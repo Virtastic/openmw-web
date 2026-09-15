@@ -3381,7 +3381,8 @@ local eventHandlers = {
             return world.createRecord(core.magic.spells.createRecordDraft({
                 name = 'harness ' .. tostring(data.effect),
                 type = core.magic.SPELL_TYPE.Spell,
-                cost = 1,
+                -- #391: the server's cost floor (#360) refuses a 100x60 levitate at cost 1.
+                cost = math.max(1, math.floor(data.magnitude * math.max(1, data.duration or 1) / 100)),
                 effects = { { id = data.effect, range = 0, area = 0,
                     magnitudeMin = data.magnitude, magnitudeMax = data.magnitude, duration = data.duration } },
             }))

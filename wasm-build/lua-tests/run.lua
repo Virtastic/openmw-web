@@ -440,6 +440,12 @@ do
   -- the holder; a persisted re-enable is applied at cell entry.
   local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  -- Backlog 391: a minted test spell must clear the server's cost floor (#360, m7.ts
+  -- minSpellCost = max(1, floor(mag x max(dur,1) / 100))) or s147/s148/s156 never register.
+  check('global.lua mpMintSpell prices the spell at the server cost floor',
+    g:find('cost = math.max(1, math.floor(data.magnitude * math.max(1, data.duration or 1) / 100)),', 1, true) ~= nil
+      and g:find('cost = 1,', 1, true) == nil,
+    'a minted spell costs 1 and the cost floor refuses it')
   check('global.lua drains mp.takeScriptNotes inside the Joined tick',
     g:find("if net.state == 'Joined' then.-scriptNotesTick%(%)") ~= nil and g:find('pcall(mp.takeScriptNotes)', 1, true) ~= nil)
   check("objects.onScriptNote sends ObjectEnabled under the OBJECT's cell key",

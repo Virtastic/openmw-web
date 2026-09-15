@@ -30,10 +30,13 @@ export default async function run(ctx) {
   assert.ok(rec, 'need a living NPC visible to both clients');
   const start = pa[rec];
 
-  // Recruit beside them (s114).
+  // Recruit beside them, in a conversation (s114: #363 admits the claim only under the lock).
   await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);
   await ctx.sleep(4_000);
+  await a.cmd(`dlg:${rec}`);
+  await ctx.sleep(1_500);
   await a.cmd(`follow:${rec}`);
+  await a.cmd('dlg:release');
   await ctx.sleep(3_000);
   ctx.log(`A recruited "${rec}" (claim=${await a.eval('window.omw.state.followClaim')})`);
 

@@ -77,7 +77,9 @@ const server = await startServer({
     server: { maxPlayers, ...(values['server-password'] ? { password: values['server-password'] } : {}) },
     // Without this a spawned world has no world browser, so it can neither list nor switch.
     ...(values.gateway ? { gateway: { url: values.gateway } } : {}),
-    limits: { maxConnsPerIp: connsPerIp, loginPerMinPerIp: 100000 },
+    // harness: the scenarios drive what the anti-cheat refuses on purpose (#390 #393 #394).
+    // Both the direct world and every gateway-spawned one boot through this entry point.
+    limits: { maxConnsPerIp: connsPerIp, loginPerMinPerIp: 100000, harness: true },
     ...(values['metrics-token']
       ? { metrics: { enabled: true, token: values['metrics-token'] } }
       : {}),

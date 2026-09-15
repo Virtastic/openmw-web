@@ -777,6 +777,7 @@ export class Social {
         const from = str('acct');
         const r = this.acceptInvite(player, from);
         if (r.ok) {
+          player.lastDoorAt = Date.now(); // #394: the teleport this asks for is explained (#361)
           player.peer.sendEvent('InviteAccepted', { cellKey: r.cellKey, x: r.x, y: r.y, z: r.z });
         } else if (r.reason === 'not_online' && this.presenceOf(from).online) {
           // They ARE on the server, just not in this world — the ordinary case, since invites

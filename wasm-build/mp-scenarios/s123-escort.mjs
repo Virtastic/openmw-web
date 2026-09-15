@@ -27,7 +27,11 @@ export default async function run(ctx) {
   const start = pa[rec];
   await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);
   await ctx.sleep(4_000);
+  // The escort is a dialogue result: the lock is what admits the claim (#363, s124's idiom).
+  await a.cmd(`dlg:${rec}`);
+  await ctx.sleep(1_500);
   await a.cmd(`escort:${rec}:${DEST.x},${DEST.y},${DEST.z}`);
+  await a.cmd('dlg:release');
   await ctx.sleep(3_000);
   ctx.log(`A asked "${rec}" to escort them to the spawn (claim=${await a.eval('window.omw.state.followClaim')}, report=${await a.eval('window.omw.state.companionReport')}); ${Math.round(dist2(start, DEST))} units to go`);
 

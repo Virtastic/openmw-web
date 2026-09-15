@@ -390,6 +390,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Long enough to cover a host crash or page reload (engine boot is tens of seconds on a
   // cold cache) and short enough that a genuine quit does not strand guests in a dead world.
   const OWNER_DISCONNECT_GRACE_MS = opts.ownerGraceMs ?? 90_000;
+  // #395: a guest position flushed this recently is the auth rescue re-booting the same
+  // session, not a return visit. The disconnect flush stamps it; a reload takes seconds.
+  const GUEST_REBOOT_MS = 60_000;
   // ONE CAP, ENFORCED AND ADVERTISED — and it is the OPERATOR'S number, [server] maxPlayers.
   //
   // The ceiling used to sit inside mayJoinWorld, which answers a question about ACCESS, so a
@@ -573,6 +576,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     worldPeer: () => worldPeerImpl(),
     roster,
     store: playerStore,
+    harness: config.limits.harness,
     recordOf: (id) => recordStore.get(id), // #359: active-effect adds budgeted by real magnitude
     // Chargen named the character: put that name on the slot, replacing the placeholder the
     // slot was auto-created with. Only ever an upgrade — a slot the player already named is
@@ -605,6 +609,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     roster,
     worldPeer: () => worldPeerImpl(),
     maxHitDamage: config.limits.maxHitDamage,
+    harness: config.limits.harness,
     holderOf: (cellKey) => world.holderOf(cellKey),
     epochOf: (cellKey) => world.epochOf(cellKey),
     allowPlayerHit: (attacker, victimId, name) =>
@@ -1004,7 +1009,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     guestSpawn: (accountKey: string): { cellKey: string; x: number; y: number; z: number } | null => {
       if (worldMode !== 'party' || worldOwner === '' || accountKey === worldOwner) return null;
       const guest = roster.activeForAccount(accountKey);
-      if (guest && playerStore.getCached(guest.charId)?.positions?.[worldId]) return null;
+      // #395: only a position written MOMENTS ago is a reboot (the auth rescue); a guest who
+      // stood here yesterday is a returning guest and lands beside the host (s154).
+      const at = guest && playerStore.getCached(guest.charId)?.positions?.[worldId]?.at;
+      if (at && Date.now() - Date.parse(at) < GUEST_REBOOT_MS) return null;
       const owner = roster.activeForAccount(worldOwner);
       if (!owner) return null;
       if (owner.cellKey && owner.pose) {
@@ -1019,6 +1027,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         if (!g || !g.inWorld || Date.now() > until) { clearInterval(t); return; }
         if (!host || !host.cellKey || !host.pose) return;
         clearInterval(t);
+        g.lastDoorAt = Date.now(); // #394: the teleport this asks for is explained (#361)
         g.peer.sendEvent('InviteAccepted', { cellKey: host.cellKey, x: host.pose.x, y: host.pose.y, z: host.pose.z });
       }, 1000);
       t.unref();

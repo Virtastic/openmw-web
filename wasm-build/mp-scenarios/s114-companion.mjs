@@ -38,8 +38,12 @@ export default async function run(ctx) {
 
   // Recruit: the dialogue result (Follow stacked on A's copy of the NPC). The conversation
   // itself pauses the game, and companion.lua only polls once it is closed -- as in play,
-  // where the claim goes out after Goodbye. The server admits a follow claim on proximity.
+  // where the claim goes out after Goodbye. The server admits the claim only under the
+  // dialogue lock (#363), so hold it across the hook as s124 does.
+  await a.cmd(`dlg:${rec}`);
+  await ctx.sleep(1_500);
   await a.cmd(`follow:${rec}`);
+  await a.cmd('dlg:release');
   await ctx.sleep(2_500); // companion.lua polls at 1 Hz
   await a.cmd(`followprobe:${rec}`);
   await ctx.sleep(1_000);

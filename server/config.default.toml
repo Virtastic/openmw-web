@@ -230,6 +230,12 @@ loginPerMinPerIp = 5              # auth attempts (Register+Login) per IP per mi
 # Cloudflare makes every player share the edge's address, which collapses every per-IP limit
 # into one global bucket. The mode is logged at boot as net.client_ip_mode.
 trustCloudflareIp = false
+# HARNESS ONLY. The browser scenarios drive things a real client never sends -- a relayed
+# CombatHit under a simulator, a same-cell snap over 1024 u, a +100 skill, a level step of 4 --
+# and the anti-cheat refusals (#361 #362 #369) are right to drop them. testhost.ts sets this
+# for the test worlds; it is DERIVED (hidden from the dashboard) and must stay false anywhere
+# a player can reach. The caps (stat 100, level 255, damage) are NOT relaxed by it.
+harness = false
 maxHitDamage = 1000               # M5 sanity bound on relayed damage/effect magnitudes (not balance)
 
 # Interest management + level of detail. Cell-granular visibility alone makes one busy cell

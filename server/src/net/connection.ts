@@ -799,6 +799,9 @@ export class Connection implements Peer {
       const guard = body?.get('guard');
       const target = id !== undefined ? this.ctx.roster.get(id) : undefined;
       if (!target || target.system === true || !target.inWorld || guard === undefined) return;
+      // #396: the arrest window sends no DialogueLock, and #366 admits a bounty drop only out
+      // of a conversation -- so the fine paid there is one, or guards re-arrest forever.
+      target.lastDialogueAt = Date.now();
       target.peer.sendEvent('PlayerArrest', { guard: lToJs(guard) as JsLike });
       return;
     }
@@ -1128,7 +1131,7 @@ export class Connection implements Peer {
     // more than 1024 u is a modified client walking through walls: refused, the avatar stays.
     // Interior->interior changes are NOT bounded here: a load door emits no signal and its
     // coordinates are unrelated across cells, so that case stays a count (farTravel).
-    if (!this.isSystem && oldCell === cellKey && player.pose) {
+    if (!this.isSystem && !this.ctx.config.limits.harness && oldCell === cellKey && player.pose) {
       const dx = x - player.pose.x, dy = y - player.pose.y, dz = z - player.pose.z;
       if (dx * dx + dy * dy + dz * dz > SAME_CELL_JUMP * SAME_CELL_JUMP) {
         const now = Date.now();

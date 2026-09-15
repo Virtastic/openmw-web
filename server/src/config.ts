@@ -222,6 +222,10 @@ export interface Config {
      *  by default: a header nobody sets is pure attack surface, and believing it lets a client
      *  reset its own login limit, evade an IP ban and evade maxConnsPerIp. */
     trustCloudflareIp: boolean;
+    /** HARNESS ONLY (testhost.ts sets it; never a dashboard field): relaxes the anti-cheat
+     *  refusals the browser scenarios drive on purpose -- a human CombatHit under a holder, a
+     *  same-cell snap over 1024 u, a +100 skill or a level step of 4. Caps stay. */
+    harness: boolean;
     maxMsgBytes: number;
     helloTimeoutMs: number;
     loginPerMinPerIp: number;
@@ -647,6 +651,7 @@ function validate(t: Tree): Config {
       // Optional: configs written before teleport-hopping was bounded must keep working.
       farTravelPerMin: optNum(t, 'limits', 'farTravelPerMin', 6),
       trustCloudflareIp: optBool(t, 'limits', 'trustCloudflareIp', false),
+      harness: optBool(t, 'limits', 'harness', false),
       maxMsgBytes: reqNum(t, 'limits', 'maxMsgBytes'),
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
       loginPerMinPerIp: reqNum(t, 'limits', 'loginPerMinPerIp'),

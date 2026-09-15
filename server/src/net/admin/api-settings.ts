@@ -190,6 +190,8 @@ export const DERIVED_FIELDS = [
   // page an operator clicks through. It stays reachable from config for the harness, where the
   // person editing the file has already accepted what it is.
   'login.allowHarnessAuth',
+  // Same door, other side: relaxes the anti-cheat refusals for the browser scenarios.
+  'limits.harness',
   // Not a question any more, anywhere: the server always supplies the game files ('serve'),
   // and per-player cloud copies belong to the game launcher. Old configs saying 'verify' are
   // still honoured at runtime; they just cannot be produced from here.

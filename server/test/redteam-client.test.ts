@@ -242,6 +242,25 @@ test('#366 a human lowers the party bounty only out of a conversation', async (t
   assert.equal(((await b.waitEvent('CrimeUpdate')).value as { bounty: number }).bounty, 0);
 });
 
+test('#396 the arrest window counts as the conversation the fine is paid in', async (t) => {
+  const { server } = await boot(t, {}, { sharing: { crime: true } });
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const { c: a } = await join(t, server, 'Thief');
+  const { c: b } = await join(t, server, 'Friend');
+  a.sendEvent('CrimeUpdate', { bounty: 40 });
+  await b.waitEvent('CrimeUpdate', (v) => (v as { bounty: number }).bounty === 40);
+  b.inbox.events.length = 0;
+  a.sendEvent('CrimeUpdate', { bounty: 0 }); // no guard in sight
+  await fence(a, b);
+  assert.equal(b.inbox.events.filter((e) => e.name === 'CrimeUpdate').length, 0, 'a bare drop cleared the record');
+  // The peer's guard reaches the avatar: the arrest dialogue opens with no DialogueLock.
+  peer.sendEvent('PlayerArrest', { id: a.playerId, guard: NPC_REF });
+  await a.waitEvent('PlayerArrest');
+  a.sendEvent('CrimeUpdate', { bounty: 0 }); // the fine, paid to the guard
+  assert.equal(((await b.waitEvent('CrimeUpdate')).value as { bounty: number }).bounty, 0, 'the fine paid under arrest lowers the shared bounty');
+});
+
 test('#367 a lock is granted only in view, one at a time', async (t) => {
   const { server } = await boot(t);
   const { c: a } = await join(t, server, 'Talker');
@@ -273,6 +292,14 @@ test('#369 a stat rises by a level-up step per window, a level by one; reputatio
   refused = c.waitEvent('StateRefused');
   c.sendEvent('PlayerSkills', { longblade: 101 });
   assert.equal(((await refused).value as { kind: string }).kind, 'PlayerSkills');
+  // #393: a NEW key is a raise from zero (axe 5 fits the window, a damage key is the effect
+  // landing); dropping Long Blade and re-adding it at 100 is not a baseline reset.
+  c.sendEvent('PlayerSkills', { longblade: 32, axe: 5, longblade_damage: 20 });
+  c.sendEvent('PlayerSkills', { axe: 5 });
+  await settle();
+  refused = c.waitEvent('StateRefused');
+  c.sendEvent('PlayerSkills', { longblade: 100, axe: 5 });
+  assert.equal(((await refused).value as { kind: string }).kind, 'PlayerSkills');
   refused = c.waitEvent('StateRefused');
   c.sendEvent('PlayerLevel', { level: 5, reputation: 5 }); // +2
   assert.equal(((await refused).value as { kind: string }).kind, 'PlayerLevel');
@@ -284,7 +311,7 @@ test('#369 a stat rises by a level-up step per window, a level by one; reputatio
   await server.flush();
   const doc = readPlayerDoc(dataDir, charId) as { stats?: { attributes?: Record<string, number>; skills?: Record<string, number>; level?: number; reputation?: number } };
   assert.deepEqual(doc.stats?.attributes, { strength: 45, luck: 41 });
-  assert.deepEqual(doc.stats?.skills, { longblade: 32 });
+  assert.deepEqual(doc.stats?.skills, { axe: 5 });
   assert.equal(doc.stats?.level, 4);
   assert.equal(doc.stats?.reputation, 15);
 });

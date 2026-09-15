@@ -38,6 +38,8 @@ export interface CombatCtx {
   worldPeer(): Player | undefined;
   roster: Roster;
   maxHitDamage: number;
+  // #390: the browser scenarios relay hitn:/hitp: under a holder on purpose (limits.harness).
+  harness?: boolean;
   // Current authority holder / epoch for a cell (M4); undefined when dormant.
   holderOf(cellKey: string): number | undefined;
   epochOf(cellKey: string): number | undefined;
@@ -359,7 +361,7 @@ export class Combat {
     // ride the relay), so a human CombatHit arriving with a holder present is a modified
     // client's declared damage. Degraded mode (no holder) keeps the relay, as before.
     const targetCell = target.kind === 'player' ? this.ctx.roster.get(target.playerId)?.cellKey : target.cellKey;
-    if (!player.system && targetCell !== undefined && this.ctx.holderOf(targetCell) !== undefined) {
+    if (!player.system && !this.ctx.harness && targetCell !== undefined && this.ctx.holderOf(targetCell) !== undefined) {
       this.drop(player, 'CombatHit', 'combat_hit_refused');
       return;
     }

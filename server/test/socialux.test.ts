@@ -276,6 +276,9 @@ test("accepting a same-world invite returns the inviter's live position", () => 
 
   // Spent: an invite is not a standing pass back to somebody's side.
   assert.equal(w.store.hasInvite('ada', 'bob', w.clock), false, 'the invite must be consumed');
+  // #394: the teleport this asks for must count as explained, or #361 refuses a friend
+  // accepting from >1024 u away in the same exterior cell and rubber-bands them.
+  assert.ok(bob.lastDoorAt !== undefined && Date.now() - bob.lastDoorAt < 1000, 'the accept stamps lastDoorAt');
   w.close();
 });
 

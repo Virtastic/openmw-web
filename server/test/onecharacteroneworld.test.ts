@@ -11,6 +11,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server';
+import { DatabaseSync } from 'node:sqlite';
 import { TestClient, tmpDataDir } from './helpers';
 
 test('opening the character in a second world drops the session in the first', async (t) => {
@@ -113,7 +114,8 @@ test('a guest joining before the host has a pose is teleported on the host\'s fi
   await host.waitEvent('PlayerList');
 
   const guest = await TestClient.connect(server.port);
-  await guest.joinAsNew('Guest', 'hunter22');
+  const { playerId: guestId, welcome } = await guest.joinAsNew('Guest', 'hunter22');
+  const charId = String(welcome['characterId']);
   await guest.waitEvent('PlayerList');
   const early = await guest.waitEvent('InviteAccepted', () => true, 300).then(() => true, () => false);
   assert.equal(early, false, 'nothing to place the guest beside yet: the host has no pose');
@@ -122,6 +124,9 @@ test('a guest joining before the host has a pose is teleported on the host\'s fi
   const at = (await guest.waitEvent('InviteAccepted', () => true, 3000)).value as { cellKey: string; x: number };
   assert.equal(at.cellKey, 'Balmora, South Wall Cornerclub', 'the deferred spawn lands beside the host');
   assert.equal(at.x, 10);
+  // #394: the teleport it asks for is explained, or #361 refuses the guest's own snap there.
+  const stamped = server.roster.get(guestId)!.lastDoorAt;
+  assert.ok(stamped !== undefined && Date.now() - stamped < 3000, 'the deferred InviteAccepted stamps lastDoorAt');
 
   // The guest walks off and reboots (the auth rescue: a fresh ticket, not a resume). They
   // keep their own position; a second InviteAccepted would put them back beside the host.
@@ -134,5 +139,35 @@ test('a guest joining before the host has a pose is teleported on the host\'s fi
   await again.joinExisting('Guest', 'hunter22');
   await again.waitEvent('PlayerList');
   const moved = await again.waitEvent('InviteAccepted', () => true, 1500).then(() => true, () => false);
-  assert.equal(moved, false, 'a guest with a position in this world is not re-spawned beside the host');
+  assert.equal(moved, false, 'a guest rebooted moments after flushing a position here is not re-spawned beside the host');
+
+  // #395: but a guest who stood here YESTERDAY is a returning guest (s154), not a reboot, and
+  // lands beside the host again. Everyone logs off, the flushed position is aged on disk, and
+  // the world comes up again the next day.
+  again.close();
+  host.close();
+  await server.close();
+  const db = new DatabaseSync(join(dataDir, 'players.db'));
+  const doc = JSON.parse((db.prepare('SELECT doc FROM players WHERE key = ?').get(charId) as { doc: string }).doc) as
+    { positions: Record<string, { at: string }> };
+  doc.positions['priv-host']!.at = new Date(Date.now() - 3_600_000).toISOString();
+  db.prepare('UPDATE players SET doc = ? WHERE key = ?').run(JSON.stringify(doc), charId);
+  db.close();
+  const server2 = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host',
+    configOverride: { login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server2.close());
+  const host2 = await TestClient.connect(server2.port);
+  t.after(() => host2.close());
+  await host2.joinExisting('Host', 'hunter22');
+  await host2.waitEvent('PlayerList');
+  host2.sendCellChange('Balmora, South Wall Cornerclub', 10, 20, 30);
+  const later = await TestClient.connect(server2.port);
+  t.after(() => later.close());
+  await later.joinExisting('Guest', 'hunter22');
+  await later.waitEvent('PlayerList');
+  const back = (await later.waitEvent('InviteAccepted', () => true, 3000)).value as { cellKey: string };
+  assert.equal(back.cellKey, 'Balmora, South Wall Cornerclub', 'a returning guest is placed beside the host');
 });

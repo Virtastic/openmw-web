@@ -65,6 +65,9 @@ export interface StateCtx {
   // #359: a custom record's body (m7 RecordStore), so an active-effect add can be budgeted by
   // the magnitude it actually carries. Absent = every effect is priced at the nominal value.
   recordOf?(id: string): { data: unknown; byAccount?: string } | undefined;
+  // #393: limits.harness -- the scenarios declare +100 skills and level steps of 4. The rate
+  // windows are skipped; the caps (100, 255, the jump limit) stand.
+  harness?: boolean;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -348,10 +351,14 @@ function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'at
   // #369: refused, not counted -- the server's copy stands and the next declaration is
   // measured against it. The first declaration (no baseline) is accepted as chargen's.
   const had = ctx.store.getCached(player.charId)?.stats?.[field];
-  if (had) {
+  if (had && !ctx.harness) {
     for (const [k, v] of Object.entries(map)) {
-      const from = had[k];
-      if (from !== undefined && !raiseWithin(player, `${field}:${k}`, v - from, STAT_RAISE_PER_WINDOW)) {
+      // #393: a key the previous declaration omitted is a raise FROM ZERO, not a free pass --
+      // dropping Long Blade and re-adding it at 100 was measured against nothing. Damage keys
+      // come and go with the effect (identity.lua emits "<id>_damage" only while dmg != 0)
+      // and only ever lower the stat, so those alone start from wherever they appear.
+      const from = had[k] ?? (k.endsWith('_damage') ? v : 0);
+      if (!raiseWithin(player, `${field}:${k}`, v - from, STAT_RAISE_PER_WINDOW)) {
         noteGain(ctx, player, 'stat_raise', { field, key: k, from, to: v });
         return false;
       }
@@ -384,7 +391,7 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   const hadStats = ctx.store.getCached(player.charId)?.stats;
   const had = hadStats?.level;
   // #369: reputation rides the same window budget as a stat.
-  if (reputation !== undefined && hadStats?.reputation !== undefined
+  if (reputation !== undefined && hadStats?.reputation !== undefined && !ctx.harness
     && !raiseWithin(player, 'reputation', reputation - hadStats.reputation, REP_RAISE_PER_WINDOW)) {
     noteGain(ctx, player, 'reputation_raise', { from: hadStats.reputation, to: reputation });
     return false;
@@ -393,7 +400,7 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   // 255 in four seconds; a level-up takes minutes of play.
   const nowMs = Date.now();
   if (had !== undefined && level > had) {
-    if (player.levelStepAt !== undefined && nowMs - player.levelStepAt < LEVEL_STEP_MS) {
+    if (!ctx.harness && player.levelStepAt !== undefined && nowMs - player.levelStepAt < LEVEL_STEP_MS) {
       noteGain(ctx, player, 'level_rate', { from: had, to: level });
       return false;
     }

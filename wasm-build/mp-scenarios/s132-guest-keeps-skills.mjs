@@ -66,8 +66,10 @@ export default async function run(ctx) {
     assert.ok(visiting > 5, `the guest character never got a class in the host world (${SKILL} stayed at the template 5)`);
     ctx.log(`guest ${SKILL} on arrival: ${visiting} | docs: ${docSkill(ctx)}`);
 
-    // The evening's training: the skill rises by 7 in the host world.
-    const want = visiting + 7;
+    // The evening's training: the skill rises by 5 in the host world -- one window's budget
+    // (#369: +5 per 10 s per key), so this passes under the production rule, not just the
+    // harness seam.
+    const want = visiting + 5;
     await guest.client.cmd(`setskill:${SKILL}:${want}`);
     await ctx.sleep(4_000); // the 1 s progression diff writes it to the GUEST character
     assert.equal(await skillOf(guest.client), want, 'the skill rose in the host world');
