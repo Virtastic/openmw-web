@@ -8,6 +8,11 @@
 // are the truth; the client's own bar must agree with them once the dust settles.
 import assert from 'node:assert/strict';
 
+// THE SERVER'S OWN PEER, anchored on the players: a hand-started peer processes actors only
+// within range of its parked avatar, and this spot is out of that range -- the avatar sat
+// out of processing range and never drowned, never fell (the s149 probe: inRange=false).
+export const managedPeer = true;
+
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 // No snap: the retail start (Seyda Neen, -2,-9) is dry land. The first draft dropped onto the

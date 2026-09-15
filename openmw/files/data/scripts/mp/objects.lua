@@ -1023,14 +1023,35 @@ function objects.tick(now)
                         enableWatch[obj.id] = on
                         sendAddressed('ObjectEnabled', obj, { enabled = on })
                     end
-                    if types.Lockable.objectIsInstance(obj) then
-                        local level = types.Lockable.isLocked(obj) and types.Lockable.getLockLevel(obj) or false
-                        local had = scriptLockWatch[obj.id]
-                        if had == nil then
-                            scriptLockWatch[obj.id] = level
-                        elseif had ~= level and not lockWatch[obj.id] then -- an activation's own watch reports its own
-                            scriptLockWatch[obj.id] = level
-                            sendAddressed('ObjectLock', obj, { lockLevel = level or nil })
+                end
+            end
+            -- Locks, over the 3x3 (doors and containers only, so it stays cheap): the door a
+            -- script locks is often in the NEXT cell over from where the player stands --
+            -- an exterior loads its neighbours, and a village straddles a cell line.
+            local cells = { cell }
+            if cell.isExterior then
+                for dx = -1, 1 do
+                    for dy = -1, 1 do
+                        if dx ~= 0 or dy ~= 0 then
+                            local okC, c = pcall(world.getExteriorCell, cell.gridX + dx, cell.gridY + dy)
+                            if okC and c then cells[#cells + 1] = c end
+                        end
+                    end
+                end
+            end
+            for _, c in ipairs(cells) do
+                for _, kind in ipairs({ types.Door, types.Container }) do
+                    local okL, list = pcall(function() return c:getAll(kind) end)
+                    for _, obj in ipairs(okL and list or {}) do
+                        if obj:isValid() then
+                            local level = types.Lockable.isLocked(obj) and types.Lockable.getLockLevel(obj) or false
+                            local had = scriptLockWatch[obj.id]
+                            if had == nil then
+                                scriptLockWatch[obj.id] = level
+                            elseif had ~= level and not lockWatch[obj.id] then -- an activation's own watch reports its own
+                                scriptLockWatch[obj.id] = level
+                                sendAddressed('ObjectLock', obj, { lockLevel = level or nil })
+                            end
                         end
                     end
                 end

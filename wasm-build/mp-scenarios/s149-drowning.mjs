@@ -10,6 +10,11 @@
 // there is well under, and sneak (swim down) holds it there.
 import assert from 'node:assert/strict';
 
+// THE SERVER'S OWN PEER, anchored on the players: a hand-started peer processes actors only
+// within range of its parked avatar, and this spot is out of that range -- the avatar sat
+// out of processing range and never drowned, never fell (the s149 probe: inRange=false).
+export const managedPeer = true;
+
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const SEABED = { x: -19264, y: -72128, z: -400 }; // -3,-9: the floor is at -1136

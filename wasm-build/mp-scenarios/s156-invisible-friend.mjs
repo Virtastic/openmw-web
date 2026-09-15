@@ -54,6 +54,7 @@ export default async function run(ctx) {
   await b.waitFor(`${rowOf}.x !== undefined`, STEP, 'B has a puppet of A');
   const seenOnB = async () => JSON.parse(await b.eval(`JSON.stringify(${rowOf}.actives||[])`));
   await ctx.sleep(2_000);
+  const ownBefore = await actives(b); // B's own list carries racial abilities (resist fire); compare, never assume empty
   const before = await seenOnB();
   ctx.log(`B's puppet of A before the cast: [${before}]`);
   assert.equal(before.length, 0, `B's puppet of A already carries effects [${before}]`);
@@ -75,6 +76,6 @@ export default async function run(ctx) {
   assert.equal(seen.length, 0, 'B still sees A as invisible after A dispelled it');
   // And B's own body was never touched.
   const own = await actives(b);
-  assert.equal(own.length, 0, `B's own body picked up A's effect [${own}]`);
+  assert.deepEqual(own, ownBefore, `B's own body changed with A's effect: [${ownBefore}] -> [${own}]`);
   ctx.log('PASS: an invisible friend is invisible on the other screen, and solid again when dispelled');
 }

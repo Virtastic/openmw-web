@@ -2110,6 +2110,7 @@ window.omw = (function(){
        var __bootFrag = String(window.__omwBootFrag || location.hash || '');
        var __hostedData = /(^|[#&])mwdata=1($|[&#])/.test(__bootFrag);
        var __mpLocker = !!window.__omwLockerToken && !__hostedData;
+       window.__omwMpLocker = __mpLocker; // the world-change rebuild keeps the destination on the same data source
 
        // SCRUB THE CLOUD FRAGMENT, for the same reason the multiplayer branch scrubs its own.
        //
@@ -4021,6 +4022,18 @@ window.omw = (function(){
     });
     keep.unshift('mp=' + encodeURIComponent(wsUrl), 'mpticket=' + encodeURIComponent(ticket));
     if (swChar) keep.push('mpchar=' + encodeURIComponent(swChar));
+    // THE LOCKER SESSION TRAVELS WITH US, ALWAYS. It is the credential every later world change
+    // needs to mint a ticket, and the destination page only learns it from this fragment. A
+    // cloud-locker boot strips mplocker from __omwBootFrag on purpose (held in memory instead),
+    // so a rebuild from that copy sent the player to a page that could never change world
+    // again: joining a friend worked, and being sent home from there -- or going home by
+    // choice -- died with "no locker session". Every second hop, for every cloud player.
+    if (window.__omwLockerToken && !keep.some(function(kv){ return kv.split('=')[0] === 'mplocker'; })) {
+      keep.push('mplocker=' + encodeURIComponent(window.__omwLockerToken));
+    }
+    // ...and the data source stays what it was: a token alone would put the next page on the
+    // locker stream, so a page that ran on hosted data says so for the destination.
+    if (!window.__omwMpLocker && !keep.some(function(kv){ return kv.split('=')[0] === 'mwdata'; })) keep.push('mwdata=1');
     // WHY WE ARE GOING. An eviction ("X sent you home", "the host has gone solo") is shown
     // as a modal and, a few hundred milliseconds later, this navigation wipes it -- the
     // player lands at home with no idea what happened. Carry the reason; the new page says

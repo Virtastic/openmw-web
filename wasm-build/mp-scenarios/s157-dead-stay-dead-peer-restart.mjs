@@ -7,7 +7,7 @@
 // record at all (relays were gated on where its avatar stood, and nothing asked at anchor),
 // so after a restart it loaded the smuggler alive and streamed him standing. The holder now
 // asks for the record when it takes a cell and kills the body for real; a late human resolves
-// the wire key first. Kill an NPC indoors (s118), restart the peer, and expect the corpse to
+// the wire key first. Kill an NPC (s109), restart the peer, and expect the corpse to
 // stay a corpse on both screens.
 import assert from 'node:assert/strict';
 
@@ -20,20 +20,16 @@ export default async function run(ctx) {
   let peer = ctx.startSimPeer('-2,-9');
   if (!peer) { ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset).'); return; }
   const [a, b] = await Promise.all([ctx.launchClient('bot-a', '', BOOT), ctx.launchClient('bot-b', '', BOOT)]);
+  // OUTDOORS, in the cell the hand-started peer holds: a manual peer anchors nothing else
+  // (that is the server-spawned peer's job, s118), and the restart below needs peer.stop().
   for (const c of [a, b]) await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 300_000, `${c.name} puppeted the cell actors`);
-  const outside = await cellOf(a);
-  for (const c of [a, b]) {
-    await c.cmd('door:enter');
-    await c.waitFor(`String(window.omw.state.cell||"") !== ${JSON.stringify(outside)}`, STEP, `${c.name} went through the door`);
-  }
   const inside = await cellOf(a);
-  assert.equal(await cellOf(b), inside, 'both are in the same interior');
   for (const c of [a, b]) {
-    await c.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 120_000, `${c.name}: the interior has a holder`);
+    await c.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 120_000, `${c.name}: the cell has a holder`);
   }
   const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
   const victim = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard);
-  assert.ok(victim, `need a living NPC inside visible to both: A=${JSON.stringify(Object.keys(pa))}`);
+  assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   const deadline = Date.now() + 90_000;
   let died = false;
@@ -49,11 +45,11 @@ export default async function run(ctx) {
   // The simulator dies and comes back cold: it loads the room from the content files.
   peer.stop();
   await ctx.sleep(3_000);
-  await a.waitFor('String(window.omw.state.authorityHolder||"none") === "none"', 120_000, 'the room lost its holder');
+  await a.waitFor('String(window.omw.state.authorityHolder||"none") === "none"', 120_000, 'the cell lost its holder');
   peer = ctx.startSimPeer('-2,-9');
   assert.ok(peer, 'could not restart the peer');
-  await a.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 300_000, 'the restarted peer re-took the room');
-  ctx.log('the peer holds the room again; watching the corpse for 20 s');
+  await a.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 300_000, 'the restarted peer re-took the cell');
+  ctx.log('the peer holds the cell again; watching the corpse for 20 s');
   // Nothing may stand him up: not the fresh holder's stream, not a snapshot. Sampled over
   // time because a resurrection would arrive with the first actor batch, not at once.
   // Both signals: the local death state, and the HOLDER's hp as mirrored onto the puppet --

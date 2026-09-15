@@ -180,8 +180,15 @@ local tracked = {
 for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0; t.baseSaid = nil end
 local peerBarsAt = nil -- when the peer last reported; past PEER_RULES_S our own bars rule again
 local PEER_RULES_S = 5 -- server/src/core/players.ts INPUT_DRIVING_MS, the same predicate
+local trackLocalChange -- defined below; the report handler needs it first
 function identity.notePeerBars(hp, mpv, ft)
     peerBarsAt = core.getRealTime()
+    -- BANK THE LOCAL CHANGE BEFORE THE REPORT OVERWRITES IT. The per-frame measurement runs
+    -- in onUpdate; a heal and a report landing in the same frame BEFORE that -- a rest, a
+    -- potion, then the 4 Hz report -- had the report's write (and its prev) erase the raise
+    -- before it was ever measured. Deterministically so for a rest (s150: 8 hours healed
+    -- nothing that stuck). Measure now, then let the report set the baseline.
+    if trackLocalChange then trackLocalChange() end
     local v = { hp = hp, mp = mpv, ft = ft }
     for k, t in pairs(tracked) do
         if v[k] ~= nil then
@@ -190,7 +197,7 @@ function identity.notePeerBars(hp, mpv, ft)
         end
     end
 end
-local function trackLocalChange()
+trackLocalChange = function()
     for _, t in pairs(tracked) do
         local ok, cur = pcall(function() return Actor.stats.dynamic[t.stat](self).current end)
         if ok and cur and t.prev then

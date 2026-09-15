@@ -10,8 +10,12 @@ import assert from 'node:assert/strict';
 
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-const POTION = 'p_restore_health_s'; // Restore Health, a few seconds long (retail)
-const GAP_MS = 3_500; // between the two drinks (a cheap potion lasts 5 s): the second outlives the first by this much
+// A FORTIFY potion, not a restore: restore health lasts 5 s, and on a loaded box one poll of
+// the active list takes 4 s, so the window in which exactly one instance is left was never
+// sampled (2 -> 0 looked like the bug it was written to catch). Fortify Health lasts long
+// enough that a 20 s gap leaves a 20 s window with one instance.
+const POTION = 'p_fortify_health_e'; // Exclusive: the longest of the line
+const GAP_MS = 20_000;
 
 const parseBars = (s) => { const m = /^(\d+)\/(\d+)$/.exec(String(s ?? '')); return m ? { c: Number(m[1]), b: Number(m[2]) } : null; };
 const bars = async (c) => parseBars(await c.eval('window.omw.state.selfStats'));
@@ -43,7 +47,7 @@ export default async function run(ctx) {
   await a.cmd(`use:${POTION}`);
   const seen = []; // instance counts over time, with seconds since the second drink
   const t0 = Date.now();
-  const by = t0 + 40_000;
+  const by = t0 + 120_000;
   let maxSeen = 0, sawOneAfterTwo = false;
   while (Date.now() < by) {
     const n = (await actives(a)).filter((id) => id === POTION).length;
