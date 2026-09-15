@@ -329,15 +329,23 @@ end
 
 local function snapshotCell(cellKey, epoch)
     local snapActors = {}
+    local ownPlayer = world.players[1]
     for _, obj in ipairs(cellActors(cellKey)) do
         local dyn = dynSnapshot(obj)
         local addr = actorAddr(obj)
+        -- Disposition rides in the snapshot: persuaded, bribed or threatened is a fact about
+        -- the NPC that a fresh holder (a restarted peer) must inherit, not re-roll from the record.
+        local disp = nil
+        if ownPlayer and ownPlayer:isValid() and types.NPC.objectIsInstance(obj) then
+            pcall(function() disp = types.NPC.getBaseDisposition(obj, ownPlayer) end)
+        end
         if addr then snapActors[#snapActors + 1] = {
             ref = addr.ref, net = addr.net,
             x = obj.position.x, y = obj.position.y, z = obj.position.z,
             rotZ = obj.rotation:getYaw(),
             hp = dyn.hp, mp = dyn.mp, ft = dyn.ft,
             dead = types.Actor.isDead(obj),
+            disp = disp,
         } end
     end
     mp.sendEvent('ActorSnapshot', { cellKey = cellKey, epoch = epoch, actors = snapActors })
@@ -421,6 +429,12 @@ actors.handlers.MP_ActorAuthorityGrant = function(data)
             end)
             -- Self-gated write: the actor's own script (companion.lua mpSetStats) applies it.
             pcall(function() obj:sendEvent('mpSetStats', { hp = a.hp, mp = a.mp, ft = a.ft }) end)
+            if type(a.disp) == 'number' then
+                local ownPlayer = world.players[1]
+                if ownPlayer and ownPlayer:isValid() then
+                    pcall(function() types.NPC.setBaseDisposition(obj, ownPlayer, a.disp) end)
+                end
+            end
         end
     end
     print('[mp] actor authority GRANTED for ' .. cellKey .. ' epoch ' .. tostring(data.epoch))
