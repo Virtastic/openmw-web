@@ -444,11 +444,25 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   world.setInventoryDebit((player, recordId, count) => {
     const led = player.pendingAcquired;
-    const have = led?.get(recordId);
-    if (led === undefined || have === undefined) return;
-    const left = have - count;
-    if (left > 0) led.set(recordId, left);
-    else led.delete(recordId);
+    const have = led?.get(recordId) ?? 0;
+    const fromCredit = Math.min(have, count);
+    if (led && have > 0) {
+      if (have - fromCredit > 0) led.set(recordId, have - fromCredit);
+      else led.delete(recordId);
+    }
+    // The rest came out of the DECLARED pack, so the doc says so now rather than at the next
+    // 2 s inventory diff: a player who dropped a thing for a friend and lost their connection
+    // before that diff used to relog still holding it, the friend holding it too.
+    const fromDoc = count - fromCredit;
+    if (fromDoc <= 0) return;
+    playerStore.update(player.charId, (doc) => {
+      const inv = doc.inventory;
+      const at = inv?.findIndex((i) => i.id === recordId) ?? -1;
+      if (!inv || at < 0) return;
+      const left = inv[at]!.n - fromDoc;
+      if (left > 0) inv[at]!.n = left;
+      else inv.splice(at, 1);
+    });
   });
   world.setModerationNote((accountKey, kind) => moderation.noteAnomaly(accountKey, kind));
 

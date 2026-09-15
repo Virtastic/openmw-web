@@ -147,3 +147,30 @@ test('a partial drop leaves the rest of the credit intact', async (t) => {
   assert.equal(await tryDrop(c, 'gold_001', 1, 24), false, 'but not a sixth');
   c.close();
 });
+
+// THE DOC FOLLOWS THE DROP. A drop spent the acquisition credit and nothing else: the
+// character doc changed only at the next 2 s inventory diff, a client-declared overwrite. A
+// player who dropped a thing for a friend and lost their connection before that diff logged
+// out with the pre-drop pack -- and relogged holding what the friend had already picked up.
+test('a drop out of the declared pack leaves the character doc without it, at once', async (t) => {
+  const { readPlayerDoc } = await import('./helpers');
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  const { welcome } = await c.joinAsNew('Giver');
+  const charId = welcome['characterId'] as string;
+  await c.waitEvent('PlayerList');
+  c.sendCellChange(CELL, 0, 0, 0);
+  await c.waitEvent('PlayerCellChange');
+  c.sendEvent('PlayerInventory', { items: [{ id: 'iron_dagger', n: 1 }, { id: 'gold_001', n: 30 }] });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(await tryDrop(c, 'iron_dagger', 1, 30), true);
+  assert.equal(await tryDrop(c, 'gold_001', 10, 31), true);
+  // The connection dies before any inventory diff could report the drop.
+  c.ws.close();
+  await new Promise((r) => setTimeout(r, 300));
+  await server.flush();
+  const inv = readPlayerDoc(dataDir, charId)?.['inventory'] as { id: string; n: number }[];
+  assert.deepEqual(inv, [{ id: 'gold_001', n: 20 }], `the doc still holds what was dropped: ${JSON.stringify(inv)}`);
+});
