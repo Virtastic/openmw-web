@@ -225,9 +225,19 @@ local lastOwnPos = nil -- teleport (single-frame jump) detector; see PlayerCellC
 local teleportTo = nil -- {x, y, z, until_}
 local TELEPORT_GRACE_S = 4
 
+local lastAppliedSelfSeq = nil
 local function onSelfState(e)
     if not e or not e.x then return end
     if teleportSeq ~= nil and (tonumber(e.lastInputSeq) or 0) <= teleportSeq then return end
+    -- NO NEW INFORMATION, NO CORRECTION. The server re-broadcasts the avatar's last pose at
+    -- 15 Hz for 2 s whether or not the peer produced a new one, so while the peer stalls (a
+    -- cold cell load for anyone on the world) every moving player was pulled back toward a
+    -- frozen sample at up to 720 units/s -- running in place -- and then snapped on resume.
+    -- A sample that acknowledges no input we have not already been corrected for is the
+    -- same sample; skip it.
+    local seq = tonumber(e.lastInputSeq)
+    if seq ~= nil and lastAppliedSelfSeq ~= nil and seq <= lastAppliedSelfSeq then return end
+    if seq ~= nil then lastAppliedSelfSeq = seq end
     if teleportTo ~= nil then
         local tx, ty, tz = e.x - teleportTo.x, e.y - teleportTo.y, e.z - teleportTo.z
         if tx * tx + ty * ty + tz * tz <= SNAP_DIST * SNAP_DIST then
@@ -333,7 +343,10 @@ local function movementTick()
     -- any legitimate movement speed.
     local key = cellKey()
     local pos = self.position
-    local jumped = lastOwnPos ~= nil and (pos - lastOwnPos):length2() > 512 * 512
+    -- 256 (SNAP_DIST), not 512: a hop between them was silently undone -- the peer never
+    -- followed, and the next samples snapped the player back. No legitimate movement covers
+    -- 256 units in one frame (a fall at 1500 u/s is 75 at 20 fps, 150 at 10).
+    local jumped = lastOwnPos ~= nil and (pos - lastOwnPos):length2() > SNAP_DIST * SNAP_DIST
     lastOwnPos = pos
     -- NEVER ANNOUNCE THE ORIGIN. The engine reports (0,0,0) for a frame or two before the
     -- player is actually placed in the world, and the join-time cell change is sent the
@@ -1158,6 +1171,8 @@ return {
             if not (okv and valid) then return end
             pcall(function() I.UI.addMode('Dialogue', { target = target }) end)
         end,
+        MP_ResyncActive = function() identity.resyncActive() end,
+        MP_ForgetDeclared = function(data) identity.forgetDeclared(data and data.kind) end,
         MP_SpellMinted = function(data)
             pcall(function()
                 types.Actor.spells(self):add(data.id)

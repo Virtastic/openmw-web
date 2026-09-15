@@ -176,10 +176,31 @@ end
 -- (the binding does not exist on a local self) and should never have been swallowed. This
 -- guards a genuinely TRANSIENT engine state, and the position self-corrects — the next pose
 -- batch sees the divergence and requests a snap. Returns whether the move happened.
+-- A teleport is deferred by the engine, and a SECOND one on the same object before the first
+-- has applied throws ("already in the process of teleporting"). Two cell-change relays in
+-- one peer frame -- every login with a stored position sends the boot spawn and the restored
+-- spot a frame apart -- left the avatar parked at the first and gated out of its owner's
+-- cell for the rest of the stay: no melee, NPCs fighting a ghost. Keep the latest target and
+-- retry it on the next ticks until it lands.
+local teleportRetry = {} -- obj -> { cellArg, pos, until_ }
 local function tryTeleport(obj, cellArg, pos)
     if not obj or not obj:isValid() or not cellArg then return false end
     local ok = pcall(function() obj:teleport(cellArg, pos) end)
+    if ok then
+        teleportRetry[obj] = nil
+    else
+        teleportRetry[obj] = { cellArg = cellArg, pos = pos, until_ = core.getRealTime() + 3 }
+    end
     return ok
+end
+local function teleportRetryTick(now)
+    for obj, t in pairs(teleportRetry) do
+        if not obj:isValid() or now > t.until_ then
+            teleportRetry[obj] = nil
+        elseif pcall(function() obj:teleport(t.cellArg, t.pos) end) then
+            teleportRetry[obj] = nil
+        end
+    end
 end
 
 -- Throttle for MP_CombatRefused: one explanation per situation, not one per swing.
@@ -647,7 +668,9 @@ local function avatarStreamTick(now)
                     animVel = animVel,
                 }
             end)
-            if not ok then entries[#entries] = nil else jumpPending[id] = nil end
+            -- On a throw the entry was never appended (the constructor is what threw), so
+            -- `entries[#entries] = nil` used to delete the PREVIOUS player's pose instead.
+            if ok then jumpPending[id] = nil end
         end
     end
     if #entries > 0 and mp.sendAvatarMoveBatch then mp.sendAvatarMoveBatch(entries) end
@@ -790,13 +813,22 @@ local function avatarEffectsTick(now)
             end
             avatarSpellsReported[id] = avatarSpellsReported[id] or {}
             local okS = pcall(function()
+                local present = {}
                 for _, spell in pairs(types.Actor.spells(p.obj)) do
+                    present[spell.id] = true
                     if not docSpells[spell.id] and not avatarSpellsReported[id][spell.id] then
                         avatarSpellsReported[id][spell.id] = true
                         entry.spellsAdd = entry.spellsAdd or {}
                         entry.spellsAdd[#entry.spellsAdd + 1] = worldmp.toNet(spell.id)
                         any = true
                     end
+                end
+                -- FORGET WHAT IS GONE. "Reported" was never cleared, so a disease the owner
+                -- cured (the doc dropped it, applyAvatarDoc shed it) could not be reported
+                -- a second time: one bite per session, then immunity. A spell no longer on
+                -- the body is reportable again when it comes back.
+                for sid in pairs(avatarSpellsReported[id]) do
+                    if not present[sid] then avatarSpellsReported[id][sid] = nil end
                 end
             end)
             -- Effects the world put on the avatar.
@@ -1202,11 +1234,26 @@ local function restorePositionTick(now)
     if dist3(player.position, restoreTarget) > RESTORE_EPSILON then teleportPlayerTo(restoreTarget) end
 end
 
+local restoreWaitUntil = nil
 local function restoreTick()
     if not pendingRestore then return end
-    mp.set('restoreFired', '1')
     local player = playerScript()
     if not player then return end
+    -- PLAYER-MADE RECORDS FIRST. The inventory names a brewed potion or a self-enchanted ring
+    -- by its server id (mp_<kind>_<n>); RecordsSync, which teaches this engine those records,
+    -- is sent at the same join and may land a tick after the record we are about to apply.
+    -- Creating the item before its record exists loses it. Wait for the registry, bounded:
+    -- a record the server no longer has must not hold the whole restore hostage.
+    local now = core.getRealTime()
+    restoreWaitUntil = restoreWaitUntil or (now + 8)
+    if now < restoreWaitUntil then
+        for _, entry in ipairs(pendingRestore.inventory or {}) do
+            local id = tostring(entry.id or '')
+            if id:sub(1, 3) == 'mp_' and not worldmp.isNetRecord(id) then return end
+        end
+    end
+    restoreWaitUntil = nil
+    mp.set('restoreFired', '1')
     local record = pendingRestore
     pendingRestore = nil
     local inventory = types.Actor.inventory(player)
@@ -1732,14 +1779,14 @@ local eventHandlers = {
         for _, sp in ipairs(data.remove or {}) do
             local localId = sp.id and worldmp.toLocal(sp.id)
             if localId then
+                -- One instance, not all: a second potion of the same kind is a second instance.
                 pcall(function()
-                    local victims = {}
                     for _, active in pairs(spells) do
                         if active.temporary and active.id == localId and active.activeSpellId then
-                            victims[#victims + 1] = active.activeSpellId
+                            spells:remove(active.activeSpellId)
+                            break
                         end
                     end
-                    for _, aid in ipairs(victims) do spells:remove(aid) end
                 end)
                 toPlayer('MP_PeerEffect', { id = localId, on = false })
             end
@@ -1807,14 +1854,20 @@ local eventHandlers = {
                 if ownerActive[data.id][localId] <= 0 then ownerActive[data.id][localId] = nil end
             end
             if localId then
+                -- ONE instance per removal, not every instance of the record: the owner sends
+                -- one remove per expiry, and two potions of the same kind are two instances
+                -- -- the first expiring used to strip the second here, and the tick below then
+                -- told the owner theirs was gone too. Forget the instance from the owner-seen
+                -- set as well, so the tick does not report the owner's own expiry back to them.
                 pcall(function()
-                    local victims = {}
                     for _, active in pairs(spells) do
                         if active.temporary and active.id == localId and active.activeSpellId then
-                            victims[#victims + 1] = active.activeSpellId
+                            spells:remove(active.activeSpellId)
+                            if avatarOwnerEffectsSeen[data.id] then avatarOwnerEffectsSeen[data.id][active.activeSpellId] = nil end
+                            if avatarEffectsReported[data.id] then avatarEffectsReported[data.id][active.activeSpellId] = nil end
+                            break
                         end
                     end
-                    for _, aid in ipairs(victims) do spells:remove(aid) end
                 end)
             end
         end
@@ -1908,8 +1961,17 @@ local eventHandlers = {
     -- locally in the meantime — the problem is purely that letting the PLAYER move during
     -- that window means the peer arrives, takes the cell and corrects them, which is the
     -- rubber-banding. Holding the screen is what makes the correction unobservable.
+    -- The server refused one of our declarations (a shape or plausibility bar). Our diff
+    -- cache had already marked it sent; forget that kind so the next tick says it again.
+    MP_StateRefused = function(data)
+        if mp.isSystem and mp.isSystem() then return end
+        if data and type(data.kind) == 'string' then toPlayer('MP_ForgetDeclared', { kind = data.kind }) end
+    end,
     MP_SimReady = function(data)
         mp.set('simReady', (data and data.ready) and '1' or '0')
+        -- A peer that just became ready (the first one, or its replacement after a restart)
+        -- built our avatar from the doc alone: re-send the effects on this body.
+        if data and data.ready and not (mp.isSystem and mp.isSystem()) then toPlayer('MP_ResyncActive', {}) end
     end,
 
     MP_WorldMode = function(data)
@@ -1954,6 +2016,12 @@ local eventHandlers = {
             notice('Could not work out where they are — ask them to try again.')
             return
         end
+        -- The rejoin position hold re-asserts the stored spot for 8 s; a returning guest who
+        -- joined straight from the launcher was put beside the host for a frame and then
+        -- teleported back to wherever they last logged out. The invite is where they meant
+        -- to go: it wins.
+        releaseRestoreHold('invite')
+        pendingRestore = pendingRestore and (function(r) r.position = nil return r end)(pendingRestore) or nil
         local ok, err = pcall(function()
             player:teleport(inviteCellArg(tostring(data.cellKey)), util.vector3(data.x or 0, data.y or 0, data.z or 0))
         end)
@@ -2157,6 +2225,15 @@ local eventHandlers = {
             return
         end
         lastPose[data.id] = { x = data.x, y = data.y, z = data.z }
+        -- THE CHARGEN SANCTUARY KEEPS THE AVATAR OUT TOO. The server never anchors the
+        -- character-creation cells, so an avatar spawned there sat in a cell the peer does
+        -- not simulate -- frozen, yet streaming a pose the server took as canonical -- and
+        -- reconciliation pinned a brand-new character to the prison ship's floor. A player in
+        -- those cells is client-authoritative until they walk out, like an unheld cell.
+        if mp.isSystem and mp.isSystem() and isChargenCell(data.cellKey) then
+            if puppets[data.id] then despawnPuppet(data.id) end
+            return
+        end
         if visibleFrom(ownCellKeyCache, data.cellKey) then
             local p = puppets[data.id]
             if p and p.obj:isValid() then
@@ -2831,6 +2908,22 @@ local eventHandlers = {
     -- the custom-record registry (world.createRecord is global-only), so the snapshot is
     -- routed through here and every slot id is mapped to its SERVER record id first. A raw
     -- local dynamic id on the wire is the exact M3 bug §M7 exists to close.
+    -- Inventory out, mapped (see identity.lua). A player-made record that is still
+    -- registering maps to itself this tick; the declaration goes out (counts must not wait)
+    -- and the kind is forgotten so the next tick says it again with the net id.
+    mpInventoryOut = function(data)
+        local pending = false
+        local items = {}
+        for i, e in ipairs(data.items or {}) do
+            local net = worldmp.toNet(e.id)
+            if net == e.id and worldmp.isDynamicId and worldmp.isDynamicId(e.id) then pending = true end
+            items[i] = { id = net, n = e.n }
+        end
+        local states = {}
+        for id, bucket in pairs(data.itemStates or {}) do states[worldmp.toNet(id)] = bucket end
+        mp.sendEvent('PlayerInventory', { items = items, itemStates = states })
+        if pending then toPlayer('MP_ForgetDeclared', { kind = 'PlayerInventory' }) end
+    end,
     mpEquipmentOut = function(data)
         local slots = {}
         for slot, recordId in pairs(data.slots or {}) do
@@ -3132,6 +3225,7 @@ return {
                 localSummonsTick() -- summons spawn on the peer while it holds our cell
                 worldmp.tick(now)
                 mirrorDoor(now)
+                teleportRetryTick(now) -- a follow-teleport that threw last frame lands now
                 avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses
                 -- Re-pushed on a cadence, not only on change: the veto FAILS OPEN (an empty
                 -- avatar set vetoes nothing), so a single dropped event would silently permit

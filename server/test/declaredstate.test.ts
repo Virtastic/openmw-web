@@ -176,7 +176,8 @@ test('a quarantined account cannot put anything into the shared world', async (t
     'a clean account must be able to play normally');
 
   // Declare something impossible -> quarantined from here on.
-  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 9500 }] });
+  // (Not gold: a 10k gold jump is one sale to Creeper and is no longer a trip.)
+  c.sendEvent('PlayerInventory', { items: [{ id: 'diamond', n: 9500 }] });
   await new Promise((r) => setTimeout(r, 300));
 
   c.sendEvent('ObjectSpawnRequest', {
@@ -211,5 +212,40 @@ test('containment does NOT apply in your own world', async (t) => {
     tempId: 3, recordId: 'gold_001', cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0, count: 1 });
   assert.ok(await c.waitEvent('ObjectSpawnAck', (v) => (v as { tempId?: number }).tempId === 3, 6000),
     'containment must not reach into a private campaign');
+  c.close();
+});
+
+// GOLD IS A STACK, AND A RICH PLAYER IS NOT A CHEAT. Ten thousand gold used to fail the shape
+// check for the WHOLE inventory -- and kept failing every tick, since the same count came
+// back -- so from the first Creeper payday the doc froze and every later item was lost on
+// relog. Selling one expensive thing is +10k gold in one declaration, which the stack rule
+// read as an absurd jump. And a refused declaration must be told to the client, which had
+// marked it sent and would never have said it again.
+test('a rich player keeps their inventory: big gold passes, and a refusal is announced', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  const { welcome } = await c.joinAsNew('Croesus');
+  const charId = String(welcome['characterId']);
+  await c.waitEvent('PlayerList');
+
+  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 400 }] });
+  await new Promise((r) => setTimeout(r, 200));
+  // Sold the Daedric warhammer to Creeper twice: +10k in one go, then past the old cap.
+  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 10400 }, { id: 'misc_com_bottle_01', n: 1 }] });
+  await new Promise((r) => setTimeout(r, 200));
+  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 25000 }, { id: 'misc_com_bottle_01', n: 1 }, { id: 'ingred_kwama_egg_01', n: 3 }] });
+  await new Promise((r) => setTimeout(r, 250));
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId);
+  assert.deepEqual(doc?.['inventory'], [{ id: 'gold_001', n: 25000 }, { id: 'misc_com_bottle_01', n: 1 }, { id: 'ingred_kwama_egg_01', n: 3 }],
+    'a rich inventory was refused (gold past 10k, or +10k in one declaration)');
+
+  // A genuinely bad shape is still refused -- and the client is told which kind.
+  const refused = c.waitEvent('StateRefused');
+  c.sendEvent('PlayerInventory', { items: [{ id: 'diamond', n: 999999 }] });
+  const ev = await refused;
+  assert.equal((ev.value as { kind?: string }).kind, 'PlayerInventory', 'the refusal must name the declaration so the client can re-send');
   c.close();
 });

@@ -22,7 +22,7 @@ local Actor = types.Actor
 local NPC = types.NPC
 
 local INTERVALS = { appearance = 1.0, equipment = 0.5, dynamic = 0.25, progression = 1.0, inventory = 2.0, active = 0.5 }
-local INVENTORY_CAP = 512
+local INVENTORY_CAP = 4096 -- the server's MAX_INVENTORY; 512 silently dropped a collector's later record ids from every declaration and restore
 -- ACQUISITION REPORTING, and why it is a separate faster pass rather than a smaller INTERVAL.
 --
 -- The full PlayerInventory snapshot is a 2 s diff, and the server used to judge "can this player
@@ -97,6 +97,23 @@ local function snapAppearance()
         hair = orFallback(rec.hair, 'hair'),
         isMale = rec.isMale == true,
         class = orFallback(rec.class, 'class'),
+        -- A CUSTOM CLASS is a record this engine minted at character creation (Generated:0x<n>);
+        -- the next engine has no such record, so the class name, favoured attributes and
+        -- major/minor skills -- everything level-ups are counted against -- were lost on every
+        -- relog and the character wore the boot template's class. Carry the spec; the restore
+        -- rebuilds the record from it (mp.applyChargen).
+        classSpec = (function()
+            local id = rec.class
+            if type(id) ~= 'string' or id:sub(1, 10) ~= 'Generated:' then return nil end
+            local ok, spec = pcall(function()
+                local c = types.NPC.classes.record(id)
+                if not c then return nil end
+                local function list(t) local out = {} for i, v in ipairs(t) do out[i] = v end return out end
+                return { name = c.name, description = c.description or '', specialization = c.specialization,
+                    attributes = list(c.attributes), majorSkills = list(c.majorSkills), minorSkills = list(c.minorSkills) }
+            end)
+            return ok and spec or nil
+        end)(),
         -- BIRTHSIGN. The engine has always been able to apply one (mp.applyChargen ->
         -- setPlayerBirthsign) and nothing ever sent it, so every rejoin dropped it: the sheet
         -- came back blank and buildPlayer's birthsign block granted nothing. The ABILITIES
@@ -222,20 +239,41 @@ function identity.notePeerEffect(id, on)
     end
 end
 
+-- Instances of PEER-APPLIED records on this body (a paralysis, a poison the world put on the
+-- avatar and the peer relayed here). They are not ours to ADD -- but when one of them
+-- disappears from this body while the peer still counts it, the owner CURED it (Cure
+-- Paralyzation, Cure Poison, Dispel), and the peer must hear that or the avatar stays frozen
+-- and poisoned until the timer runs out, pinning the owner in place through reconciliation.
+local peerLocal = {} -- activeSpellId -> record id
 local function snapActive()
     local set = {}
+    local peerNow = {}
     local ok = pcall(function()
         for _, sp in pairs(Actor.activeSpells(self)) do
-            if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil and not peerEffects[sp.id] then
-                local idx = {}
-                for _, e in ipairs(sp.effects or {}) do
-                    if e.index ~= nil then idx[#idx + 1] = e.index end
+            if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil then
+                if peerEffects[sp.id] then
+                    peerNow[tostring(sp.activeSpellId)] = sp.id
+                else
+                    local idx = {}
+                    for _, e in ipairs(sp.effects or {}) do
+                        if e.index ~= nil then idx[#idx + 1] = e.index end
+                    end
+                    if #idx > 0 then set[tostring(sp.activeSpellId)] = { id = sp.id, effects = idx } end
                 end
-                if #idx > 0 then set[tostring(sp.activeSpellId)] = { id = sp.id, effects = idx } end
             end
         end
     end)
-    return ok and set or nil
+    if not ok then return nil end
+    -- A peer-applied instance that was here and is gone: cured locally. Say so once.
+    local cured = {}
+    for aid, rid in pairs(peerLocal) do
+        if not peerNow[aid] and peerEffects[rid] then
+            cured[#cured + 1] = { key = aid, id = rid }
+            identity.notePeerEffect(rid, false)
+        end
+    end
+    peerLocal = peerNow
+    return set, cured
 end
 
 -- Per-item state the record id cannot express: wear, remaining enchantment charge, and which
@@ -418,13 +456,22 @@ function identity.tick(now)
         last.spells = spells
     end
 
-    if baselineReady then diffSend('inventory', 'PlayerInventory', snapInventory, now) end
+    -- Through global for the record registry, like equipment and the spellbook: a brewed
+    -- potion or a self-enchanted ring is a `Generated:` id that means nothing to the next
+    -- engine, so an inventory sent raw came back on relog as nothing -- or as whatever
+    -- record the new engine had minted under that number.
+    if baselineReady then
+        diffSend('inventory', 'PlayerInventory', snapInventory, now, function(_, snap)
+            core.sendGlobalEvent('mpInventoryOut', snap)
+        end)
+    end
 
     if now >= nextAt.active then
         nextAt.active = now + INTERVALS.active
-        local active = snapActive()
+        local active, cured = snapActive()
         if active then
             local add, remove = {}, {}
+            for _, c in ipairs(cured or {}) do remove[#remove + 1] = c end
             for key, sp in pairs(active) do
                 if not (last.active and last.active[key]) then
                     add[#add + 1] = { key = key, id = sp.id, effects = sp.effects }
@@ -471,6 +518,25 @@ end
 function identity.markBaselineReady()
     baselineReady = true
     mp.set('baselineReady', '1')
+end
+
+-- THE AVATAR WAS (RE)BUILT -- a peer restart, a body rebuild -- and knows none of our
+-- temporary effects; our diff cache says they were sent, so it would never say them again.
+-- Forget the active set: the next tick re-adds every running effect (adds are idempotent
+-- by instance on the peer's side, which has none after a rebuild). Levitating players were
+-- dragged out of the sky by the new body; chameleoned ones were seen.
+function identity.resyncActive()
+    last.active = nil
+end
+
+-- The server refused a declaration of this event name: drop the cache for that kind so the
+-- next tick re-sends (it may pass then -- the doc it was judged against has moved on).
+local KIND_OF_EVENT = { PlayerAppearance = 'appearance', PlayerEquipment = 'equipment', PlayerInventory = 'inventory',
+    PlayerSpellbook = 'spells', PlayerAttributes = 'progression', PlayerSkills = 'skills', PlayerLevel = 'level',
+    PlayerStatsDynamic = 'dynamic' }
+function identity.forgetDeclared(eventName)
+    local kind = KIND_OF_EVENT[eventName]
+    if kind then last[kind] = nil end
 end
 
 function identity.reset()
@@ -529,6 +595,7 @@ function identity.applyRecord(record)
             race = record.appearance.race,
             head = record.appearance.head,
             hair = record.appearance.hair,
+            classSpec = record.appearance.classSpec, -- a custom class, rebuilt when the id is unknown
             isMale = record.appearance.isMale,
             class = record.appearance.class,
             -- Applied by the same call that applies race and class; the binding resolves it

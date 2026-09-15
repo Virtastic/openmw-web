@@ -452,6 +452,8 @@ end
 toNetId = function(localId) return worldmp.toNet(localId) end
 toLocalId = function(netId) return worldmp.toLocal(netId) end
 
+function worldmp.isDynamicId(id) return isDynamicId(id) end
+
 function worldmp.toNet(localId)
     if localToNet[localId] then return localToNet[localId] end
     if isDynamicId(localId) then

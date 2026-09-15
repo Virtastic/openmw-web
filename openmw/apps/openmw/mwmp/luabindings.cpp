@@ -382,6 +382,43 @@ namespace MWMP
             // page, which made EVERY switch a restore.
             std::string name = t.get_or<std::string>("name", "");
             bool isMale = t.get_or("isMale", true);
+            // A CUSTOM CLASS, by content. The id in `class` is a record this engine has never
+            // seen (another engine minted it at character creation); rebuild it here exactly
+            // as the class-creation dialog does (setPlayerClass(const ESM::Class&) inserts it)
+            // so level-ups count against the right majors and the sheet names the right
+            // class. Malformed specs are skipped and the old "left as-is" path runs.
+            std::optional<ESM::Class> customClass;
+            if (sol::optional<sol::table> spec = t["classSpec"])
+            {
+                ESM::Class c;
+                c.blank();
+                c.mName = spec->get_or<std::string>("name", "");
+                c.mDescription = spec->get_or<std::string>("description", "");
+                const std::string special = spec->get_or<std::string>("specialization", "");
+                const auto& names = ESM::Class::specializationIndexToLuaId;
+                const auto it = std::find(names.begin(), names.end(), special);
+                bool ok = !c.mName.empty() && it != names.end();
+                c.mData.mSpecialization = ok ? static_cast<int32_t>(it - names.begin()) : 0;
+                c.mData.mIsPlayable = 1;
+                const auto ids = [&](const char* key, size_t n, auto&& put) {
+                    sol::optional<sol::table> l = (*spec)[key];
+                    if (!l || l->size() != n) { ok = false; return; }
+                    for (size_t i = 1; i <= n; ++i)
+                    {
+                        sol::optional<std::string> id = (*l)[i];
+                        if (!id) { ok = false; return; }
+                        const int idx = put(ESM::RefId::deserializeText(*id), i - 1);
+                        if (idx < 0) ok = false;
+                    }
+                };
+                ids("attributes", 2, [&](ESM::RefId id, size_t i) { const int x = ESM::Attribute::refIdToIndex(id); if (x >= 0) c.mData.mAttribute[i] = x; return x; });
+                ids("majorSkills", 5, [&](ESM::RefId id, size_t i) { const int x = ESM::Skill::refIdToIndex(id); if (x >= 0) c.mData.mSkills[i][1] = x; return x; });
+                ids("minorSkills", 5, [&](ESM::RefId id, size_t i) { const int x = ESM::Skill::refIdToIndex(id); if (x >= 0) c.mData.mSkills[i][0] = x; return x; });
+                if (ok)
+                    customClass = std::move(c);
+                else
+                    Log(Debug::Warning) << "[mp] chargen: custom class spec malformed, ignored";
+            }
             luaManager->addAction(
                 [=] {
                     MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
@@ -420,6 +457,11 @@ namespace MWMP
                         Log(Debug::Warning) << "[mp] chargen: unknown race '" << race << "', left as-is";
                     if (resolves(store.get<ESM::Class>(), cls))
                         mechanics->setPlayerClass(ESM::RefId::deserializeText(cls));
+                    else if (customClass)
+                    {
+                        mechanics->setPlayerClass(*customClass);
+                        Log(Debug::Info) << "[mp] chargen: custom class '" << customClass->mName << "' rebuilt from its spec";
+                    }
                     else if (!cls.empty())
                         Log(Debug::Warning) << "[mp] chargen: unknown class '" << cls << "', left as-is";
                     if (resolves(store.get<ESM::BirthSign>(), birthsign))

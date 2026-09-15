@@ -239,3 +239,35 @@ test('death is written immediately, before any disconnect or sweep', async () =>
     await server.close();
   }
 });
+
+// A CUSTOM CLASS COMES BACK. Its id is a record the creating engine minted (Generated:0x<n>)
+// that the next engine does not have, so the id alone lost the class on every relog: the
+// character wore the boot template's class, level-ups counted against the wrong majors. The
+// doc carries the class's content beside the id; the restore rebuilds the record from it.
+test('a custom class rides the doc by content, not just by id', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  let a = await TestClient.connect(server.port);
+  await a.joinAsNew('Custom');
+  await a.waitEvent('PlayerList');
+  const classSpec = { name: 'Sea Reaver', description: 'salt and steel', specialization: 'combat',
+    attributes: ['strength', 'endurance'], majorSkills: ['longblade', 'block', 'heavyarmor', 'athletics', 'armorer'],
+    minorSkills: ['axe', 'bluntweapon', 'mediumarmor', 'restoration', 'mercantile'] };
+  a.sendEvent('PlayerAppearance', { ...APPEARANCE, class: 'Generated:0x3', classSpec });
+  // A malformed spec (four majors) is dropped, the appearance itself still lands.
+  a.sendEvent('ChatSend', { text: 'sync' });
+  await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'sync');
+  a.close();
+  await a.closed;
+
+  a = await TestClient.connect(server.port);
+  a.hello();
+  await a.waitJson('SessionHelloOk');
+  a.login('Custom', 'hunter22');
+  const w = await a.waitJson('SessionWelcome');
+  const rec = w['playerRecord'] as { appearance: Record<string, unknown> };
+  assert.equal(rec.appearance['class'], 'Generated:0x3');
+  assert.deepEqual(rec.appearance['classSpec'], classSpec, 'the class content must come back with the record');
+  a.close();
+});

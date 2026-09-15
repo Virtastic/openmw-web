@@ -22,7 +22,13 @@ const MAX_RECORD_ID = 64;
 // records in total, so 4096 is beyond any legitimate personal inventory while still bounding
 // what one client can make the server hold.
 const MAX_INVENTORY = 4096;
+// GOLD IS A STACK. 10,000 was a shape bound and it refused the ENTIRE inventory declaration
+// -- permanently, since the same count came back every tick -- the moment a player carried
+// 10,001 gold (Creeper alone pays 5,000 a day). Everything else stays under it; gold gets
+// a bound that a mortal cannot reach.
 const MAX_COUNT = 10000;
+const MAX_GOLD = 100_000_000;
+const GOLD = 'gold_001';
 const MAX_SPELLS = 1024;
 const MAX_STAT_ENTRIES = 64;
 const MAX_STAT_KEY = 32;
@@ -60,6 +66,27 @@ function relayAll(roster: Roster, name: string, body: JsLike): void {
 
 // ------------------------------------------------------- per-message handlers
 
+// A custom class's content, bounded: five major and five minor skill ids, two attribute ids,
+// a specialization word, a name. Anything else and the spec is simply not stored (the
+// class id still is), which is the pre-existing behaviour.
+function classSpecOf(v: LValue | undefined): PlayerAppearanceDoc['classSpec'] | undefined {
+  const t = tbl(v);
+  if (!t) return undefined;
+  const ids = (x: LValue | undefined, n: number): string[] | undefined => {
+    const l = tbl(x);
+    if (!l || l.size !== n) return undefined;
+    const out: string[] = [];
+    for (let i = 1; i <= n; i++) { const id = recordId(l.get(i)); if (!id) return undefined; out.push(id); }
+    return out;
+  };
+  const name = t.get('name'), desc = t.get('description'), spec = t.get('specialization');
+  const attributes = ids(t.get('attributes'), 2), majorSkills = ids(t.get('majorSkills'), 5), minorSkills = ids(t.get('minorSkills'), 5);
+  if (typeof name !== 'string' || name.length === 0 || name.length > 64) return undefined;
+  if (typeof spec !== 'string' || !['combat', 'magic', 'stealth'].includes(spec)) return undefined;
+  if (!attributes || !majorSkills || !minorSkills) return undefined;
+  return { name, description: typeof desc === 'string' ? desc.slice(0, 1024) : '', specialization: spec, attributes, majorSkills, minorSkills };
+}
+
 function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean {
   const appearance: PlayerAppearanceDoc = {
     race: recordId(body.get('race')) ?? '',
@@ -73,6 +100,7 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
     // withholds playerRecord on every join and costs them their inventory and position.
     ...(recordId(body.get('birthsign')) ? { birthsign: recordId(body.get('birthsign'))! } : {}),
     ...(body.get('isWerewolf') === true ? { isWerewolf: true } : {}),
+    ...(classSpecOf(body.get('classSpec')) ? { classSpec: classSpecOf(body.get('classSpec'))! } : {}),
   };
   // hair is OPTIONAL: bald/hairless heads are legal in the game data, and demanding it would
   // permanently reject those characters' appearance. The rest identify the character and are
@@ -348,7 +376,7 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     const t = tbl(entry);
     const id = t ? recordId(t.get('id')) : undefined;
     const n = t ? finite(t.get('n')) : undefined;
-    if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > MAX_COUNT) return false;
+    if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > (id === GOLD ? MAX_GOLD : MAX_COUNT)) return false;
     out.push({ id, n });
   }
   // Compare against what this character last declared, before overwriting it.
@@ -358,7 +386,9 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   for (const { id, n } of out) {
     const had = before.get(id);
     if (had === undefined) newIds++;
-    if (n - (had ?? 0) >= IMPLAUSIBLE_STACK) {
+    // Selling one expensive thing to a 10k-purse merchant is +10k gold in one declaration:
+    // ordinary play, not a stack jump. Gold has its own ceiling above.
+    if (id !== GOLD && n - (had ?? 0) >= IMPLAUSIBLE_STACK) {
       // REFUSED now, not merely counted. The declaration is dropped whole and the server's
       // copy stands, so the client's next pass is measured against what the server believes
       // rather than against the hoard it just claimed.
@@ -456,12 +486,13 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
 function handleItemAcquired(ctx: StateCtx, player: Player, body: LTable): boolean {
   const id = recordId(body.get('id'));
   const n = finite(body.get('n'));
-  if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > MAX_COUNT) return false;
+  const cap = id === GOLD ? MAX_GOLD : MAX_COUNT;
+  if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > cap) return false;
   const led = (player.pendingAcquired ??= new Map<string, number>());
   // Bounded by the same breadth limit the snapshot uses, so a client cannot grow this map
   // without bound between snapshots.
   if (!led.has(id) && led.size >= MAX_INVENTORY) return false;
-  led.set(id, Math.min(MAX_COUNT, (led.get(id) ?? 0) + n));
+  led.set(id, Math.min(cap, (led.get(id) ?? 0) + n));
   return true;
 }
 
@@ -477,7 +508,7 @@ const RESURRECT_GRACE_MS = 6_000;
 // the movement envelope uses. The real fix is the discrete-intent tier: the avatar drinks the
 // potion on the peer and this whole path goes away.
 const RESTORE_WINDOW_MS = 10_000;
-const RESTORE_BUDGET_MULT = 2; // x the player's max health per window
+const RESTORE_BUDGET_MULT = 4; // x the player's max health per window: a level-2 chugging three cheap potions in a fight is inside it
 
 export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
   if (sender.system !== true || sender !== ctx.worldPeer()) return; // forgery / second peer: only THE world peer reports avatars
@@ -723,7 +754,14 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
   if (!handler) return false;
   const body = tbl(value);
   const ok = body ? handler(ctx, player, body) : false;
-  if (!ok) log('warn', 'state.invalid_body', { from: player.name, name });
+  if (!ok) {
+    log('warn', 'state.invalid_body', { from: player.name, name });
+    // TELL THE CLIENT. Its diff cache marks a snapshot as sent BEFORE the answer, so a refused
+    // one was never re-sent until the fingerprint happened to change again -- and for the
+    // inventory the next one was judged against the same stale doc. The client forgets the
+    // kind and says it again on its next tick.
+    player.peer.sendEvent('StateRefused', { kind: name });
+  }
   // PROGRESSION HAS TO REACH THE PEER, or the peer fights with a character who never improved.
   //
   // These three handlers wrote the doc and stopped there. The peer holds its own copy of each
@@ -734,7 +772,11 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
   //
   // The client sends these on a DIFF, so this is bounded by how often a character actually
   // changes, not by tick rate.
-  if (ok && (name === 'PlayerAttributes' || name === 'PlayerSkills' || name === 'PlayerLevel')) {
+  //
+  // The SPELLBOOK too: a disease cured at a shrine (no bottle, so no inventory diff), a
+  // vampire's new abilities, a curse lifted -- the avatar kept the old spell list until some
+  // unrelated inventory change pushed the doc.
+  if (ok && (name === 'PlayerAttributes' || name === 'PlayerSkills' || name === 'PlayerLevel' || name === 'PlayerSpellbook')) {
     const worldPeer = ctx.worldPeer();
     const doc = ctx.store.getCached(player.charId);
     if (worldPeer && doc) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc, player.bounty));
