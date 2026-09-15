@@ -9,7 +9,7 @@
 
 import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, objRefToJs, netRefKey, type ObjRef } from '../proto/ref';
-import type { Player, Roster } from './players';
+import { INPUT_DRIVING_MS, type Player, type Roster } from './players';
 import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells, isChargenCell } from './movement';
 import { MONTH_DAYS } from './worldtime';
 import { unpackActorMoveBatch } from '../proto/movement';
@@ -997,6 +997,13 @@ export class WorldState {
   // becoming real) — none of it was synced before this, so one player's scripted reveal
   // was invisible to everyone else in the cell. Persisted like locks so a late joiner
   // and a cell reload both see the current truth.
+  // WHO OWNS A SCRIPTED ENABLE. The peer runs the cell scripts authoritatively and every
+  // client runs its local copy; when two engines disagree on a global (one's dialogue moved
+  // it, the other's did not) their scripts flip the same ref opposite ways once a second,
+  // forever, through this relay. Same rule as quest globals: the peer's write wins for a
+  // window, a client's write to a ref the peer just wrote is dropped. Last-writer-wins only
+  // between humans, where no simulator has an opinion.
+  private peerEnabledAt = new Map<string, number>();
   private async enabled(player: Player, body: LTable): Promise<void> {
     const got = await this.docAndRef(player, body, 'ObjectEnabled');
     if (!got) return;
@@ -1005,6 +1012,15 @@ export class WorldState {
     if (typeof on !== 'boolean') {
       this.invalid(player, 'ObjectEnabled');
       return;
+    }
+    const nowMs = Date.now();
+    if (player.system === true) this.peerEnabledAt.set(ref.key, nowMs);
+    else {
+      const at = this.peerEnabledAt.get(ref.key);
+      if (at !== undefined && nowMs - at <= INPUT_DRIVING_MS) {
+        log('debug', 'world.enabled_peer_owned', { key: ref.key, cellKey, from: player.name });
+        return;
+      }
     }
     const map = (doc.enabled ??= {});
     // Enabled is the vanilla default: record only the DISABLED state, so the doc does not

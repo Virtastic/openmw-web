@@ -56,3 +56,43 @@ test('a door opened in a held cell reaches the holder standing elsewhere, and th
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(peer.inbox.events.filter((e) => e.name === 'DoorState').length, 0, 'an unheld far cell is not relayed to the peer');
 });
+
+// A SCRIPTED ENABLE HAS ONE OWNER. The peer runs the cell scripts authoritatively and every
+// client runs a local copy; two engines disagreeing on a global flipped the same ref opposite
+// ways once a second through this relay, forever. The peer's write wins for a window; a
+// client's contrary write inside it is dropped, exactly as quest globals already work.
+test("a client's enable/disable of a ref the peer just wrote is dropped; after the window it lands", async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant');
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  bob.sendCellChange('0,0', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  const watcher = await TestClient.connect(server.port);
+  t.after(() => watcher.close());
+  await watcher.joinAsNew('Watcher');
+  watcher.sendCellChange('0,0', 0, 0, 0);
+  await watcher.waitEvent('PlayerCellChange');
+
+  const ref = { __refnum: { index: 700, contentFile: 0 } };
+  watcher.inbox.events.length = 0;
+  peer.sendEvent('ObjectEnabled', { ref, cellKey: '0,0', enabled: false }); // the script on the simulator
+  await watcher.waitEvent('ObjectEnabled', (v) => (v as { enabled: boolean }).enabled === false);
+  bob.sendEvent('ObjectEnabled', { ref, cellKey: '0,0', enabled: true }); // Bob's stale copy re-enables it
+  await new Promise((r) => setTimeout(r, 300)); // object ops are queued; chat is not, so a chat fence proves nothing here
+  assert.equal(watcher.inbox.events.filter((e) => e.name === 'ObjectEnabled' && (e.value as { enabled: boolean }).enabled === true).length, 0,
+    "Bob's contrary write inside the peer's window was relayed: the ping-pong");
+  // The record stays the peer's.
+  bob.inbox.events.length = 0; // the cell state from Bob's own entry is still in the inbox
+  bob.sendEvent('ResyncRequest', { cellKey: '0,0' });
+  const state = (await bob.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { disabled: string[] };
+  assert.deepEqual(state.disabled, ['c:700:0']);
+});
