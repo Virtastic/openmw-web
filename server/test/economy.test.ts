@@ -272,8 +272,12 @@ test("a merchant restocks on the 24-hour rule, including across a month boundary
   b.sendCellChange('0,0', 0, 0, 0);
   b.sendEvent('ContainerOpen', { ref: REF, cellKey: '0,0', contents: [], gold: 500 });
   const state = (await b.waitEvent('ContainerState')).value as { gold?: number; items: { id: string; n: number }[] };
-  assert.deepEqual(state.items.map((i) => i.id + ':' + i.n).sort(), ['ash_yam:1', 'iron_dagger:1'],
-    'the bought dagger is back in stock and the sold yam stays');
+  // Backlog 165: the restock is the PURSE only. The stock used to come back too, but the
+  // server cannot tell a restocking entry from Creeper's one-off loot (that is a sign on the
+  // record's count, which no client reports), so a whole-list refill duped every unique daily.
+  // What was bought stays bought until a binding names the restocking entries.
+  assert.deepEqual(state.items.map((i) => i.id + ':' + i.n).sort(), ['ash_yam:1'],
+    'the bought dagger stays bought and the sold yam stays');
   assert.equal(state.gold, 500,
     `exactly 24 game hours passed, so the purse must be back; 300 means the restock was`
     + ' skipped because the two halves of the server disagree about how long a month is');

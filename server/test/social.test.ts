@@ -121,6 +121,7 @@ test('social: an invite cannot be accepted once blocked, and cannot be stacked',
   const w = world();
   const alice = w.add('alice', 'Alice');
   const bob = w.add('bob', 'Bob');
+  w.store.addFriend('alice', 'bob', w.now()); // #371: invites are friends-only
 
   assert.equal(w.social.invite(alice, 'bob'), 'ok');
   assert.equal(w.social.invite(alice, 'bob'), 'ok');
@@ -137,6 +138,7 @@ test('social: an expired invite cannot be accepted', () => {
   const w = world();
   const alice = w.add('alice', 'Alice');
   const bob = w.add('bob', 'Bob');
+  w.store.addFriend('alice', 'bob', w.now()); // #371: invites are friends-only
   assert.equal(w.social.invite(alice, 'bob'), 'ok');
   w.advance(socialTuning.inviteTtlMs + 1);
   assert.equal(w.social.acceptInvite(bob, 'alice').ok, false, 'invites must expire');
@@ -147,6 +149,7 @@ test('social: accepting an invite yields the host position to travel to', () => 
   const w = world();
   const alice = w.add('alice', 'Alice', { cellKey: '-2,-9' });
   const bob = w.add('bob', 'Bob');
+  w.store.addFriend('alice', 'bob', w.now()); // #371: invites are friends-only
   assert.equal(w.social.invite(alice, 'bob'), 'ok');
   const res = w.social.acceptInvite(bob, 'alice');
   assert.equal(res.ok, true);
@@ -231,6 +234,7 @@ test('social: private refuses incoming invites, not merely location', () => {
   const w = world();
   const alice = w.add('alice', 'Alice');
   const bob = w.add('bob', 'Bob');
+  w.store.addFriend('alice', 'bob', w.now()); // #371: invites are friends-only
   assert.equal(w.social.setPresenceMode(bob, 'private'), 'ok');
   assert.equal(w.social.invite(alice, 'bob'), 'private', 'private must mean do-not-contact');
   w.close();

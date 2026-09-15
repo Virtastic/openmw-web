@@ -778,6 +778,14 @@ export class WorldState {
           log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'travel claim without the conversation' });
           return;
         }
+        // Bounded by the actor's cell (backlog 84): AITravel walks, it does not teleport, and a
+        // dialogue result sends an NPC across the street, not across the map. Within two cells
+        // of the actor's own; an interior's coordinates are local, so its cell is the origin.
+        const home = parseExterior(cellKey) ?? { x: 0, y: 0 };
+        if (Math.abs(Math.floor(x / 8192) - home.x) > 2 || Math.abs(Math.floor(y / 8192) - home.y) > 2) {
+          log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'travel destination beyond reach', x, y });
+          return;
+        }
         this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
         return;
       }
@@ -1002,7 +1010,9 @@ export class WorldState {
     // fromInventory distinguishes a DROP from a PLACEMENT. Without it this op is just
     // "put an object in the world", which scripts and tools use for things nobody carries
     // (s31 spawns a chest) — so conservation could only ever be counted, never enforced.
-    const fromInventory = body.get('fromInventory') === true;
+    // Gold is never a placement (backlog 82): no script or tool of a human's spawns a purse
+    // on the ground, so a human's gold always came out of an inventory -- flag or no flag.
+    const fromInventory = body.get('fromInventory') === true || (recordId === GOLD && !player.system);
     // The holder naming a runtime-spawned actor owns nothing of the kind and is not dropping
     // anything: the ownership ledger does not apply (and would flag the peer's account).
     const actor = body.get('actor') === true && player.system === true;
@@ -1446,15 +1456,12 @@ export class WorldState {
           cont.gold = cont.goldOrigin;
           changed = true;
         }
-        // AND THE STOCK. The engine refills a merchant's restocking entries on each open from
-        // its own record, and the canonical list overwrote that on every client -- so the
-        // potions and arrows bought on day one were gone from the world for good. Back up to
-        // the first-seen count for whatever ran low; what players sold the merchant stays.
-        for (const o of cont.origin ?? []) {
-          const have = cont.items.find((i) => i.id === o.id);
-          if (!have) { cont.items.push({ ...o }); changed = true; }
-          else if (have.n < o.n) { have.n = o.n; changed = true; }
-        }
+        // GOLD ONLY (backlog 165). The stock used to come back too, so the potions and arrows
+        // bought on day one were not gone for good -- but neither was Creeper's one-off
+        // loot: a first-seen list cannot tell a restocking entry (negative count in the
+        // record) from a unique item, so a daily refill of the whole list duped every unique
+        // in every merchant. Until a client binding reports which entries restock, what
+        // players bought stays bought.
         if (changed) {
           cont.stateSeq += 1;
           this.cells.markDirty(cellKey);

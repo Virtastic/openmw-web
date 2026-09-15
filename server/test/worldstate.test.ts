@@ -601,6 +601,63 @@ test('ActorEffects relays from the holder and is refused from a non-holder', asy
   assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorEffects').length, 0, "a bystander's effect claim was relayed");
 });
 
+// Backlog 84: AITravel walks, so a destination past two cells from the actor's own is not a
+// dialogue result -- it is a client sending the NPC into the void. Interiors are origin-local.
+test('ActorAI travel is bounded to two cells of the actor', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const join = async (name: string) => {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    await c.joinAsNew(name);
+    c.sendCellChange('3,3', 0, 0, 0);
+    await c.waitEvent('PlayerCellChange', (v) => (v as { cellKey: string }).cellKey === '3,3');
+    return c;
+  };
+  const bob = await join('Bob');
+  const eve = await join('Eve');
+  const npc = { __refnum: { index: 778, contentFile: 0 } };
+  bob.sendEvent('DialogueLock', { ref: npc, cellKey: '3,3', want: true });
+  await bob.waitEvent('DialogueLockResult');
+  const travel = (x: number, y: number) => bob.sendEvent('ActorAI', { ref: npc, cellKey: '3,3', epoch: 0, travel: { x, y, z: 0 } });
+  travel(5 * 8192 + 10, 1 * 8192 + 10); // two cells over: allowed
+  const got = (await eve.waitEvent('ActorAI', (v) => (v as { travel?: unknown }).travel !== undefined)).value as { travel: Record<string, number> };
+  assert.equal(got.travel['x'], 5 * 8192 + 10);
+  eve.inbox.events.length = 0;
+  travel(6 * 8192 + 10, 3 * 8192); // three cells over: dropped
+  bob.sendEvent('ChatSend', { text: 'fence' });
+  await eve.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'fence');
+  assert.equal(eve.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a far travel destination was relayed');
+});
+
+// Backlog 82: gold is never a placement. A human's gold drop is judged as a drop whether or
+// not the client flagged it, so an undeclared purse on the ground is refused when enforcement
+// is on -- the flag was the one thing a modified client could simply leave out.
+test('a gold drop without fromInventory is still a drop', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { economy: { refuseUnownedDrops: true } },
+  });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  await c.joinAsNew('Midas');
+  c.sendCellChange('0,0', 0, 0, 0);
+  await c.waitEvent('PlayerCellChange');
+  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 10 }] });
+  await new Promise((r) => setTimeout(r, 100));
+  const drop = async (tempId: number, count: number) => {
+    c.sendEvent('ObjectSpawnRequest', { tempId, recordId: 'gold_001', cellKey: '0,0', x: 0, y: 0, z: 0, rotZ: 0, count });
+    const mine = (v: unknown) => (v as { tempId?: number }).tempId === tempId;
+    return Promise.race([
+      c.waitEvent('ObjectSpawnAck', mine, 10_000).then(() => 'ack'),
+      c.waitEvent('ObjectSpawnRefused', mine, 10_000).then((e) => (e.value as { reason: string }).reason),
+    ]);
+  };
+  assert.equal(await drop(1, 1000), 'unowned', 'gold the player never held was placed');
+  assert.equal(await drop(2, 10), 'ack', 'and the gold they do hold drops');
+});
+
 // #269: the per-map caps add up to more than the LSER ceiling, so the frame is budgeted at
 // send time. A doc with EVERY map at its cap must still decode on the client.
 test('a cell doc at every cap is trimmed to a frame the decoder accepts', () => {

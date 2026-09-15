@@ -90,6 +90,18 @@ test('availability: Offline hides a player from friends and refuses invites; Onl
   w.close();
 });
 
+// Backlog 371: an invite is "come to my world" and is friends-only; a stranger gets the same
+// answer JoinFriend gives, which social.lua already words.
+test('an invite to someone who is not a friend is refused with not_friends', () => {
+  const w = world();
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  assert.equal(w.social.invite(alice, 'bob'), 'not_friends');
+  w.befriend(alice, bob);
+  assert.equal(w.social.invite(alice, 'bob'), 'ok');
+  w.close();
+});
+
 test('availability: bad state is rejected and persists across a reload', () => {
   const w = world();
   const bob = w.add('bob', 'Bob');

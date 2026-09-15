@@ -61,6 +61,7 @@ export type SocialFailure =
   | 'too_many_requests'
   | 'no_request'
   | 'not_online'
+  | 'not_friends'
   | 'private';
 
 /** How long a presence row stays believable without a refresh. Comfortably longer than the
@@ -460,6 +461,9 @@ export class Social {
     const from = player.accountKey;
     if (targetAcct === from) return 'self';
     if (this.d.store.blockedEitherWay(from, targetAcct)) return 'blocked';
+    // Friends only (backlog 371): an invite is "come to my world", which a stranger has no
+    // business sending to every account on the server. The friend request is the front door.
+    if (!this.d.store.areFriends(from, targetAcct)) return 'not_friends';
     // 'private' means do not contact me, not just do not locate me.
     if (this.presenceMode(targetAcct) === 'private') return 'private';
     // Availability is the reachability rule — NOT "are they in my world". Requiring the
