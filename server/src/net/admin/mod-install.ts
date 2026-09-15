@@ -24,6 +24,7 @@ import { findDataFolders, slugify, type Candidate } from '../../core/mod-archive
 import { extractEntry, listEntries, ZipError, type ZipEntry } from '../../core/zip';
 import { extractSevenZip, listSevenZip, sniffArchive } from '../../core/sevenzip';
 import { readMasters } from '../../core/esm';
+import { writeBsa } from '../../core/bsa-pack';
 import { identifyRelease, looksLikeTamrielRebuilt } from '../../core/tr-releases';
 import { MOD_META as MODS_META_DIR } from '../../core/mod-conflicts';
 import {
@@ -38,6 +39,16 @@ const STAGING = 'mod-staging';
 const MOD_META = MODS_META_DIR;
 /** A staged zip nobody committed is rubbish after this long. Swept on the next upload. */
 const STAGE_TTL_MS = 6 * 60 * 60 * 1000;
+/**
+ * A mod with more loose asset files than this gets them packed into one <slug>.bsa at install.
+ *
+ * The browser mounts every loose file as its own StreamFS entry: one HTTP round trip and one
+ * LRU slot on first read. ~3,300 loose meshes already thrashed it (that is why the engine's own
+ * asset pack is a BSA — see wasm-build/build-assetpack.py); Tamriel Data is 54,000. Only the
+ * folders the VFS reads from archives are packed: plugins, scripts and readmes stay loose.
+ */
+export const PACK_LOOSE_ABOVE = 500;
+const PACKABLE = /^(meshes|textures|icons|sound|music|bookart|fonts|video|splash)\//i;
 
 export type InstallResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
 
@@ -384,7 +395,7 @@ async function commitInstallLocked(
       mkdirSync(root, { recursive: true });
       // Validate and book-keep first, serially — this is string work and the order of `files`
       // and the plugin list must be the entry order, not whichever copy finished first.
-      const jobs: { src: string; dest: string; entry: ZipEntry }[] = [];
+      const jobs: { src: string; dest: string; rel: string; entry: ZipEntry }[] = [];
       for (const e of entries) {
         if (e.isDir || (prefix !== '' && !e.path.startsWith(prefix))) continue;
         const rel = e.path.slice(prefix.length);
@@ -396,7 +407,7 @@ async function commitInstallLocked(
           throw new ZipError(`refused: ${e.path} escapes the mod folder`);
         }
         mkdirSync(dirname(dest), { recursive: true });
-        jobs.push({ src: join(scratch, e.path), dest, entry: e });
+        jobs.push({ src: join(scratch, e.path), dest, rel: rel.split(sep).join('/'), entry: e });
         files.push(rel.split(sep).join('/'));
         bytes += e.size;
         const name = rel.slice(rel.lastIndexOf('/') + 1);
@@ -444,6 +455,24 @@ async function commitInstallLocked(
           }
         };
         await Promise.all(Array.from({ length: 16 }, worker));
+      }
+
+      // Pack the loose assets into one archive, then drop the loose copies so they are not
+      // ALSO mounted. The file list keeps naming them: conflict detection is about what the
+      // mod provides, not how it is stored.
+      const loose = jobs.filter((j) => PACKABLE.test(j.rel));
+      if (loose.length > PACK_LOOSE_ABOVE) {
+        installProgress.set(token, { pct: 99, note: 'packing assets into an archive' });
+        const bsa = `${slug}.bsa`;
+        await writeBsa(join(root, bsa), loose.map((j) => ({ name: j.rel, path: j.dest, size: j.entry.size })));
+        // Whole folders, not 54,000 unlinks across the bind mount: PACKABLE matches everything
+        // under each top-level asset folder, so removing the folder removes exactly the packed set.
+        for (const d of new Set(loose.map((j) => j.rel.slice(0, j.rel.indexOf('/'))))) {
+          await rm(join(root, d), { recursive: true, force: true });
+        }
+        files.push(bsa);
+        archives.push(bsa);
+        log('info', 'mods.packed', { slug, bsa, files: loose.length });
       }
     } catch (e) {
       // Half a mod is worse than none: it would contribute a data= line and a content= naming

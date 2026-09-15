@@ -14,7 +14,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 
-import { commitInstall, uninstallMod, saveModOrder } from '../src/net/admin/mod-install';
+import { commitInstall, uninstallMod, saveModOrder, PACK_LOOSE_ABOVE } from '../src/net/admin/mod-install';
+import { readBsaNames } from '../src/core/bsa-pack';
 import { crc32, listEntries } from '../src/core/zip';
 import { emptyDoc, readModDoc, writeModDoc } from '../src/core/mods';
 import { startServer } from '../src/server';
@@ -359,4 +360,44 @@ test('two installs at once do not lose one of the mods', async () => {
     commitInstall(dataDir, gameDataDir, second, [{ path: '', slug: 'two', name: 'Two' }]),
   ]);
   assert.deepEqual(readModDoc(dataDir).mods.map((m) => m.slug).sort(), ['one', 'two']);
+});
+
+test('a mod with many loose assets is packed into one BSA and the loose copies removed', async () => {
+  const dataDir = tmp();
+  const gameDataDir = tmp();
+  const files = [{ name: 'TD/Tamriel_Data.esm', data: 'plugin' }, { name: 'TD/readme.txt', data: 'notes' }];
+  for (let i = 0; i <= PACK_LOOSE_ABOVE; i++) {
+    files.push({ name: `TD/Meshes/TR/m${i}.nif`, data: `mesh${i}` });
+  }
+  files.push({ name: 'TD/Textures/t.dds', data: 'tex' });
+  stage(dataDir, TOKEN, files);
+
+  const res = await commitInstall(dataDir, gameDataDir, TOKEN, [{ path: 'TD', slug: 'td', name: 'TD' }]);
+  assert.ok(res.ok, res.ok ? '' : res.error);
+  const mod = res.value[0]!;
+  assert.deepEqual(mod.archives, ['td.bsa']);
+  assert.deepEqual(mod.plugins, [{ file: 'Tamriel_Data.esm', enabled: true }]);
+
+  const root = join(gameDataDir, 'mods', 'td');
+  assert.ok(!existsSync(join(root, 'Meshes')), 'loose meshes were removed');
+  assert.ok(!existsSync(join(root, 'Textures')));
+  assert.ok(existsSync(join(root, 'readme.txt')), 'non-asset files stay loose');
+  const names = readBsaNames(readFileSync(join(root, 'td.bsa')));
+  assert.equal(names.length, PACK_LOOSE_ABOVE + 2);
+  assert.ok(names.some((n) => n.name === 'meshes\\tr\\m7.nif' && n.size === 5));
+  assert.ok(names.some((n) => n.name === 'textures\\t.dds'));
+  // Conflict detection still sees what the mod provides, plus the archive itself.
+  const listed = JSON.parse(readFileSync(join(dataDir, 'mod-files', 'td.json'), 'utf8')) as string[];
+  assert.ok(listed.includes('Meshes/TR/m0.nif'));
+  assert.ok(listed.includes('td.bsa'));
+});
+
+test('a mod under the packing threshold stays loose', async () => {
+  const dataDir = tmp();
+  const gameDataDir = tmp();
+  stage(dataDir, TOKEN, [{ name: 'Meshes/a.nif', data: 'mesh' }, { name: 'x.esp', data: 'p' }]);
+  const res = await commitInstall(dataDir, gameDataDir, TOKEN, [{ path: '', slug: 'small', name: 'Small' }]);
+  assert.ok(res.ok, res.ok ? '' : res.error);
+  assert.deepEqual(res.value[0]!.archives, []);
+  assert.ok(existsSync(join(gameDataDir, 'mods', 'small', 'Meshes', 'a.nif')));
 });
