@@ -470,3 +470,37 @@ test('actor batches are rate-tiered but NEVER culled: a distant NPC must not fre
   near.close();
   far.close();
 });
+
+// THE COMPANION SURVIVES A RELOG. A follow claim names a SESSION id; the peer drops the follow
+// when that session leaves, and the same character came back under a new id with nobody told
+// -- the companion recruited an hour ago stood where it was left. The claim follows the
+// character: on the returning session's first cell change the holder is told again.
+test('a follow claim is re-issued to the holder for the character\'s new session', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', configOverride: { server: { password: PEER_PASS } } });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant');
+
+  const first = await TestClient.connect(server.port);
+  const { playerId: firstId } = await first.joinAsNew('Recruiter');
+  await first.waitEvent('PlayerList');
+  first.sendCellChange('0,0', 0, 0, 0);
+  await first.waitEvent('PlayerCellChange');
+  first.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: firstId });
+  assert.equal(((await peer.waitEvent('ActorAI')).value as { follow: number }).follow, firstId, 'the holder hears the recruit');
+  first.ws.close();
+  await new Promise((r) => setTimeout(r, 200));
+
+  // Back, as the same character, under a new session id.
+  peer.inbox.events.length = 0;
+  const back = await TestClient.connect(server.port);
+  t.after(() => back.close());
+  const w = await back.joinExisting('Recruiter');
+  const backId = w['playerId'] as number;
+  assert.notEqual(backId, firstId, 'a fresh session id (the thing the old claim named)');
+  back.sendCellChange('0,0', 0, 0, 0);
+  const rebound = await peer.waitEvent('ActorAI', (v) => (v as { follow?: number }).follow === backId, 3000);
+  assert.deepEqual((rebound.value as { ref: unknown }).ref, ACTOR_REF, 'the same companion, told to follow the new session');
+});

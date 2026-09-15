@@ -483,7 +483,7 @@ export class WorldState {
   // the new cell has to find the claim made in the old one. The cell rides along (updated by
   // the holder's ActorCellChange) so a claim can be replayed to whoever next holds that cell
   // -- the peer restarts, and a fresh process has never heard who follows whom.
-  private readonly followedBy = new Map<string, { ref: ObjRef; cellKey: string; follow: number; escort?: Record<string, number> }>();
+  private readonly followedBy = new Map<string, { ref: ObjRef; cellKey: string; follow: number; charId: string; escort?: Record<string, number> }>();
   private static readonly MAX_FOLLOWERS = 8;
   private replayFollows(holderId: number, cellKey: string): void {
     const holder = this.roster.get(holderId);
@@ -491,6 +491,22 @@ export class WorldState {
     for (const f of this.followedBy.values()) {
       if (f.cellKey !== cellKey) continue;
       holder.peer.sendEvent('ActorAI', { ...objRefToJs(f.ref), cellKey, epoch: 0, follow: f.follow, ...(f.escort ? { escort: f.escort } : {}) });
+    }
+  }
+  // THE COMPANION SURVIVES THE PLAYER'S RELOG. A claim names a SESSION id; the peer drops the
+  // follow when that session leaves (a reload, a dropped connection), and the same character
+  // came back under a new id with nobody told. Called on every cell change: the claims that
+  // named this character now name this session, and the holder of each companion's cell is
+  // told again. Idempotent -- a claim already on this id is skipped.
+  rebindFollows(player: Player): void {
+    if (player.system) return;
+    for (const f of this.followedBy.values()) {
+      if (f.charId !== player.charId || f.follow === player.id) continue;
+      f.follow = player.id;
+      const holder = this.authority.holderOf(f.cellKey);
+      const holderPlayer = holder === undefined ? undefined : this.roster.get(holder);
+      holderPlayer?.peer.sendEvent('ActorAI', { ...objRefToJs(f.ref), cellKey: f.cellKey, epoch: 0, follow: f.follow, ...(f.escort ? { escort: f.escort } : {}) });
+      log('info', 'actor.follow_rebound', { to: player.name, cellKey: f.cellKey, key: f.ref.key });
     }
   }
   // The four non-holder claims below accept a content ref OR the net id of a runtime actor
@@ -536,7 +552,7 @@ export class WorldState {
         log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follower cap' });
         return;
       }
-      this.followedBy.set(ref.key, { ref, cellKey, follow, ...(escort ? { escort } : {}) });
+      this.followedBy.set(ref.key, { ref, cellKey, follow, charId: player.charId, ...(escort ? { escort } : {}) });
     }
     log('info', 'actor.follow_claim', { from: player.name, cellKey, key: ref.key, follow: follow ?? null, escort: escort !== undefined });
     this.relayCellExcept(cellKey, player.id, 'ActorAI', { ...lToJs(body) as Record<string, JsLike> });

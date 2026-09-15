@@ -1163,6 +1163,7 @@ export class Connection implements Peer {
       this.ctx.quests.releaseDialogueLocks(player.id, oldCell);
     }
     this.ctx.world.authorityEnter(player, cellKey);
+    this.ctx.world.rebindFollows(player);
   }
 
   // ----------------------------------------------------------------- states
