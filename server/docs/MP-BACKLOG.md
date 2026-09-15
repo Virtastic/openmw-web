@@ -197,6 +197,14 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 245 | Diagnostic scenarios (s11, s65, s74, s98) assert nothing and count as PASS | `diagnostic` export reported separately |
 | 246 | s20 asserts the sender's own mirror (proves nothing about the wire); s31/s111 chesttake: is a direct sendContainerOpByNet (the UI take diff is never raced); s32 door:lock: sends ObjectLock itself (s158's watch is the real path) | per row |
 | 247 | Coverage map overstates: topics "OK" (s73 injects into testLearned; s75 says organic UNPROVEN); barter:sell writes the purse directly (TradeWindow not drivable headless) — say so | MP-COVERAGE-MAP.md rows |
+| 248 | Restore-over-time and Damage Magicka land TWICE on a peer-ruled body: the bar channel carries the local result AND both active-spell mirrors carry the effect (a Cheap Potion of Healing heals ~40, a 50-pt self heal ~100; a helper's durational heal 2x) — invisible to s146/s112/s144 which never assert a magnitude | global.lua:1986 MP_AvatarActiveSpells and :1905 MP_SelfActiveSpells drop restore/damage H/M indexes (keep fatigue) |
+| 249 | PvP-off veto bypassed by any spell record with one non-Harmful effect (forwardMagicHits merges a frame's hits with beneficial = OR; the receiver applies the whole record) | puppet.lua:282 AND; #250 |
+| 250 | The receiver applies the WHOLE record ignoring which effects hit (range/area/resist): a Self+Touch record cast at an NPC gives the NPC the caster's Fortify | carry effect.mEffectIndex in MagicHit + wire; combat.lua:250 apply only those |
+| 251 | Scrolls and cast-when-used items at a puppet/NPC land NOTHING (source id is the ITEM record; combat.lua:241 gates on spells.records → nil); spellId never toNet/toLocal at that seam so a spellmaker spell at a puppet lands nothing either | combat.lua:241 resolve enchantments too; :136/:241 map ids |
+| 252 | CombatSpellHit unvalidated beyond shape + cell adjacency: a modified client lands any retail spell on any player/NPC in a neighbouring cell at 8/s with no magicka | combat.ts:357 require doc.spells/inventory knows the id |
+| 253 | Magicka raises have no budget (hp has RESTORE_BUDGET): a modified client refills magicka at will | playerstate.ts:228 |
+| 254 | Reflect ping-pong between two IDLE Reflect-wearers (the reflected copy lands on the caster's puppet and is forwarded without ignoreReflect) | wire ignoreReflect on reflected hits |
+| 255 | No hit VFX/sound on a puppet for the caster (the seam returns before playEffects) | spelleffects.cpp:1456 |
 
 ## Open (found, not fixed)
 
