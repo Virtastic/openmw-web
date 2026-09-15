@@ -564,7 +564,7 @@ export class WorldSupervisor {
     const kill = setTimeout(() => {
       if (this.worlds.get(id) !== w) return; // it exited; nothing to escalate to
       log('warn', 'world.sigkill_escalated', { id, pid: w.child.pid ?? -1 });
-      killGroup(w.child);
+      killGroup(w.child, this.deps.spawner === undefined);
     }, WorldSupervisor.STOP_GRACE_MS);
     kill.unref();
   }
@@ -712,9 +712,11 @@ function delay(ms: number): Promise<void> {
 
 // SIGKILL the world's whole process group (the world plus the sim peers it spawned). Windows
 // has no process groups and the world is spawned attached there, so it falls back to the
-// child alone; so does a spawner that did not detach (a test fake).
-function killGroup(child: ChildProcess): void {
-  if (process.platform !== 'win32' && child.pid !== undefined) {
+// child alone; so does a spawner that did not detach (a test fake) -- checked, not assumed: a
+// fake child's pid is a number that may name a REAL process group on the box (in the image's
+// test run it named the test runner's own, and node:test reported the file as cancelled).
+function killGroup(child: ChildProcess, ownGroup: boolean): void {
+  if (ownGroup && process.platform !== 'win32' && child.pid !== undefined) {
     try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* not a group leader, or gone */ }
   }
   try { child.kill('SIGKILL'); } catch { /* already gone */ }
