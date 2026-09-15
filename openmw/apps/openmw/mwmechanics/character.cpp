@@ -2255,7 +2255,10 @@ namespace MWMechanics
                             float realHealthLost = healthLost * (1.0f - 0.25f * fatigueTerm);
                             // The avatar on the peer takes the fall for a peer-ruled player
                             // (mwmp/puppets.hpp peerRulesBody); the report lands in the bars.
-                            if (!(isPlayer && MWMP::peerRulesBody()))
+                            // A puppet's holder takes it too — local damage would kill an NPC
+                            // puppet for good on this client (backlog 290).
+                            if (!(isPlayer && MWMP::peerRulesBody())
+                                && !MWMP::isPuppet(mPtr.getCellRef().getRefNum()))
                             {
                                 health.setCurrent(health.getCurrent() - realHealthLost);
                                 cls.getCreatureStats(mPtr).setHealth(health);

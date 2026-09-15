@@ -117,7 +117,6 @@ end
 
 -- pcall targets, module-level: a closure per actor per tick was garbage at 20 Hz x N (#267).
 local function speedsOf(obj) return types.Actor.getWalkSpeed(obj), types.Actor.getCurrentSpeed(obj) end
-local function isRunning(obj) return types.Actor.isRunning and types.Actor.isRunning(obj) end
 local function stanceOf(obj) return types.Actor.getStance(obj) end
 
 local function actorPose(obj)
@@ -127,9 +126,11 @@ local function actorPose(obj)
     local animVel = walkSpeed > 0 and (speed / walkSpeed) or 0
     -- Coarse AI-package hint from motion (reading a foreign actor's AI package is not
     -- exposed to global scripts; motion is a good enough facing/anim hint for puppets).
+    -- Bit 0 (run): types.Actor.isRunning does not exist, so the bit was never set and a running
+    -- guard outpaced its walking puppet into a snap every cooldown (#286). Motion decides:
+    -- faster than a walk is a run.
     local flags = 0
-    local ok, running = pcall(isRunning, obj)
-    if ok and running then flags = flags + 1 end
+    if animVel > 1.05 then flags = flags + 1 end
     -- Posture (bits 4/5, the player pose's bits): an NPC fighting someone on the holder must
     -- look like it everywhere else -- weapon out, spell readied -- or a player takes damage
     -- from a body standing at ease. puppet.lua mirrors the stance; it still never swings.
@@ -144,7 +145,7 @@ local function actorPose(obj)
         net = netId,
         x = pos.x, y = pos.y, z = pos.z,
         yaw = obj.rotation:getYaw(),
-        pitch = 0,
+        pitch = obj.rotation:getPitch(), -- flyers/swimmers level off without it (#291)
         flags = flags,
         animVel = animVel,
     }
@@ -431,7 +432,10 @@ actors.handlers.MP_ActorAuthorityGrant = function(data)
     -- Apply the handoff snapshot: teleport actors to their last authoritative pose + stats.
     local snap = data.snapshot and data.snapshot.actors or {}
     for _, a in ipairs(snap) do
-        local obj = actorOf(a)
+        -- A dead entry stays where the death left it: teleport + hp 0 here re-killed every
+        -- respawned guard at each re-anchor. WorldCellState -> noteCellDeaths re-asserts a
+        -- death that still stands (#287).
+        local obj = (not a.dead) and actorOf(a) or nil
         if obj then
             local cellArg = obj.cell and not obj.cell.isExterior and obj.cell.name or ''
             pcall(function()
@@ -933,6 +937,19 @@ end
 
 function actors.cellKeyOfObj(obj)
     return cellKeyOf(obj.cell)
+end
+
+-- The cells this process holds, resolved (objects.lua polls their doors, #289).
+function actors.heldCells()
+    local out = {}
+    for key in pairs(held) do
+        local x, y = key:match('^(-?%d+),(-?%d+)$')
+        local ok, c
+        if x then ok, c = pcall(world.getExteriorCell, tonumber(x), tonumber(y))
+        else ok, c = pcall(world.getCellByName, key) end
+        if ok and c then out[#out + 1] = c end
+    end
+    return out
 end
 
 -- --------------------------------------------------------------- tick

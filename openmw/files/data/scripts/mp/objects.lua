@@ -78,6 +78,10 @@ local enableWatch = {}
 -- lockWatch only watches for 4 s after an activation, and a Lock with nobody touching the
 -- object was never seen. obj.id -> lock level (false = unlocked); doubles as the echo mute.
 local scriptLockWatch = {}
+-- Same poll, on the PEER only, for doors its NPCs open: a guard walking through a door
+-- relays nothing (only the activating player does), so the puppet hit a shut door and
+-- snapped through (#289). obj.id -> open (boolean); doubles as the echo mute.
+local doorStateWatch = {}
 local nextEnablePoll = 0
 local ENABLE_POLL = 1.0 -- seconds; a reveal appearing within a second reads as instant
 local containerWatch = {} -- obj.id -> {obj=, last={id->n}, nextPoll=, until_=}
@@ -877,6 +881,7 @@ handlers.MP_DoorState = function(data)
         return
     end
     doorPending[obj.id] = nil
+    if type(data.open) == 'boolean' then doorStateWatch[obj.id] = data.open end -- the poll must not re-report this
     if type(data.open) == 'boolean' and types.Door.isOpen(obj) ~= data.open then
         pcall(function() types.Door.activateDoor(obj, data.open) end)
         -- activateDoor swings it silently (the sound lives in Door::activate): backlog 135.
@@ -1155,22 +1160,46 @@ function objects.tick(now)
             -- Locks, over the 3x3 (doors and containers only, so it stays cheap): the door a
             -- script locks is often in the NEXT cell over from where the player stands --
             -- an exterior loads its neighbours, and a village straddles a cell line.
-            local cells = { cell }
+            -- On the peer, every held cell too (the dummy's 3x3 is not where the NPCs are).
+            local function keyOf(c) return c.isExterior and (c.gridX .. ',' .. c.gridY) or c.name end
+            local cells, seen = { cell }, { [keyOf(cell)] = true }
+            local function addCell(c)
+                local k = keyOf(c)
+                if not seen[k] then seen[k] = true; cells[#cells + 1] = c end
+            end
             if cell.isExterior then
                 for dx = -1, 1 do
                     for dy = -1, 1 do
                         if dx ~= 0 or dy ~= 0 then
                             local okC, c = pcall(world.getExteriorCell, cell.gridX + dx, cell.gridY + dy)
-                            if okC and c then cells[#cells + 1] = c end
+                            if okC and c then addCell(c) end
                         end
                     end
                 end
+            end
+            local peer = mp.isSystem and mp.isSystem()
+            if peer and deps.heldCellsFn then
+                for _, c in ipairs(deps.heldCellsFn()) do addCell(c) end
             end
             for _, c in ipairs(cells) do
                 for _, kind in ipairs({ types.Door, types.Container }) do
                     local okL, list = pcall(function() return c:getAll(kind) end)
                     for _, obj in ipairs(okL and list or {}) do
                         if obj:isValid() then
+                            if peer and kind == types.Door and not types.Door.isTeleport(obj) then
+                                -- Door swing (#289): report once settled (Idle), like doorPending.
+                                local okS, st = pcall(types.Door.getDoorState, obj)
+                                if okS and st == types.Door.STATE.Idle then
+                                    local open = not types.Door.isClosed(obj)
+                                    local had = doorStateWatch[obj.id]
+                                    if had == nil then
+                                        doorStateWatch[obj.id] = open
+                                    elseif had ~= open then
+                                        doorStateWatch[obj.id] = open
+                                        sendAddressed('DoorState', obj, { open = open })
+                                    end
+                                end
+                            end
                             local level = types.Lockable.isLocked(obj) and types.Lockable.getLockLevel(obj) or false
                             local had = scriptLockWatch[obj.id]
                             if had == nil then
@@ -1406,6 +1435,7 @@ function objects.reset()
     openRetries = {}
     lockWatch = {}
     enableWatch = {}
+    doorStateWatch = {}
     nextEnablePoll = 0
     containerWatch = {}
     containerData = {}

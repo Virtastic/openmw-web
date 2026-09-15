@@ -183,7 +183,7 @@ namespace MWMechanics
         friend class AiSequence;
 
     private:
-        bool isNearInactiveCell(osg::Vec3f position);
+        bool isNearInactiveCell(const MWWorld::Ptr& actor, const osg::Vec3f& position);
     };
 }
 

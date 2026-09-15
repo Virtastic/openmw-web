@@ -197,6 +197,7 @@ namespace MWWorld
         void setSimAnchors(const std::vector<osg::Vec3f>& anchors,
             const std::vector<ESM::RefId>& interiors) override;
         bool isAnchoredInterior(const MWWorld::CellStore* cell) const override;
+        bool isWithinActiveGrids(int x, int y) const override;
 
         // FIXME
         void addContainerScripts(const Ptr& reference, CellStore* cell) override;

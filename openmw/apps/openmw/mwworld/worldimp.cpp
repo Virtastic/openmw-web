@@ -2748,6 +2748,11 @@ namespace MWWorld
         return mWorldScene->isAnchoredInterior(cell);
     }
 
+    bool World::isWithinActiveGrids(int x, int y) const
+    {
+        return mWorldScene->isWithinActiveGrids(x, y);
+    }
+
     std::vector<osg::Vec3f> World::getSimAnchorPositions() const
     {
         return mWorldScene->getSimAnchorPositions();

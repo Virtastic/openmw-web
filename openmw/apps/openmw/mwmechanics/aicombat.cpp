@@ -190,13 +190,14 @@ namespace MWMechanics
             storage.stopAttack();
             stats.setAttackingOrSpell(false);
             storage.mActionCooldown = 0.f;
-            // Continue combat if target is player or player follower/escorter and an attack has been attempted
-            const auto& playerFollowersAndEscorters
-                = MWBase::Environment::get().getMechanicsManager()->getActorsSidingWith(MWMechanics::getPlayer());
-            bool targetSidesWithPlayer
-                = (std::find(playerFollowersAndEscorters.begin(), playerFollowersAndEscorters.end(), target)
-                    != playerFollowersAndEscorters.end());
-            if ((target == MWMechanics::getPlayer() || targetSidesWithPlayer)
+            // Continue combat if target is player or player follower/escorter and an attack has been attempted.
+            // On the sim peer an avatar is a player, and siding is symmetric, so the target's own
+            // ally set answers "sides with the player or any avatar" (backlog 292).
+            const auto targetAllies
+                = MWBase::Environment::get().getMechanicsManager()->getActorsSidingWith(target);
+            const bool targetSidesWithPlayer
+                = std::any_of(targetAllies.begin(), targetAllies.end(), MWMechanics::isPlayerOrAvatar);
+            if ((MWMechanics::isPlayerOrAvatar(target) || targetSidesWithPlayer)
                 && (hitAttemptMatchesTarget(actor, target) || hitAttemptMatchesTarget(target, actor)))
                 forceFlee = true;
             else // Otherwise end combat

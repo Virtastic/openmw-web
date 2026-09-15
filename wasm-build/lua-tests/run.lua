@@ -1177,7 +1177,7 @@ do
     and ac:find('broadcastCell(cellKey, cell.epoch, cell, now, byCell[cellKey] or {})', 1, true) ~= nil
     and ac:find('local function broadcastCell(cellKey, epoch, cell, now, live)', 1, true) ~= nil)
   check('actorPose pcalls module-level functions, not per-actor closures',
-    ac:find('pcall(speedsOf, obj)', 1, true) ~= nil and ac:find('pcall(isRunning, obj)', 1, true) ~= nil
+    ac:find('pcall(speedsOf, obj)', 1, true) ~= nil
     and ac:find('pcall(stanceOf, obj)', 1, true) ~= nil
     and not ac:find('local function actorPose(obj).-pcall%(function'))
   -- Backlog 271: the wire count is a u8; a cell of 256+ actors left the rest frozen.
@@ -1222,6 +1222,29 @@ do
   -- 256: the harness can spend a level.
   check("player.lua answers levelup:<a,b,c> with mp.applyLevelup",
     p:find("cmd:match('^levelup:(.+)$')", 1, true) ~= nil and p:find('mp.applyLevelup(attrs)', 1, true) ~= nil)
+end
+
+print('actors.lua / objects.lua -- NPC fidelity: run bit from motion, the dead skip the grant, pitch streams, peer polls doors')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  -- #286: types.Actor.isRunning does not exist; bit 0 comes from speed vs walk speed.
+  check('actorPose sets the run bit from animVel, never from a nonexistent isRunning',
+    ac:find('if animVel > 1.05 then flags = flags + 1 end', 1, true) ~= nil
+    and not ac:find('pcall(isRunning', 1, true))
+  -- #287: a dead snapshot entry is not teleported + re-killed at every re-anchor.
+  check('the authority grant loop skips dead snapshot entries',
+    ac:find('local obj = (not a.dead) and actorOf(a) or nil', 1, true) ~= nil)
+  -- #291: the wire carries pitch; a flyer's pitch is read, not zeroed.
+  check('actorPose streams the actor pitch',
+    ac:find('pitch = obj.rotation:getPitch()', 1, true) ~= nil
+    and not ac:find('pitch = 0,', 1, true))
+  -- #289: the peer's 1 Hz poll reads door state over held cells and mutes network applies.
+  check('the peer polls getDoorState over held cells and the DoorState apply mutes the poll',
+    ob:find("sendAddressed('DoorState', obj, { open = open })", 1, true) ~= nil
+    and ob:find('for _, c in ipairs(deps.heldCellsFn()) do addCell(c) end', 1, true) ~= nil
+    and ob:find('doorStateWatch[obj.id] = data.open', 1, true) ~= nil
+    and ac:find('function actors.heldCells()', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

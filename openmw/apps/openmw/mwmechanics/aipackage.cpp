@@ -2,6 +2,7 @@
 
 #include <components/detournavigator/agentbounds.hpp>
 #include <components/detournavigator/navigator.hpp>
+#include <components/esm/util.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadland.hpp>
 #include <components/misc/coordinateconverter.hpp>
@@ -110,7 +111,7 @@ bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f&
     //... At current time, the first test is unnecessary. AI shuts down when actor is more than
     //... "actors processing range" setting value units from player, and exterior cells are 8192 units long and wide.
     //... But AI processing distance may increase in the future.
-    if (isNearInactiveCell(position)
+    if (isNearInactiveCell(actor, position)
         || MWBase::Environment::get().getMechanicsManager()->checkScriptedAnimationPlaying(actor))
     {
         actor.getClass().getMovementSettings(actor).mPosition[0] = 0;
@@ -403,26 +404,29 @@ bool MWMechanics::AiPackage::doesPathNeedRecalc(const osg::Vec3f& newDest, const
         || mPathFinder.getPathCell() != actor.getCell();
 }
 
-bool MWMechanics::AiPackage::isNearInactiveCell(osg::Vec3f position)
+bool MWMechanics::AiPackage::isNearInactiveCell(const MWWorld::Ptr& actor, const osg::Vec3f& position)
 {
-    const MWWorld::Cell* playerCell = getPlayer().getCell()->getCell();
-    if (playerCell->isExterior())
-    {
-        // get actor's distance from origin of center cell
-        Misc::makeCoordinateConverter(*playerCell).toLocal(position);
-
-        // currently assumes 3 x 3 grid for exterior cells, with player at center cell.
-        // AI shuts down actors before they reach edges of 3 x 3 grid.
-        const float distanceFromEdge = 200.0;
-        float minThreshold = (-1.0f * ESM::Land::REAL_SIZE) + distanceFromEdge;
-        float maxThreshold = (2.0f * ESM::Land::REAL_SIZE) - distanceFromEdge;
-        return (position.x() < minThreshold) || (maxThreshold < position.x()) || (position.y() < minThreshold)
-            || (maxThreshold < position.y());
-    }
-    else
-    {
+    // MP: the ACTOR's cell, not the player's — an anchored interior or a far anchored exterior
+    // has no player nearby, and the old dummy-frame test froze every actor two cells out and
+    // every interior actor while the dummy stood outdoors (backlog 285). An interior is loaded
+    // whole; an exterior actor stops 200 units short of any cell outside the active grids,
+    // which with no anchors is the player's own 3 x 3 grid — vanilla behaviour.
+    const MWWorld::CellStore* cell = actor.getCell();
+    if (cell == nullptr || !cell->getCell()->isExterior())
         return false;
-    }
+
+    const MWBase::World* world = MWBase::Environment::get().getWorld();
+    const ESM::RefId worldspace = cell->getCell()->getWorldSpace();
+    const float distanceFromEdge = 200.0f;
+    for (float dx : { -distanceFromEdge, distanceFromEdge })
+        for (float dy : { -distanceFromEdge, distanceFromEdge })
+        {
+            const ESM::ExteriorCellLocation loc
+                = ESM::positionToExteriorCellLocation(position.x() + dx, position.y() + dy, worldspace);
+            if (!world->isWithinActiveGrids(loc.mX, loc.mY))
+                return true;
+        }
+    return false;
 }
 
 bool MWMechanics::AiPackage::isReachableRotatingOnTheRun(const MWWorld::Ptr& actor, const osg::Vec3f& dest)

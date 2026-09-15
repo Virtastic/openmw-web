@@ -582,6 +582,9 @@ namespace MWBase
         /// True when this cell is an interior held for the server; its actors must keep
         /// processing regardless of how far the local player is.
         virtual bool isAnchoredInterior(const MWWorld::CellStore* cell) const = 0;
+        /// True when exterior cell (x, y) is within the active grid of the player or any
+        /// simulation anchor. No anchors (every normal client): the player's grid, vanilla.
+        virtual bool isWithinActiveGrids(int x, int y) const = 0;
 
         /// MP (E5): accumulate a physics position offset on an actor, applied by the NEXT
         /// physics step — which resolves collision, unlike moveObject/adjustPosition, and

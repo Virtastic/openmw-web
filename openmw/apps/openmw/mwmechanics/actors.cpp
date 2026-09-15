@@ -673,9 +673,13 @@ namespace MWMechanics
         }
 
         MWWorld::Ptr player = MWMechanics::getPlayer();
-        const std::set<MWWorld::Ptr>& playerAllies = cachedAllies.getActorsSidingWith(player);
-
-        bool isPlayerFollowerOrEscorter = playerAllies.find(actor1) != playerAllies.end();
+        // Siding is symmetric (an actor sides with whom it follows and who follows it,
+        // recursively), so "sides with the player or ANY avatar" is one any_of over the
+        // actor's own ally set — no avatar registry walk needed (backlog 292).
+        const auto sidesWithAPlayer = [&](const std::set<MWWorld::Ptr>& allies) {
+            return std::any_of(allies.begin(), allies.end(), MWMechanics::isPlayerOrAvatar);
+        };
+        bool isPlayerFollowerOrEscorter = sidesWithAPlayer(allies1);
 
         // If actor2 and at least one actor2 are in combat with actor1, actor1 and its allies start combat with them
         // Doesn't apply for player followers/escorters
@@ -730,7 +734,7 @@ namespace MWMechanics
         // Do aggression check if actor2 is the player or a player follower or escorter
         if (!aggressive)
         {
-            if (againstPlayer || playerAllies.find(actor2) != playerAllies.end())
+            if (againstPlayer || sidesWithAPlayer(cachedAllies.getActorsSidingWith(actor2)))
             {
                 // Player followers and escorters with high fight should not initiate combat with the player or with
                 // other player followers or escorters
@@ -1028,7 +1032,8 @@ namespace MWMechanics
                     = world->getStore().get<ESM::GameSetting>().find("fSuffocationDamage")->mValue.getFloat();
                 // A peer-ruled player drowns on the peer (mwmp/puppets.hpp peerRulesBody);
                 // the report lands in the bars. The breath timer above still runs for the UI.
-                if (!(isPlayer && MWMP::peerRulesBody()))
+                // A puppet drowns on its holder, never locally (backlog 290).
+                if (!(isPlayer && MWMP::peerRulesBody()) && !MWMP::isPuppet(ptr.getCellRef().getRefNum()))
                 {
                     DynamicStat<float> health = stats.getHealth();
                     health.setCurrent(health.getCurrent() - fSuffocationDamage * duration);
