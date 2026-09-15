@@ -313,6 +313,8 @@ local function isHolderOf(region)
     return region ~= nil and regionHolder[region] ~= nil and regionHolder[region] == deps.ownIdFn()
 end
 
+local lastWeatherSaidAt = nil
+local WEATHER_RESAY = 60 -- seconds
 local function tickWeather(now)
     if now - lastWeatherAt < WEATHER_POLL then return end
     lastWeatherAt = now
@@ -329,8 +331,12 @@ local function tickWeather(now)
     end
     local fp = string.format('%s|%d|%s|%.2f', body.region, body.current,
         tostring(body.next), body.transition or 0)
-    if fp == lastWeatherSent then return end
+    -- Re-said once a minute even when unchanged: a guest's refused rest ran their own
+    -- weather forward (advanceTime moves the sky), the rollback does not undo it, and a
+    -- holder that only speaks on change left them under the wrong sky until the next front.
+    if fp == lastWeatherSent and now - (lastWeatherSaidAt or 0) < WEATHER_RESAY then return end
     lastWeatherSent = fp
+    lastWeatherSaidAt = now
     mp.sendEvent('WorldWeather', body)
 end
 
