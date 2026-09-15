@@ -20,7 +20,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { log } from '../log';
-import type { ModStack } from './mods';
+import { MODS_SUBDIR, type ModStack } from './mods';
 
 export interface GameData {
   ok: boolean;
@@ -138,7 +138,17 @@ export function detectGameData(dir: string, order?: { file: string; enabled: boo
   }
   modEsm.sort(byName);
   modEsp.sort(byName);
-  archives.sort(byName);
+  // OFFICIAL ARCHIVES FIRST, in their own order, then the rest alphabetically -- the order
+  // the browser registers them in (index.html buildLoadOrder). A later fallback-archive=
+  // wins, so sorting everything alphabetically put a top-level replacer BSA whose name sorts
+  // before "Tribunal" UNDER the official one on the peer while it won in the browser:
+  // different meshes and different collision for the same world (backlog 303).
+  const officialBsa = OFFICIAL.map(({ bsa }) => bsa.toLowerCase());
+  const officialRank = (a: string): number => {
+    const i = officialBsa.indexOf(a.toLowerCase());
+    return i < 0 ? OFFICIAL.length : i;
+  };
+  archives.sort((a, b) => officialRank(a) - officialRank(b) || byName(a, b));
 
   // The operator's own load order, when the dashboard's mod manager has written one,
   // replaces the alphabetical guess for the MOD tier only. Masters keep their fixed order —
@@ -306,16 +316,29 @@ export function gameDataDir(dataDir: string): string {
  * force a full download of a file it otherwise never reads end to end. Content files are
  * already read in full at load, so hashing them costs no extra I/O.
  *
- * Returns a name -> sha256 map. Unreadable files are omitted rather than throwing: a hash we
- * could not compute must not become a refusal for every player.
+ * Returns a LOWERCASED name -> sha256 map (content names are case-insensitive, see
+ * ContentGate.key). Installed mods' enabled plugins (gamedata/mods/<slug>/<file>) are hashed
+ * too, so the peer's authoritative manifest carries a hash for every server-served plugin
+ * (backlog 299). Unreadable files are omitted rather than throwing: a hash we could not
+ * compute must not become a refusal for every player.
  */
-export function hashContentFiles(data: GameData): Map<string, string> {
+export function hashContentFiles(
+  data: GameData,
+  mods: { slug: string; enabled: boolean; plugins: { file: string; enabled: boolean }[] }[] = [],
+): Map<string, string> {
   const out = new Map<string, string>();
   if (!data.ok) return out;
-  for (const name of data.contentFiles) {
+  const paths = data.contentFiles.map((name) => [name, join(data.dir, name)] as const);
+  for (const m of mods) {
+    if (!m.enabled) continue;
+    for (const p of m.plugins) {
+      if (p.enabled) paths.push([p.file, join(data.dir, MODS_SUBDIR, m.slug, p.file)]);
+    }
+  }
+  for (const [name, path] of paths) {
     try {
-      const buf = readFileSync(join(data.dir, name));
-      out.set(name, createHash('sha256').update(buf).digest('hex'));
+      const buf = readFileSync(path);
+      out.set(name.toLowerCase(), createHash('sha256').update(buf).digest('hex'));
     } catch (err) {
       log('warn', 'gamedata.hash_failed', { file: name, error: String(err) });
     }

@@ -9,6 +9,7 @@
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { checkpoint, openDb, tx } from './sqlite';
+import { remapRefKey } from '../proto/ref';
 
 const CELL_MIGRATIONS = [
   {
@@ -168,6 +169,43 @@ interface GlobalDoc {
   kills?: Record<string, number>; // M4 shared kill tally, per base recordId
   quest?: SharedQuestState; // M6
   m7?: WorldM7State; // M7 clock / weather / cell-reset schedule
+  // Backlog 298: the content list (file names, load order) every c:<index>:<contentFile>
+  // key in the cell docs was written against. Stamped when the peer's manifest becomes
+  // authoritative; a later boot under a different list remaps the keys (setContentList).
+  content?: string[];
+}
+
+/** Rewrites every content-ref key in `doc` through `idxMap` IN PLACE (references held by a
+ *  live WorldState stay valid). Keys whose file is gone are dropped. actorOverrides is a
+ *  dormant snapshot of the peer's own actors, keyed the same way inside an opaque blob: it
+ *  is cleared rather than walked, and the peer re-simulates the cell from content. */
+export function remapCellDoc(doc: CellDoc, idxMap: Map<number, number>): { changed: number; dropped: number } {
+  let changed = 0, dropped = 0;
+  const rk = (k: string): string | null => remapRefKey(k, idxMap);
+  const rekey = (rec: Record<string, unknown> | undefined): void => {
+    if (!rec) return;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rec)) {
+      const nk = rk(k);
+      if (nk === null) { dropped++; continue; }
+      if (nk !== k) changed++;
+      out[nk] = v;
+    }
+    for (const k of Object.keys(rec)) delete rec[k];
+    Object.assign(rec, out);
+  };
+  rekey(doc.moved); rekey(doc.locks); rekey(doc.doors); rekey(doc.containers);
+  rekey(doc.actorDeaths); rekey(doc.memberVars); rekey(doc.enabled); rekey(doc.follows);
+  const deleted: string[] = [];
+  for (const k of doc.deleted) {
+    const nk = rk(k);
+    if (nk === null) { dropped++; continue; }
+    if (nk !== k) changed++;
+    deleted.push(nk);
+  }
+  doc.deleted.splice(0, doc.deleted.length, ...deleted);
+  if (doc.actorOverrides !== undefined) { delete doc.actorOverrides; dropped++; }
+  return { changed, dropped };
 }
 
 export class CellStore {
@@ -180,6 +218,7 @@ export class CellStore {
   private kills = new Map<string, number>();
   private quest: SharedQuestState = emptySharedQuestState();
   private m7: WorldM7State = emptyWorldM7State();
+  private content: string[] | undefined;
   private globalLoaded: Promise<void>;
   private globalWrite: Promise<void> = Promise.resolve();
 
@@ -205,6 +244,7 @@ export class CellStore {
       }
       if (g?.kills) for (const [k, v] of Object.entries(g.kills)) this.kills.set(k, v);
       if (g?.quest) this.quest = { ...emptySharedQuestState(), ...g.quest };
+      if (Array.isArray(g?.content)) this.content = g.content.map(String);
       if (g?.m7) {
         const base = emptyWorldM7State();
         this.m7 = {
@@ -235,6 +275,7 @@ export class CellStore {
         kills: Object.fromEntries(this.kills),
         quest: this.quest,
         m7: this.m7,
+        ...(this.content ? { content: this.content } : {}),
       };
       this.db
         .prepare('INSERT INTO world_global (id, doc) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET doc = excluded.doc')
@@ -295,6 +336,59 @@ export class CellStore {
   // sharedQuest(): mutate in place, then saveShared() to schedule the atomic write.
   worldM7(): WorldM7State {
     return this.m7;
+  }
+
+  contentList(): string[] | undefined {
+    return this.content;
+  }
+
+  /** Backlog 298: pin the world's content list (names in load order, i.e. the contentFile
+   *  index space every c: key lives in). Synchronous on purpose — node:sqlite is, and a
+   *  remap that ran while the peer was already sending events for a cell would race it.
+   *
+   *  No stored list = a world from before the stamp: adopt now and continue (null). Same list
+   *  = nothing to do. A different list = rewrite every cell doc, cached and on disk, by file
+   *  NAME: a key whose file moved gets its new index, one whose file is gone is dropped.
+   *  Case-insensitive, as the engine resolves content files. */
+  setContentList(names: string[]): { changed: number; dropped: number } | null {
+    const same = this.content !== undefined && this.content.length === names.length
+      && this.content.every((n, i) => n.toLowerCase() === names[i]!.toLowerCase());
+    if (same) return null;
+    let result: { changed: number; dropped: number } | null = null;
+    if (this.content !== undefined) {
+      const newIdx = new Map(names.map((n, i) => [n.toLowerCase(), i]));
+      const idxMap = new Map<number, number>();
+      for (const [i, n] of this.content.entries()) {
+        const to = newIdx.get(n.toLowerCase());
+        if (to !== undefined) idxMap.set(i, to);
+      }
+      let changed = 0, dropped = 0;
+      const seen = new Set<string>();
+      tx(this.db, () => {
+        const rows = this.db.prepare('SELECT cellKey, doc FROM cells').all() as { cellKey: string; doc: string }[];
+        const upd = this.db.prepare('UPDATE cells SET doc = ? WHERE cellKey = ?');
+        for (const row of rows) {
+          seen.add(row.cellKey);
+          const cached = this.cache.get(row.cellKey);
+          const doc = cached ?? (JSON.parse(row.doc) as CellDoc);
+          const r = remapCellDoc(doc, idxMap);
+          changed += r.changed; dropped += r.dropped;
+          if (cached) this.dirty.add(row.cellKey);
+          else if (r.changed || r.dropped) upd.run(JSON.stringify(doc), row.cellKey);
+        }
+        for (const [key, doc] of this.cache) {
+          if (seen.has(key)) continue;
+          const r = remapCellDoc(doc, idxMap);
+          changed += r.changed; dropped += r.dropped;
+          this.dirty.add(key);
+        }
+      });
+      result = { changed, dropped };
+      log('warn', 'world.content_remapped', { changed, dropped, from: this.content.join(','), to: names.join(',') });
+    }
+    this.content = [...names];
+    this.writeGlobal();
+    return result;
   }
 
   // Wipes every delta for a cell (M7 operator reset) and flushes it immediately, so a

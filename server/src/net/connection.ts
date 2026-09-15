@@ -1275,6 +1275,7 @@ export class Connection implements Peer {
     // world configured [simPeer] mode = "on" refuses to boot at all if that validation fails.
     if (this.isSystem && this.ctx.gameDataOk && !this.ctx.content.isAuthoritative) {
       this.ctx.content.setAuthoritative(msg.manifest);
+      this.ctx.world.adoptContentList(msg.manifest); // backlog 298: remap cell docs on a list change
     }
     const contentCheck = this.ctx.content.check(msg.manifest);
     if (!contentCheck.ok) {

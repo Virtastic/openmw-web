@@ -298,3 +298,30 @@ test('a gateway world sees the shared modlist and the shared dashboard layer', (
   assert.equal(loadConfig(shared, undefined, shared).sharing.journal, false);
   assert.equal(loadConfig(world).sharing.journal, true);
 });
+
+// Backlog 302: the browser cascades a plugin whose master is not loaded out of the list; the
+// peer emitted the content= line and esmloader threw at startup. Same rule on both now.
+test('a plugin whose master is missing is dropped, and the drop cascades', () => {
+  const s = resolveMods({ ...emptyDoc(), mods: [
+    mod({ slug: 'a', plugins: [{ file: 'A.esp', enabled: true, masters: ['B.esm', 'Morrowind.esm'] }] }),
+    mod({ slug: 'b', plugins: [{ file: 'B.esm', enabled: true, masters: ['Tamriel_Data.esm'] }] }),
+    mod({ slug: 'c', plugins: [{ file: 'C.esp', enabled: true, masters: ['Tribunal.esm'] }] }),
+    mod({ slug: 'd', plugins: [{ file: 'D.esp', enabled: true }] }),
+  ] });
+  // Tamriel_Data is nowhere: B goes, and A (which needs B) goes with it. C only needs an
+  // official master; D declares nothing.
+  assert.deepEqual(s.content, ['C.esp', 'D.esp']);
+  assert.deepEqual(s.dataDirs, ['mods/a', 'mods/b', 'mods/c', 'mods/d'], 'the data= lines stay: loose files still load');
+
+  // An official master the dashboard switched OFF is not loaded either.
+  const off = resolveMods({ version: 2, entries: [{ file: 'Tribunal.esm', enabled: false }], mods: [
+    mod({ slug: 'c', plugins: [{ file: 'C.esp', enabled: true, masters: ['Tribunal.esm'] }] }),
+  ] });
+  assert.deepEqual(off.content, []);
+
+  // A top-level plugin in the base-game order counts as loaded.
+  const top = resolveMods({ version: 2, entries: [{ file: 'Top.esm', enabled: true }], mods: [
+    mod({ slug: 'c', plugins: [{ file: 'C.esp', enabled: true, masters: ['Top.esm'] }] }),
+  ] });
+  assert.deepEqual(top.content, ['C.esp']);
+});
