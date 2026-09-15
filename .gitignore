@@ -175,3 +175,6 @@ dist/
 # clones: ours pointed the build at Dockerfile.simpeer, which is a ~35 minute engine compile
 # instead of the ~1 minute image docker-compose.yml deliberately tells you to start with.
 /docker-compose.override.yml
+
+# harness logs written by ci/jenkins/run-harness.sh
+wasm-build/harness-out/

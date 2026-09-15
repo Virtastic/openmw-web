@@ -1,6 +1,9 @@
-// Single pipeline for the OpenMW-Web job: builds BOTH deliverables from the dev branch and
-// deploys each to the test app server. Replaces the former OpenMW-Web-Engine-WASM and
-// OpenMW-Web-MP-Server jobs, so there is exactly one button to press for this repo.
+// Single pipeline for the OpenMW-Web job: builds BOTH deliverables and (for dev) deploys each
+// to the test app server. Replaces the former OpenMW-Web-Engine-WASM and OpenMW-Web-MP-Server
+// jobs, so there is exactly one button to press for this repo.
+//
+// This is the DEV/TEST box. Prod is GitHub Actions (deploy-ovh / deploy-mp on push to main)
+// and nothing here reaches it.
 //
 // Lives in the REPO, not in Jenkins' own config, so it is versioned, reviewable through a PR
 // against dev, and survives the Jenkins container being rebuilt. It is also what lets polling
@@ -10,18 +13,30 @@
 //
 // Ordering is deliberate: the engine is built and deployed FIRST, so a slow MP-server rebuild
 // (the sim peer is the fork compiled natively) never delays the game going live on test.
+//
+// Parameters (Jenkins only learns them after the first run of this file):
+//   BRANCH       which branch to build. dev by default; a feature branch for a bake + sweep.
+//   DEPLOY       ship the images to the test server (off for feature-branch bakes).
+//   RUN_HARNESS  run the MP browser harness on the images just built (ci/jenkins/run-harness.sh).
+//   SCENARIOS    space-separated scenario ids (s149 s152 ...); empty = the whole suite.
 pipeline {
   agent any
-  // 120 min covers the old engine (60) and server (45) budgets in one run, plus restaging.
-  options { timestamps(); timeout(time: 120, unit: 'MINUTES'); disableConcurrentBuilds() }
+  parameters {
+    string(name: 'BRANCH', defaultValue: 'dev', description: 'branch to build')
+    booleanParam(name: 'DEPLOY', defaultValue: true, description: 'deploy engine + server to the test app server')
+    booleanParam(name: 'RUN_HARNESS', defaultValue: false, description: 'run the multiplayer browser harness after the build')
+    string(name: 'SCENARIOS', defaultValue: '', description: 'harness scenarios (e.g. "s149 s152"); empty = full suite')
+  }
+  // 120 min covered the engine (60) and server (45) budgets; a full harness sweep adds hours.
+  options { timestamps(); timeout(time: 420, unit: 'MINUTES'); disableConcurrentBuilds() }
   stages {
-    stage('Checkout dev') {
+    stage('Checkout') {
       steps {
         // Build in /src, not the Jenkins workspace: /src is the host's ~/morrowind-src, and it
         // is where the ~750 MB of gitignored build inputs live between builds.
         dir('/src') {
           checkout([$class: 'GitSCM',
-                    branches: [[name: '*/dev']],
+                    branches: [[name: "*/${params.BRANCH}"]],
                     userRemoteConfigs: [[url: 'https://github.com/Virtastic/openmw-web.git']]])
         }
         // `cd /src` rather than a sh inside dir('/src'): that makes Jenkins create a sibling
@@ -35,11 +50,31 @@ pipeline {
     stage('Restage build inputs') { steps { sh '/src/ci/jenkins/restage-inputs.sh' } }
 
     stage('Compile OpenMW to WebAssembly') { steps { sh '/src/ci/jenkins/build-engine.sh' } }
-    // Unconditional on purpose: an image that was never deployed has never been tested.
+    // Unconditional for dev on purpose: an image that was never deployed has never been tested.
     // deploy-test.sh runs the contract gate itself and fails the build on any miss.
-    stage('Deploy engine to test server') { steps { sh '/src/ci/jenkins/deploy-test.sh engine' } }
+    stage('Deploy engine to test server') {
+      when { expression { params.DEPLOY } }
+      steps { sh '/src/ci/jenkins/deploy-test.sh engine' }
+    }
 
-    stage('Build gateway + sim peer')      { steps { sh '/src/ci/jenkins/build-server.sh' } }
-    stage('Deploy server to test server')  { steps { sh '/src/ci/jenkins/deploy-test.sh server' } }
+    stage('Build gateway + sim peer') { steps { sh '/src/ci/jenkins/build-server.sh' } }
+    stage('Deploy server to test server') {
+      when { expression { params.DEPLOY } }
+      steps { sh '/src/ci/jenkins/deploy-test.sh server' }
+    }
+
+    stage('Multiplayer harness') {
+      when { expression { params.RUN_HARNESS } }
+      steps {
+        sh "SCENARIOS='${params.SCENARIOS}' /src/ci/jenkins/run-harness.sh"
+      }
+      post {
+        always {
+          // The log lives under /src (a mount, see Checkout); copy it into the workspace to archive.
+          sh 'cp /src/wasm-build/harness-out/jenkins-${BUILD_NUMBER}.log "$WORKSPACE"/ 2>/dev/null || true'
+          archiveArtifacts artifacts: 'jenkins-*.log', allowEmptyArchive: true
+        }
+      }
+    }
   }
 }
