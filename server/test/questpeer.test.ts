@@ -135,3 +135,60 @@ test("the host's quest global reaches the peer live, and seeds a joining peer an
   assert.equal((seededPeer.value as { globals: Record<string, number> }).globals['mp_campaign_gate'], 2,
     'a fresh simulator starts from the campaign\'s globals');
 });
+
+// ONE BODY'S STATE STAYS WITH THAT BODY. PCVampire/PCWerewolf and their counters are globals
+// in the vanilla scripts, so they shadowed to the CAMPAIGN doc like every character global:
+// a guest turning vampire made the host a vampire on the host's next login, and the peer's
+// dummy a werewolf (backlog #151). They persist to the writer's own doc only, reach nobody
+// live, and come back to the same character on a rejoin -- from its own doc, never the campaign's.
+test("a guest's PCVampire stays on the guest: not the host doc, not the peer, restored on rejoin", async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const { readPlayerDoc } = await import('./helpers');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host',
+    configOverride: { server: { password: PEER_PASS }, login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  const hostChar = String((await host.joinAsNew('Host', 'hunter22')).welcome['characterId']);
+  await host.waitEvent('PlayerList');
+  host.sendCellChange('0,0', 0, 0, 0);
+
+  const guest = await TestClient.connect(server.port);
+  const guestChar = String((await guest.joinAsNew('Guest', 'hunter22')).welcome['characterId']);
+  await guest.waitEvent('PlayerList');
+  guest.sendCellChange('0,0', 0, 0, 0);
+  peer.inbox.events.length = 0;
+  host.inbox.events.length = 0;
+  guest.sendEvent('GlobalVarUpdate', { name: 'PCVampire', value: 1 });
+  guest.sendEvent('GlobalVarUpdate', { name: 'mp_campaign_gate', value: 5 }); // a fence: this one IS relayed
+  await peer.waitEvent('GlobalVarUpdate', gv('mp_campaign_gate'), 3000);
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'GlobalVarUpdate' && gv('PCVampire')(e.value)).length, 0,
+    'the peer is never told a player is a vampire');
+  assert.equal(host.inbox.events.filter((e) => e.name === 'GlobalVarUpdate' && gv('PCVampire')(e.value)).length, 0,
+    'nor is the host');
+
+  await server.flush();
+  const hostDoc = readPlayerDoc(dataDir, hostChar) as { globals?: Record<string, number> };
+  assert.equal(hostDoc.globals?.['PCVampire'], undefined, "the host's campaign doc does not gain the guest's vampirism");
+  assert.equal(hostDoc.globals?.['mp_campaign_gate'], 5, 'the ordinary character global still shadows to the campaign');
+  const guestDoc = readPlayerDoc(dataDir, guestChar) as { globals?: Record<string, number> };
+  assert.equal(guestDoc.globals?.['PCVampire'], 1, "the guest's own doc has it");
+
+  // Rejoin: the sync is seeded from the host's campaign, with the guest's own body state on top.
+  guest.close();
+  await guest.closed;
+  const back = await TestClient.connect(server.port);
+  t.after(() => back.close());
+  await back.joinExisting('Guest', 'hunter22');
+  const sync = await back.waitEvent('GlobalVarSync', () => true, 5000);
+  const globals = (sync.value as { globals: Record<string, number> }).globals;
+  assert.equal(globals['PCVampire'], 1, 'a rejoin restores the vampirism to the same character');
+  assert.equal(globals['mp_campaign_gate'], 5, 'alongside the campaign globals');
+});

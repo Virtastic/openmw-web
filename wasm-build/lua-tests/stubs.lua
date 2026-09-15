@@ -57,6 +57,8 @@ function M.install(opts)
     -- never fires and cannot be mistaken for the acquisition event under test.
     stats = { Skill = { records = { { id = 'longblade' }, { id = 'destruction' } } } },
     contentFiles = { list = opts.contentFiles or { 'builtin.omwscripts', 'morrowind.esm' } },
+    -- world.lua reads these at load (RECORD_KIND_OF_TYPE); empty stores are enough.
+    magic = { spells = { records = {} }, enchantments = { records = {} } },
     sendGlobalEvent = function(name, data) calls.events[#calls.events + 1] = { name = name, body = data, global = true } end,
   }
 

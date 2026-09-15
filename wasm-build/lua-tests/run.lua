@@ -479,6 +479,31 @@ do
   end
 end
 
+-- ================================ world.lua: dayspassed is a function of the calendar
+-- It used to be an offset learned from whatever this engine booted with, so every relog reset
+-- it and no two engines agreed: DaysPassed-stamped timers (vampire incubation, lycanthropy)
+-- misfired (backlog #150). Now: days since the vanilla start (16 Last Seed 3E 427 = day 1).
+print('world.lua -- dayspassed counts from the vanilla start, on every engine alike')
+do
+  package.loaded['scripts.mp.world'] = nil
+  stubs.install({})
+  local okLoad, worldmp = pcall(require, 'scripts.mp.world')
+  check('world.lua loads under the stubs', okLoad, tostring(worldmp))
+  if okLoad then
+    local d = worldmp.daysPassedOf
+    check('the vanilla start is day 1', d({ year = 427, month = 8, day = 16, gameHour = 0 }) == 1,
+      'got ' .. tostring(d({ year = 427, month = 8, day = 16, gameHour = 0 })))
+    check('the hour does not move the day', d({ year = 427, month = 8, day = 16, gameHour = 23.9 }) == 1)
+    check('the next morning is day 2', d({ year = 427, month = 8, day = 17, gameHour = 0 }) == 2)
+    check('a month boundary counts the real month length (Last Seed has 31 days)',
+      d({ year = 427, month = 9, day = 1, gameHour = 0 }) == 17)
+    check('a year later is 366 (365-day calendar, no leap years)',
+      d({ year = 428, month = 8, day = 16, gameHour = 0 }) == 366)
+    check('before the start it clamps to 1, never 0 or negative',
+      d({ year = 427, month = 1, day = 1, gameHour = 0 }) == 1)
+  end
+end
+
 -- ============================================================ identity.lua: the spell restore REPLACES
 -- Reported from live play: a Redguard carrying Ancestor Guardian, a DUNMER power. applyChargen
 -- runs buildPlayer(), which clears the spellbook and grants this character's race powers,

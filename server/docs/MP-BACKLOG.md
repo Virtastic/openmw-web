@@ -94,6 +94,12 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 143 | Another player's body was a crime witness (canReportCrime excluded only getPlayer) | mechanicsmanagerimp.cpp canReportCrime: same avatar / content-less puppet predicate as canCommitCrimeAgainst | fixed | needs a bake + tier2 |
 | 147 | Personal-crime mode seeded a guest with the HOST's bounty | quests.ts seedBounty reads the player's own doc when crime is not shared | fixed (unit) | standing.test.ts |
 | 149 | Nothing ever respawned and corpses never cleared: the peer anchored with respawn=false (CellStore::respawn never ran), a death had no date and was replayed on every cell entry forever, each peer restart rolled one more live creature on top of the old corpse | worldstate.ts (deaths {deathNo, atH}, forgotten after fCorpseRespawnDelay 72 h, placed levelled spawn dropped with it), scene.cpp (peer anchors load with respawn=true) | fixed | actor.test.ts (death at 10 h still sent, at 80 h gone with its spawn; engine side needs a bake: kill a smuggler, rest 3 days, re-enter) |
+| 150 | dayspassed was boot-relative (offset learned from what this engine booted with): every relog reset it, no two engines agreed; DaysPassed-stamped timers (vampire incubation, lycanthropy, mod timers) misfired. Refines #71 | world.lua daysPassedOf: days since 16 Last Seed 3E 427 (= day 1) in the absHours basis, clamped >= 1 | fixed | lua-tests (7 checks); needs a bake |
+| 151 | PCVampire/PCWerewolf/counters shadowed to the CAMPAIGN doc: a guest turning vampire made the host a vampire on next login, and the peer's dummy a werewolf | quests.ts CHARACTER_GLOBALS (pcvampire, vampclan, vampkills, pcwerewolf, pcknownwerewolf, pcknownreset: the GLOB names in Morrowind.esm/Bloodmoon.esm): own char doc only, relayed to nobody, filtered out of the campaign seed and overlaid from the own doc on GlobalVarSync | done (unit) | questpeer.test.ts |
+| 153 | Relog as a werewolf left negative attribute modifiers at dawn (setWerewolf(true) ran before the base writes in phase 2) | identity.lua: the form restore moved to the end of applyPhase2, after the base attribute/skill writes and before the diff-cache seed | fixed | needs a bake |
+| 156 | Sleep ambush spawned a creature only the sleeper sees (spawnRandomCreature not gated on localSpawnsEnabled) | waitdialog.cpp onWaitingInterrupted gated on MWMP::localSpawnsEnabled(), as transformationextensions.cpp / creaturelevlist.cpp | fixed | needs a bake (the peer does not roll the ambush for an avatar: no ambush at all under a holder) |
+| 158 | No "contracted disease" message when the avatar caught it | global.lua MP_SelfSpells: a Disease/Blight record added to the player goes through notice() (sMagicContractDisease with the record name); global context has no openmw.ui | fixed | needs a bake |
+| 159 | Peer follow-teleport ignored vanilla follower rules (in combat, stayoutside, >800 units): a stay-outside guar rode the strider indoors | global.lua canFollowThroughDoor (actionteleport.cpp getFollowers rules); actors.inCombat tracks the follower's own mpActorCombat report since global context cannot read an AI stack; stayoutside read from the mirrored local (#107) | fixed | needs a bake |
 
 ## Open (found, not fixed)
 
@@ -168,16 +174,10 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 145 | Peer NPC aggression toward an avatar is computed against the parked dummy (race/Personality/faction of the dummy, not the player) | mechanicsmanagerimp.cpp:493 getDerivedDisposition per target; apply doc.factions to the avatar |
 | 146 | Theft/trespass victim reactions (startCombat, disposition drop) land on the thief's AI-off puppet copy; a Fight-70 NPC that would attack a thief just barks | generalises #46 |
 | 148 | mStolenItems not persisted: after a relog stolen goods sell back to the victim and are not confiscated on arrest | needs a binding |
-| 150 | dayspassed is boot-relative (offset learned from what this engine booted with): every relog resets it, no two engines agree; DaysPassed-stamped timers (vampire incubation, lycanthropy, mod timers) misfire. Refines #71 | world.lua:186 dayspassed = totalDays - EPOCH_DAYS + 1 |
-| 151 | PCVampire/PCWerewolf/counters shadow to the CAMPAIGN doc: a guest turning vampire makes the host a vampire on next login, and the peer's dummy becomes a werewolf | quests.ts:38 CHARACTER_GLOBALS: persist to charId only, never relay/seed |
 | 152 | Werewolf avatar fights with human numbers (applyWerewolfStats only for actor==player); transformation rebuilds the puppet mid-fight | mechanicsmanagerimp.cpp:1960 isAvatar; global.lua:2352 setWerewolf in place |
-| 153 | Relog as a werewolf leaves negative attribute modifiers at dawn (setWerewolf(true) runs before the base writes in phase 2) | identity.lua:656 move to end of applyPhase2 |
 | 154 | A vampire friend looks human on your screen (head swap reads the Vampirism effect; puppets never get it) | identity.lua snapAppearance vampireSpell; global.lua:1075 |
 | 155 | Mark position lost on relog/world hop (no binding, not in the doc): Recall does nothing | luabindings.cpp mp.getMark/setMark; identity.lua |
-| 156 | Sleep ambush spawns a creature only the sleeper sees (spawnRandomCreature not gated on localSpawnsEnabled) | waitdialog.cpp:271 |
 | 157 | Corprus worsening resets on relog (worsen count not on the wire) | activespells.cpp:188 |
-| 158 | No "contracted disease" message when the avatar catches it | global.lua:1811 MP_SelfSpells ui.showMessage sMagicContractDisease |
-| 159 | Peer follow-teleport ignores vanilla follower rules (in combat, stayoutside, >800 units): a stay-outside guar rides the strider indoors | global.lua:2324 |
 
 ## Wontfix / by design
 

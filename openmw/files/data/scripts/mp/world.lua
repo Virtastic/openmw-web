@@ -133,9 +133,17 @@ local clockWarned = false
 -- everything that ages by days reads it -- powers once a day, corpse disposal, disease
 -- worsening, levelled respawn. The calendar fields above were written and this one never
 -- was, so a shared clock a day ahead of this engine's boot left every such timer a day
--- late, and a slew across midnight ran them backwards. Kept relative to what the engine
--- started with (the offset is learned on the first write), so every engine agrees.
-local daysPassedOffset = nil
+-- late, and a slew across midnight ran them backwards. It used to be kept relative to what
+-- THIS engine booted with, which made it boot-relative: every relog reset it and no two
+-- engines agreed, so DaysPassed-stamped timers (vampire incubation, lycanthropy, mod
+-- timers) misfired (backlog #150). Now it is a pure function of the calendar: days since
+-- the vanilla start (16 Last Seed, 3E 427 = day 1) in the same totalDays basis absHours
+-- uses, so every engine sharing the clock shares dayspassed.
+local EPOCH_DAYS = math.floor(absHours({ year = 427, month = 8, day = 16, gameHour = 0 }) / 24)
+
+local function daysPassedOf(t)
+    return math.max(1, math.floor(absHours(t) / 24) - EPOCH_DAYS + 1)
+end
 
 local function probeTimeFields()
     if timeFields then return timeFields end
@@ -183,13 +191,7 @@ local function writeLocalTime(t)
     local values = { gamehour = t.gameHour, day = t.day, month = t.month - 1, year = t.year }
     local wrote = false
     pcall(function()
-        local totalDays = math.floor(absHours(t) / 24)
-        if daysPassedOffset == nil then
-            local have = store['dayspassed']
-            if type(have) ~= 'number' then return end
-            daysPassedOffset = have - totalDays
-        end
-        local want = totalDays + daysPassedOffset
+        local want = daysPassedOf(t)
         if store['dayspassed'] ~= want then store['dayspassed'] = want end
     end)
     for _, name in ipairs(TIME_FIELDS) do
@@ -959,5 +961,8 @@ end
 function worldmp.init(d)
     deps = d
 end
+
+-- Exposed for the Lua unit runner (wasm-build/lua-tests): the dayspassed math is pure.
+worldmp.daysPassedOf = daysPassedOf
 
 return worldmp

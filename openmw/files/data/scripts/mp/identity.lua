@@ -650,11 +650,7 @@ function identity.applyRecord(record)
             name = record.appearance.name or (mp.getName and mp.getName()) or nil,
         })
     end
-    -- Form is restored with the rest of the look, not in phase 2: applyChargen rebuilds the
-    -- player record, and setting the form before that would be undone by it.
-    if record.appearance and record.appearance.isWerewolf == true then
-        pcall(function() NPC.setWerewolf(self, true) end)
-    end
+    -- Form (werewolf) is restored at the END of phase 2, not here: see applyPhase2.
     pendingPhase2 = record
     phase2At = core.getRealTime() + 0.5
 end
@@ -729,6 +725,13 @@ local function applyPhase2(record)
         end
     end)
     if not ok then print('[mp] restore failed: ' .. tostring(err)) end
+    -- Form LAST. setWerewolf(true) takes a snapshot of the human attributes/skills and lays
+    -- the werewolf modifiers over them; it must run after applyChargen (which rebuilds the
+    -- player record and would undo it) AND after the base writes above, or the snapshot is
+    -- of the chargen defaults and the dawn revert leaves negative modifiers (backlog #153).
+    if record.appearance and record.appearance.isWerewolf == true then
+        pcall(function() NPC.setWerewolf(self, true) end)
+    end
     -- Seed every diff cache from the just-applied state: the first broadcast tick after a
     -- restore must see "no change" (server already holds this snapshot). Appearance is the
     -- exception — peers need the relay — so its cache stays empty.

@@ -371,6 +371,28 @@ local function inviteCellArg(cellKey)
     return cellKey:match('^%-?%d+,%-?%d+$') and '' or cellKey
 end
 
+-- Vanilla's follower rules for a cell change (mwworld/actionteleport.cpp getFollowers): a
+-- follower comes along unless it is in combat, is more than 800 units from where the leader
+-- stood, or has `stayoutside == 1` in an exterior and the destination is an interior. Combat
+-- is what its own script last reported (actors.inCombat: any fight, vanilla only skips one
+-- fighting the leader -- a follower mid-fight should not be yanked either way); the local
+-- var is the memberVar mirrored per backlog #107.
+local FOLLOW_RANGE = 800
+local function canFollowThroughDoor(obj, from, destCellArg_)
+    if not (obj and obj:isValid()) then return false end
+    if actors.inCombat(obj) then return false end
+    local okd, far = pcall(function() return (obj.position - from):length() > FOLLOW_RANGE end)
+    if okd and far then return false end
+    if destCellArg_ ~= '' then
+        local oks, stay = pcall(function()
+            local script = world.mwscript.getLocalScript(obj)
+            return obj.cell and obj.cell.isExterior and script and script.variables.stayoutside
+        end)
+        if oks and stay == 1 then return false end
+    end
+    return true
+end
+
 -- M2: the puppet record is built from the relayed PlayerAppearance when one is known —
 -- the puppet then IS the remote player's look, not a generic villager. Records are
 -- immutable, so each distinct identity gets its own generated record (cached).
@@ -1818,7 +1840,20 @@ local eventHandlers = {
         if not player or not data then return end
         for _, sid in ipairs(data.add or {}) do
             local localId = worldmp.toLocal(sid)
-            if localId then pcall(function() types.Actor.spells(player):add(localId) end) end
+            if localId then
+                pcall(function() types.Actor.spells(player):add(localId) end)
+                -- Vanilla says "You have been infected with X" when a disease lands; the
+                -- engine only says it on ITS OWN contact roll, and this one happened on the
+                -- peer (backlog #158). Global context has no openmw.ui, so it goes through
+                -- notice() -> MP_UiChatMessage, which player.lua also pops on screen.
+                pcall(function()
+                    local rec = core.magic.spells.records[localId]
+                    local T = core.magic.SPELL_TYPE
+                    if rec and (rec.type == T.Disease or rec.type == T.Blight) then
+                        notice((core.getGMST('sMagicContractDisease'):gsub('%%s', rec.name)))
+                    end
+                end)
+            end
         end
     end,
     MP_SelfActiveSpells = function(data)
@@ -2322,6 +2357,7 @@ local eventHandlers = {
                 -- cell); on a client it is our own cell, as before — the two agree whenever
                 -- the mover is genuinely visible.
                 local dest = (mp.isSystem and mp.isSystem()) and inviteCellArg(data.cellKey) or destCellArg()
+                local from = p.obj.position -- the leader's position BEFORE the move
                 local moved = tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z))
                 if mp.isSystem and mp.isSystem() then
                     print(string.format('[mp] avatar #%d follow-teleport to (%.0f,%.0f,%.0f) ok=%s',
@@ -2329,9 +2365,15 @@ local eventHandlers = {
                     -- COMPANIONS COME THROUGH THE DOOR TOO. The engine only carries followers
                     -- of a PLAYER across cells; this avatar is an NPC to it, so its follower
                     -- would be left standing at the door for everyone. Same move, same spot.
+                    -- With the engine's own follower rules (actionteleport.cpp getFollowers,
+                    -- backlog #159): a follower in combat stays, one
+                    -- flagged `stayoutside` stays out of an interior, and one more than 800
+                    -- units from where the leader stood was not really following.
                     if moved then
                         for _, follower in pairs(actors.followersOf(data.id)) do
-                            tryTeleport(follower.obj, dest, util.vector3(data.x, data.y, data.z))
+                            if canFollowThroughDoor(follower.obj, from, dest) then
+                                tryTeleport(follower.obj, dest, util.vector3(data.x, data.y, data.z))
+                            end
                         end
                     end
                 end

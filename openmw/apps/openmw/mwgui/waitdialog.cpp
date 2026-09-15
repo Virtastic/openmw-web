@@ -26,6 +26,8 @@
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
 
+#include "../mwmp/puppets.hpp"
+
 namespace MWGui
 {
 
@@ -269,7 +271,10 @@ namespace MWGui
     void WaitDialog::onWaitingInterrupted()
     {
         MWBase::Environment::get().getWindowManager()->messageBox("#{sSleepInterrupt}");
-        MWBase::Environment::get().getWorld()->spawnRandomCreature(mInterruptCreatureList);
+        // Multiplayer client: a runtime actor spawn is the peer's to make (mwmp/puppets.hpp
+        // localSpawnsEnabled); a local roll would be a creature only the sleeper sees.
+        if (MWMP::localSpawnsEnabled())
+            MWBase::Environment::get().getWorld()->spawnRandomCreature(mInterruptCreatureList);
         stopWaiting();
     }
 

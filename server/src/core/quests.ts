@@ -37,6 +37,17 @@ const TIME_GLOBALS = new Set(['gamehour', 'day', 'month', 'year', 'dayspassed'])
 // there is nothing to restore here and everything to break.
 const CLIENT_GLOBALS = new Set(['chargenstate']);
 
+// CHARACTER globals: the vampire/werewolf state the vanilla and Bloodmoon scripts keep in
+// globals although it describes ONE BODY (GLOB records of Morrowind.esm / Bloodmoon.esm).
+// They used to shadow to the CAMPAIGN doc like every other character global, so a guest
+// turning vampire made the host a vampire on the host's next login and the peer's dummy a
+// werewolf (backlog #151). Persisted to the writer's OWN character doc, relayed to nobody
+// (not even the peer), never seeded from the campaign doc.
+const CHARACTER_GLOBALS = new Set([
+  'pcvampire', 'vampclan', 'vampkills',
+  'pcwerewolf', 'pcknownwerewolf', 'pcknownreset',
+]);
+
 // Phase 4: mwscript globals split into WORLD-SHARED and CHARACTER-SHADOWED.
 //
 // Morrowind gates most quests on globals, not on the journal index. With per-character
@@ -333,6 +344,14 @@ export class Quests {
       log('debug', 'quest.client_global_dropped', { name, from: player.name });
       return;
     }
+    if (CHARACTER_GLOBALS.has(lower)) {
+      // One body's state: the writer's own doc, nobody else's, and nobody told. The peer's
+      // dummy and a bot have no character to keep it for.
+      if (player.system !== true && player.bot !== true) {
+        this.ctx.players.update(player.charId, (doc) => { (doc.globals ??= {})[name] = value; });
+      }
+      return;
+    }
     // Phase 4: character-shadowed globals are the DEFAULT, and shadowing is PERSISTENCE,
     // not relaying — so it happens whatever the questVars sharing policy says. Store on
     // the character (a rejoin or world hop restores the player's own quest state) and
@@ -425,9 +444,18 @@ export class Quests {
     const globals = { ...(this.ctx.players.getCached(source)?.globals ?? {}) };
     // Filter on the way OUT too, not just on the way in: characters saved before
     // CLIENT_GLOBALS existed already have a chargenstate on disk, and sending it would
-    // re-break exactly the players this fixes.
+    // re-break exactly the players this fixes. Same for CHARACTER_GLOBALS: a campaign doc
+    // written before the split may carry a guest's PCVampire; the player's own doc is the
+    // only source for those.
     for (const k of Object.keys(globals)) {
-      if (CLIENT_GLOBALS.has(k.toLowerCase())) delete globals[k];
+      const l = k.toLowerCase();
+      if (CLIENT_GLOBALS.has(l) || CHARACTER_GLOBALS.has(l)) delete globals[k];
+    }
+    if (player.system !== true) {
+      const own = this.ctx.players.getCached(player.charId)?.globals ?? {};
+      for (const k of Object.keys(own)) {
+        if (CHARACTER_GLOBALS.has(k.toLowerCase())) globals[k] = own[k]!;
+      }
     }
     if (Object.keys(globals).length === 0) return;
     player.peer.sendEvent('GlobalVarSync', { globals });

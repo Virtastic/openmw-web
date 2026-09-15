@@ -604,8 +604,18 @@ end
 -- this actor is fighting, when that is a player. Rides ActorAI with a `combat` field so the
 -- client's AI-off puppet can be put into the same state and vanilla's own checks -- rest
 -- refused while an enemy is on you, no greeting from someone swinging at you -- read true.
+-- refKey -> true while the actor's own script last reported a Combat package with a live
+-- target (any target, not only a player). Global context cannot read an actor's AI stack,
+-- so this is the only "is it fighting" the follow-teleport (global.lua) can ask.
+local inCombat = {}
+
+function actors.inCombat(obj)
+    return inCombat[refKeyOf(obj)] == true
+end
+
 function actors.noteCombat(obj, target)
     if not (obj and obj:isValid()) then return end
+    inCombat[refKeyOf(obj)] = (target ~= nil) or nil
     local cellKey = actors.cellKeyOfObj(obj)
     if not cellKey then return end
     local foeId = deps.playerIdOf and deps.playerIdOf(target) or nil
