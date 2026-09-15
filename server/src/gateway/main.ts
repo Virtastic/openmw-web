@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 import { existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WorldSupervisor, reapOrphanWorlds } from './worlds';
+import { WorldSupervisor, measuredSample, reapOrphanWorlds } from './worlds';
 import { startDirectory } from './directory';
 import { buildFrontDoor } from './frontdoor';
 import { gatewayAdminRoutes, platformMaintenance } from './admin';
@@ -140,6 +140,7 @@ const worlds = new WorldSupervisor({
     restartBackoffMs: 15_000,
     sharedDir,
   },
+  sample: measuredSample, // #270: the box as it is, prod only
 });
 
 // Before anything binds a port: kill the world processes a previous gateway left behind. They

@@ -150,8 +150,10 @@ export interface WorldDeps {
   now?: () => number;
   // #270: the box as it IS, beside the static price. RSS of the world processes (their sim
   // peers are children of them and counted by the pid sum) and the 1-minute load average.
-  // Injected by tests; the default reads /proc/<pid>/status (Linux, where prod runs) and
-  // os.loadavg(), and answers 0 where it cannot measure so the static budget stays the rule.
+  // Wired by main.ts (measuredSample: /proc/<pid>/status on Linux + os.loadavg()); absent =
+  // no measured pressure, the static budget alone. Never a silent default: a test suite or a
+  // CI image build running on a saturated box must not see 'cpu' refusals (#100 lost the
+  // whole directory suite to the engine bake's load average).
   sample?: (pids: number[]) => { rssMb: number; load1: number };
 }
 
@@ -163,7 +165,7 @@ function procRssMb(pid: number): number {
     return m ? Number(m[1]) / 1024 : 0;
   } catch { return 0; }
 }
-function defaultSample(pids: number[]): { rssMb: number; load1: number } {
+export function measuredSample(pids: number[]): { rssMb: number; load1: number } {
   let rssMb = process.memoryUsage().rss / 1048576;
   for (const pid of pids) rssMb += procRssMb(pid);
   return { rssMb, load1: loadavg()[0] ?? 0 };
@@ -248,7 +250,7 @@ export class WorldSupervisor {
     // resource. Only ever binds with a budget set (mem) or with worlds running (cpu).
     if (budget > 0 || running > 0) {
       const pids = [...this.worlds.values()].map((w) => w.child.pid).filter((p): p is number => typeof p === 'number');
-      const { rssMb, load1 } = (this.deps.sample ?? defaultSample)(pids);
+      const { rssMb, load1 } = this.deps.sample ? this.deps.sample(pids) : { rssMb: 0, load1: 0 };
       if (budget > 0 && rssMb > usable) return { cap: Math.max(1, running), reason: 'mem', fromMemory: Math.max(1, running) };
       if (running > 0 && load1 > cpus().length) return { cap: Math.max(1, running), reason: 'cpu', fromMemory: Number.POSITIVE_INFINITY };
     }
