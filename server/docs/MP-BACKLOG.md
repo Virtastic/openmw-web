@@ -171,6 +171,15 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 219 | Running global scripts are not persisted across a relog: Sleepers stops at the host's first relog (no dreams/ambush), VampireCheck never runs for a returning character (vampirism unreachable after one relog — refines #150), MoveMehra/All_Nerevarine lost | luabindings.cpp runningGlobalScripts/startGlobalScript; campaign doc `scripts` list |
 | 220 | OnDeath "player->" afflictions apply on every client in the cell: the GUEST gets Corprus from Dagoth Gares and can never be cured at home (no A2_2 journal) — needs a decision | identity.lua strip campaign-script spells on WorldClosed? |
 | 221 | GetAiPackageDone pollers stall on clients (puppet AiSequence never executes): Fargoth's lookout, MehraMiloScript, HentusTravel state machines never advance; StartCombat Player from a peer-run branch targets the dummy (generalises #78/#145) | actors.cpp:1712 |
+| 222 | NPC-local writes from a dialogue result are lost after 6 s of talking (memberWatch never re-armed on a topic click) and MemberVarUpdate relays with the old cellsVisible rule, so the holder is deaf to it outside the dummy's cell | quests.lua:398 diff locals at releaseLock; quests.ts:151 relayCell uses hears() |
+| 223 | Player reputation is not on the wire nor in the doc: resets to 0 on every relog (PcReputation topics vanish, derived disposition drops) | identity.lua snapProgression reputation; playerstate.ts clamp 0..255 |
+| 224 | A human's dialogue-set quest global never reaches the other human live (only the peer + doc): the guest's Global filters and local scripts are stale until relog although the journal advanced (s62 pins the old per-character model) | quests.ts:394 relayAll for humans; flip s62 |
+| 225 | SetJournalIndex to a LOWER stage (quest restart) is dropped, not persisted, and reverted on next login; later advances below the old max are silently dropped too | quests.ts:239 record() before the regress check for owner/peer origin |
+| 226 | ForceGreeting dialogues take no lock: their AITravel/StartCombat/ModDisposition results are dropped ("without the conversation") — also the #44 arrest path | player.lua:1325 UiModeChanged → mpDialogueForced → requestLock |
+| 227 | NPC combat is silent on clients: no attack shout, hit grunt, flee/thief bark (every say() is on peer-run paths) | mp.say binding; MP_ActorAI combat + onHitIntercept |
+| 228 | An NPC killed by a friend mid-conversation leaves the window open; results execute on the corpse (world not paused in MP) | MP_ActorDeath for lockHeld → removeMode Dialogue + releaseLock |
+| 229 | Persuasion/result-script Fight/Flee/Alarm changes stay on the talking client (no AI-setting field on ActorStats) | actors.lua |
+| 230 | TalkedToPc per engine and never persisted: every NPC greets a returning player as a stranger | needs a binding |
 
 ## Open (found, not fixed)
 
