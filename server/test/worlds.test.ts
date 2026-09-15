@@ -567,3 +567,30 @@ test('a world that was played keeps its directory when it goes idle', async () =
   assert.equal(sup.running, 0, 'an idle world is stopped');
   assert.ok(existsSync(dir), 'but a world that was PLAYED must keep its data');
 });
+
+// A FLIP IS NOT A BOOT MODE. The directory follows the owner's live flips from /status (so
+// friend-joins are not refused as not_open), and the rolling restart used to pass that
+// observed mode to the replacement process -- which then BOOTED as party: chargen gate on,
+// the empty-world revert to Solo gone, bots reading it as public. It restarts the way it
+// started; the owner flips it again if they want to, exactly as after any other restart.
+test('rolling restart: a world the owner flipped to party restarts with its BOOT mode', async () => {
+  const worldsDir = mkdtempSync(join(tmpdir(), 'omw-worlds-'));
+  const envs: NodeJS.ProcessEnv[] = [];
+  const sup = new WorldSupervisor({
+    settings: {
+      worldsDir, serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080, basePort: 44000, maxWorlds: 3,
+      idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100,
+      sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
+    },
+    now: () => 1_000_000,
+    spawner: (_id, _args, env) => { envs.push(env); return new FakeChild() as unknown as ChildProcess; },
+    fetchStatus: async () => ({ playerCount: 1, connectedCount: 1, peerCount: 1, maxPlayers: 32, name: 'w', mode: 'party' }),
+  });
+  assert.ok(sup.ensure('priv-host-1', 'private', 'acct-host'));
+  assert.equal(envs[0]!['OMW_WORLD_MODE'], 'private');
+  await sup.poll(); // the owner flipped it: /status says party
+  assert.equal(sup.get('priv-host-1')?.mode, 'party', 'the directory follows the live flip');
+  const r = await sup.rollingRestart({ readyTimeoutMs: 1_000 });
+  assert.deepEqual(r.restarted, ['priv-host-1']);
+  assert.equal(envs[1]!['OMW_WORLD_MODE'], 'private', 'the replacement boots as the original did, not as the flip');
+});

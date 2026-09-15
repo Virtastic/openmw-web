@@ -115,6 +115,10 @@ export interface WorldInfo {
 interface World {
   id: string;
   mode: WorldMode;
+  // What the process was STARTED as. mode follows the owner's live flips (poll); a restart
+  // must boot the way the original did, or a flip to Party becomes the world's boot mode --
+  // chargen gate on, the empty-world revert to Solo gone, bots reading it as public.
+  bootMode: WorldMode;
   port: number;
   child: ChildProcess;
   startedAt: number;
@@ -397,7 +401,7 @@ export class WorldSupervisor {
     } catch (err) {
       log('warn', 'world.pid_write_failed', { id, error: String(err) });
     }
-    const world: World = { id, mode, port, child, startedAt: this.now(), stopping: false, ownerAccount };
+    const world: World = { id, mode, bootMode: mode, port, child, startedAt: this.now(), stopping: false, ownerAccount };
     this.worlds.set(id, world);
     log('info', 'world.started', { id, mode, port, pid: child.pid ?? -1 });
 
@@ -626,7 +630,7 @@ export class WorldSupervisor {
     const readyTimeoutMs = opts.readyTimeoutMs ?? this.deps.settings.startTimeoutMs;
     const order = [...this.worlds.values()]
       .sort((a, b) => (a.lastStatus?.playerCount ?? 0) - (b.lastStatus?.playerCount ?? 0))
-      .map((w) => ({ id: w.id, mode: w.mode, owner: w.ownerAccount }));
+      .map((w) => ({ id: w.id, mode: w.bootMode, owner: w.ownerAccount }));
     const restarted: string[] = [];
     const failed: string[] = [];
 
