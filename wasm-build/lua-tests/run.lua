@@ -6,6 +6,19 @@
 package.path = './openmw/files/data/?.lua;./wasm-build/lua-tests/?.lua;' .. package.path
 
 local stubs = require('stubs')
+-- A Windows checkout (core.autocrlf) hands the source checks CRLF files; the checks look for
+-- '\n'-delimited hunks. Normalise every read here so a check means the same on both hosts.
+do
+  local rawOpen = io.open
+  io.open = function(path, mode)
+    local f = rawOpen(path, mode)
+    if not f or (mode and mode:find('w')) then return f end
+    return setmetatable({}, { __index = function(_, k)
+      if k == 'read' then return function(_, ...) local s = f:read(...); return type(s) == 'string' and s:gsub('\r\n', '\n') or s end end
+      local v = f[k]; if type(v) == 'function' then return function(_, ...) return v(f, ...) end end; return v
+    end })
+  end
+end
 local pass, fail = 0, 0
 local function check(name, ok, detail)
   if ok then pass = pass + 1; print('  ok   ' .. name)
