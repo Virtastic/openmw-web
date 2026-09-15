@@ -125,6 +125,8 @@ export interface QuestCtx {
   worldPeer?(): Player | undefined;
   // Who simulates a cell (worldstate.ts): the holder hears its cells wherever it stands.
   holderOf?(cellKey: string): number | undefined;
+  // #366: anomaly sink (moderation), same contract as movement/playerstate.
+  noteAnomaly?(accountKey: string, kind: string): void;
 }
 
 type JournalLogEntry = NonNullable<PlayerDoc['journalLog']>[number];
@@ -154,6 +156,25 @@ export class Quests {
 
   private drop(player: Player, name: string, why: string): void {
     log('warn', 'quest.dropped', { from: player.name, name, why });
+  }
+
+  // #366: A GUEST'S QUEST WRITE PERSISTS ONLY OUT OF A CONVERSATION. The host's campaign is
+  // the doc every journal/global write lands in, and a guest's modified client could set any
+  // stage or global in it. What a legitimate guest write always has: a dialogue lock held on
+  // some NPC, or one released in the last ten seconds (the result script runs on "Goodbye").
+  // Otherwise the write is relayed live (the other clients' scripts stay in step for the
+  // session) but not persisted, and counted. The host's own writes are unchanged.
+  private static readonly GUEST_WRITE_GRACE_MS = 10_000;
+  private guestWriteUnbacked(player: Player, name: string): boolean {
+    if (player.system === true) return false;
+    const owner = this.ctx.ownerCharId();
+    if (owner === undefined || owner === player.charId) return false;
+    const nowMs = Date.now();
+    if (player.lastDialogueAt !== undefined && nowMs - player.lastDialogueAt <= Quests.GUEST_WRITE_GRACE_MS) return false;
+    for (const held of this.dialogueLocks.values()) if (held.playerId === player.id) return false;
+    log('warn', 'quest.guest_write_unbacked', { from: player.name, name });
+    this.ctx.noteAnomaly?.(player.accountKey, 'guest_quest_write');
+    return true;
   }
 
   // Relays exclude the sender: it already applied the change locally, and clients seed
@@ -323,10 +344,11 @@ export class Quests {
       return;
     }
     if (!advances && !regressing) return; // identical index: nothing to do
+    const out: JsLike = { questId, index: idx, ...(typeof actorRefId === 'string' ? { actorRefId } : {}) };
+    if (this.guestWriteUnbacked(player, 'JournalEntry')) { this.relayAll(player.id, 'JournalEntry', out); return; } // #366
     shared.journal[questId] = idx;
     this.ctx.cells.saveShared();
     record();
-    const out: JsLike = { questId, index: idx, ...(typeof actorRefId === 'string' ? { actorRefId } : {}) };
     this.relayAll(player.id, 'JournalEntry', out);
   }
 
@@ -503,6 +525,7 @@ export class Quests {
       // The ping-pong the old rule feared is what the peer-owned window above is for.
       this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
       if (target === undefined) return; // unowned instance: persists nothing
+      if (this.guestWriteUnbacked(player, 'GlobalVarUpdate')) return; // #366: relayed, not persisted
       this.ctx.players.update(target, (doc) => {
         (doc.globals ??= {})[name] = value;
       });
@@ -518,6 +541,7 @@ export class Quests {
     }
     // Absent seq = plain last-write-wins; keep the stored seq monotonic regardless.
     const nextSeq = seq ?? (prev ? prev.seq + 1 : 1);
+    if (this.guestWriteUnbacked(player, 'GlobalVarUpdate')) { this.relayAll(player.id, 'GlobalVarUpdate', { name, value, seq: nextSeq }); return; } // #366
     shared.globals[name] = { value, seq: nextSeq };
     this.ctx.cells.saveShared();
     this.relayAll(player.id, 'GlobalVarUpdate', { name, value, seq: nextSeq });
@@ -651,6 +675,18 @@ export class Quests {
       this.drop(player, 'CrimeUpdate', 'invalid shape');
       return;
     }
+    // #366: ONE RECORD, RAISED BY ANYONE, LOWERED ONLY OUT OF A GUARD'S DIALOGUE. A human's
+    // bare drop is the party-wide forgiveness a modified client hands out (bounty 0 ->
+    // everyone walks). The peer never lowers a bounty (fines are paid in the guard's dialogue
+    // on the client), so "peer-only drops" would mean no fine is ever paid; the cheap
+    // correlation is the conversation itself: a drop within 10 s of this player's own
+    // DialogueLock traffic (pay the fine / go to jail) stands, any other is refused.
+    const talked = player.lastDialogueAt !== undefined && Date.now() - player.lastDialogueAt <= Quests.GUEST_WRITE_GRACE_MS;
+    if (player.system !== true && !talked && this.ctx.isShared('crime') && bounty < (this.ctx.cells.sharedQuest().bounty ?? 0)) {
+      log('warn', 'quest.crime_drop_refused', { from: player.name, have: this.ctx.cells.sharedQuest().bounty, got: bounty });
+      this.ctx.noteAnomaly?.(player.accountKey, 'crime_drop');
+      return;
+    }
     // Shared: routed like the journal — see factionUpdate above — a bounty earned in someone
     // else's world, or in the shared one, belongs to that world's campaign, not to the visitor.
     // Personal: the writer's OWN doc. A guest's number used to be written over the host's
@@ -721,6 +757,7 @@ export class Quests {
       return;
     }
     const held = this.dialogueLocks.get(ref.key);
+    if (!player.system) player.lastDialogueAt = Date.now(); // #361/#366: a conversation, either edge
     if (!want) {
       if (held?.playerId === player.id) {
         this.dialogueLocks.delete(ref.key);
@@ -736,6 +773,14 @@ export class Quests {
       player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: false, holderId: held.playerId });
       return;
     }
+    // #367: you talk to what you can see, and to one NPC at a time -- a new request ends the
+    // conversation the client claims it is still having (it can only have one window open).
+    if (!player.system && !cellsVisible(player.cellKey, cellKey)) {
+      this.drop(player, 'DialogueLock', 'lock from afar');
+      player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: false });
+      return;
+    }
+    if (!player.system) this.releaseDialogueLocks(player.id);
     this.dialogueLocks.set(ref.key, { playerId: player.id, cellKey });
     player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: true });
   }

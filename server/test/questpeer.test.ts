@@ -190,6 +190,9 @@ test('the owner and the peer may regress a journal stage; a guest may not', asyn
   peer.sendEvent('JournalEntry', { questId: 'mq_restart', index: 5 }); // the simulator's scripts may too
   assert.equal(idx(await guest.waitEvent('JournalEntry', je, 3000)), 5, "the peer's regress is authoritative");
   host.inbox.events.length = 0;
+  // #366: a guest's journal write persists only out of a conversation (a dialogue lock).
+  guest.sendEvent('DialogueLock', { net: 7, cellKey: '0,0', want: true });
+  await guest.waitEvent('DialogueLockResult');
   guest.sendEvent('JournalEntry', { questId: 'mq_restart', index: 1 }); // a guest cannot rewind the campaign
   guest.sendEvent('JournalEntry', { questId: 'mq_restart', index: 30 }); // a fence: this one IS relayed
   assert.equal(idx(await host.waitEvent('JournalEntry', je, 3000)), 30);
@@ -230,6 +233,8 @@ test("a guest's PCVampire stays on the guest: not the host doc, not the peer, re
   guest.sendCellChange('0,0', 0, 0, 0);
   peer.inbox.events.length = 0;
   host.inbox.events.length = 0;
+  guest.sendEvent('DialogueLock', { net: 7, cellKey: '0,0', want: true }); // #366: the campaign gate needs a conversation
+  await guest.waitEvent('DialogueLockResult');
   guest.sendEvent('GlobalVarUpdate', { name: 'PCVampire', value: 1 });
   guest.sendEvent('GlobalVarUpdate', { name: 'mp_campaign_gate', value: 5 }); // a fence: this one IS relayed
   await peer.waitEvent('GlobalVarUpdate', gv('mp_campaign_gate'), 3000);

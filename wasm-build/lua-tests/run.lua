@@ -428,6 +428,13 @@ do
   check('global.lua forwards MP_WorldTimeRefused',
     g:find('MP_WorldTimeRefused', 1, true) ~= nil,
     'a refused Rest is silent again')
+  -- Backlog 359: the same record from the same owner never stacks on the avatar (eight adds
+  -- of one Fortify Health custom spell were eight times the effect); distinct records still do.
+  check('global.lua MP_AvatarActiveSpells stacks only distinct records per owner',
+    g:find('local stack = (ownerActive[data.id][localId] or 0) <= 1', 1, true) ~= nil
+      and g:find('caster = p.obj, stackable = stack,', 1, true) ~= nil
+      and g:find('caster = p.obj, stackable = true,', 1, true) == nil,
+    'a repeated active-effect add stacks again')
   -- Backlog 213/214/216/218: the engine's script notes are drained once joined and reach
   -- the three consumers; the object's OWN cell key travels; a scripted teleport lands on
   -- the holder; a persisted re-enable is applied at cell entry.

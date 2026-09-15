@@ -37,8 +37,17 @@ const MAX_SPELLS = 1024;
 const OWN_WEAR_TYPES = new Set(['Lockpick', 'Probe', 'Repair', 'Light']);
 const MAX_STAT_ENTRIES = 64;
 const MAX_STAT_KEY = 32;
-const MAX_STAT_VALUE = 200; // attributes and skills: 100 is the game's ceiling; damage keys ("<id>_damage") share the map
+// #369: 100 is the game's ceiling for a BASE attribute or skill (fortifies never travel here);
+// damage keys ("<id>_damage") share the map and cannot exceed the stat they damage.
+const MAX_STAT_VALUE = 100;
 const LEVEL_STEP_MS = 10_000;
+// #369: how much one key may RISE per window. A level-up adds up to +5 to an attribute, a
+// trainer or a skill book +1 at a time; reputation moves by a few points per quest.
+const STAT_RAISE_PER_WINDOW = 5;
+const REP_RAISE_PER_WINDOW = 10;
+// #358: gold per PlayerInventory declaration. A merchant purse is <= 10k (Mudcrab), Creeper
+// pays 5k/day; no honest 2 s diff gains more than this.
+const GOLD_DELTA_MAX = 20_000;
 export const MAX_EQUIPMENT_SLOT = 20;
 
 export interface StateCtx {
@@ -53,6 +62,9 @@ export interface StateCtx {
   // Anti-cheat telemetry, same contract movement uses: the client authors its own character,
   // so this is the SIGNAL moderation acts on, never a rejection.
   noteAnomaly?(accountKey: string, kind: string): void;
+  // #359: a custom record's body (m7 RecordStore), so an active-effect add can be budgeted by
+  // the magnitude it actually carries. Absent = every effect is priced at the nominal value.
+  recordOf?(id: string): { data: unknown; byAccount?: string } | undefined;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -316,9 +328,35 @@ function parseNumberMap(body: LTable): Record<string, number> | undefined {
   return out;
 }
 
+// #369: a key may rise by at most `limit` per LEVEL_STEP_MS window, ACCUMULATED across
+// declarations (two +1 skill gains in ten seconds are ordinary play; +5 per tick is not). A
+// lower value never counts. Returns false when this raise would exceed the budget.
+function raiseWithin(player: Player, key: string, delta: number, limit: number): boolean {
+  if (delta <= 0) return true;
+  const nowMs = Date.now();
+  const b = (player.raiseBudget ??= {});
+  const cur = b[key];
+  const sum = cur && nowMs - cur.at < LEVEL_STEP_MS ? cur.sum : 0;
+  if (sum + delta > limit) return false;
+  b[key] = { at: cur && sum > 0 ? cur.at : nowMs, sum: sum + delta };
+  return true;
+}
+
 function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'attributes' | 'skills'): boolean {
   const map = parseNumberMap(body);
   if (!map) return false;
+  // #369: refused, not counted -- the server's copy stands and the next declaration is
+  // measured against it. The first declaration (no baseline) is accepted as chargen's.
+  const had = ctx.store.getCached(player.charId)?.stats?.[field];
+  if (had) {
+    for (const [k, v] of Object.entries(map)) {
+      const from = had[k];
+      if (from !== undefined && !raiseWithin(player, `${field}:${k}`, v - from, STAT_RAISE_PER_WINDOW)) {
+        noteGain(ctx, player, 'stat_raise', { field, key: k, from, to: v });
+        return false;
+      }
+    }
+  }
   ctx.store.update(player.charId, (doc) => {
     doc.stats = { ...doc.stats, [field]: map };
   });
@@ -343,7 +381,14 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   if (repRaw !== undefined && (reputation === undefined || !Number.isInteger(reputation) || reputation < 0 || reputation > 255)) return false;
   // A level moves by ONE at a time in Morrowind. Several at once is not a fast player, it is
   // a declaration — same absurd-only bar as the movement envelope, same non-rejecting answer.
-  const had = ctx.store.getCached(player.charId)?.stats?.level;
+  const hadStats = ctx.store.getCached(player.charId)?.stats;
+  const had = hadStats?.level;
+  // #369: reputation rides the same window budget as a stat.
+  if (reputation !== undefined && hadStats?.reputation !== undefined
+    && !raiseWithin(player, 'reputation', reputation - hadStats.reputation, REP_RAISE_PER_WINDOW)) {
+    noteGain(ctx, player, 'reputation_raise', { from: hadStats.reputation, to: reputation });
+    return false;
+  }
   // ...and by one per window. +1 was the legitimate step, and sixty of them a second reached
   // 255 in four seconds; a level-up takes minutes of play.
   const nowMs = Date.now();
@@ -352,7 +397,9 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
       noteGain(ctx, player, 'level_rate', { from: had, to: level });
       return false;
     }
-    player.levelStepAt = nowMs;
+    // #369: stamped only for an ACCEPTED step -- a refused jump used to start the window too,
+    // so the honest +1 that followed it was refused as a rate trip.
+    if (level - had < LEVEL_JUMP_LIMIT) player.levelStepAt = nowMs;
   }
   if (had !== undefined && level - had >= LEVEL_JUMP_LIMIT) {
     // REFUSED, not merely counted. A level moves by one at a time in Morrowind: there is no
@@ -383,6 +430,18 @@ function handleSpellbook(ctx: StateCtx, player: Player, body: LTable): boolean {
   const add = parseIdList(body.get('add'));
   const remove = parseIdList(body.get('remove'));
   if (add === undefined || remove === undefined) return false;
+  // #362: the book is client-authored and knowsSource reads it, so it is where a forged
+  // source enters. What the server CAN check: a custom record belongs to the account that
+  // minted it (nobody teaches a spellmaker spell to a friend) -- another account's is refused
+  // and noted. A retail id cannot be checked without game data (no ESM spell set server-side)
+  // and is accepted; peer grants (SelfSpells) land in the doc directly and re-add as a no-op.
+  for (const id of add) {
+    const rec = ctx.recordOf?.(id);
+    if (rec && rec.byAccount !== undefined && rec.byAccount !== player.accountKey) {
+      noteGain(ctx, player, 'spellbook_foreign_record', { id });
+      return false;
+    }
+  }
   ctx.store.update(player.charId, (doc) => {
     const spells = new Set(doc.spells ?? []);
     // A LOCAL dynamic id ("$dynamic3", "Generated:0x1") is one engine's private name for a
@@ -415,8 +474,8 @@ function handleSpellbook(ctx: StateCtx, player: Player, body: LTable): boolean {
 // doing real work. Kept under MAX_COUNT deliberately — a threshold above it can never fire.
 const IMPLAUSIBLE_STACK = 9000;   // one item id gaining this much in a single declaration
 const IMPLAUSIBLE_DISTINCT = 250; // this many NEW item ids appearing at once
-// Morrowind levels one at a time; five at once is a declaration, not a fast player.
-const LEVEL_JUMP_LIMIT = 5;
+// Morrowind levels one at a time (#369: exactly one -- a jump of two is a declaration).
+const LEVEL_JUMP_LIMIT = 2;
 
 function noteGain(ctx: StateCtx, player: Player, kind: string, detail: Record<string, unknown>): void {
   metrics.implausibleGains.inc({ kind });
@@ -447,12 +506,22 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   // Compare against what this character last declared, before overwriting it.
   const prev = ctx.store.getCached(player.charId)?.inventory ?? [];
   const before = new Map(prev.map((i) => [i.id, i.n]));
+  // #359: ids leaving the inventory now, kept a moment for handleActiveSpells' source check.
+  const nowIds = new Set(out.map((i) => i.id));
+  if ((player.recentlyUsed?.size ?? 0) > 512) player.recentlyUsed!.clear(); // bounded; entries expire in 10 s anyway
+  for (const id of before.keys()) if (!nowIds.has(id)) (player.recentlyUsed ??= new Map()).set(id, Date.now());
   let newIds = 0;
   for (const { id, n } of out) {
     const had = before.get(id);
     if (had === undefined) newIds++;
-    // Selling one expensive thing to a 10k-purse merchant is +10k gold in one declaration:
-    // ordinary play, not a stack jump. Gold has its own ceiling above.
+    // #358: gold is no longer exempt. Selling one expensive thing to a 10k-purse merchant is
+    // +10k in one declaration; a modified client's `{gold_001: 100000000}` is refused whole
+    // (the doc stands, the connection lives). Record-id whitelisting is a follow-up: the
+    // server ships no game data, so there is no cheap item-record set to check against.
+    if (id === GOLD && n - (had ?? 0) > GOLD_DELTA_MAX) {
+      noteGain(ctx, player, 'inventory_gold', { from: had ?? 0, to: n });
+      return false;
+    }
     if (id !== GOLD && n - (had ?? 0) >= IMPLAUSIBLE_STACK) {
       // REFUSED now, not merely counted. The declaration is dropped whole and the server's
       // copy stands, so the client's next pass is measured against what the server believes
@@ -753,6 +822,23 @@ const MAX_ACTIVE_SPELL_OPS = 32;
 const ACTIVE_OPS_WINDOW_MS = 5_000;
 const ACTIVE_OPS_BUDGET = 40; // adds+removes per window; a potion binge is a handful
 const MAX_EFFECT_INDEXES = 8; // ESM spells carry at most 8 effects
+// #359: the avatar receives the WHOLE effect of every add, so adds are budgeted by the
+// magnitude they carry, per 10 s: a custom record's own magnitudeMax per effect index (the
+// exploit vector -- m7 caps it at 100 now), a nominal 50 for a retail id the server cannot
+// read. 800 is one maximal eight-effect custom spell; a potion binge is a few hundred.
+const ACTIVE_MAG_WINDOW_MS = 10_000;
+const ACTIVE_MAG_BUDGET = 800;
+const NOMINAL_EFFECT_MAG = 50;
+function effectMagnitude(ctx: StateCtx, op: ActiveOp): number {
+  const data = ctx.recordOf?.(op.id)?.data as { effects?: { magnitudeMax?: unknown }[] } | undefined;
+  const fx = Array.isArray(data?.effects) ? data.effects : undefined;
+  let sum = 0;
+  for (const i of op.effects ?? []) {
+    const m = fx?.[i]?.magnitudeMax;
+    sum += typeof m === 'number' && Number.isFinite(m) ? Math.max(0, m) : NOMINAL_EFFECT_MAG;
+  }
+  return sum;
+}
 type ActiveOp = { key: string; id: string; effects?: number[] };
 function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolean {
   const list = (v: LValue | undefined, withEffects: boolean): ActiveOp[] | undefined => {
@@ -797,6 +883,29 @@ function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolea
     return true; // consumed, not forwarded
   }
   if (add.length === 0 && remove.length === 0) return true;
+  // #359: EVERY ADD NEEDS A SOURCE THE PLAYER HAS -- a spell in their book or an item (a
+  // potion, a scroll) in their inventory, the same test CombatSpellHit applies. A retail
+  // NPC-only spell or a stranger's custom record applied to one's own avatar is refused.
+  const doc = ctx.store.getCached(player.charId);
+  // ...or an item the last inventory diff just took away: the last potion of a kind is drunk
+  // before the 2 s inventory diff lands, and the 0.5 s active diff may lose that race.
+  const known = (id: string) => doc?.spells?.includes(id) === true || doc?.inventory?.some((i) => i.id === id) === true
+    || (player.recentlyUsed?.get(id) ?? 0) > nowMs - ACTIVE_MAG_WINDOW_MS;
+  const unknown = add.find((op) => !known(op.id));
+  if (unknown) {
+    noteGain(ctx, player, 'active_spell_unknown', { id: unknown.id });
+    return true; // consumed, not forwarded
+  }
+  if (player.activeMagWindowAt === undefined || nowMs - player.activeMagWindowAt > ACTIVE_MAG_WINDOW_MS) {
+    player.activeMagWindowAt = nowMs;
+    player.activeMagInWindow = 0;
+  }
+  const mag = add.reduce((n, op) => n + effectMagnitude(ctx, op), 0);
+  if ((player.activeMagInWindow ?? 0) + mag > ACTIVE_MAG_BUDGET) {
+    noteGain(ctx, player, 'active_spell_magnitude', { magnitude: mag, inWindow: player.activeMagInWindow ?? 0 });
+    return true; // consumed, not forwarded
+  }
+  player.activeMagInWindow = (player.activeMagInWindow ?? 0) + mag;
   player.actives ??= new Map();
   for (const op of add) player.actives.set(op.key, op);
   for (const op of remove) player.actives.delete(op.key);

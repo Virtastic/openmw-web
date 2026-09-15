@@ -29,6 +29,9 @@ import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible, acceptPeerP
  *  bound cell keys a client invents, which cannot be validated because the server never reads
  *  the content that defines what cells exist. */
 const MAX_CELLS_PER_SESSION = 4096;
+// #361: a same-cell PlayerCellChange further than this from the last pose, with nothing
+// seen that explains a teleport, is refused. A room is smaller; a Recall is explained.
+const SAME_CELL_JUMP = 1024;
 
 /** Chat gets its own budget on top of limits.msgsPerSec, because chat AMPLIFIES: one inbound
  *  line becomes one outbound event per player in the world. limits.msgsPerSec only kills the
@@ -1118,6 +1121,28 @@ export class Connection implements Peer {
     }
 
     const oldCell = player.cellKey;
+    // #361: A SAME-CELL JUMP IS A TELEPORT THE CLIENT DECLARED (player.lua sends one for any
+    // >256 u frame), and the peer moves the ruling body there. The legitimate ones leave a
+    // trace the server saw seconds earlier: a cast (Recall, Intervention), an animated door,
+    // a conversation (guild guide), a respawn, the join itself, chargen. None of those and
+    // more than 1024 u is a modified client walking through walls: refused, the avatar stays.
+    // Interior->interior changes are NOT bounded here: a load door emits no signal and its
+    // coordinates are unrelated across cells, so that case stays a count (farTravel).
+    if (!this.isSystem && oldCell === cellKey && player.pose) {
+      const dx = x - player.pose.x, dy = y - player.pose.y, dz = z - player.pose.z;
+      if (dx * dx + dy * dy + dz * dz > SAME_CELL_JUMP * SAME_CELL_JUMP) {
+        const now = Date.now();
+        const recent = (t: number | undefined, ms = 5_000) => t !== undefined && now - t <= ms;
+        const explained = player.inChargen === true || recent(player.lastCastAt) || recent(player.lastDoorAt)
+          || recent(player.lastDialogueAt) || recent(player.resurrectedAt, 15_000) || recent(player.joinedWorldAt, 15_000);
+        if (!explained) {
+          metrics.cellChangeRefused.inc();
+          this.ctx.moderation.noteAnomaly(player.accountKey, 'cell_jump');
+          log('warn', 'conn.cell_change_refused', { player: player.name, account: player.accountKey, cellKey, dist: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)) });
+          return;
+        }
+      }
+    }
     if (oldCell !== undefined && oldCell !== cellKey) player.prevCellKey = oldCell;
 
     // TELEPORT-HOPPING, bounded without any game data.
@@ -1229,8 +1254,10 @@ export class Connection implements Peer {
     if (oldCell && oldCell !== cellKey) {
       this.ctx.world.authorityLeaveAll(player.id, oldCell, true, player.system === true);
       this.ctx.world.onCellVacated(oldCell);
-      // M6: walking out of the cell ends any conversation started there.
-      this.ctx.quests.releaseDialogueLocks(player.id, oldCell);
+      // M6: walking out of the cell ends any conversation -- ALL of them (#367): the lock's
+      // cell is the client's claim, so releasing only those keyed on the left cell let a
+      // forged key keep a lock forever.
+      this.ctx.quests.releaseDialogueLocks(player.id);
     }
     this.ctx.world.authorityEnter(player, cellKey);
     this.ctx.world.rebindFollows(player);

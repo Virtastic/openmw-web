@@ -51,23 +51,48 @@ const RECORDS_PER_SYNC = 128;
 const RESET_TICK_MS = 1_000;
 // RECORD BODIES ARE CLIENT-AUTHORED AND REPLAYED TO THE PEER, whose avatar then fights with them.
 // Nothing bounded the numbers: chopMaxDamage=9999 or Fortify Health 10000 for 10^6 s were stored
-// and handed to everyone. Capped at 4x the vanilla maxima -- generous for any honest mod, useless
-// for a cheat: the spellmaker/enchanter sliders stop at magnitude 100 per effect and duration
-// 1440 s, and the strongest retail weapons (Daedric claymore, Chrysamere) top out near 50 per
-// swing type.
-const MAX_EFFECT_MAGNITUDE = 4 * 100;
-const MAX_EFFECT_DURATION = 4 * 1440;
+// and handed to everyone. #360: capped at the VANILLA maxima now, not 4x -- the spellmaker and
+// enchanter sliders stop at magnitude 100 per effect and duration 1440 s with at most eight
+// effects, the strongest retail weapons (Daedric claymore, Chrysamere) top out near 50 per swing
+// type; armor rating, enchant charge, speed and reach get the same treatment. A record over the
+// line is a cheat, not a mod.
+const MAX_EFFECT_MAGNITUDE = 100;
+const MAX_EFFECT_DURATION = 1440;
+const MAX_EFFECTS = 8;
 const MAX_WEAPON_DAMAGE = 4 * 50;
+const MAX_ARMOR = 200;
+const MAX_CHARGE = 400;
+const MAX_SPEED = 2;
+const MAX_REACH = 2;
 const DAMAGE_FIELDS = ['chopMinDamage', 'chopMaxDamage', 'slashMinDamage', 'slashMaxDamage', 'thrustMinDamage', 'thrustMaxDamage'];
-function recordWithinCaps(data: unknown): boolean {
+// #360: a spell's cost is client-declared and the engine bills magicka from it. The vanilla
+// formula (spellmaker) is 0.1 x baseCost x avg(magnitude) x (1 + duration) per effect, and
+// the server does not know an effect's baseCost (the cheapest vanilla ones are a few tenths),
+// so the floor is Σ(magnitudeMax x max(duration,1)) / 100: below it the spell is free, above
+// it the engine's own figure decides. Clamped to >= 1. An autocalc spell carries no cost.
+function minSpellCost(effects: Record<string, unknown>[]): number {
+  let sum = 0;
+  for (const e of effects) {
+    const mag = typeof e['magnitudeMax'] === 'number' ? e['magnitudeMax'] : 0;
+    const dur = typeof e['duration'] === 'number' ? Math.max(1, e['duration']) : 1;
+    sum += (mag * dur) / 100;
+  }
+  return Math.max(1, Math.floor(sum));
+}
+function recordWithinCaps(data: unknown, kind?: string): boolean {
   if (!data || typeof data !== 'object') return true;
   const d = data as Record<string, unknown>;
   const over = (v: unknown, cap: number) => typeof v === 'number' && (v > cap || v < 0);
   if (DAMAGE_FIELDS.some((f) => over(d[f], MAX_WEAPON_DAMAGE))) return false;
+  if (over(d['baseArmor'], MAX_ARMOR) || over(d['charge'], MAX_CHARGE) || over(d['speed'], MAX_SPEED) || over(d['reach'], MAX_REACH)) return false;
   const effects = Array.isArray(d['effects']) ? d['effects'] as Record<string, unknown>[] : [];
-  return !effects.some((e) => e && typeof e === 'object'
+  if (effects.length > MAX_EFFECTS) return false;
+  if (effects.some((e) => e && typeof e === 'object'
     && (over(e['magnitudeMin'], MAX_EFFECT_MAGNITUDE) || over(e['magnitudeMax'], MAX_EFFECT_MAGNITUDE)
-      || over(e['duration'], MAX_EFFECT_DURATION)));
+      || over(e['duration'], MAX_EFFECT_DURATION)))) return false;
+  // Only a SPELL bills its cost from the record (an enchantment spends charge, a potion nothing).
+  if (kind === 'spell' && d['isAutocalc'] !== true && effects.length > 0 && typeof d['cost'] === 'number' && d['cost'] < minSpellCost(effects)) return false;
+  return true;
 }
 
 export const M7_EVENTS = new Set([
@@ -242,7 +267,7 @@ export class WorldM7 {
     const playerId = player.id;
     const accountKey = player.accountKey;
     const jsData = lToJs(data) as JsLike;
-    if (!recordWithinCaps(jsData)) {
+    if (!recordWithinCaps(jsData, kind)) {
       // Same refusal as a malformed body: logged, counted, no ack (the client treats an
       // unacked tempId as a failed creation).
       metrics.recordsRefused.inc();

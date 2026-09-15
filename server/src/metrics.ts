@@ -276,6 +276,9 @@ export const metrics = {
   // hopping the map faster than any spell or silt strider allows.
   farTravelRefused: reg(
     new Counter('omwmp_far_travel_refused_total', 'Cell changes refused: teleporting across the grid too often.', [])),
+  // #361: same-cell jumps beyond a room with no cast/door/conversation/respawn to explain them.
+  cellChangeRefused: reg(
+    new Counter('omwmp_cell_change_refused_total', 'Same-cell teleports refused: nothing seen that explains the jump.', [])),
 
   movesRefused: reg(
     new Counter('omwmp_moves_refused_total', 'Player move frames refused for sustained implausible speed.', [])),

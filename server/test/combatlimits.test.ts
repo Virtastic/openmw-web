@@ -26,13 +26,16 @@ function fakePlayer(id: number, cellKey: string): Player {
 const sentOf = (p: Player): { name: string }[] =>
   (p.peer as unknown as { sent: { name: string }[] }).sent;
 
-function harness(attackerCell: string, victimCell: string) {
+function harness(attackerCell: string, victimCell: string, holder = false) {
   const attacker = fakePlayer(1, attackerCell);
   const victim = fakePlayer(2, victimCell);
   const roster = { get: (id: number) => (id === 2 ? victim : undefined) } as unknown as Roster;
   const combat = new Combat({
     roster, maxHitDamage: 1000, worldPeer: () => undefined,
-    holderOf: () => 2, epochOf: () => 1,
+    // #362: a human CombatHit is relayed only while NO simulator holds the target's cell
+    // (degraded mode); with a holder it is refused outright. The rate/proximity rules below
+    // are about the relay, so this harness models degraded mode.
+    holderOf: () => (holder ? 2 : undefined), epochOf: () => 1,
     allowPlayerHit: () => true,
     knowsSource: () => true,
   });
@@ -51,6 +54,12 @@ test('a hit lands when the attacker is near the victim', () => {
   const h = harness('0,0', '0,0');
   h.combat.handleEvent(h.attacker, 'CombatHit', hitBody() as never);
   assert.equal(sentOf(h.victim).filter((e) => e.name === 'CombatHit').length, 1);
+});
+
+test('a hit into a cell a simulator holds is refused: the peer resolves melee (#362)', () => {
+  const h = harness('0,0', '0,0', true);
+  h.combat.handleEvent(h.attacker, 'CombatHit', hitBody() as never);
+  assert.equal(sentOf(h.victim).length, 0, 'a client-declared melee hit was relayed past the simulator');
 });
 
 test('a player cannot be hit from across the map', () => {

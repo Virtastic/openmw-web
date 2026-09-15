@@ -230,6 +230,14 @@ test('a client heal reaches the peer, and sustained fake healing is refused', as
 test("a client's active effects are forwarded to the peer for the avatar, and garbage is not", async (t) => {
   const { peer, a } = await world(t);
   peer.inbox.events.length = 0;
+  // #359: an add needs a source the player has -- a spell in the book or an item in the bag.
+  a.sendEvent('PlayerActiveSpells', { add: [{ key: '6', id: 'levitate', effects: [0] }], remove: [] });
+  a.sendEvent('PlayerSpellbook', { add: ['levitate', 'fortify_speed'] });
+  a.sendEvent('PlayerInventory', { items: [{ id: 'p_water_walking_s', n: 1 }] });
+  a.sendEvent('ChatSend', { text: 'srcfence' });
+  await peer.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'srcfence');
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'AvatarActiveSpells').length, 0,
+    'an effect from a source the player does not have reached the avatar (#359)');
   a.sendEvent('PlayerActiveSpells', {
     add: [{ key: '7', id: 'levitate', effects: [0] }, { key: '8', id: 'p_water_walking_s', effects: [0, 1] }],
     remove: [{ key: '3', id: 'chameleon' }],
@@ -290,6 +298,7 @@ test("a player's active effects reach the other clients, and a late joiner is ca
   await b.joinAsNew('Watcher');
   await b.waitEvent('PlayerList');
   b.inbox.events.length = 0;
+  a.sendEvent('PlayerSpellbook', { add: ['invisibility'] }); // #359: the source must be known
   a.sendEvent('PlayerActiveSpells', { add: [{ key: '7', id: 'invisibility', effects: [0] }], remove: [] });
   const seen = await b.waitEvent('AvatarActiveSpells', (v) => (v as { id?: number })?.id === a.playerId);
   assert.equal((seen.value as { add: { id: string }[] }).add[0]!.id, 'invisibility', 'the observer gets the op');

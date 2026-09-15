@@ -2092,8 +2092,12 @@ local eventHandlers = {
             if localId then effects = withoutBarCarried(localId, effects) end
             if localId and #effects > 0 then ownerActive[data.id][localId] = (ownerActive[data.id][localId] or 0) + 1 end
             if localId and #effects > 0 then
+                -- #359: the SAME record from the same owner never stacks (a second add refreshes
+                -- the instance): eight "Fortify Health 100" adds of one custom spell were eight
+                -- times the effect. Distinct records still stack (two different potions).
+                local stack = (ownerActive[data.id][localId] or 0) <= 1
                 local ok, err = pcall(function()
-                    spells:add({ id = localId, effects = effects, caster = p.obj, stackable = true,
+                    spells:add({ id = localId, effects = effects, caster = p.obj, stackable = stack,
                         ignoreResistances = true, ignoreSpellAbsorption = true, ignoreReflect = true, quiet = true })
                 end)
                 if not ok then print('[mp] avatar active effect add failed: ' .. tostring(err)) end

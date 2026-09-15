@@ -127,6 +127,18 @@ export interface Player {
   levelStepAt?: number;
   // When each bar's MAXIMUM last stepped (a level-up); one step per window per stat.
   baseStepAt?: Partial<Record<'hp' | 'mp' | 'ft', number>>;
+  // #369: per-key raise budget for attributes/skills/reputation (playerstate.ts raiseWithin).
+  raiseBudget?: Record<string, { at: number; sum: number }>;
+  // #359: Σ(magnitude) of PlayerActiveSpells adds in the current window (playerstate.ts).
+  activeMagWindowAt?: number;
+  activeMagInWindow?: number;
+  recentlyUsed?: Map<string, number>; // record id -> when it left the inventory (#359)
+  // #361: the last moments this player did something that legitimately teleports them --
+  // a spell cast (Recall/Intervention), an animated door, a conversation (guild guide, a
+  // travel fare). A same-cell jump with none of them recent is a declared teleport.
+  lastCastAt?: number;
+  lastDoorAt?: number;
+  lastDialogueAt?: number;
   // Where this player's last cell change / teleport claimed they landed. While set, the
   // peer's avatar poses are ignored for them: the avatar teleports on the RELAY of the cell
   // change, so its stream still says the old place for a while -- and one stale sample is a

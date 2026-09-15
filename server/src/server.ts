@@ -554,6 +554,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     worldPeer: () => worldPeerImpl(),
     roster,
     store: playerStore,
+    recordOf: (id) => recordStore.get(id), // #359: active-effect adds budgeted by real magnitude
     // Chargen named the character: put that name on the slot, replacing the placeholder the
     // slot was auto-created with. Only ever an upgrade — a slot the player already named is
     // left alone.
@@ -613,6 +614,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     worldGlobals: config.sharing.worldGlobals,
     worldPeer: () => worldPeerImpl(),
     holderOf: (cellKey) => world.holderOf(cellKey),
+    noteAnomaly: (accountKey, kind) => moderation.noteAnomaly(accountKey, kind), // #366
   });
   world.dialogueHolder = (refKey) => quests.dialogueHolder(refKey);
 

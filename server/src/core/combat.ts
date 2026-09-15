@@ -353,6 +353,15 @@ export class Combat {
       this.drop(player, 'CombatHit', 'hitPos out of bounds');
       return;
     }
+    // #362: WHILE A SIMULATOR HOLDS THE TARGET'S CELL, MELEE IS ITS TO RESOLVE. A real client
+    // never forwards a swing there (combat.lua: cancel-only under Phase 4C, only mpTest hits
+    // ride the relay), so a human CombatHit arriving with a holder present is a modified
+    // client's declared damage. Degraded mode (no holder) keeps the relay, as before.
+    const targetCell = target.kind === 'player' ? this.ctx.roster.get(target.playerId)?.cellKey : target.cellKey;
+    if (!player.system && targetCell !== undefined && this.ctx.holderOf(targetCell) !== undefined) {
+      this.drop(player, 'CombatHit', 'combat_hit_refused');
+      return;
+    }
     const owner = this.resolveOwner(player, target, 'CombatHit');
     if (!owner) return;
     owner.peer.sendEvent('CombatHit', { ...(lToJs(body) as Record<string, JsLike>), attackerId: player.id });
@@ -436,6 +445,7 @@ export class Combat {
       this.drop(player, 'CombatCast', 'invalid target');
       return;
     }
+    if (!player.system) player.lastCastAt = Date.now(); // #361: a Recall/Intervention leaves this trace
     this.relayCosmetic(player, 'CombatCast', body);
   }
 

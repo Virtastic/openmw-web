@@ -8,7 +8,7 @@
 // the losing racer gets ok=false.
 
 import { lToJs, lserNodeCount, type LTable, type LValue, type JsLike } from '../proto/lser';
-import { parseObjRef, objRefToJs, netRefKey, parseRefKey, type ObjRef } from '../proto/ref';
+import { parseObjRef, objRefToJs, netRefKey, parseRefKey, contentRefKey, type ObjRef } from '../proto/ref';
 import { INPUT_DRIVING_MS, type Player, type Roster } from './players';
 import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells, isChargenCell } from './movement';
 import { MONTH_DAYS } from './worldtime';
@@ -32,6 +32,19 @@ const MAX_FIRST_OPEN_GOLD = 50_000;
 const MAX_FAR_CELL_COORD = Math.floor(MAX_ABS_COORD / 8192);
 const MAX_FAR_ENABLE_CELLS = 64;
 const MAX_HUMAN_ACTOR_SPAWN_COUNT = 10; // backlog 338
+// #365: one stack in a first-open roll. No levelled list or merchant stocks more than a few
+// dozen of one thing; "64 stacks x 10,000 daedric" was legit for friends via server take.
+const MAX_FIRST_OPEN_STACK = 100;
+// #364: how far a player may reach for a loose object whose position the server knows
+// (spawned or moved refs; content refs have no server-side pose). A little past activation
+// distance plus the pose stream's lag.
+const OBJECT_REACH = 512;
+// #364: an actor the holder has streamed is not loot. Refs seen in ActorMoveBatch are
+// remembered per cell for this long; take/delete/move on one is refused as `actor_ref`.
+const ACTOR_REF_TTL_MS = 10 * 60_000;
+// #363: scripted "this NPC is now there" claims per player per minute (a Heart-chamber
+// script fires once; a modified client teleporting every quest NPC into the void does not).
+const MAX_POSITION_CLAIMS_PER_MIN = 5;
 // A CELL'S STATE IS ONE FRAME, AND THE WIRE HAS A CEILING. WorldCellState and CellSnapshotReplace
 // carry every placed object and every tombstone in a cell in a single LSER value, and LSER
 // refuses anything past 65,536 nodes. A placed object is ~19 nodes, so around 3,400 dropped
@@ -200,6 +213,12 @@ export class WorldState {
   // cellKey -> count of ActorMoveBatch frames relayed for that cell, the phase source for
   // actor LOD striding. Cleared when the cell empties.
   private readonly actorBatchNo = new Map<string, number>();
+  // #364: cellKey -> refKey -> last time the holder streamed it as an actor.
+  private readonly actorRefs = new Map<string, Map<string, number>>();
+  private isActorRef(cellKey: string, refKey: string): boolean {
+    const at = this.actorRefs.get(cellKey)?.get(refKey);
+    return at !== undefined && Date.now() - at <= ACTOR_REF_TTL_MS;
+  }
 
   // Phase 4: lowercased record ids of quest-critical items that must never deplete from a
   // container (see containerOp). Loaded from the content table; empty = vanilla behaviour.
@@ -414,7 +433,9 @@ export class WorldState {
       case 'ContainerOpRequest': this.enqueue(() => this.containerOp(player, body)); break;
       case 'ResyncRequest': {
         const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
-        if (cellKey) this.sendCellState(player, cellKey);
+        // #370: a resync reads (and creates) a cell doc, so it is reach-gated like an edit.
+        if (cellKey && (player.system || cellsVisible(player.cellKey, cellKey))) this.sendCellState(player, cellKey);
+        else if (cellKey) log('warn', 'object.out_of_reach', { from: player.name, name, at: player.cellKey ?? null, cellKey });
         else this.invalid(player, name);
         break;
       }
@@ -575,6 +596,7 @@ export class WorldState {
   private static readonly MAX_FOLLOWERS = 8;
   private static readonly MAX_ACTOR_SPAWNS_PER_MIN = 10; // a sleeper ambush is one or two
   private actorSpawnsBy = new Map<number, number[]>(); // playerId -> recent request times (spawn)
+  private positionClaimsBy = new Map<number, number[]>(); // #363: playerId -> recent position claims
   private replayFollows(holderId: number, cellKey: string): void {
     const holder = this.roster.get(holderId);
     if (!holder) return;
@@ -634,6 +656,14 @@ export class WorldState {
     }
     if (player.system || !cellsVisible(player.cellKey, cellKey)) {
       log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follow claim from afar' });
+      return;
+    }
+    // #363: RECRUITING IS A CONVERSATION, like travel: the player who holds (or just held,
+    // 5 s) this NPC's dialogue lock may say it follows them. A claim already theirs may be
+    // updated or dismissed without one (a scripted escort ends by script, not by talking).
+    if (follow !== undefined && this.dialogueHolder?.(ref.key) !== player.id && this.followedBy.get(ref.key)?.follow !== player.id) {
+      log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follow claim without the conversation' });
+      this.moderationNote?.(player.accountKey, 'follow_claim');
       return;
     }
     // An escort is a follow with a destination: four finite numbers, or nothing.
@@ -712,6 +742,18 @@ export class WorldState {
           log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'position claim from afar' });
           return;
         }
+        // #363: NOT dialogue-gated -- these come from scripts (216: Dagoth Ur to the Heart,
+        // OnActivate, CellChanged) with no conversation to hold a lock on -- but rate-bounded
+        // per player, same shape as actor spawns: a script fires once, a loop does not.
+        const nowMs = Date.now();
+        const recent = (this.positionClaimsBy.get(player.id) ?? []).filter((t) => nowMs - t < 60_000);
+        if (recent.length >= MAX_POSITION_CLAIMS_PER_MIN) {
+          log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'position claim rate' });
+          this.moderationNote?.(player.accountKey, 'position_claim');
+          return;
+        }
+        recent.push(nowMs);
+        this.positionClaimsBy.set(player.id, recent);
         const holder = this.authority.holderOf(cellKey);
         const to = holder === undefined ? undefined : this.roster.get(holder);
         if (!to) return; // nobody simulates it: the client's own move stands
@@ -895,6 +937,18 @@ export class WorldState {
     this.authority.noteActorFrame(cellKey);
     const batchNo = (this.actorBatchNo.get(cellKey) ?? 0) + 1;
     this.actorBatchNo.set(cellKey, batchNo);
+    // #364: remember WHICH refs the holder streams as actors (one frame in twenty: the set
+    // changes on the minute, the stream runs at 20 Hz), so an object op on one is refused.
+    // Only the 8-byte refs are read; the poses stay undecoded (#271).
+    if (batchNo % 20 === 1) {
+      const seen = this.actorRefs.get(cellKey) ?? new Map<string, number>();
+      const count = payload.readUInt8(4);
+      const nowMs = Date.now();
+      for (let i = 0, off = 5; i < count; i++, off += 28) {
+        seen.set(contentRefKey(payload.readUInt32LE(off), payload.readInt32LE(off + 4)), nowMs);
+      }
+      this.actorRefs.set(cellKey, seen);
+    }
     // Distance is only comparable between exterior cells (same reason as pose interest
     // management); interiors keep the flat cell-granular stream. Measured from the STREAMED
     // cell's centre, not the holder's pose: the peer's dummy is parked wherever it last
@@ -1109,6 +1163,28 @@ export class WorldState {
       return undefined;
     }
     const doc = await this.cells.get(cellKey);
+    // #364: WHAT A HUMAN MAY TOUCH. An actor the holder streams is not an object (deleting
+    // Caius, "taking" a guard); and a loose object the server knows the position of (spawned
+    // or moved) must be within reach of the player's last pose -- exterior neighbours
+    // included, since exterior coordinates are world coordinates. A content ref that was
+    // never moved has no server-side position and keeps the cell-visibility rule alone.
+    if (!player.system && (name === 'ObjectTakeRequest' || name === 'ObjectDelete' || name === 'ObjectMove' || name === 'ObjectLock')) {
+      if (name !== 'ObjectLock' && this.isActorRef(cellKey, ref.key)) {
+        log('warn', 'object.actor_ref', { from: player.name, name, cellKey, key: ref.key });
+        this.moderationNote?.(player.accountKey, 'actor_ref');
+        return undefined;
+      }
+      const at = doc.placed[ref.key] ?? doc.moved[ref.key];
+      const pose = player.pose;
+      if (at && pose && (cellKey === player.cellKey || parseExterior(cellKey) !== null)) {
+        const dx = at.x - pose.x, dy = at.y - pose.y, dz = at.z - pose.z;
+        if (dx * dx + dy * dy + dz * dz > OBJECT_REACH * OBJECT_REACH) {
+          log('warn', 'object.out_of_reach', { from: player.name, name, cellKey, key: ref.key, dist: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)) });
+          this.moderationNote?.(player.accountKey, 'object_reach');
+          return undefined;
+        }
+      }
+    }
     // A take has to be told about a dead object, not silently dropped: the client suppressed
     // its own pickup and is waiting for an answer.
     if (name !== 'ObjectDelete' && name !== 'ObjectTakeRequest' && doc.deleted.includes(ref.key))
@@ -1207,6 +1283,16 @@ export class WorldState {
       this.invalid(player, 'ObjectMove');
       return;
     }
+    // #364: the destination is bounded the same way the source is -- a human moves what it
+    // can reach to where it stands, not across the cell.
+    if (!player.system && player.pose && (cellKey === player.cellKey || parseExterior(cellKey) !== null)) {
+      const dx = x - player.pose.x, dy = y - player.pose.y, dz = z - player.pose.z;
+      if (dx * dx + dy * dy + dz * dz > OBJECT_REACH * OBJECT_REACH) {
+        log('warn', 'object.out_of_reach', { from: player.name, name: 'ObjectMove', cellKey, key: ref.key, to: true });
+        this.moderationNote?.(player.accountKey, 'object_reach');
+        return;
+      }
+    }
     const placed = doc.placed[ref.key];
     if (placed) Object.assign(placed, { x, y, z, rotZ }); // spawned: placed entry is truth
     else {
@@ -1290,6 +1376,7 @@ export class WorldState {
       return;
     }
     if (cellMapFull(doc.doors, ref.key, cellKey, 'doors', player.name)) return;
+    if (!player.system) player.lastDoorAt = Date.now(); // #361: a door used is a teleport explained
     doc.doors[ref.key] = open;
     this.cells.markDirty(cellKey);
     this.relayCell(cellKey, 'DoorState', { ...objRefToJs(ref), cellKey, open, byId: player.id });
@@ -1319,10 +1406,14 @@ export class WorldState {
       let items = contents;
       if (player.system !== true) {
         const goldIn = contents.filter((i) => i.id === 'gold_001').reduce((n, i) => n + i.n, 0);
-        if (goldIn > MAX_FIRST_OPEN_GOLD || (gold ?? 0) > MAX_FIRST_OPEN_GOLD) {
-          log('warn', 'world.container_first_open_implausible', { player: player.name, cellKey, key: ref.key, stacks: contents.length, gold: goldIn, purse: gold ?? 0 });
+        // #365: no levelled list or merchant stocks more than a few dozen of one thing; a
+        // stack past MAX_FIRST_OPEN_STACK is clamped, not trusted, and the gold is stripped
+        // as before (#344 keeps the stack COUNT unbounded -- big containers become canonical).
+        const bigStack = contents.find((i) => i.id !== 'gold_001' && i.n > MAX_FIRST_OPEN_STACK);
+        if (goldIn > MAX_FIRST_OPEN_GOLD || (gold ?? 0) > MAX_FIRST_OPEN_GOLD || bigStack) {
+          log('warn', 'world.container_first_open_implausible', { player: player.name, cellKey, key: ref.key, stacks: contents.length, gold: goldIn, purse: gold ?? 0, ...(bigStack ? { stack: bigStack.id, n: bigStack.n } : {}) });
           this.moderationNote?.(player.accountKey, 'container_first_open');
-          items = contents.filter((i) => i.id !== 'gold_001');
+          items = contents.filter((i) => i.id !== 'gold_001').map((i) => (i.n > MAX_FIRST_OPEN_STACK ? { ...i, n: MAX_FIRST_OPEN_STACK } : i));
           gold = undefined;
         }
       }
@@ -1605,6 +1696,7 @@ export class WorldState {
   onCellVacated(cellKey: string): void {
     if (this.roster.inWorld().some((p) => p.cellKey === cellKey)) return;
     this.actorBatchNo.delete(cellKey); // no occupants -> no holder -> no stride phase to keep
+    this.actorRefs.delete(cellKey);
     this.enqueue(() => this.cells.flushKey(cellKey));
   }
 }

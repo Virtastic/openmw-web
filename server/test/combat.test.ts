@@ -25,6 +25,20 @@ function hitBody(target: JsLike, health = 25) {
   };
 }
 
+// #362: A HUMAN'S CombatHit INTO A CELL A SIMULATOR HOLDS IS REFUSED -- the peer's avatar swings
+// for the player (Phase 4C) and combat.lua forwards only mpTest hits, so a relayed one is a
+// modified client's declared damage. The routing machinery below (holder, epoch, proximity,
+// parking, the refusal report) is therefore exercised with CombatSpellHit, which takes the same
+// resolveOwner path; every caster learns the test spell in scenario(). CombatHit keeps its own
+// shape checks and the degraded-mode (holderless) relay, asserted in the fatigue test.
+const TEST_SPELL = 'mp_test_bolt';
+function spellBody(target: JsLike, casterId: number, magnitude = 15) {
+  return { target, spellId: TEST_SPELL, casterId, effects: [{ id: 'fire_damage', magnitude, duration: 3 }] };
+}
+async function learn(...cs: TestClient[]) {
+  for (const c of cs) c.sendEvent('PlayerSpellbook', { add: [TEST_SPELL], remove: [] });
+}
+
 // Brings up a server plus three in-world clients: two in cell "0,0" (attacker + victim,
 // attacker holds authority since it entered first) and one far away in "40,40".
 async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
@@ -67,6 +81,7 @@ async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
   await far.waitEvent('PlayerCellChange');
   // No grant, and no Info: 40,40 is far outside the peer's footprint, so that cell simply has
   // no holder. The point of `far` is that it is out of range, which is unchanged.
+  await learn(atk, vic, far); // #362: the routing tests cast
 
   return { server, peer, atk, vic, far, atkId, vicId, epoch, welcome };
 }
@@ -92,7 +107,13 @@ async function fence(from: TestClient, ...watchers: TestClient[]) {
 // Reported from live play as "I cannot attack anything", with the server logging
 // combat.dropped/"damage.health missing or over cap" once per swing.
 test('a fatigue-only hit (hand-to-hand) is relayed, not dropped', async (t) => {
-  const { vic, vicId, atk } = await scenario(t, true);
+  const { vic, vicId, atk, atkId } = await scenario(t, true);
+  // #362: the CombatHit relay survives only where no simulator holds the victim's cell
+  // (degraded mode). Both walk to an unheld cell first.
+  atk.sendCellChange('50,50', 0, 0, 0);
+  await atk.waitEvent('PlayerCellChange', (v) => (v as { id?: number }).id === atkId && (v as { cellKey?: string }).cellKey === '50,50');
+  vic.sendCellChange('50,50', 0, 0, 0);
+  await vic.waitEvent('PlayerCellChange', (v) => (v as { id?: number }).id === vicId && (v as { cellKey?: string }).cellKey === '50,50');
 
   const fatigueOnly = {
     target: { playerId: vicId },
@@ -118,47 +139,58 @@ test('a fatigue-only hit (hand-to-hand) is relayed, not dropped', async (t) => {
 test('combat routing with pvp enabled', async (t) => {
   const { server, peer, atk, vic, far, atkId, vicId, epoch, welcome } = await scenario(t, true);
 
-  await t.test('player target reaches the victim only', async () => {
+  await t.test('a human melee hit into a held cell is refused (#362)', async () => {
     atk.sendEvent('CombatHit', hitBody({ playerId: vicId }));
-    const got = await vic.waitEvent('CombatHit');
-    const v = got.value as { attackerId: number; damage: { health: number }; target: { playerId: number } };
+    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }));
+    await fence(atk, vic, peer);
+    await fence(vic, vic, peer);
+    assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatHit').length, 0, 'the peer resolves melee: a client hit on a player was relayed');
+    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatHit').length, 0, 'the peer resolves melee: a client hit on an actor was relayed');
+  });
+
+  await t.test('player target reaches the victim only', async () => {
+    atk.sendEvent('CombatSpellHit', spellBody({ playerId: vicId }, atkId));
+    const got = await vic.waitEvent('CombatSpellHit');
+    const v = got.value as { attackerId: number; spellId: string; target: { playerId: number } };
     assert.equal(v.attackerId, atkId); // server stamps the attacker
-    assert.equal(v.damage.health, 25); // raw pre-mitigation damage passes through
+    assert.equal(v.spellId, TEST_SPELL);
     assert.equal(v.target.playerId, vicId);
     await fence(atk, atk, far);
-    assert.equal(atk.inbox.events.filter((e) => e.name === 'CombatHit').length, 0); // no echo
-    assert.equal(far.inbox.events.filter((e) => e.name === 'CombatHit').length, 0); // no bystander
+    assert.equal(atk.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0); // no echo
+    assert.equal(far.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0); // no bystander
   });
 
   await t.test('actor target reaches the authority holder only', async () => {
     // A player attacks an actor; only the cell's holder — the sim peer — gets it. Both
     // combatants are non-holders now, which is the only shape that exists.
-    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }));
-    const got = await peer.waitEvent('CombatHit');
+    vic.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }, vicId));
+    const got = await peer.waitEvent('CombatSpellHit');
     assert.equal((got.value as { attackerId: number }).attackerId, vicId);
     await fence(vic, vic, far);
-    assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
-    assert.equal(far.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
+    assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0);
+    assert.equal(far.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0);
   });
 
   await t.test('stale epoch and dormant cell are dropped', async () => {
-    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch: epoch + 99 }));
-    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: 'nobody-here', epoch: 1 }));
+    peer.inbox.events.length = 0;
+    vic.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,0', epoch: epoch + 99 }, vicId));
+    vic.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: 'nobody-here', epoch: 1 }, vicId));
     await fence(vic, peer);
-    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
+    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0);
   });
 
   await t.test('non-holder may omit epoch; proximity is the presence proof', async () => {
     // The common case: a non-holder attacks an NPC in a cell someone else simulates.
     // It has no Grant, so it quotes no epoch — the hit must still reach the holder.
-    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0' }));
-    const got = await peer.waitEvent('CombatHit');
+    vic.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,0' }, vicId));
+    const got = await peer.waitEvent('CombatSpellHit');
     assert.equal((got.value as { attackerId: number }).attackerId, vicId);
     // But a distant player cannot reach into the cell, epoch or not.
-    far.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0' }));
-    far.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }));
+    peer.inbox.events.length = 0;
+    far.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,0' }, 0));
+    far.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }, 0));
     await fence(far, peer);
-    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
+    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0);
   });
 
   await t.test('ActorAuthorityInfo carries the live epoch', async () => {
@@ -170,8 +202,10 @@ test('combat routing with pvp enabled', async (t) => {
     late.sendCellChange('0,0', 0, 0, 0);
     const info = await late.waitEvent('ActorAuthorityInfo');
     assert.deepEqual(info.value, { cellKey: '0,0', holderId: peer.playerId, epoch });
-    late.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch: (info.value as { epoch: number }).epoch }));
-    await peer.waitEvent('CombatHit');
+    await learn(late);
+    peer.inbox.events.length = 0;
+    late.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,0', epoch: (info.value as { epoch: number }).epoch }, late.playerId!));
+    await peer.waitEvent('CombatSpellHit');
     late.close();
     await late.closed;
   });
@@ -191,9 +225,10 @@ test('combat routing with pvp enabled', async (t) => {
     atk.sendEvent('CombatHit', { ...hitBody({ playerId: vicId }), weaponId: 'x'.repeat(65) });
     await fence(atk, vic);
     assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
-    // A valid one still lands afterwards (the session survives bad frames).
-    atk.sendEvent('CombatHit', hitBody({ playerId: vicId }, 1000)); // exactly at cap
-    assert.equal(((await vic.waitEvent('CombatHit')).value as { damage: { health: number } }).damage.health, 1000);
+    // A valid one still lands afterwards (the session survives bad frames). #362: a cast --
+    // melee into a held cell is refused whatever its shape.
+    atk.sendEvent('CombatSpellHit', spellBody({ playerId: vicId }, atkId, 1000)); // exactly at cap
+    assert.equal(((await vic.waitEvent('CombatSpellHit')).value as { effects: { magnitude: number }[] }).effects[0]!.magnitude, 1000);
   });
 
   await t.test('CombatSpellHit routes like CombatHit and caps effect magnitudes', async () => {
@@ -280,9 +315,9 @@ test('combat routing with pvp enabled', async (t) => {
     // '0,1' is adjacent to the attacker (so it passes proximity) and unheld.
     vic.inbox.events.length = 0;
     peer.inbox.events.length = 0;
-    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,1' }));
+    vic.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,1' }, vicId));
     await fence(vic, peer);
-    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatHit').length, 0,
+    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0,
       'nothing to deliver to yet: the cell has no holder');
     assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatRefused').length, 0,
       'a parked swing must not be reported as refused — it has not failed yet');
@@ -290,10 +325,10 @@ test('combat routing with pvp enabled', async (t) => {
     // The peer takes the cell. The parked swing must now land, with every ordinary guard still
     // applied to the delivery.
     peer.sendCellChange('0,1', 0, 0, 0);
-    const landed = await peer.waitEvent('CombatHit');
+    const landed = await peer.waitEvent('CombatSpellHit');
     assert.equal((landed.value as { attackerId: number }).attackerId, vicId,
       'the delivered hit lost its attacker');
-    assert.equal((landed.value as { damage: { health: number } }).damage.health, 25,
+    assert.equal((landed.value as { effects: { magnitude: number }[] }).effects[0]!.magnitude, 15,
       'the delivered hit lost its damage');
   });
 
@@ -303,7 +338,7 @@ test('combat routing with pvp enabled', async (t) => {
     vic.inbox.events.length = 0;
     // '0,1', because the test above moved the peer there — a stale epoch only means anything
     // for a cell that HAS a holder; without one the swing would be parked, not refused.
-    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,1', epoch: epoch + 99 }));
+    vic.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,1', epoch: epoch + 99 }, vicId));
     const stale = await vic.waitEvent('CombatRefused');
     assert.equal((stale.value as { reason: string }).reason, 'stale epoch');
 
@@ -345,9 +380,9 @@ test('pvp gate blocks player targets but not actor targets', async (t) => {
   });
 
   await t.test('actor-targeted hit still routes to the holder', async () => {
-    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }));
-    const got = await peer.waitEvent('CombatHit');
-    assert.equal((got.value as { damage: { health: number } }).damage.health, 25);
+    vic.sendEvent('CombatSpellHit', spellBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }, vicId)); // #362: a cast, not melee
+    const got = await peer.waitEvent('CombatSpellHit');
+    assert.equal((got.value as { effects: { magnitude: number }[] }).effects[0]!.magnitude, 15);
   });
 
   await t.test('Welcome flags report pvp=false', () => {

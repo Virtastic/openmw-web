@@ -149,6 +149,13 @@ test('actor authority and relay end to end', async (t) => {
       await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === tag);
     };
     a.inbox.events.length = 0;
+    // #363: recruiting is a conversation -- without this NPC's dialogue lock the claim is dropped.
+    b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: bId });
+    await fence('claimfence0');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0,
+      'a follow claim with no conversation behind it was relayed (#363)');
+    b.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: true });
+    await b.waitEvent('DialogueLockResult');
     b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: bId });
     const claim = await a.waitEvent('ActorAI');
     assert.equal((claim.value as { follow?: number }).follow, bId, 'the holder is told who the actor follows');
@@ -494,6 +501,8 @@ test('a follow claim is re-issued to the holder for the character\'s new session
   await first.waitEvent('PlayerList');
   first.sendCellChange('0,0', 0, 0, 0);
   await first.waitEvent('PlayerCellChange');
+  first.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: true }); // #363: a recruit is a conversation
+  await first.waitEvent('DialogueLockResult');
   first.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: firstId });
   assert.equal(((await peer.waitEvent('ActorAI')).value as { follow: number }).follow, firstId, 'the holder hears the recruit');
   first.ws.close();
@@ -524,6 +533,8 @@ test('a follow claim survives a world restart', async (t) => {
   await first.waitEvent('PlayerList');
   first.sendCellChange('0,0', 0, 0, 0);
   await first.waitEvent('PlayerCellChange');
+  first.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: true }); // #363: a recruit is a conversation
+  await first.waitEvent('DialogueLockResult');
   first.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: firstId });
   await peer.waitEvent('ActorAI');
   first.close();

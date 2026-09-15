@@ -74,6 +74,10 @@ function harness(opts: { owner?: string; shareJournal?: boolean; worldGlobals?: 
 
 const entry = (questId: string, index: number) =>
   new Map<string, unknown>([['questId', questId], ['index', index]]) as never;
+// #366: a GUEST's journal/global write persists only out of a conversation -- a dialogue lock
+// held (or released within 10 s). The tests below model the guest talking to an NPC first.
+const talk = (w: ReturnType<typeof harness>, p: Player) =>
+  w.quests.handleEvent(p, 'DialogueLock', new Map<string, unknown>([['net', 7], ['cellKey', '0,0'], ['want', true]]) as never);
 
 test("a guest's deed advances the OWNER's log and never their own", async () => {
   const w = harness({ owner: 'alice' });
@@ -81,6 +85,10 @@ test("a guest's deed advances the OWNER's log and never their own", async () => 
   const bob = w.add('bob'); // a guest in alice's world
   w.setJournal('bob', 'MQ', 10); // bob's own campaign, mid-quest
 
+  w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 20)); // #366: no conversation -> relayed, not persisted
+  assert.equal(w.journalOf('alice').MQ, undefined, "a guest's bare write must not land in the owner's campaign (#366)");
+  assert.equal(w.events('alice', 'JournalEntry').length, 1, 'but it is relayed live');
+  talk(w, bob);
   w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 20));
 
   assert.equal(w.journalOf('alice').MQ, 20, "the owner's campaign advanced");
@@ -150,6 +158,7 @@ test('a lagging guest cannot rewind the owner\'s campaign', async () => {
   const w = harness({ owner: 'alice' });
   w.add('alice');
   const bob = w.add('bob');
+  talk(w, bob); // #366
   w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 40));
   w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 20)); // stale client
   assert.equal(w.sharedJournal().MQ, 40, 'monotonic-max still guards the instance log');
@@ -168,6 +177,7 @@ test('a guest\'s quest GLOBALS follow the journal, not their own character', asy
   const w = harness({ owner: 'alice' });
   w.add('alice');
   const bob = w.add('bob');
+  talk(w, bob); // #366
 
   w.quests.handleEvent(bob, 'GlobalVarUpdate', gvar('FreedSlavesCounter', 7));
 
