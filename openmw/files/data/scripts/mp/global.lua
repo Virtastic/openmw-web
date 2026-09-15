@@ -2446,6 +2446,16 @@ local eventHandlers = {
 
     -- Pick up a net-tracked object through the REAL activation pipeline (activateBy ->
     -- native pickup + our onActivate hook relays the ObjectDelete).
+    mpSetItemCondition = function(data)
+        local player = playerScript()
+        if not player then return end
+        for _, item in ipairs(types.Actor.inventory(player):getAll()) do
+            if item.recordId == data.id then
+                pcall(function() item.itemData.condition = data.condition end)
+                return
+            end
+        end
+    end,
     mpTakeNet = function(data)
         local player = playerScript()
         local obj = data.netId and objects.objOfNet(data.netId)
@@ -2995,12 +3005,17 @@ local eventHandlers = {
         mp.sendEvent('PlayerInventory', { items = items, itemStates = states })
         if pending then toPlayer('MP_ForgetDeclared', { kind = 'PlayerInventory' }) end
     end,
+    -- Same pending rule as the inventory: a just-made item on the hand maps to itself this
+    -- tick; the declaration goes out and is forgotten so the next tick says it by net id.
     mpEquipmentOut = function(data)
-        local slots = {}
+        local slots, pending = {}, false
         for slot, recordId in pairs(data.slots or {}) do
-            slots[slot] = worldmp.toNet(recordId)
+            local net = worldmp.toNet(recordId)
+            if net == recordId and worldmp.isDynamicId and worldmp.isDynamicId(recordId) then pending = true end
+            slots[slot] = net
         end
         mp.sendEvent('PlayerEquipment', { slots = slots })
+        if pending then toPlayer('MP_ForgetDeclared', { kind = 'PlayerEquipment' }) end
     end,
     -- Spellbook out, mapped — the sibling of mpEquipmentOut, and for the same reason: the
     -- custom-record registry is global-only, so a player-script send would put a raw local

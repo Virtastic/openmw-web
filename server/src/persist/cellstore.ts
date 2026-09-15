@@ -42,6 +42,8 @@ export interface PlacedObject {
   rotZ: number;
   count: number;
   byId: number; // transient playerId of the spawner; informational in restored state
+  // The dropped item's own state (wear, charge, soul), so a pickup is not a pristine copy.
+  state?: { condition?: number; charge?: number; soul?: string };
 }
 
 export type ContainerItems = { id: string; n: number }[];

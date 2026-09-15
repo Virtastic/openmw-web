@@ -1733,7 +1733,13 @@ export class Connection implements Peer {
     this.ctx.sessions.add(sessionToken, accountKey, account.name);
     // playerRecord: only a doc with an appearance skips chargen — a position-only doc
     // (player quit mid-chargen after a cell change) must not.
-    const record = doc && (doc.appearance || forceRecord) ? doc : null;
+    // THE BOUNTY THIS WORLD HOLDS THEM TO, not the doc's. A guest's own doc carries their home
+    // campaign's number; the peer's guards read the world's (seedBounty: the host's record, or
+    // the party's shared one). The client restored the doc's, so a guest wanted at home was
+    // offered pay-or-jail by every guard here while the peer's guards ignored them -- and a
+    // guest who was clean at home walked past guards the peer had hunting them.
+    this.ctx.quests.seedBounty(this.player);
+    const record = doc && (doc.appearance || forceRecord) ? { ...doc, bounty: this.player.bounty ?? 0 } : null;
     // serverSeq = binary seq already consumed for this connection (0: none yet).
     this.sendText(
       welcome(this.player.id, sessionToken, this.ctx.motd(), this.outSeq, record, {
@@ -1778,10 +1784,13 @@ export class Connection implements Peer {
     // kind of message, it is the same messages, earlier.
     this.ctx.replayChat?.(this.player);
     this.ctx.world.sendKillCounts(this.player);
+    // RECORDS BEFORE THE EQUIPMENT THAT NAMES THEM. A player-made ring on someone's hand
+    // arrived as a net id the joiner could not resolve yet (RecordsSync came four lines
+    // later) and the puppet was dressed once, with a placeholder, and never again.
+    this.ctx.m7.onJoinWorld(this.player); // M7 clock + weather + RecordsSync at join
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.quests.sendGlobalSync(this.player); // Phase 4 character-shadowed quest globals
-    this.ctx.m7.onJoinWorld(this.player); // M7 clock + weather + RecordsSync at join
     this.ctx.social.onJoin(this.player); // Phase C FriendList + presence to friends
     // M8 resume completeness: a rejoin-in-place gets everything a fresh join gets
     // (PlayerList, M2 appearance/equipment/stats, JournalSync, WorldTime, weather,

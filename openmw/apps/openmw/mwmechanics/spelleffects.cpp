@@ -1315,6 +1315,34 @@ namespace MWMechanics
             return { MagicApplicationResult::Type::REMOVED, receivedMagicDamage, affectedHealth };
         }
         const auto* magicEffect = world->getStore().get<ESM::MagicEffect>().find(effect.mEffectId);
+#ifdef __EMSCRIPTEN__
+        // MULTIPLAYER, THE WHOLE SEAM. A puppet is somebody else's body: the peer's NPC or
+        // another player's avatar. Two branches below (Damage H/M/F, Restore H/M/F) already
+        // declined to touch the local copy and parked the effect for scripts/mp to forward to
+        // its owner -- and every OTHER effect was applied to the local copy alone: a Calm
+        // that soothed nobody, a Soultrap the peer (where the creature dies) never heard of,
+        // a Paralyze that froze a statue. Forward ONCE per effect instance, on its first
+        // tick -- the owner applies the spell record whole, with its own durations -- and
+        // let the local copy tick down untouched. (The two per-tick branches below are now
+        // unreachable for puppets; they stay as the desktop path's shape.)
+        if (!(effect.mFlags & ESM::ActiveEffect::Flag_Remove) && target.getClass().isActor()
+            && MWMP::isPuppet(target.getCellRef().getRefNum()))
+        {
+            if (!(effect.mFlags & ESM::ActiveEffect::Flag_Applied))
+            {
+                MWMP::MagicHit hit{ target.getCellRef().getRefNum(),
+                    caster.isEmpty() ? ESM::RefNum{} : caster.getCellRef().getRefNum(),
+                    effect.mEffectId.serializeText(), spellParams.getSourceSpellId().serializeText(),
+                    roll(effect), 0 };
+                // The engine's own word on it: a heal, a fortify, a cure crosses the PvP veto.
+                hit.mBeneficial = !(magicEffect->mData.mFlags & ESM::MagicEffect::Harmful);
+                MWMP::recordMagicHit(hit);
+                effect.mFlags |= ESM::ActiveEffect::Flag_Applied;
+            }
+            effect.mTimeLeft -= dt;
+            return { MagicApplicationResult::Type::APPLIED, receivedMagicDamage, affectedHealth };
+        }
+#endif
         if (effect.mFlags & ESM::ActiveEffect::Flag_Applied)
         {
             if (magicEffect->mData.mFlags & ESM::MagicEffect::Flags::AppliedOnce)

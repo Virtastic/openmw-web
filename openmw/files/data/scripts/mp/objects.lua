@@ -584,6 +584,33 @@ end
 -- to being PLACED by a script or tool. The server can only apply "you cannot drop what you
 -- do not have" to the former — ObjectSpawnRequest is the generic place-an-object op, and
 -- refusing everything unowned wrongly blocked scripted containers nobody carries.
+-- THE ITEM'S OWN STATE, for a drop: wear, charge, the soul in a gem. A placement carried the
+-- record and the count only, so a friend picked up a pristine, fully charged copy of what
+-- was dropped -- a half-charged ring dropped and picked up was a free recharge. Same shape
+-- as identity.lua itemState; applied on every other client in MP_ObjectPlace.
+local function itemStateOf(obj)
+    local ok, d = pcall(function() return obj.itemData end)
+    if not ok or d == nil then return nil end
+    local st, any = {}, false
+    local okc, c = pcall(function() return d.condition end)
+    if okc and type(c) == 'number' then st.condition = c; any = true end
+    local oke, e = pcall(function() return d.enchantmentCharge end)
+    if oke and type(e) == 'number' then st.charge = e; any = true end
+    local oks, sl = pcall(function() return d.soul end)
+    if oks and type(sl) == 'string' and sl ~= '' then st.soul = sl; any = true end
+    return any and st or nil
+end
+local function applyItemState(obj, st)
+    if type(st) ~= 'table' then return end
+    pcall(function()
+        local d = obj.itemData
+        if not d then return end
+        if type(st.condition) == 'number' then d.condition = st.condition end
+        if type(st.charge) == 'number' then d.enchantmentCharge = st.charge end
+        if type(st.soul) == 'string' and st.soul ~= '' then d.soul = st.soul end
+    end)
+end
+
 function objects.requestSpawn(obj, posOverride, cellKeyOverride, fromInventory, actor)
     tempCounter = tempCounter + 1
     pendingSpawns[tempCounter] = obj
@@ -592,6 +619,7 @@ function objects.requestSpawn(obj, posOverride, cellKeyOverride, fromInventory, 
     if not okYaw or rotZ ~= rotZ then rotZ = 0 end -- NaN pre-placement
     mp.sendEvent('ObjectSpawnRequest', {
         tempId = tempCounter,
+        state = (not actor) and itemStateOf(obj) or nil,
         -- M7: a client-minted record id is meaningless (and dangerous) on a peer — send the
         -- server's recordNetId when this record has one. Content ids pass through.
         recordId = worldmp.toNet(obj.recordId),
@@ -696,6 +724,7 @@ handlers.MP_ObjectPlace = function(data)
     local cellArg = (player and player.cell and not player.cell.isExterior) and player.cell.name or ''
     obj:teleport(cellArg, util.vector3(data.x, data.y, data.z),
         { rotation = util.transform.rotateZ(data.rotZ or 0) })
+    if ok then applyItemState(obj, data.state) end -- the dropper's wear/charge/soul, not a fresh copy's
     netToObj[data.netId] = obj
     objIdToNet[obj.id] = data.netId
     netSpawned[obj.id] = true

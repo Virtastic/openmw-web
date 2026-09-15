@@ -56,3 +56,45 @@ test('standing earned in your own world is recorded and sent back on the next jo
   assert.equal(record?.['bounty'], 250);
 });
 
+
+// A GUEST'S BOUNTY IS THE WORLD'S, NOT THEIR OWN DOC'S. The peer's guards read the world's
+// number (the host's record when crime is personal); the client restored the doc's. A guest
+// wanted at home was offered pay-or-jail by every guard in the host's world while the peer's
+// guards ignored them. Crime is SHARED by default (one record for the party), so the guest's
+// own crime here is the party's: it lands on the host's campaign and every avatar is wanted.
+test("a guest's welcome carries the host world's bounty; their crime is the party's", async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  // The guest has a record at home: wanted for 500.
+  const home = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: dataDir, port: 0, host: '127.0.0.1', worldMode: 'private', worldOwner: 'guest', worldId: 'priv-guest', configOverride: { login: { allowHarnessAuth: true } } as never });
+  const g0 = await TestClient.connect(home.port);
+  await g0.joinAsNew('Guest', 'hunter22');
+  await g0.waitEvent('PlayerList');
+  g0.sendEvent('PlayerAppearance', { race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'nightblade', name: 'Guest' });
+  g0.sendEvent('ChargenComplete', {});
+  g0.sendEvent('CrimeUpdate', { bounty: 500 });
+  g0.close(); await g0.closed; await home.flush(); await home.close();
+
+  const world = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: dataDir, port: 0, host: '127.0.0.1', worldMode: 'party', worldOwner: 'host', worldId: 'priv-host', configOverride: { login: { allowHarnessAuth: true } } as never });
+  t.after(() => world.close());
+  const host = await TestClient.connect(world.port);
+  t.after(() => host.close());
+  const hw = await host.joinAsNew('Host', 'hunter22');
+  const hostChar = String(hw.welcome['characterId']);
+  await host.waitEvent('PlayerList');
+  host.sendEvent('PlayerAppearance', { race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'nightblade', name: 'Host' });
+  host.sendEvent('ChargenComplete', {});
+  const guest = await TestClient.connect(world.port);
+  t.after(() => guest.close());
+  const gw = await guest.joinExisting('Guest', 'hunter22');
+  const record = gw['playerRecord'] as Record<string, unknown> | null;
+  assert.ok(record, 'the guest has a record');
+  assert.equal(record?.['bounty'], 0, "the guest's welcome carries the host world's bounty (clean), not their own 500");
+  await guest.waitEvent('PlayerList');
+  guest.sendEvent('CrimeUpdate', { bounty: 300 });
+  const seen = (await host.waitEvent('CrimeUpdate', (v) => (v as { shared?: boolean }).shared === true)).value as { bounty: number };
+  assert.equal(seen.bounty, 300, 'shared crime: the host is wanted for it too');
+  await world.flush();
+  assert.equal(readPlayerDoc(dataDir, hostChar)?.['bounty'], 300, "shared crime is the campaign's record");
+});

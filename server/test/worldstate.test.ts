@@ -237,3 +237,38 @@ test('world objects and containers end to end', async (t) => {
   });
 });
 
+
+// A DROP IS THE ITEM, NOT ITS RECORD. A placement carried the record and the count, so a friend
+// picked up a pristine, fully charged copy of what was dropped -- a half-charged ring dropped
+// and picked up was a free recharge. The dropped item's own state (wear, charge, soul) rides
+// the request, the relay and the cell record; garbage in it is dropped, not the placement.
+test("a dropped item's wear, charge and soul reach the other client and the cell record", async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Dropper');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  await a.waitEvent('PlayerCellChange');
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Friend');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('0,0', 0, 0, 0);
+  await b.waitEvent('PlayerCellChange');
+  a.sendEvent('ObjectSpawnRequest', {
+    tempId: 1, recordId: 'ring_of_fire', cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0, count: 1,
+    state: { condition: 12, charge: 3.5, soul: 'scamp', junk: 'x' },
+  });
+  const seen = (await b.waitEvent('ObjectPlace')).value as { state?: Record<string, unknown> };
+  assert.deepEqual(seen.state, { condition: 12, charge: 3.5, soul: 'scamp' }, 'the state reaches the other client');
+  b.inbox.events.length = 0;
+  b.sendEvent('ResyncRequest', { cellKey: '0,0' });
+  const state = (await b.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { placed: { state?: unknown }[] };
+  assert.deepEqual(state.placed[0]?.state, { condition: 12, charge: 3.5, soul: 'scamp' }, 'and the cell record keeps it for a late joiner');
+  // Garbage state is dropped; the placement itself is not.
+  a.sendEvent('ObjectSpawnRequest', { tempId: 2, recordId: 'gold_001', cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0, count: 5, state: { condition: -5, soul: 7 } });
+  const plain = (await b.waitEvent('ObjectPlace', (v) => (v as { recordId: string }).recordId === 'gold_001')).value as { state?: unknown };
+  assert.equal(plain.state, undefined);
+});

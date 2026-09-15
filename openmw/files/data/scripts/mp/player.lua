@@ -843,6 +843,24 @@ local function dispatch(cmd)
         -- M3 test hooks (world objects; all resolved in the GLOBAL script).
         local dropId = cmd:match('^drop:(.+)$')
         if dropId then core.sendGlobalEvent('mpDropItem', { id = dropId }) end
+        -- setcond:<id>:<n> / itemstate:<id>: an item's own state (wear, charge, soul) -- what a
+        -- drop must carry (s160). itemData is writable from the global script only.
+        local condId, condN = cmd:match('^setcond:(.+):([%d.]+)$')
+        if condId then core.sendGlobalEvent('mpSetItemCondition', { id = condId, condition = tonumber(condN) }) end
+        local stateId = cmd:match('^itemstate:(.+)$')
+        if stateId then
+            local out = 'none'
+            pcall(function()
+                for _, item in ipairs(types.Actor.inventory(self):getAll()) do
+                    if item.recordId == stateId then
+                        local d = item.itemData
+                        out = string.format('%s/%s/%s', tostring(d and d.condition), tostring(d and d.enchantmentCharge), tostring(d and d.soul))
+                        break
+                    end
+                end
+            end)
+            mp.set('itemState', out)
+        end
         local takeNet = cmd:match('^takenet:(%d+)$')
         if takeNet then core.sendGlobalEvent('mpTakeNet', { netId = tonumber(takeNet) }) end
         if cmd == 'chest:spawn' then core.sendGlobalEvent('mpSpawnChest', {}) end

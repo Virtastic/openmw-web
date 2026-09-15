@@ -855,7 +855,16 @@ export class WorldState {
     // Holder-only by construction: a client's actor placement would be a body it can then
     // steer nowhere; the flag is carried so every client builds an actor, not an item.
     const netId = this.cells.allocNetId();
-    const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id, ...(actor ? { actor: true } : {}) };
+    // The item's own state rides along, bounded: a number is a number, a soul is a record id.
+    const stRaw = body.get('state'); const st = stRaw instanceof Map ? stRaw : undefined;
+    const state: { condition?: number; charge?: number; soul?: string } = {};
+    if (st) {
+      const c = finite(st.get('condition')), ch = finite(st.get('charge')), soul = str(st.get('soul'), MAX_RECORD_ID);
+      if (c !== undefined && c >= 0 && c <= 1e6) state.condition = c;
+      if (ch !== undefined && ch >= 0 && ch <= 1e6) state.charge = ch;
+      if (soul) state.soul = soul;
+    }
+    const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id, ...(actor ? { actor: true } : {}), ...(Object.keys(state).length ? { state } : {}) };
     doc.placed[netRefKey(netId)] = placed;
     this.cells.markDirty(cellKey);
     // Ack first: the requester is in the cell-scoped broadcast set, and per-connection

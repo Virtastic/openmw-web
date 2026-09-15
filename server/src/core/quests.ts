@@ -507,7 +507,11 @@ export class Quests {
     // Routed like the journal — see factionUpdate above. A bounty earned in someone else's
     // world, or in the shared one, belongs to that world's campaign, not to the visitor.
     const crimeTarget = this.ctx.journalTarget(player);
-    if (crimeTarget !== undefined) {
+    // A GUEST'S PERSONAL BOUNTY IS NOT THE HOST'S. With crime personal, the guest's absolute
+    // level used to be written over the host's doc (last-writer-wins), and the host inherited
+    // the guest's record on relog. Personal means the visitor's number stays the visitor's:
+    // held live for the peer's guards, persisted nowhere (they keep loot, not standing).
+    if (crimeTarget !== undefined && (this.ctx.isShared('crime') || crimeTarget === player.charId)) {
       this.ctx.players.update(crimeTarget, (doc) => (doc.bounty = bounty));
     } else {
       log('info', 'quest.standing_not_persisted', { player: player.name, bounty });
