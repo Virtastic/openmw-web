@@ -202,5 +202,10 @@ export async function deleteAccount(dataDir: string, name: string): Promise<Eras
   // honest trade and it is documented: a ban cannot outlive the data it names.
   report.bans = withDb(join(dataDir, 'bans.db'), false, (db) =>
     Number(db.prepare("DELETE FROM bans WHERE scope = 'account' AND key = ?").run(key).changes) > 0);
+  // THE CREDENTIALS TOO. A 24 h locker Bearer and any unspent login ticket outlived the account,
+  // and a re-registered same name yields the same key -- so the old device's session resolved
+  // to the NEW person's account. Both tables live in the shared dir (identities.ts).
+  withDb(join(dataDir, 'locker-sessions.db'), 0, (db) => Number(db.prepare('DELETE FROM locker_sessions WHERE accountKey = ?').run(key).changes));
+  withDb(join(dataDir, 'tickets.db'), 0, (db) => Number(db.prepare('DELETE FROM tickets WHERE accountKey = ?').run(key).changes));
   return report;
 }

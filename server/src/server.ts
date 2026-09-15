@@ -1731,6 +1731,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // caller at all — only a test — so the rows accumulated forever.
       socialStore.sweepExpired(Date.now());
       socialStore.prunePresence(Date.now());
+      // A BAN REACHES EVERY WORLD. /ban in world A wrote the shared bans.db and kicked the
+      // roster of A; a guest sitting in world B played on until they next disconnected.
+      // Every world checks its own roster against the shared list on this same beat.
+      for (const p of roster.inWorld()) {
+        if (p.system || p.bot) continue;
+        if (bans.isAccountBanned(p.accountKey)) {
+          log('info', 'ban.reached_world', { account: p.accountKey, name: p.name });
+          p.peer.disconnect('BANNED', 'this account is banned');
+        }
+      }
     } catch (err) {
       log('warn', 'presence.tick_failed', { error: String(err) });
     }

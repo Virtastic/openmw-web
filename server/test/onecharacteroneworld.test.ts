@@ -38,3 +38,21 @@ test('opening the character in a second world drops the session in the first', a
   inB.sendEvent('ChatSend', { text: 'still here' });
   await inB.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'still here');
 });
+
+// A BAN REACHES EVERY WORLD. /ban in world A wrote the shared list and kicked A's roster; a
+// guest sitting in world B played on until they next disconnected. Every world checks its
+// roster against the shared list on its heartbeat.
+test('an account banned in one world is dropped from another within a heartbeat', async (t) => {
+  const { BanStore } = await import('../src/persist/banstore');
+  const sharedDir = mkdtempSync(join(tmpdir(), 'omw-shared-'));
+  const opts = { requireGameData: false, port: 0, host: '127.0.0.1', sharedDir, presenceMs: 300,
+    configOverride: { login: { allowHarnessAuth: true } } as never };
+  const b = await startServer({ ...opts, dataDir: tmpDataDir(), worldId: 'world-b' });
+  t.after(() => b.close());
+  const guest = await TestClient.connect(b.port);
+  t.after(() => guest.close());
+  await guest.joinAsNew('Pest', 'hunter22');
+  await guest.waitEvent('PlayerList');
+  new BanStore(sharedDir).banAccount('pest', 'admin', 'griefing'); // what /ban in world A writes
+  await guest.waitDisconnect('BANNED');
+});
