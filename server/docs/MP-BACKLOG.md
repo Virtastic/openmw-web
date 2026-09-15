@@ -158,6 +158,15 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 137 | Puppet bow: `shoot attach` runs, `shoot release` gated on mReadyToHit: the arrow may stay glued to the hand after a shot | character.cpp:1141-1145 |
 | 138 | Revive is despawn+spawn: no get-up animation on the puppet | global.lua:2383 |
 | 139 | Feature gaps: no chat bubbles, emotes, party marker on map/compass, friend highlight beyond the crosshair name | — |
+| 140 | Paying the fine never calms the peer's guards/witnesses: recordCrimeId runs only on the owner's client; the peer only zeroes the bounty | luabindings.cpp mp.recordCrimePaid(), quests.lua:684 peer branch of MP_CrimeUpdate |
+| 141 | A guest arrives with their HOME faction ranks (welcome record from own doc) and a guest's join/promotion is written to the host's doc + shared.factions, which is never sent at join: guest relogs and the rank is gone | connection.ts:1761 send sharedQuest().factions when factions shared |
+| 142 | Persuasion result never reaches a player who enters the cell later; their next persuasion overwrites it (ActorDisposition relayed only on change, no per-actor catch-up on cell entry) | actors.lua:259 clear tracked.dispVal on MP_PlayerCellChange |
+| 143 | Another player's body is a crime witness (canReportCrime excludes only getPlayer): a friend in the room refuses your owned bed, barks "thief", reports you if the template NPC has Alarm 100 | mechanicsmanagerimp.cpp:1222 isAvatar/isPuppet guard |
+| 144 | Assault/murder of a guildmate on the peer never expels (the owner's engine never ran commitCrime) | MWMP::Crime.faction, MP_PlayerCrime expel |
+| 145 | Peer NPC aggression toward an avatar is computed against the parked dummy (race/Personality/faction of the dummy, not the player) | mechanicsmanagerimp.cpp:493 getDerivedDisposition per target; apply doc.factions to the avatar |
+| 146 | Theft/trespass victim reactions (startCombat, disposition drop) land on the thief's AI-off puppet copy; a Fight-70 NPC that would attack a thief just barks | generalises #46 |
+| 147 | Personal-crime mode (crime=false) seeds a guest with the HOST's bounty | quests.ts:250 seedBounty from own cached doc |
+| 148 | mStolenItems not persisted: after a relog stolen goods sell back to the victim and are not confiscated on arrest | needs a binding |
 
 ## Wontfix / by design
 
