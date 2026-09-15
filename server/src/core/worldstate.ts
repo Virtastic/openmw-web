@@ -710,7 +710,9 @@ export class WorldState {
         log('warn', 'actor.bad_batch', { from: player.name, error: String(err) });
         return;
       }
-      const cellKey = player.cellKey;
+      // The epoch names the cell (authority.ts cellOfEpoch): the peer streams every cell it
+      // anchors, not only the one its avatar stands in.
+      const cellKey = this.authority.cellOfEpoch(epoch) ?? player.cellKey;
       if (!cellKey || this.authority.holderOf(cellKey) !== player.id) {
         // The anti-cheat chokepoint: only the cell's holder may author its actors. Counted
         // (not just dropped) so forgery is VISIBLE — a modified client trying to move

@@ -130,3 +130,37 @@ test('entering an exterior cell yields the neighbours\' records as well', async 
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(friend.inbox.events.filter((e) => e.name === 'WorldCellState').length, 0, 'an interior has no neighbours');
 });
+
+// EPOCHS NAME CELLS. An ActorMoveBatch carries an epoch and no cell key, and the server keyed
+// every batch on the holder's OWN cell: the one peer anchors many cells while its avatar
+// stands in one, so every other cell's stream was refused as stale (frozen NPCs everywhere
+// the avatar was not). Epochs come from one counter now, so the epoch says which cell.
+test("the peer's actor batches for a far held cell reach the players standing there", async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', configOverride: { server: { password: PEER_PASS } } });
+  t.after(() => server.close());
+  const carol = await TestClient.connect(server.port);
+  t.after(() => carol.close());
+  await carol.joinAsNew('Carol');
+  carol.sendCellChange('0,0', 0, 0, 0);
+  await carol.waitEvent('PlayerCellChange');
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  bob.sendCellChange('9,9', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  const e1 = ((await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { epoch: number }).epoch;
+  peer.sendCellChange('9,9', 0, 0, 0); // Carol keeps 0,0 occupied, so the peer keeps holding it
+  const e2 = ((await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '9,9')).value as { epoch: number }).epoch;
+  assert.notEqual(e1, e2, 'epochs are unique across cells');
+
+  const entry = { ref: { index: 42, contentFile: 0 }, pose: { x: 1, y: 2, z: 3, yaw: 0, pitch: 0, flags: 0, animVel: 0, counter: 0 } };
+  peer.sendActorMoveBatch(e1, [entry]); // the cell the avatar LEFT
+  const got = await carol.waitActorBatch();
+  assert.equal(got.batch.epoch, e1, 'Carol, standing in 0,0, gets the 0,0 stream');
+  peer.sendActorMoveBatch(e2, [entry]);
+  assert.equal((await bob.waitActorBatch()).batch.epoch, e2, 'Bob gets the 9,9 stream');
+});

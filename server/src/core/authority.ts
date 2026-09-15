@@ -154,6 +154,21 @@ export class Authority {
     return c && c.holderId !== null ? c.epoch : undefined; // no live epoch while dormant
   }
 
+  // EPOCHS NAME CELLS. An ActorMoveBatch carries an epoch and no cell key, and the server
+  // keyed every batch on the holder's own cell -- the one peer anchors many cells while its
+  // avatar stands in one, so every other cell's stream was refused as a stale epoch (or, on
+  // a coincidental match, relayed to the wrong room): frozen NPCs everywhere the peer's
+  // avatar was not. Epochs are drawn from one counter, so a live epoch identifies its cell.
+  private epochCounter = 0;
+  private nextEpoch(c: { epoch: number }): number {
+    this.epochCounter = Math.max(this.epochCounter, c.epoch) + 1;
+    return this.epochCounter;
+  }
+  cellOfEpoch(epoch: number): string | undefined {
+    for (const [key, c] of this.cells) if (c.holderId !== null && c.epoch === epoch) return key;
+    return undefined;
+  }
+
   occupants(cellKey: string): number[] {
     return [...(this.cells.get(cellKey)?.order ?? [])];
   }
@@ -209,7 +224,7 @@ export class Authority {
   // where the cell has occupants and no holder.
   private handTo(c: Cell, cellKey: string, next: number, kind: string): void {
     c.holderId = next;
-    c.epoch += 1;
+    c.epoch = this.nextEpoch(c);
     c.grantedAt = this.now();
     c.lastActorFrame = 0;
     metrics.cellAuthority.inc({ kind });
@@ -246,7 +261,7 @@ export class Authority {
       // already stale. Reachable only when there is no cached snapshot — a fresh or
       // just-restarted server, i.e. exactly when a crowd arrives at once.
       c.holderId = playerId;
-      c.epoch += 1;
+      c.epoch = this.nextEpoch(c);
       c.grantedAt = this.now();
       c.lastActorFrame = 0;
       const snapshot = c.lastSnapshot ?? (await this.loadOr(cellKey));
