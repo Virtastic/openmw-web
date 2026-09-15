@@ -193,3 +193,23 @@ test('a mod file revalidates by ETag; retail stays immutable; ranges survive', a
     assert.equal(await stale.text(), 'plugin-v2!!');
   } finally { await s.stop(); }
 });
+
+// Backlog 306: the browser's persistent chunk cache keyed pathname@size, so a re-installed mod
+// file of the same size served the old bytes. The manifest now carries each file's mtime.
+test('mwdata-mods.json files carry an mtime for the chunk-cache key', async () => {
+  const dir = fixture();
+  mkdirSync(join(dir, 'mods', 'tr'), { recursive: true });
+  writeFileSync(join(dir, 'mods', 'tr', 'TR.esm'), 'abc');
+  const doc = { version: 2 as const, entries: [], mods: [{
+    slug: 'tr', name: 'TR', archive: 'tr.zip', source: '', installedAt: '', enabled: true,
+    plugins: [{ file: 'TR.esm', enabled: true }], archives: [], files: 1, bytes: 3,
+  }] };
+  const s = await serve(dir, 'serve', () => doc);
+  try {
+    const body = await (await fetch(`${s.base}/mwdata-mods.json`)).json() as { mods: { files: { p: string; s: number; m: number }[] }[] };
+    const f = body.mods[0]!.files.find((x) => x.p === 'TR.esm');
+    assert.ok(f, 'the plugin is listed');
+    assert.equal(f.s, 3);
+    assert.ok(Number.isInteger(f.m) && f.m > 0, 'an integer mtime rides along');
+  } finally { await s.stop(); }
+});

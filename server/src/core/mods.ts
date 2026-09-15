@@ -180,6 +180,8 @@ export interface ModStack {
   contentCollisions: { file: string; owners: string[] }[];
 }
 
+const OFFICIAL_MASTERS = ['morrowind.esm', 'tribunal.esm', 'bloodmoon.esm'];
+
 /** `.esm` before `.esp`, which is the order the engine expects and the client also applies. */
 export const pluginRank = (f: string): number => (/\.(esm|omwgame)$/i.test(f) ? 0 : 1);
 
@@ -244,9 +246,34 @@ export function resolveMods(doc: ModDoc): ModStack {
     }
   }
 
+  // A PLUGIN WHOSE MASTER IS NOT LOADED IS DROPPED, cascading (A needs B, B needs C, losing C
+  // takes both) -- the same last gate play/index.html applies before it emits content=. The
+  // browser cascaded and booted; the peer emitted the line and esmloader threw at startup, so
+  // the world went unsimulated with nothing naming the cause (backlog 302). Loaded = the
+  // enabled top-level files (doc.entries, the base-game order) plus the official masters
+  // unless that order has switched them off, plus the mod plugins themselves.
+  const off = new Set(doc.entries.filter((e) => !e.enabled).map((e) => e.file.toLowerCase()));
+  const have = new Set([
+    ...OFFICIAL_MASTERS.filter((m) => !off.has(m)),
+    ...doc.entries.filter((e) => e.enabled).map((e) => e.file.toLowerCase()),
+  ]);
+  let content = orderByMasters([...masters, ...plugins], declaredMasters);
+  for (const f of content) have.add(f.toLowerCase());
+  for (let dropped = true; dropped;) {
+    dropped = false;
+    content = content.filter((f) => {
+      const missing = (declaredMasters.get(f.toLowerCase()) ?? []).find((m) => !have.has(m));
+      if (missing === undefined) return true;
+      log('warn', 'mods.missing_master', { plugin: f, master: missing });
+      have.delete(f.toLowerCase());
+      dropped = true;
+      return false;
+    });
+  }
+
   return {
     dataDirs,
-    content: orderByMasters([...masters, ...plugins], declaredMasters),
+    content,
     archives,
     bsaCollisions: [...bsaSeen].filter(([, o]) => o.length > 1).map(([name, owners]) => ({ name, owners })),
     contentCollisions: [...contentSeen].filter(([, o]) => o.length > 1).map(([file, owners]) => ({ file, owners })),

@@ -53,3 +53,14 @@ export function parseRefKey(key: string): ObjRef | null {
   if (n) return { kind: 'net', netId: Number(n[1]), key };
   return null;
 }
+
+// Backlog 298: a content-file INDEX is only meaningful against one load order. `idxMap` is
+// old contentFile -> new contentFile; a file that is gone has no entry and its key is
+// dropped (null). Non-content keys ("n:<netId>") pass through untouched.
+export function remapRefKey(key: string, idxMap: Map<number, number>): string | null {
+  const c = /^c:(-?\d+):(-?\d+)$/.exec(key);
+  if (!c) return key;
+  const to = idxMap.get(Number(c[2]));
+  if (to === undefined) return null;
+  return to === Number(c[2]) ? key : contentRefKey(Number(c[1]), to);
+}

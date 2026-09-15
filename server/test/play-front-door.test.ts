@@ -162,5 +162,19 @@ test('the persistent key survives presigned-URL renewal and rejects expiring URL
   // Keyed by pathname+size, not the full URL: a locker URL is re-signed hourly and would never
   // hit twice, so query-carrying and cross-origin URLs must opt out entirely.
   assert.ok(sfs.includes("u.origin === location.origin && !u.search"), 'presigned URLs must not persist');
-  assert.ok(sfs.includes("u.pathname + '@' + size + '@' + CHUNK"), 'the key must be pathname, size, and chunk granularity');
+  // Backlog 306: the mod manifest's mtime joins the key when given, so a re-installed file of
+  // the same size does not serve the old chunks; retail (no mtime passed) keys as before.
+  assert.ok(sfs.includes("u.pathname + '@' + size + (mtime ? '@' + mtime : '') + '@' + CHUNK"),
+    'the key must be pathname, size, optional mtime, and chunk granularity');
+  assert.ok(index.includes("StreamFS.mount(dest, 'mwdata/mods/' + mod.slug + '/' + f.p, f.s, f.m)"),
+    'mod mounts pass the manifest mtime through');
+});
+
+// Backlog 300: a top-level .omwaddon/.omwgame/.omwscripts loaded on the peer (gamedata.ts
+// CONTENT_EXT) and not in the browser, so every client was refused BAD_CONTENT.
+test('buildLoadOrder accepts every content extension the peer does', clientOpts, () => {
+  const fn = /function buildLoadOrder\(rootFiles\)\{[\s\S]*?\n       \}/.exec(index);
+  assert.ok(fn, 'buildLoadOrder not found');
+  assert.match(fn[0], /\/\\\.\(esp\|omwaddon\|omwgame\|omwscripts\)\$\//);
+  assert.match(fn[0], /\/\\\.esm\$\/\.test\(lower\)\) modEsm/);
 });

@@ -2186,13 +2186,16 @@ window.omw = (function(){
          masters.forEach(function(m){ if(rootFiles.has(m) && !off[m]) content.push(rootFiles.get(m)); });
          archives.forEach(function(a){ if(rootFiles.has(a)) fbarch.push(rootFiles.get(a)); });
 
+         // The same content set and split as the peer's (gamedata.ts CONTENT_EXT: .esm first,
+         // every other plugin type after): a top-level .omwaddon/.omwgame/.omwscripts loaded
+         // there and not here, and every client was refused BAD_CONTENT (backlog 300).
          var official=new Set(masters.concat(archives)), modEsm=[], modEsp=[], modBsa=[];
          if (!/[?&]nomods=1\b/.test(location.search))
            rootFiles.forEach(function(orig, lower){
              if (official.has(lower)) return;
              if (/\.esm$/.test(lower)) modEsm.push(orig);
-             else if (/\.esp$/.test(lower)) modEsp.push(orig);
-             else if (/\.bsa$/.test(lower)) modBsa.push(orig);
+             else if (/\.(esp|omwaddon|omwgame|omwscripts)$/.test(lower)) modEsp.push(orig);
+             else if (/\.(bsa|ba2)$/.test(lower)) modBsa.push(orig);
            });
          var byName=function(a,b){ return a.toLowerCase()<b.toLowerCase()?-1:1; };
          modEsm.sort(byName); modEsp.sort(byName); modBsa.sort(byName);
@@ -2282,7 +2285,7 @@ window.omw = (function(){
                }
                var slash = dest.lastIndexOf('/');
                if (slash > root.length) { try { FS.mkdirTree(dest.slice(0, slash)); } catch(e){} }
-               StreamFS.mount(dest, 'mwdata/mods/' + mod.slug + '/' + f.p, f.s);
+               StreamFS.mount(dest, 'mwdata/mods/' + mod.slug + '/' + f.p, f.s, f.m);
                // Keyed by the name the SERVER declared, mapping to the name we actually used.
                // Keying it by the kept name meant a renamed archive was looked up under its
                // original and missed, so the second mod's .bsa was silently dropped — which is
@@ -3498,6 +3501,8 @@ window.omw = (function(){
              if (/^video\/.*\.bik$/.test(lower)) window.__mwHasVideoBik = true;
              var dir = f.p.lastIndexOf('/');
              if (dir > 0) { try { FS.mkdirTree('/mwdata/' + f.p.slice(0, dir)); } catch(e){} }
+             // No mtime in the key here: retail files are immutable (mwdata-routes.ts), and
+             // folding `m` in would throw away every player's cached base game once for nothing.
              try { StreamFS.mount('/mwdata/' + f.p, 'mwdata/' + f.p, f.s); }
              catch(e){ append('[mw] mount failed '+f.p+': '+e, 'err'); }
            });

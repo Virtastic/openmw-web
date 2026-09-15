@@ -228,3 +228,21 @@ test('strict: a server with no hashes of its own does not refuse anyone', () => 
   gate.setAuthoritative(REAL_CLIENT); // canonical carries no sha256
   assert.deepEqual(gate.check(hashed(REAL_CLIENT)), { ok: true });
 });
+
+// Backlog 299: the peer reports no hashes (no engine client can), so the authoritative list
+// takes them from the server's own files. Then 'strict' has something to refuse on.
+test('tier 2: the pinned list carries the server\'s hashes, and strict uses them', () => {
+  const gate = new ContentGate('strict');
+  gate.hashes = () => new Map([['morrowind.esm', 'aa'], ['land.esp', 'bb']]);
+  gate.setAuthoritative(REAL_CLIENT);
+  const honest = clone(REAL_CLIENT).map((e) => (e.name === 'Morrowind.esm' ? { ...e, sha256: 'aa' }
+    : e.name === 'land.esp' ? { ...e, sha256: 'bb' } : e));
+  assert.equal(gate.check(honest).ok, true);
+  const skewed = honest.map((e) => (e.name === 'land.esp' ? { ...e, sha256: 'cc' } : e));
+  const r = gate.check(skewed);
+  assert.equal(r.ok, false);
+  assert.match((r as { detail: string }).detail, /land\.esp/);
+  // Files the server could not hash (engine resources) stay unverified rather than refused.
+  const unhashedBuiltin = honest.map((e) => (e.name === 'builtin.omwscripts' ? { ...e } : e));
+  assert.equal(gate.check(unhashedBuiltin).ok, true);
+});

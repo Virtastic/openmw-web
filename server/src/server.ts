@@ -73,7 +73,7 @@ import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
 import { WorldBrowser } from './core/worldbrowser';
 import { parseExterior, isChargenCell } from './core/movement';
-import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings, type GameData } from './core/gamedata';
+import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings, hashContentFiles, type GameData } from './core/gamedata';
 
 // The version is in ./version (shared with the multiplayer server); re-exported so
 // existing importers keep working.
@@ -1275,6 +1275,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // The operator's saved load order, if the dashboard's mod manager has ever written one.
   const gameData = detectGameData(gameDataDir(sharedDir), orderedContent(gameDataDir(sharedDir), sharedDir));
   log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
+  // Backlog 299: the peer's manifest is pinned with the server's own plugin hashes, so
+  // 'strict' can tell a same-named, different-version plugin from the world's copy.
+  contentGate.hashes = () =>
+    hashContentFiles(gameData, presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)).mods);
 
   // THE SIM PEER IS NOT OPTIONAL. There is exactly one mode: the server runs its own headless
   // engine, and that engine is the only thing allowed to simulate NPCs. What used to be "tier

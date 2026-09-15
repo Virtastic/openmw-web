@@ -30,8 +30,10 @@ import type { HttpRoute } from './http';
 import { log } from '../log';
 import { MODS_SUBDIR, resolveMods, type ModDoc } from '../core/mods';
 
-/** One entry of mwdata-manifest.json: `p`ath relative to the folder, and `s`ize. */
-interface Entry { p: string; s: number }
+/** One entry of mwdata-manifest.json: `p`ath relative to the folder, `s`ize, and `m`time
+ *  (ms, integer). The browser folds `m` into its persistent chunk-cache key so a re-installed
+ *  mod file of the same size does not serve the old bytes (backlog 306). */
+interface Entry { p: string; s: number; m: number }
 
 /** Skipped wholesale: not game data, and one of them is an operator secret. */
 const SKIP_DIR = /^(\.|__pycache__$|node_modules$)/;
@@ -57,7 +59,7 @@ async function walk(root: string, dir = root, out: Entry[] = [], skip?: string):
     let st;
     try { st = await stat(full); } catch { continue; }
     if (st.isDirectory()) await walk(root, full, out, skip);
-    else if (st.isFile()) out.push({ p: relative(root, full).split(sep).join('/'), s: st.size });
+    else if (st.isFile()) out.push({ p: relative(root, full).split(sep).join('/'), s: st.size, m: Math.floor(st.mtimeMs) });
   }
   return out;
 }

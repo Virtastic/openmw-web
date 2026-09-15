@@ -22,6 +22,13 @@ export class ContentGate {
 
   constructor(private readonly mode: 'strict' | 'names' | 'off') {}
 
+  /** Backlog 299: sha256 by LOWERCASED content-file name, computed from the SERVER's own
+   *  files (gamedata.ts hashContentFiles) when the peer's manifest is pinned. The peer, like
+   *  every engine client, reports no hashes (net.lua cannot read files), so without this an
+   *  authoritative entry had nothing for 'strict' to compare a client's report against.
+   *  Read lazily, at pin time, so the suite's hundreds of servers never hash anything. */
+  hashes?: () => Map<string, string>;
+
   // NOTE: MOP + Project Atlas ship as the streamed asset-pack BSA (play/index.html
   // mountAssetPack), a fallback-archive present in BOTH single-player and multiplayer via
   // the data source — NOT as content plugins. So they never appear in this manifest
@@ -39,7 +46,11 @@ export class ContentGate {
   // live in the ENGINE's resources, not in the game data folder. Any folder scan or cfg
   // parse would omit them and refuse 100% of clients.
   setAuthoritative(entries: ManifestEntry[]): void {
-    this.canonical = entries.map((e) => ({ ...e }));
+    const hashes = this.hashes?.() ?? new Map<string, string>();
+    this.canonical = entries.map((e) => {
+      const sha256 = e.sha256 || hashes.get(ContentGate.key(e.name));
+      return { ...e, ...(sha256 ? { sha256 } : {}) };
+    });
     this.authoritative = true;
     log('info', 'content.authoritative', { files: entries.map((e) => e.name).join(',') });
   }

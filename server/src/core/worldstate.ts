@@ -275,6 +275,15 @@ export class WorldState {
   // actor fact a non-holder may state hangs off it (see actorEvent, ActorDisposition).
   dialogueHolder?: (refKey: string) => number | undefined;
 
+  /** Backlog 298: the peer's manifest just became the world's content list (connection.ts
+   *  handleHello, ContentGate.setAuthoritative). Every c:<index>:<contentFile> key in the cell
+   *  docs is an index into THAT list, so a list that differs from the one the docs were
+   *  written under is remapped by file name before any event touches a cell. */
+  adoptContentList(manifest: { name: string; idx: number }[]): void {
+    const names = [...manifest].sort((a, b) => a.idx - b.idx).map((e) => e.name);
+    this.cells.setContentList(names);
+  }
+
   constructor(
     private readonly roster: Roster,
     private readonly cells: CellStore,

@@ -181,3 +181,84 @@ test('a SCHEDULED cell reset fires on its own and restocks, without kicking anyo
 
   a.close();
 });
+
+// Backlog 298: every c:<index>:<contentFile> key is an index into the content list the doc
+// was written under. Change the list (Tribunal off, a mod inserted) and the same numbers
+// name different objects -- silently. The stamp + remap keeps the keys pointing at the
+// FILE they were written for.
+const K = (i: number, cf: number): string => `c:${i}:${cf}`;
+function seedDoc(): import('../src/persist/cellstore').CellDoc {
+  return {
+    placed: { 'n:1': { netId: 1, recordId: 'x', cellKey: 'c', x: 0, y: 0, z: 0, rotZ: 0, count: 1, byId: 0 } },
+    deleted: [K(1, 0), K(2, 1), K(3, 2)],
+    moved: { [K(4, 2)]: { x: 1, y: 2, z: 3, rotZ: 0 } },
+    locks: { [K(5, 1)]: 10 },
+    doors: { [K(6, 0)]: true },
+    containers: { [K(7, 2)]: { items: [], stateSeq: 1 } },
+    actorDeaths: { [K(8, 1)]: { deathNo: 1, atH: 0 } },
+    memberVars: { [K(9, 2)]: { v: 1 } },
+    enabled: { [K(10, 1)]: false },
+    follows: { [K(11, 2)]: { charId: 'c1' } },
+    actorOverrides: { actors: [] },
+  };
+}
+
+test('content remap: a removed file drops its keys, later files renumber (Tribunal off)', async () => {
+  const dir = tmpDataDir();
+  const seed = new CellStore(dir);
+  await seed.ready();
+  assert.equal(seed.setContentList(['Morrowind.esm', 'Tribunal.esm', 'TR.esm']), null, 'legacy/first stamp');
+  Object.assign(await seed.get('cellA'), seedDoc());
+  seed.markDirty('cellA');
+  await seed.close();
+
+  const store = new CellStore(dir);
+  await store.ready();
+  assert.deepEqual(store.contentList(), ['Morrowind.esm', 'Tribunal.esm', 'TR.esm']);
+  const r = store.setContentList(['Morrowind.esm', 'TR.esm']);
+  const doc = await store.get('cellA');
+  // Tribunal (index 1) gone: every key on it dropped. TR (2 -> 1) renumbered. Morrowind stays.
+  assert.deepEqual(doc.deleted, [K(1, 0), K(3, 1)]);
+  assert.deepEqual(Object.keys(doc.moved), [K(4, 1)]);
+  assert.deepEqual(doc.locks, {});
+  assert.deepEqual(Object.keys(doc.doors), [K(6, 0)]);
+  assert.deepEqual(Object.keys(doc.containers), [K(7, 1)]);
+  assert.deepEqual(doc.actorDeaths, {});
+  assert.deepEqual(Object.keys(doc.memberVars ?? {}), [K(9, 1)]);
+  assert.deepEqual(doc.enabled, {});
+  assert.deepEqual(Object.keys(doc.follows ?? {}), [K(11, 1)]);
+  assert.equal(doc.actorOverrides, undefined, 'the dormant actor snapshot is not walked, it is dropped');
+  assert.ok('n:1' in doc.placed, 'net refs are untouched');
+  // TR keys: deleted, moved, containers, memberVars, follows = 5 changed. Tribunal keys:
+  // deleted, locks, actorDeaths, enabled = 4, plus the actorOverrides blob = 5 dropped.
+  assert.deepEqual(r, { changed: 5, dropped: 5 });
+  await store.close();
+
+  // The remap is on disk and the new list is stamped: a third boot under the same list is a no-op.
+  const again = new CellStore(dir);
+  await again.ready();
+  assert.deepEqual(again.contentList(), ['Morrowind.esm', 'TR.esm']);
+  assert.equal(again.setContentList(['morrowind.esm', 'tr.esm']), null, 'same list, any case');
+  assert.deepEqual((await again.get('cellA')).deleted, [K(1, 0), K(3, 1)]);
+  await again.close();
+});
+
+test('content remap: an inserted file shifts every later index', async () => {
+  const dir = tmpDataDir();
+  const seed = new CellStore(dir);
+  await seed.ready();
+  seed.setContentList(['Morrowind.esm', 'Tribunal.esm', 'TR.esm']);
+  Object.assign(await seed.get('cellB'), seedDoc());
+  seed.markDirty('cellB');
+  await seed.close();
+
+  const store = new CellStore(dir);
+  await store.ready();
+  store.setContentList(['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm', 'TR.esm']);
+  const doc = await store.get('cellB');
+  assert.deepEqual(doc.deleted, [K(1, 0), K(2, 1), K(3, 3)]);
+  assert.deepEqual(Object.keys(doc.moved), [K(4, 3)]);
+  assert.deepEqual(Object.keys(doc.locks), [K(5, 1)], 'an index before the insertion is unchanged');
+  assert.deepEqual(Object.keys(doc.containers), [K(7, 3)]);
+  await store.close();
+});

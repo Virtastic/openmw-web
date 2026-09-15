@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { detectGameData, buildPeerCfg, buildPeerSettings, gameDataDir } from '../src/core/gamedata';
+import { createHash } from 'node:crypto';
+import { detectGameData, buildPeerCfg, buildPeerSettings, gameDataDir, hashContentFiles } from '../src/core/gamedata';
 
 function dirWith(files: string[]): string {
   const d = mkdtempSync(join(tmpdir(), 'omw-gd-'));
@@ -256,4 +257,28 @@ test('but an ENABLED expansion still requires its archive', () => {
 
 test('the peer settings put physics on its own thread (#267)', () => {
   assert.match(buildPeerSettings(), /^\[Physics\]\nasync num threads = 1$/m);
+});
+
+// Backlog 299: a mod's plugins are hashed from gamedata/mods/<slug>/, keyed lowercase.
+test('hashContentFiles covers installed mod plugins too', () => {
+  const d = dirWith(RETAIL);
+  mkdirSync(join(d, 'mods', 'tr'), { recursive: true });
+  writeFileSync(join(d, 'mods', 'tr', 'TR_Mainland.esm'), 'tr-bytes');
+  const r = detectGameData(d);
+  const h = hashContentFiles(r, [
+    { slug: 'tr', enabled: true, plugins: [{ file: 'TR_Mainland.esm', enabled: true }, { file: 'Off.esp', enabled: false }] },
+    { slug: 'gone', enabled: false, plugins: [{ file: 'Gone.esp', enabled: true }] },
+  ]);
+  assert.equal(h.get('morrowind.esm'), createHash('sha256').update('x').digest('hex'));
+  assert.equal(h.get('tr_mainland.esm'), createHash('sha256').update('tr-bytes').digest('hex'));
+  assert.equal(h.has('off.esp'), false);
+  assert.equal(h.has('gone.esp'), false);
+});
+
+// Backlog 303: the peer sorted every archive alphabetically, the browser registers the
+// official three first. A later fallback-archive= wins, so a top-level replacer whose name
+// sorts before "Tribunal" lost on the peer and won in the browser.
+test('archives: official first in their own order, then the rest alphabetically', () => {
+  const r = detectGameData(dirWith([...RETAIL, 'Zed.bsa', 'Aardvark.bsa']));
+  assert.deepEqual(r.archives, ['Morrowind.bsa', 'Tribunal.bsa', 'Bloodmoon.bsa', 'Aardvark.bsa', 'Zed.bsa']);
 });
