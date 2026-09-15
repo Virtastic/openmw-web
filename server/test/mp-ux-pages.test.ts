@@ -5,14 +5,17 @@
 // the wiring so the fix cannot be edited away in silence.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PLAY = join(import.meta.dirname, '..', '..', 'play');
-const index = readFileSync(join(PLAY, 'index.html'), 'utf8');
-const launcher = readFileSync(join(PLAY, 'launcher.html'), 'utf8');
+// The tier2 image carries no play/ (authticket/play-front-door skip the same way).
+const pages = existsSync(join(PLAY, 'index.html')) && existsSync(join(PLAY, 'launcher.html'));
+const opts = pages ? {} : { skip: 'play/ pages are not part of the server image' };
+const index = pages ? readFileSync(join(PLAY, 'index.html'), 'utf8') : '';
+const launcher = pages ? readFileSync(join(PLAY, 'launcher.html'), 'utf8') : '';
 
-test('#88: BAD_CONTENT reloads once automatically, then shows the remedy and a Reload button', () => {
+test('#88: BAD_CONTENT reloads once automatically, then shows the remedy and a Reload button', opts, () => {
   assert.ok(index.includes('BAD_CONTENT_REMEDY = \'The world’s mod list changed since this page loaded'), 'no remedy sentence');
   // The auto-reload is guarded by sessionStorage and cleared once a join succeeds.
   assert.ok(index.includes("sessionStorage.getItem(BAD_CONTENT_RELOADED) === '1'"), 'no loop guard');
@@ -27,7 +30,7 @@ test('#88: BAD_CONTENT reloads once automatically, then shows the remedy and a R
   assert.ok(index.slice(auto, auto + 400).includes('location.reload();'));
 });
 
-test('#89: a friend playing solo is listed as such, with no join button', () => {
+test('#89: a friend playing solo is listed as such, with no join button', opts, () => {
   assert.ok(launcher.includes("const solo = f.mode === 'private';"));
   assert.ok(launcher.includes("'<b></b> is playing solo'"));
   assert.ok(launcher.includes('if (solo) { wrap.appendChild(row); return; }'), 'a solo row still gets a Join button');
