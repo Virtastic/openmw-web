@@ -1038,6 +1038,16 @@ handlers.MP_WorldCellState = function(data)
             pcall(function() obj:setEnabled(false) end)
         end
     end
+    -- M6 per-object script locals: the same apply path as a live MemberVarUpdate (quests.lua),
+    -- one call per variable, so a late arrival's scripted objects resume where the cell left off.
+    if deps.memberVarFn then
+        for refKey, vars in pairs(data.memberVars or {}) do
+            local obj = resolveRefKey(refKey)
+            if obj then
+                for name, value in pairs(vars) do deps.memberVarFn({ ref = obj, name = name, value = value }) end
+            end
+        end
+    end
 end
 
 -- Inbound side of the chargen sanctuary: any server-pushed object state addressed to a

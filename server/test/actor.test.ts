@@ -504,3 +504,37 @@ test('a follow claim is re-issued to the holder for the character\'s new session
   const rebound = await peer.waitEvent('ActorAI', (v) => (v as { follow?: number }).follow === backId, 3000);
   assert.deepEqual((rebound.value as { ref: unknown }).ref, ACTOR_REF, 'the same companion, told to follow the new session');
 });
+
+test('a follow claim survives a world restart', async (t) => {
+  const dataDir = tmpDataDir();
+  const cfg = { requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride: { server: { password: PEER_PASS } } };
+  let server = await startServer(cfg);
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant');
+  const first = await TestClient.connect(server.port);
+  const { playerId: firstId } = await first.joinAsNew('Recruiter');
+  await first.waitEvent('PlayerList');
+  first.sendCellChange('0,0', 0, 0, 0);
+  await first.waitEvent('PlayerCellChange');
+  first.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: firstId });
+  await peer.waitEvent('ActorAI');
+  first.close();
+  peer.close();
+  await Promise.all([first.closed, peer.closed]);
+  await server.close(); // flushes the cell doc
+
+  // A NEW PROCESS on the same data: nothing in memory knows who follows whom.
+  server = await startServer(cfg);
+  const peer2 = await TestClient.simPeer(server.port, PEER_PASS, 'Dagoth');
+  t.after(() => peer2.close());
+  peer2.sendCellChange('0,0', 0, 0, 0);
+  await peer2.waitEvent('ActorAuthorityGrant');
+  const back = await TestClient.connect(server.port);
+  t.after(() => back.close());
+  const backId = (await back.joinExisting('Recruiter'))['playerId'] as number;
+  back.sendCellChange('0,0', 0, 0, 0);
+  const replayed = await peer2.waitEvent('ActorAI', (v) => (v as { follow?: number }).follow === backId, 3000);
+  assert.deepEqual((replayed.value as { ref: unknown }).ref, ACTOR_REF, 'the companion follows the returning character again');
+});

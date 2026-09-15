@@ -1443,6 +1443,7 @@ local function start()
     objects.init({
         playerFn = playerScript,
         cellDeathsFn = function(cellKey, keys) actors.noteCellDeaths(cellKey, keys) end,
+        memberVarFn = function(data) quests.handlers.MP_MemberVarUpdate(data) end,
         allAvatarsFn = function()
             local out = {}
             for _, p in pairs(puppets) do

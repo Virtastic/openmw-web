@@ -78,6 +78,9 @@ export interface CellDoc {
   // Phase 4: refKey -> false for objects a script DISABLED. Enabled is the vanilla
   // default, so only disables are recorded (see WorldState.enabled).
   enabled?: Record<string, false>;
+  // Who follows whom, refKey -> the CHARACTER followed (a session id dies with the process;
+  // WorldState.hydrateFollows resolves it back to one). Escort rides along as claimed.
+  follows?: Record<string, { charId: string; escort?: Record<string, number> }>;
 }
 
 export function emptyCellDoc(): CellDoc {

@@ -8,7 +8,7 @@
 // the losing racer gets ok=false.
 
 import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
-import { parseObjRef, objRefToJs, netRefKey, type ObjRef } from '../proto/ref';
+import { parseObjRef, objRefToJs, netRefKey, parseRefKey, type ObjRef } from '../proto/ref';
 import { INPUT_DRIVING_MS, type Player, type Roster } from './players';
 import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells, isChargenCell } from './movement';
 import { MONTH_DAYS } from './worldtime';
@@ -36,6 +36,12 @@ const MAX_FIRST_OPEN_GOLD = 50_000;
 // Two thousand each is far past any honest cell and leaves half the ceiling for the rest.
 const MAX_PLACED_PER_CELL = 2000;
 const MAX_DELETED_PER_CELL = 2000;
+const MAX_MEMBER_VARS_PER_CELL = 2000;
+function memberVarEntries(doc: CellDoc): number {
+  let n = 0;
+  for (const vars of Object.values(doc.memberVars ?? {})) n += Object.keys(vars).length;
+  return n;
+}
 // A single barter window cannot move more gold than the richest vendor in the game holds many
 // times over. This does not stop a player selling honestly; it bounds GRIEFING -- a negative
 // delta drains a merchant's purse for everyone in the world, and nothing else caps it.
@@ -241,6 +247,7 @@ export class WorldState {
           holderId === undefined ? { cellKey, epoch } : { cellKey, holderId, epoch }),
       loadOverrides: async (cellKey) => {
         const doc = await this.cells.get(cellKey);
+        this.hydrateFollows(cellKey, doc); // first grant since the process started: the doc's claims come back
         return (doc.actorOverrides as ActorSnapshot | undefined) ?? { actors: [] };
       },
       foldOverrides: async (cellKey, snapshot) => {
@@ -493,8 +500,29 @@ export class WorldState {
     const holder = this.roster.get(holderId);
     if (!holder) return;
     for (const f of this.followedBy.values()) {
-      if (f.cellKey !== cellKey) continue;
+      if (f.cellKey !== cellKey || f.follow < 0) continue; // < 0: hydrated, character not back yet (rebindFollows)
       holder.peer.sendEvent('ActorAI', { ...objRefToJs(f.ref), cellKey, epoch: 0, follow: f.follow, ...(f.escort ? { escort: f.escort } : {}) });
+    }
+  }
+  // THE COMPANION SURVIVES THE WORLD'S RESTART. replayFollows only ever helped a restarted
+  // PEER; a restarted world process had an empty map and every companion stood where it was
+  // left. The claims live in the doc of the cell the companion stands in (storeFollow, written
+  // with every set/clear/move/death) and come back when that cell is first granted again.
+  // The doc names the character; the session is whoever is in as that character right now,
+  // or -1 until rebindFollows sees them.
+  private async storeFollow(cellKey: string, key: string, f?: { charId: string; escort?: Record<string, number> }): Promise<void> {
+    const doc = await this.cells.get(cellKey);
+    const follows = (doc.follows ??= {});
+    if (f) follows[key] = f;
+    else delete follows[key];
+    this.cells.markDirty(cellKey);
+  }
+  private hydrateFollows(cellKey: string, doc: CellDoc): void {
+    for (const [key, f] of Object.entries(doc.follows ?? {})) {
+      const ref = parseRefKey(key);
+      if (!ref || this.followedBy.has(key)) continue;
+      const owner = this.roster.inWorld().find((p) => p.charId === f.charId);
+      this.followedBy.set(key, { ref, cellKey, follow: owner?.id ?? -1, charId: f.charId, ...(f.escort ? { escort: f.escort } : {}) });
     }
   }
   // THE COMPANION SURVIVES THE PLAYER'S RELOG. A claim names a SESSION id; the peer drops the
@@ -516,7 +544,7 @@ export class WorldState {
   // The four non-holder claims below accept a content ref OR the net id of a runtime actor
   // the holder named: a quest NPC placed by a script is a net actor, and it can be talked
   // to, recruited, taunted and sent walking like any other.
-  private followClaim(player: Player, body: LTable): void {
+  private async followClaim(player: Player, body: LTable): Promise<void> {
     const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
     const ref = parseObjRef(body);
     const rawFollow = body.get('follow');
@@ -546,6 +574,7 @@ export class WorldState {
     if (follow === undefined) {
       if (this.followedBy.get(ref.key)?.follow !== player.id) return; // not yours to dismiss
       this.followedBy.delete(ref.key);
+      await this.storeFollow(cellKey, ref.key);
     } else {
       // A recruit needs a conversation; a claim needs a message. Vanilla has no cap because
       // it has no forged claims. Eight is more companions than any quest hands out at once,
@@ -557,6 +586,7 @@ export class WorldState {
         return;
       }
       this.followedBy.set(ref.key, { ref, cellKey, follow, charId: player.charId, ...(escort ? { escort } : {}) });
+      await this.storeFollow(cellKey, ref.key, { charId: player.charId, ...(escort ? { escort } : {}) });
     }
     log('info', 'actor.follow_claim', { from: player.name, cellKey, key: ref.key, follow: follow ?? null, escort: escort !== undefined });
     this.relayCellExcept(cellKey, player.id, 'ActorAI', { ...lToJs(body) as Record<string, JsLike> });
@@ -617,7 +647,7 @@ export class WorldState {
         this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
         return;
       }
-      this.followClaim(player, body);
+      await this.followClaim(player, body);
       return;
     }
     if (name === 'ActorDisposition' && this.authority.holderOf(str(body.get('cellKey'), MAX_CELL_KEY) ?? '') !== player.id) {
@@ -661,7 +691,11 @@ export class WorldState {
       this.relayCellExcept(cellKey, player.id, name, payload);
       if (toCellKey !== cellKey) this.relayCellExcept(toCellKey, player.id, name, payload);
       const f = this.followedBy.get(ref.key);
-      if (f) f.cellKey = toCellKey;
+      if (f && f.cellKey !== toCellKey) {
+        await this.storeFollow(f.cellKey, ref.key);
+        f.cellKey = toCellKey;
+        await this.storeFollow(toCellKey, ref.key, { charId: f.charId, ...(f.escort ? { escort: f.escort } : {}) });
+      }
       return;
     }
     // Stats/Equip/AI: relay verbatim cell-scoped (excluding the holder).
@@ -681,6 +715,7 @@ export class WorldState {
     this.cells.markDirty(cellKey);
     // A corpse follows nobody: a restarted peer replayed the claim and stood the companion up.
     this.followedBy.delete(ref.key);
+    delete doc.follows?.[ref.key];
     this.relayCellExcept(cellKey, player.id, 'ActorDeath', lToJs(body) as Record<string, JsLike>);
     // Shared kill tally. Counted for EVERY death that names a record, not only
     // player-attributed ones: vanilla `GetDeadCount` counts deaths of a record regardless
@@ -1295,6 +1330,10 @@ export class WorldState {
         // store back: a friend who entered the cell after the kill (or anyone after a relog)
         // found the smuggler chief standing again -- AI off, unlootable, unkillable.
         deaths: Object.keys(doc.actorDeaths ?? {}),
+        // M6 per-object script locals. Stored on every MemberVarUpdate (quests.storeMemberVar)
+        // and never read back: a joiner's copy of a scripted object started from the content
+        // file's defaults. Bounded like placed/deleted; past the cap the cell simply sends none.
+        memberVars: memberVarEntries(doc) <= MAX_MEMBER_VARS_PER_CELL ? { ...(doc.memberVars ?? {}) } : {},
       });
     });
   }

@@ -215,6 +215,17 @@ test('global and member variables', async (t) => {
     far.close();
     await far.closed;
   });
+
+  await t.test('member vars reach a joiner in the cell state', async () => {
+    const late = await TestClient.connect(server.port);
+    await late.joinAsNew('Late');
+    await late.waitEvent('PlayerList');
+    late.sendCellChange('0,0', 0, 0, 0);
+    const state = (await late.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { memberVars: unknown };
+    assert.deepEqual(state.memberVars, { 'c:300:0': { state: 3 } });
+    late.close();
+    await late.closed;
+  });
 });
 
 test('dialogue lock', async (t) => {
