@@ -45,6 +45,9 @@ export interface Player {
   peer: Peer;
   ip: string; // M8: needed by /ipban; never leaves the server except into ban/log lines
   inWorld: boolean;
+  // When this session entered the world (ms): a presence row another world wrote LATER means
+  // the character was opened there and this session is the stale one (server.ts presence).
+  joinedWorldAt?: number;
   // M1 movement state. cellKey unset = visible to nobody (client sends PlayerCellChange
   // right after Ready). poseVersion bumps on every accepted pose/cell update so the batch
   // broadcaster can do per-recipient change detection + force-include-on-visibility.
@@ -233,6 +236,7 @@ export class Roster {
   // joiner the full roster snapshot.
   joinWorld(player: Player): void {
     player.inWorld = true;
+    player.joinedWorldAt = Date.now();
     this.inWorldCache = undefined; // before the reads below, or the joiner misses itself
     // A system peer is invisible as a PARTICIPANT: it is never announced and never listed,
     // so no client spawns a puppet NPC of it. But it is announced TO — it needs everyone

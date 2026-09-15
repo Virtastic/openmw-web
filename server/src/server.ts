@@ -123,6 +123,7 @@ export interface StartOptions {
   worldOwner?: string; // accountKey; '' only on a standalone (non-gateway) stack
   /** Test seam: how long a party world stays open after its owner disconnects. */
   ownerGraceMs?: number;
+  presenceMs?: number; // social heartbeat period (tests shorten it)
   configOverride?: DeepPartial<Config>; // tests
 }
 
@@ -1565,6 +1566,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // A peer finishing its hello should not wait up to a full tick to be put to work —
   // that is 5s of the player holding a loading screen for no reason.
   ctx.onPeerJoined = () => simPeerPass();
+  // The joiner's row goes out at once, not at the next beat: the world it may have left a
+  // session in evicts that session on ITS next beat, and the write is what it keys on.
+  ctx.onPlayerJoined = (p) => {
+    if (p.system || p.bot) return;
+    try { socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, false, Date.now()); }
+    catch (err) { log('warn', 'presence.join_write_failed', { error: String(err) }); }
+  };
   simPeerTick.unref();
   metrics.simPeerRunning.addCollector(() => simPeers.running);
 
@@ -1651,10 +1659,22 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // and the Players list showed one world's population as if it were everyone. Refreshed on a
   // heartbeat and read with a TTL, so a world that dies without cleaning up ages out.
   const presenceWorld = worldId ?? 'default';
+  // ONE CHARACTER, ONE WORLD. The in-process rule is "the newcomer wins" (SUPERSEDED, in
+  // connection.ts); across processes nothing enforced it, and the same character in two
+  // worlds meant two sessions flushing one doc last-writer-wins -- an inventory from one tab
+  // under a position from the other. The presence row is the arbiter: a row another world
+  // wrote AFTER this session joined means the character was opened there, and this session
+  // is the one to drop. Checked on the heartbeat, so the overlap is at most one beat.
   const publishPresence = (): void => {
     const now = Date.now();
     for (const p of roster.inWorld()) {
       if (p.system) continue; // the sim peer is infrastructure, not a player
+      const row = p.bot ? undefined : socialStore.presenceOf(p.accountKey);
+      if (row && !row.offline && row.world !== presenceWorld && row.updatedAt > (p.joinedWorldAt ?? 0)) {
+        log('info', 'presence.superseded_elsewhere', { account: p.accountKey, name: p.name, by: row.world });
+        p.peer.disconnect('SUPERSEDED', 'this character was opened in another world');
+        continue;
+      }
       socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now);
     }
   };
@@ -1714,7 +1734,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     } catch (err) {
       log('warn', 'presence.tick_failed', { error: String(err) });
     }
-  }, 10_000);
+  }, opts.presenceMs ?? 10_000);
   presenceTick.unref();
   // DEV/TEST BOTS. Off unless [dev] bots (or OMW_DEV_BOTS) says otherwise — see dev/testbots.
   // Started AFTER hooks so plugins see a normal roster, and given the world's respawn cell so

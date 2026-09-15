@@ -95,6 +95,7 @@ export interface ServerCtx {
   simReady?(): boolean;
   /** Run an anchor/claim pass now instead of waiting for the next periodic one. */
   onPeerJoined?(): void;
+  onPlayerJoined?(player: Player): void; // presence at once (server.ts one-character-one-world)
   /** Send this player their chat scrollback. Absent = no history configured. */
   replayChat?(player: Player): void;
   // Tier 2 (the server has its own valid game data). Only then may a sim peer's manifest be
@@ -1742,6 +1743,7 @@ export class Connection implements Peer {
     this.state = 'IN_WORLD';
     metrics.joinLatency.observe({}, (Date.now() - this.openedAt) / 1000);
     this.ctx.roster.joinWorld(this.player);
+    this.ctx.onPlayerJoined?.(this.player);
     // Spawn-near-owner: a fresh (non-resume) guest lands next to the world's owner.
     // Reuses the invite-teleport client path (global.lua MP_InviteAccepted -> teleport).
     if (!this.resumed) {

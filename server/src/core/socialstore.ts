@@ -349,6 +349,13 @@ export class SocialStore {
     return Number(res?.changes ?? 0);
   }
 
+  /** Where one account's presence row says it is. */
+  presenceOf(account: AccountKey): { world: string; updatedAt: number; offline: boolean } | undefined {
+    const r = this.db.prepare('SELECT world, updated_at AS updatedAt, offline_since AS offlineSince FROM presence WHERE account = ?')
+      .get(account) as { world: string; updatedAt: number; offlineSince: number | null } | undefined;
+    return r ? { world: r.world, updatedAt: r.updatedAt, offline: r.offlineSince !== null } : undefined;
+  }
+
   /** Everyone online across every world, fresher than `ttlMs`. */
   presentEverywhere(now: number, ttlMs: number): PresenceRow[] {
     const rows = this.db.prepare(
