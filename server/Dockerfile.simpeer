@@ -134,6 +134,7 @@ RUN npm ci
 COPY server/tsconfig.json server/esbuild.mjs ./
 COPY server/src ./src
 COPY server/test ./test
+COPY server/bots ./bots
 COPY server/config.default.toml ./
 # The dashboard's on-disk assets: several tests read web/app.js and web/play.js (the
 # single-player dashboard suite, the front door, update wiring), and without this the whole
