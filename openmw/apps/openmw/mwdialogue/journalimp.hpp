@@ -5,6 +5,8 @@
 
 #include "quest.hpp"
 
+#include <functional>
+
 namespace MWDialogue
 {
     /// \brief The player's journal
@@ -26,6 +28,8 @@ namespace MWDialogue
     private:
         Topic& getTopic(const ESM::RefId& id);
 
+        void addEntryStamped(const ESM::RefId& id, int index, const std::function<StampedJournalEntry()>& make);
+
         bool isThere(const ESM::RefId& topicId, const ESM::RefId& infoId = ESM::RefId()) const;
 
     public:
@@ -46,6 +50,9 @@ namespace MWDialogue
         void addEntry(const ESM::RefId& id, int index, const MWWorld::Ptr& actor) override;
         ///< Add a journal entry.
         /// @param actor Used as context for replacing of escape sequences (%name, etc).
+
+        void addEntryAt(const ESM::RefId& id, int index, const MWWorld::Ptr& actor, int day, int month,
+            int dayOfMonth) override;
 
         void setJournalIndex(const ESM::RefId& id, int index) override;
         ///< Set the journal index without adding an entry.

@@ -15,10 +15,12 @@ import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
 import { cellsVisible } from './movement';
 import { cellMapFull, type CellStore, type FactionState } from '../persist/cellstore';
-import type { PlayerStore } from '../persist/playerstore';
+import type { PlayerDoc, PlayerStore } from '../persist/playerstore';
+import { daysPassed } from './worldtime';
 import { log } from '../log';
 
 const MAX_ID = 64;
+const MAX_JOURNAL_LOG = 2000;
 const MAX_CELL_KEY = 128;
 const MAX_INDEX = 0x7fffffff;
 
@@ -119,6 +121,8 @@ export interface QuestCtx {
   // Who simulates a cell (worldstate.ts): the holder hears its cells wherever it stands.
   holderOf?(cellKey: string): number | undefined;
 }
+
+type JournalLogEntry = NonNullable<PlayerDoc['journalLog']>[number];
 
 function tbl(v: LValue | undefined): LTable | undefined {
   return v instanceof Map ? v : undefined;
@@ -266,6 +270,7 @@ export class Quests {
         this.ctx.players.update(h.charId, (doc) => {
           const log = (doc.journal ??= {});
           if ((log[questId] ?? -1) < idx) log[questId] = idx;
+          this.logEntry(doc, questId, idx);
         });
       }
       this.relayAll(player.id, 'JournalEntry', { questId, index: idx });
@@ -280,6 +285,7 @@ export class Quests {
       if (ownerChar === undefined) return;
       this.ctx.players.update(ownerChar, (doc) => {
         (doc.journal ??= {})[questId] = idx;
+        this.logEntry(doc, questId, idx);
       }, 'now');
     };
     if (!this.ctx.isShared('journal')) { record(); return; } // individual mode: never relayed
@@ -306,6 +312,16 @@ export class Quests {
     record();
     const out: JsLike = { questId, index: idx, ...(typeof actorRefId === 'string' ? { actorRefId } : {}) };
     this.relayAll(player.id, 'JournalEntry', out);
+  }
+
+  // Backlog 257: the dated, ordered log behind the questId->index map. One line per entry
+  // the engine would keep (Journal::addEntry ignores a repeat of the same stage).
+  private logEntry(doc: { journalLog?: JournalLogEntry[] }, q: string, i: number): void {
+    const t = this.ctx.cells.worldM7().time;
+    const logList = (doc.journalLog ??= []);
+    if (logList.some((e) => e.q === q && e.i === i)) return;
+    logList.push({ q, i, d: daysPassed(t), m: t.month, dm: t.day });
+    if (logList.length > MAX_JOURNAL_LOG) logList.splice(0, logList.length - MAX_JOURNAL_LOG);
   }
 
   // creditParty lived here and is GONE. It advanced co-present party members' OWN journals,
@@ -362,6 +378,10 @@ export class Quests {
     const quests = this.ctx.isShared('journal')
       ? { ...this.ctx.cells.sharedQuest().journal }
       : { ...(this.ctx.players.getCached(player.charId)?.journal ?? {}) };
+    // The dated log lives on the doc the entries were recorded to (journalTarget), in order.
+    const logChar = this.ctx.journalTarget(player);
+    const journalLog = (logChar === undefined ? [] : (this.ctx.players.getCached(logChar)?.journalLog ?? []))
+      .map((e) => ({ ...e }));
     // BORROWED: this sync carries a campaign that is not this character's own, so the client
     // must set its own journal aside for the visit and put it back on the way home. The
     // client cannot work this out for itself — it does not know who owns the instance.
@@ -369,7 +389,7 @@ export class Quests {
     // message is sent on EVERY join, so a missed transition repairs itself on the next one.
     const owner = this.ctx.ownerCharId();
     const borrowed = owner !== undefined && owner !== player.charId;
-    player.peer.sendEvent('JournalSync', { quests, borrowed });
+    player.peer.sendEvent('JournalSync', { quests, borrowed, journalLog });
   }
 
   // ---------------------------------------------------------------- globals

@@ -207,12 +207,18 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     // seconds after the refusal. A potion in that window is lost too; a small price.
     const restRefused = player.restRefusedAt !== undefined && Date.now() - player.restRefusedAt <= REST_REFUSED_MS;
     const raise = (k: 'hp' | 'mp' | 'ft', v: DynamicStatDoc) => {
-      if (restRefused) return undefined;
       // `have.b` (or a plausibly stepped new base), NEVER `v.b` outright: `v` is the client's
       // own untrusted body, so capping against its claimed base let a modified client assert
       // `{c: 99999, b: 99999}` and be stored at ten times its real maximum -- then forwarded
       // to the avatar as a restore.
       const have = cur?.[k]; if (have === undefined) return undefined;
+      if (restRefused) {
+        // Only the RAISE is the refused rest's healing; a base step in the window is a
+        // level-up, and dropping it lost the health gain for the session (backlog 256).
+        const b = newBase(k, v);
+        if (b !== undefined && b !== have.b) return { c: Math.min(have.c, b), b };
+        return undefined;
+      }
       const b = newBase(k, v) ?? have.b;
       const want = Math.min(v.c, b);
       if (want > have.c + 0.5 || b !== have.b) return { c: Math.max(want, Math.min(have.c, b)), b };

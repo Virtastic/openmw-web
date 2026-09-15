@@ -292,6 +292,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     cells: cellStore,
     records: recordStore,
     isMapShared: () => hooks.shareFamily('map'),
+    players: playerStore,
+    ownerCharId: () => (worldOwner === '' ? undefined : roster.activeForAccount(worldOwner)?.charId),
     // Owner-only time skip: the one surviving group rule. Your world, your clock — a guest
     // must not fast-forward the host's game. A standalone stack has no owner, so the owner
     // rule there admits anyone (it is the operator's own game).

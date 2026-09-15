@@ -102,6 +102,13 @@ export interface PlayerDoc {
   // M6: this player's own view. Always written (even in shared mode, so a family can be
   // switched to individual later without losing history); relayed only per [sharing].
   journal?: Record<string, number>; // questId -> highest index this player reported
+  // Backlog 257: the entries in the order they were earned, stamped with the world clock
+  // (d = dayspassed, m = month, dm = day of month), so a relog rebuilds a dated journal
+  // instead of one entry per quest all dated today. Capped; the map above stays the truth.
+  journalLog?: { q: string; i: number; d: number; m: number; dm: number }[];
+  // Backlog 260: exterior cells this character (or the campaign, when the map is shared)
+  // has discovered, replayed on the welcome so the world map survives a relog.
+  explored?: string[];
   // Phase 4: character-shadowed mwscript globals — quest progress variables that must NOT
   // travel between players (see quests.ts WORLD_GLOBALS). Restored on join/world-hop.
   globals?: Record<string, number>;

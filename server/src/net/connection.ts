@@ -1791,8 +1791,9 @@ export class Connection implements Peer {
     this.ctx.quests.seedBounty(this.player);
     // Same for faction ranks when they are shared (backlog 141): a guest gets the campaign's.
     const factions = this.ctx.quests.guestFactions(this.player);
+    const explored = this.ctx.m7.exploredFor(this.player); // backlog 260: own map, or the campaign's when shared
     const record = doc && (doc.appearance || forceRecord)
-      ? { ...doc, bounty: this.player.bounty ?? 0, ...(factions ? { factions } : {}) }
+      ? { ...doc, bounty: this.player.bounty ?? 0, ...(factions ? { factions } : {}), ...(explored ? { explored } : {}) }
       : null;
     // serverSeq = binary seq already consumed for this connection (0: none yet).
     this.sendText(

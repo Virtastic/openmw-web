@@ -516,6 +516,28 @@ test('map sharing follows the [sharing] toggle', async (t) => {
     a.close(); b.close();
     await a.closed; await b.closed;
   });
+
+  // Backlog 260: exploration persisted nothing, so a returning player had a blank world map.
+  await t.test('explored cells come back in the welcome record on a rejoin', async () => {
+    const { server } = await boot(t, { sharing: { map: false } });
+    const { c: a } = await join(server, 'MapBack');
+    a.sendEvent('PlayerAppearance', { race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'warrior', name: 'MapBack' });
+    a.sendEvent('ChargenComplete', {});
+    a.sendEvent('WorldMapExplored', { cellKeys: ['1,1', '2,2', 'Balmora, Guild of Mages'] });
+    a.sendEvent('WorldMapExplored', { cellKeys: ['2,2', '3,3'] }); // repeat dedups
+    await fence(a, a);
+    a.close();
+    await a.closed;
+    await new Promise((r) => setTimeout(r, 300));
+    await server.flush();
+
+    const back = await TestClient.connect(server.port);
+    const w = await back.joinExisting('MapBack');
+    const rec = w['playerRecord'] as { explored?: string[] } | null;
+    assert.deepEqual(rec?.explored, ['1,1', '2,2', '3,3'], 'exterior keys only, in discovery order, deduped');
+    back.close();
+    await back.closed;
+  });
 });
 
 

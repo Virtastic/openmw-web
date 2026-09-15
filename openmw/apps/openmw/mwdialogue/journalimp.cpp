@@ -1,5 +1,6 @@
 #include "journalimp.hpp"
 
+#include <functional>
 #include <iterator>
 
 #include <components/esm3/esmreader.hpp>
@@ -108,6 +109,20 @@ namespace MWDialogue
 
     void Journal::addEntry(const ESM::RefId& id, int index, const MWWorld::Ptr& actor)
     {
+        addEntryStamped(id, index, [&] { return StampedJournalEntry::makeFromQuest(id, index, actor); });
+    }
+
+    void Journal::addEntryAt(
+        const ESM::RefId& id, int index, const MWWorld::Ptr& actor, int day, int month, int dayOfMonth)
+    {
+        addEntryStamped(id, index, [&] {
+            return StampedJournalEntry(id, JournalEntry::idFromIndex(id, index), day, month, dayOfMonth, actor);
+        });
+    }
+
+    void Journal::addEntryStamped(
+        const ESM::RefId& id, int index, const std::function<StampedJournalEntry()>& make)
+    {
         // bail out if we already have heard this...
         const ESM::RefId& infoId = JournalEntry::idFromIndex(id, index);
         for (const JournalEntry& entry : mJournal)
@@ -121,7 +136,7 @@ namespace MWDialogue
                 return;
             }
 
-        StampedJournalEntry entry = StampedJournalEntry::makeFromQuest(id, index, actor);
+        StampedJournalEntry entry = make();
 
         Quest& quest = getOrStartQuest(id);
         if (quest.addEntry(entry)) // we are doing slicing on purpose here

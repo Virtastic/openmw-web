@@ -66,6 +66,13 @@ namespace MWBase
         ///< Add a journal entry.
         /// @param actor Used as context for replacing of escape sequences (%name, etc).
 
+        virtual void addEntryAt(
+            const ESM::RefId& id, int index, const MWWorld::Ptr& actor, int day, int month, int dayOfMonth)
+            = 0;
+        ///< Multiplayer: addEntry stamped with a given date instead of today's. A session boots
+        /// with an empty journal and rebuilds it from the server's ordered log (backlog 257);
+        /// stamping every replayed entry "today" dated the whole campaign to the relog.
+
         virtual void setJournalIndex(const ESM::RefId& id, int index) = 0;
         ///< Set the journal index without adding an entry.
 

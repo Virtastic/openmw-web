@@ -1512,6 +1512,11 @@ local function restoreTick()
     -- ever read them back, so a guild rank or a bounty was recorded and then quietly lost on
     -- the next join.
     quests.restoreStanding(record)
+    -- Backlog 260: the world map the doc remembers (own discoveries, or the campaign's when
+    -- the map is shared), replayed through the same handler a peer's discovery uses.
+    if type(record.explored) == 'table' and #record.explored > 0 then
+        worldmp.handlers.MP_WorldMapExplored({ cellKeys = record.explored })
+    end
     -- MAP THE RECORD IDS BEFORE IT LEAVES. equipment and spells are stored FLAT in the doc
     -- (not world-keyed), and they went out through toNet but came back raw — so a dynamic or
     -- enchanted item saved in world A was fed to world B as A's id, where that same string

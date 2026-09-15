@@ -623,14 +623,18 @@ handlers.MP_WorldMapExplored = function(data)
             exploredIn[key] = true
             local gx, gy = key:match('^(-?%d+),(-?%d+)$')
             if gx and mp.setMapExplored then
-                local name = key
+                -- NAMED cells only: vanilla adds a visited location when the player enters
+                -- a named exterior (windowmanagerimp.cpp), never the wilderness. An unnamed
+                -- key fell back to the key itself and painted markers called "3" (backlog 259).
                 local okc, cell = pcall(function() return world.getExteriorCell(tonumber(gx), tonumber(gy)) end)
-                if okc and cell and cell.name and cell.name ~= '' then name = cell.name end
-                local ok, err = pcall(function() mp.setMapExplored(name, tonumber(gx), tonumber(gy)) end)
-                if ok then
-                    applied = applied + 1
-                else
-                    print('[mp] setMapExplored(' .. key .. ') failed: ' .. tostring(err))
+                local name = okc and cell and cell.name or ''
+                if name ~= '' then
+                    local ok, err = pcall(function() mp.setMapExplored(name, tonumber(gx), tonumber(gy)) end)
+                    if ok then
+                        applied = applied + 1
+                    else
+                        print('[mp] setMapExplored(' .. key .. ') failed: ' .. tostring(err))
+                    end
                 end
             end
         end

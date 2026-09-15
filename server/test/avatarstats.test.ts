@@ -375,3 +375,33 @@ test('the heal behind a refused rest does not reach the avatar', async (t) => {
   a.sendEvent('PlayerStatsDynamic', { hp: { c: 60, b: 100 } });
   await peer.waitEvent('AvatarRestore', (v) => (v as { id?: number })?.id === a.playerId, 3000);
 });
+
+test('a base raise behind a refused rest lands the base without the heal', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, rules: { timeSkip: 'off' } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  const welcome = await a.joinAsNew('Leveller');
+  a.playerId = welcome['playerId'] as number;
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  let seq = 0;
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(35) }] }), 100);
+  t.after(() => clearInterval(reporter));
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 35);
+
+  a.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
+  await a.waitEvent('WorldTimeRefused');
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 110, b: 110 } }); // levelled up inside the window
+  const restore = (await peer.waitEvent('AvatarRestore', (v) => (v as { id?: number })?.id === a.playerId, 3000)).value as { hp?: { c: number; b: number } };
+  assert.equal(restore.hp?.b, 110, 'the level-up base was dropped with the refused rest');
+  assert.equal(restore.hp?.c, 35, 'the refused rest\'s heal reached the avatar');
+});

@@ -1190,5 +1190,39 @@ do
     and g:find("pcall(obj.removeScript, obj, 'scripts/mp/puppet.lua')", 1, true) ~= nil)
 end
 
+-- ============================================ backlog 256-263: the information layer
+print('information layer -- journal dates, map memory, menus, levels (backlog 256-263)')
+do
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  local w = io.open('./openmw/files/data/scripts/mp/world.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  -- 257: the dated log is replayed in order, through the stamping binding when it exists.
+  check('JournalSync replays journalLog with ipairs before the quest map',
+    (q:find("for _, e in ipairs(data.journalLog or {})", 1, true) or math.huge)
+      < (q:find("for questId, index in pairs(data.quests or {})", 1, true) or 0))
+  check('applyJournalEntry stamps through mp.addJournalEntryAt when present, else addJournalEntry',
+    q:find('if stamp and mp.addJournalEntryAt then', 1, true) ~= nil
+      and q:find('mp.addJournalEntryAt(questId, index, stamp.d, stamp.m, stamp.dm)', 1, true) ~= nil
+      and q:find('quest:addJournalEntry(index)', 1, true) ~= nil)
+  check('a pre-player entry keeps its stamp and order through the retry',
+    q:find('for _, e in ipairs(retry) do applyJournalEntry(e.q, e.i, e.stamp) end', 1, true) ~= nil)
+  -- 259: only a named exterior becomes a visited location.
+  local h = w:match('handlers%.MP_WorldMapExplored = function%(data%)(.-)\nend')
+  check('MP_WorldMapExplored skips unnamed cells', h ~= nil
+    and h:find("local name = okc and cell and cell.name or ''", 1, true) ~= nil
+    and h:find("if name ~= '' then", 1, true) ~= nil and not h:find('local name = key', 1, true))
+  -- 260: the welcome record's explored keys ride the same handler.
+  check('the rejoin restore replays record.explored through MP_WorldMapExplored',
+    g:find('worldmp.handlers.MP_WorldMapExplored({ cellKeys = record.explored })', 1, true) ~= nil)
+  -- 263: the use bit is masked in a menu; the harness's forced press is not.
+  check('inputTick masks the use bit while a UI mode is open',
+    p:find('pcall(function() inMenu = I.UI.getMode() ~= nil end)', 1, true) ~= nil
+      and p:find('if (c.use and c.use ~= 0 and not inMenu) or now < forceUseUntil then flags = flags + 8 end', 1, true) ~= nil)
+  -- 256: the harness can spend a level.
+  check("player.lua answers levelup:<a,b,c> with mp.applyLevelup",
+    p:find("cmd:match('^levelup:(.+)$')", 1, true) ~= nil and p:find('mp.applyLevelup(attrs)', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

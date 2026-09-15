@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { startServer, type RunningServer } from '../src/server';
 import type { DeepPartial, Config } from '../src/config';
 import { TestClient, tmpDataDir } from './helpers';
+import { daysPassed } from '../src/core/worldtime';
 
 const NPC_REF = { __refnum: { index: 300, contentFile: 0 } };
 const NPC2_REF = { __refnum: { index: 301, contentFile: 0 } };
@@ -413,6 +414,45 @@ test('running global scripts persist on the campaign doc and come back at join',
   await b.waitEvent('PlayerList');
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(b.inbox.events.filter((e) => e.name === 'GlobalScriptsSync').length, 0);
+});
+
+// Backlog 257: doc.journal is questId->index, so a relog rebuilt one entry per quest, in hash
+// order, all dated today. The ordered, dated log rides JournalSync beside it.
+test('the journal sync carries the entries in the order they were earned, with their days', async (t) => {
+  const { server } = await boot(t);
+  const a = await TestClient.connect(server.port);
+  await a.joinAsNew('Alice');
+  await a.waitEvent('PlayerList');
+  await a.waitEvent('JournalSync');
+  a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 10 });
+  a.sendEvent('JournalEntry', { questId: 'a1_2_antabolisinformant', index: 10 });
+  // Two months on: past the vanilla epoch (dayspassed clamps to 1 before 16 Last Seed).
+  const joinClock = (await a.waitEvent('WorldTime')).value as { month: number };
+  a.sendEvent('WorldTimeRequest', { advanceHours: 30 * 24, reason: 'rest' });
+  await a.waitEvent('WorldTime', (v) => (v as { month: number }).month !== joinClock.month);
+  a.sendEvent('WorldTimeRequest', { advanceHours: 30 * 24, reason: 'rest' });
+  const clock = (await a.waitEvent('WorldTime', (v) => (v as { month: number }).month === joinClock.month + 2)).value as { day: number; month: number; year: number };
+  a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 50 });
+  a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 50 }); // repeat: one line
+  await fence(a, a);
+  await server.flush();
+  a.close();
+  await a.closed;
+
+  const again = await TestClient.connect(server.port);
+  t.after(() => again.close());
+  await again.joinExisting('Alice');
+  const sync = (await again.waitEvent('JournalSync')).value as {
+    quests: Record<string, number>;
+    journalLog: { q: string; i: number; d: number; m: number; dm: number }[];
+  };
+  assert.deepEqual(sync.quests, { a1_1_thelefthanded: 50, a1_2_antabolisinformant: 10 });
+  assert.deepEqual(sync.journalLog.map((e) => [e.q, e.i]),
+    [['a1_1_thelefthanded', 10], ['a1_2_antabolisinformant', 10], ['a1_1_thelefthanded', 50]]);
+  const [first, , third] = sync.journalLog as [typeof sync.journalLog[number], unknown, typeof sync.journalLog[number]];
+  assert.ok(first.d >= 1 && first.m >= 1 && first.dm >= 1, 'stamped with the world clock');
+  assert.ok(third.d > first.d, 'the later entry carries a later day');
+  assert.deepEqual([third.d, third.m, third.dm], [daysPassed(clock), clock.month, clock.day], 'stamped with the clock as it stood');
 });
 
 test('dialogue topics reach the other player, and never bounce back to the sender', async (t) => {

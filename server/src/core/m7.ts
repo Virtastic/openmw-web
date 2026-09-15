@@ -15,6 +15,7 @@ import type { Player, Roster } from './players';
 import { WorldClock } from './worldtime';
 import { WeatherRegions } from './weather';
 import type { CellStore, CellDoc } from '../persist/cellstore';
+import type { PlayerStore } from '../persist/playerstore';
 import { RecordStore, RECORD_KINDS, type RecordKind, type CustomRecord } from '../persist/recordstore';
 import { log } from '../log';
 import { metrics } from '../metrics';
@@ -24,6 +25,7 @@ const MAX_CELL_KEY = 128;
 // Vvardenfell and Solstheim, and exceeding it dropped the whole map sync while reporting
 // 'invalid shape' -- which is not what happened and sends anyone debugging it the wrong way.
 const MAX_MAP_CELLS = 8192;
+const MAX_EXPLORED = 1024; // exterior keys kept on a character doc (backlog 260)
 const MAX_RECORD_FIELDS = 128;
 // A WORLD-WIDE CEILING ON CUSTOM RECORDS, for the same reason regions have one and for a worse
 // consequence. Every RecordCreate is appended to the store, INSERTed into SQLite, and -- this is
@@ -82,6 +84,10 @@ export interface M7Ctx {
   records: RecordStore;
   // M6 sharing policy, asked per relay (the `sharing` plugin answers from [sharing]).
   isMapShared(): boolean;
+  // Backlog 260: where exploration persists. The explorer's own doc always; the campaign
+  // owner's too when the map is shared, so a guest's discoveries outlive their visit.
+  players?: PlayerStore;
+  ownerCharId?(): string | undefined;
   // Phase 3.7: set after construction (WorldState and WorldM7 are mutually referential).
   // Used to push the restored cell truth to occupants right after a reset.
   world?: { sendCellSnapshot(cellKey: string, doc: CellDoc): void };
@@ -344,9 +350,32 @@ export class WorldM7 {
       }
       cellKeys.push(key);
     }
+    // Persist BEFORE the sharing gate: an individual map is still this character's map
+    // (backlog 260: nothing was kept, and a returning host had a blank world map).
+    const exterior = cellKeys.filter((k) => /^-?\d+,-?\d+$/.test(k));
+    const targets = new Set([player.charId]);
+    const owner = this.ctx.ownerCharId?.();
+    if (owner !== undefined && this.ctx.isMapShared()) targets.add(owner);
+    if (exterior.length > 0 && !player.system) {
+      for (const charId of targets) {
+        this.ctx.players?.update(charId, (doc) => {
+          const set = new Set(doc.explored ?? []);
+          for (const k of exterior) set.add(k);
+          doc.explored = [...set].slice(-MAX_EXPLORED);
+        });
+      }
+    }
     if (!this.ctx.isMapShared()) return; // individual mode: never relayed
     for (const p of this.ctx.roster.inWorld()) {
       if (p.id !== player.id) p.peer.sendEvent('WorldMapExplored', { cellKeys, byId: player.id });
     }
+  }
+
+  // The keys a joining client replays through MP_WorldMapExplored: the campaign's when the
+  // map is shared and this is a guest, else the character's own (backlog 260).
+  exploredFor(player: Player): string[] | undefined {
+    const owner = this.ctx.ownerCharId?.();
+    const source = owner !== undefined && this.ctx.isMapShared() ? owner : player.charId;
+    return this.ctx.players?.getCached(source)?.explored;
   }
 }

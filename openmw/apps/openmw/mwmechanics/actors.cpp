@@ -2098,6 +2098,13 @@ namespace MWMechanics
                 if (sidingActors.find(observer) != sidingActors.cend())
                     continue;
 
+                // Backlog 258: another player's body is not an observer (the #143 predicate,
+                // mechanicsmanagerimp.cpp canReportCrime). A friend's puppet beside you hid
+                // the eye and Sneak never trained.
+                const ESM::RefNum observerRef = observer.getCellRef().getRefNum();
+                if (MWMP::isAvatar(observerRef) || (MWMP::isPuppet(observerRef) && !observerRef.hasContentFile()))
+                    continue;
+
                 if (world->getLOS(player, observer))
                 {
                     if (MWBase::Environment::get().getMechanicsManager()->awarenessCheck(player, observer))

@@ -16,6 +16,7 @@
 #endif
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm/attr.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadclas.hpp>
@@ -25,6 +26,7 @@
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
+#include "../mwbase/journal.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwbase/scriptmanager.hpp"
@@ -626,6 +628,44 @@ namespace MWMP
                     player.getClass().getCreatureStats(player).getActiveSpells().clear(player);
                 },
                 "MPClearActiveSpells");
+        };
+
+        // Backlog 256 (harness): spend a level on three attributes, the exact call the level-up
+        // dialog's OK button makes (mwgui/levelupdialog.cpp onOkButtonClicked -> E5's extracted
+        // MWMechanics::applyLevelup). A headless scenario cannot click the dialog; without this
+        // no test can raise a guest's base health mid-session. Unknown attribute ids are
+        // skipped rather than thrown: a typo in a scenario should fail its assertion, not the
+        // engine.
+        api["applyLevelup"] = [luaManager = context.mLuaManager](const sol::table& attrs) {
+            std::vector<ESM::Attribute::AttributeID> ids;
+            for (size_t i = 1; i <= attrs.size(); ++i)
+            {
+                sol::optional<std::string> name = attrs[i];
+                if (!name)
+                    continue;
+                ESM::Attribute::AttributeID id(*name);
+                if (ESM::Attribute::refIdToIndex(id) >= 0)
+                    ids.push_back(id);
+            }
+            luaManager->addAction(
+                [ids = std::move(ids)] { MWMechanics::applyLevelup(MWMechanics::getPlayer(), ids); },
+                "MPApplyLevelup");
+        };
+
+        // Backlog 257: a journal entry stamped with the day it was EARNED. quest:addJournalEntry
+        // stamps today (StampedJournalEntry::makeFromQuest reads the clock), and a session
+        // rebuilds its whole journal from the server at join -- so every entry read as
+        // written on the day of the relog. Same dedupe and index handling as addEntry
+        // (Journal::addEntryStamped); only the stamp differs.
+        api["addJournalEntryAt"] = [luaManager = context.mLuaManager](
+                                       std::string_view questId, int index, int day, int month, int dayOfMonth) {
+            ESM::RefId id = ESM::RefId::deserializeText(questId);
+            luaManager->addAction(
+                [id, index, day, month, dayOfMonth] {
+                    MWBase::Environment::get().getJournal()->addEntryAt(
+                        id, index, MWMechanics::getPlayer(), day, month, dayOfMonth);
+                },
+                "MPAddJournalEntryAt");
         };
 
         // M7 WorldMapExplored (PROTOCOL.md §M7): mark an exterior cell as discovered on the

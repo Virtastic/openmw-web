@@ -34,6 +34,18 @@ const MAX_ROLL_DAYS = 3660; // ten years
 // these numbers is a second chance for them to disagree -- which is exactly what happened.
 export const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
+// `dayspassed` exactly as world.lua's daysPassedOf computes it: days since the vanilla start
+// (16 Last Seed, 3E 427 = day 1). Stamped on journal entries (backlog 257).
+function absDays(t: { day: number; month: number; year: number }): number {
+  let days = t.year * 365 + (t.day - 1);
+  for (let m = 0; m < t.month - 1; m++) days += MONTH_DAYS[m] ?? 30;
+  return days;
+}
+const EPOCH_DAYS = absDays({ year: 427, month: 8, day: 16 });
+export function daysPassed(t: { day: number; month: number; year: number }): number {
+  return Math.max(1, absDays(t) - EPOCH_DAYS + 1);
+}
+
 // Phase 2.5: who may skip time, and by how much.
 //   'anyone'  M7 behaviour — any rest/wait advances the shared clock for everybody
 //   'owner'   only the world's owner may skip (guests must not fast-forward the host's game).

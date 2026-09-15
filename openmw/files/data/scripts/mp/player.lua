@@ -208,7 +208,12 @@ local function inputTick(now)
     if c.sneak then flags = flags + 2 end
     if c.jump or jumpLatched then flags = flags + 4 end
     jumpLatched = false
-    if (c.use and c.use ~= 0) or now < forceUseUntil then flags = flags + 8 end
+    -- A MENU HOLDS NOTHING. playercontrols leaves controls.use set when a menu opens with the
+    -- key down (backlog 263), so the avatar stayed wound up for the whole menu. The harness's
+    -- forced press is not a key and is kept.
+    local inMenu = false
+    pcall(function() inMenu = I.UI.getMode() ~= nil end)
+    if (c.use and c.use ~= 0 and not inMenu) or now < forceUseUntil then flags = flags + 8 end
     -- THE STANCE RIDES THE INPUT, or the avatar never swings. The engine only starts an attack
     -- from UpperBodyState::WeaponEquipped (mwmechanics/character.cpp), and nothing on the peer
     -- ever drew the avatar's weapon: the use bit arrived at a body standing at ease and did
@@ -1177,6 +1182,14 @@ local function dispatch(cmd)
         if cmd == 'jump' then
             jumpFrames = 4 -- held ~3 frames, released on the 4th
             I.Controls.overrideMovementControls(true)
+        end
+        -- Test hook (backlog 256): spend a level on three attributes, the level-up dialog's
+        -- OK button without the dialog (mp.applyLevelup over MWMechanics::applyLevelup).
+        local levelAttrs = cmd:match('^levelup:(.+)$')
+        if levelAttrs and mp.applyLevelup then
+            local attrs = {}
+            for a in levelAttrs:gmatch('[^,]+') do attrs[#attrs + 1] = a end
+            mp.applyLevelup(attrs)
         end
     end
 end

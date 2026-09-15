@@ -59,7 +59,7 @@ local journal = {} -- questId -> index (diff cache AND echo guard)
 local journalSent = 0 -- JournalEntry broadcasts WE originated (echo-guard evidence)
 local journalSynced = false -- MP_JournalSync consumed?
 local pendingJournal = {} -- questId -> index observed locally before the sync landed
-local pendingApply = {} -- inbound entries that arrived before the player object existed
+local pendingApply = {} -- inbound {q,i,stamp} that arrived before the player object existed, in order
 
 local globals = {} -- name -> last seen value
 local globalSeq = {} -- name -> last sequence WE stamped
@@ -115,7 +115,10 @@ end
 
 -- ================================================================== journal
 
-local function applyJournalEntry(questId, index)
+-- `stamp` (optional, from JournalSync's journalLog): {d=dayspassed, m=month, dm=day of
+-- month} the entry was earned on. With mp.addJournalEntryAt the engine keeps that date;
+-- without it (older engine) the entry lands dated today, as before (backlog 257).
+local function applyJournalEntry(questId, index, stamp)
     -- Cache FIRST: the engine's onQuestUpdate for this apply arrives a frame later and is
     -- recognised as our own echo by value. Caching before the player-object check matters:
     -- JournalSync can land before world.players[1] exists, and an unseeded cache would make
@@ -123,7 +126,7 @@ local function applyJournalEntry(questId, index)
     journal[questId] = index
     local player = playerObj()
     if not player then
-        pendingApply[questId] = index -- retried from tick() once the player exists
+        pendingApply[#pendingApply + 1] = { q = questId, i = index, stamp = stamp } -- retried from tick()
         return false
     end
     local all = types.Player.quests(player)
@@ -141,7 +144,13 @@ local function applyJournalEntry(questId, index)
     -- the engine journal starts EMPTY every session and is rebuilt from JournalSync: with
     -- index-only, every player's journal read blank after a relog while their quests still
     -- gated correctly. Repeats are safe — Topic::addEntry dedupes by info id.
-    local ok = pcall(function() quest:addJournalEntry(index) end)
+    local ok = pcall(function()
+        if stamp and mp.addJournalEntryAt then
+            mp.addJournalEntryAt(questId, index, stamp.d, stamp.m, stamp.dm)
+        else
+            quest:addJournalEntry(index)
+        end
+    end)
     if not ok then
         -- No info record at this exact stage (common: the server stores the current index,
         -- not every stage passed through). The index still has to land.
@@ -589,6 +598,15 @@ handlers.MP_JournalSync = function(data)
             notice('Your own journal is back.')
         end
     end
+    -- The dated log first, IN ORDER (ipairs: the server sends it oldest first), so the
+    -- journal reads as it was earned; the map below then lands whatever the log lacks and
+    -- settles every current stage.
+    for _, e in ipairs(data.journalLog or {}) do
+        local idx = asInt(e.i)
+        if type(e.q) == 'string' and idx and type(e.d) == 'number' then
+            applyJournalEntry(e.q, idx, { d = asInt(e.d), m = asInt(e.m) or 1, dm = asInt(e.dm) or 1 })
+        end
+    end
     for questId, index in pairs(data.quests or {}) do
         local idx = asInt(index)
         if type(questId) == 'string' and idx then applyJournalEntry(questId, idx) end
@@ -958,7 +976,7 @@ function quests.tick(now)
     if next(pendingApply) and playerObj() then
         local retry = pendingApply
         pendingApply = {}
-        for questId, index in pairs(retry) do applyJournalEntry(questId, index) end
+        for _, e in ipairs(retry) do applyJournalEntry(e.q, e.i, e.stamp) end
     end
     if now >= nextDiffAt then
         nextDiffAt = now + DIFF_INTERVAL
