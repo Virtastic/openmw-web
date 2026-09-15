@@ -198,7 +198,13 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
       steps[k] = nowMs;
       return v.b;
     };
+    // A REST THAT WAS REFUSED HEALED NOBODY. The guest's engine restored their body for the
+    // hours the wait dialog asked for; the server refused the hours (timeSkip=owner). The
+    // raise that follows is those hours' healing, in zero world time: dropped for a few
+    // seconds after the refusal. A potion in that window is lost too; a small price.
+    const restRefused = player.restRefusedAt !== undefined && Date.now() - player.restRefusedAt <= REST_REFUSED_MS;
     const raise = (k: 'hp' | 'mp' | 'ft', v: DynamicStatDoc) => {
+      if (restRefused) return undefined;
       // `have.b` (or a plausibly stepped new base), NEVER `v.b` outright: `v` is the client's
       // own untrusted body, so capping against its claimed base let a modified client assert
       // `{c: 99999, b: 99999}` and be stored at ten times its real maximum -- then forwarded
@@ -504,6 +510,7 @@ function handleItemAcquired(ctx: StateCtx, player: Player, body: LTable): boolea
 // client PlayerStatsDynamic (doc + relay + death flush) and additionally hands the OWNER
 // their own bars as MP_SelfStats -- the client renders what the peer simulated.
 const PEER_STATS_FRESH_MS = INPUT_DRIVING_MS; // one predicate everywhere (players.ts)
+const REST_REFUSED_MS = 4_000; // the raise claim behind a refused rest lands within the 2 s diff + a slow box
 const RESURRECT_GRACE_MS = 6_000;
 // Restoration budget: how much a client may heal ITSELF per window while the peer owns its
 // bars. Generous for real play -- a Restore Health potion is ~20-100, resting is a full bar --

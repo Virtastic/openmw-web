@@ -307,3 +307,41 @@ test("a client's PlayerDeath is ignored while the peer reports it alive, honoure
   a.sendEvent('PlayerDeath', {});
   await a.waitEvent('PlayerResurrect', () => true, 3000);
 });
+
+// A REST THAT WAS REFUSED HEALED NOBODY. A guest's wait dialog restores their local body for
+// the hours it asked for; the server refuses the hours (timeSkip=owner) and the clock never
+// moves -- but the raise that followed was claimed like a potion: a full heal in zero world
+// time, repeatable. The claim behind a refused rest is dropped.
+test('the heal behind a refused rest does not reach the avatar', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, rules: { timeSkip: 'off' } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  const welcome = await a.joinAsNew('Sleeper');
+  a.playerId = welcome['playerId'] as number;
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  let seq = 0;
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(35) }] }), 100);
+  t.after(() => clearInterval(reporter));
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 35);
+
+  a.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
+  await a.waitEvent('WorldTimeRefused');
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 95, b: 100 } }); // the rest's healing, claimed
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'AvatarRestore').length, 0, 'the refused rest\'s heal reached the avatar');
+
+  // A potion after the window is still a heal.
+  await new Promise((r) => setTimeout(r, 4_000));
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 60, b: 100 } });
+  await peer.waitEvent('AvatarRestore', (v) => (v as { id?: number })?.id === a.playerId, 3000);
+});

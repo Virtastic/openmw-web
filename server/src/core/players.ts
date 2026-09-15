@@ -115,6 +115,9 @@ export interface Player {
   // health every tick and never dies. See playerstate.ts handleStatsDynamic.
   restoreWindowAt?: number;
   restoreInWindow?: number;
+  // When this player's time skip (a rest) was refused: the rest still healed their LOCAL body
+  // for hours that never passed, and the raise claim that follows must not land (playerstate).
+  restRefusedAt?: number;
   // When each bar's MAXIMUM last stepped (a level-up); one step per window per stat.
   baseStepAt?: Partial<Record<'hp' | 'mp' | 'ft', number>>;
   // Where this player's last cell change / teleport claimed they landed. While set, the

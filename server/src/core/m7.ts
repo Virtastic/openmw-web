@@ -139,6 +139,7 @@ export class WorldM7 {
         const verdict = this.ctx.maySkipTime?.(player) ?? { may: true, why: '' };
         if (!verdict.may) {
           log('info', 'time.skip_refused', { from: player.name, why: verdict.why });
+          player.restRefusedAt = Date.now();
           player.peer.sendEvent('WorldTimeRefused', { reason: verdict.why });
           break;
         }
