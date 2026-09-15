@@ -130,6 +130,17 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 181 | Internal hosting mints locker URLs on http://127.0.0.1:8080 (no domain): server-side saves/locker uploads from another machine fail; publicBase hidden from the dashboard | fsstorage.ts:166; api-settings.ts DERIVED_FIELDS |
 | 183 | s114 red in #91: A's client went silent ~5 s after the second snapto (simpeer.avatar_stats_gated lastInputAgoMs=5668), A's copy of the companion never moved while B saw it; no Lua/JS error. Rerun alone with moveRx/actorBatchesIn/puppetRx/uiMode + A's full console | s114, player.lua input sender |
 | 184 | Harness under Jenkins cannot sync mp scripts into the peer (EACCES on /usr/local/share/openmw/resources/vfs/scripts/mp) and only WARNS: the peer runs the image's baked Lua — honest only while the image is built from the branch under test | mp-harness.mjs:283 syncPeerScripts; run-harness.sh |
+| 186 | Backup does nothing useful on a gateway: SIGUSR1 has no gateway handler (README cron flushes nothing, Node opens the inspector), tar copies db/wal/shm at different instants, README names the wrong container | gateway/main.ts forward SIGUSR1 to worlds; stores checkpoint WAL on flush; ops.ts export VACUUM INTO |
+| 187 | Orphaned sim peers after a world is SIGKILLed are never reaped (peers spawned detached:false, no pid file; a peer that once joined redials forever); no init in compose | worlds.ts:563 kill the process group; simpeer.ts detached; compose init: true; net.lua:434 |
+| 188 | Dashboard delete-account in gateway mode: no kick, no discardForCharacter, erase.ts never writes the `erased` tombstone so the world's next flush resurrects the doc | gateway/admin.ts:198; erase.ts:454 |
+| 189 | Cell docs have no cap on moved/locks/doors: ~11k ObjectMoves (3 min at 60 msg/s) makes WorldCellState exceed the LSER node ceiling and every entrant disconnects BAD_PROTO; memberVars capped on send only | worldstate.ts:1031/1046/1104 docAndRef guard 2000 keys; quests.ts:492 |
+| 190 | Wire version handshake (proto=2) not maintained: 14 PROTOCOL.md commits since the last bump; a mismatched client connects and misbehaves silently (real shape of #173) | connection.ts:1200 bump proto per additive change or minClientBuild |
+| 191 | Gateway shutdown exits 3 s after stopAll while the world stop grace is 20 s (PID 1 exit kills children mid-drain) | gateway/main.ts:335 await child exits; compose stop_grace_period |
+| 192 | Persistence failures (players.flush_failed, cell_flush_failed, world.crashed, cells_unsimulated, server.crash) not in the default notification event list | config.default.toml:442 |
+| 193 | erase.ts opens SQLite without busy_timeout: a concurrent world write turns the dashboard delete into a 500 | erase.ts:346 |
+| 194 | Ban rows attribute dashboard bans to "dashboard", not the operator | server.ts:1076 |
+| 195 | First-run setup trusts XFF from any private peer: behind an operator's own proxy without XFF every internet client looks private during the setup window | routes.ts:338; document beside the LAN copy |
+| 196 | Slow growth: erased never pruned; quests.ts peerMemberAt grows per cell|ref|name; Export streams gamedata/ (multi-GB); the 1 Hz "avatar submerged" info line ships in production Lua with a sync append per line | playerstore.ts:156, quests.ts, ops.ts:46, global.lua:664 |
 
 ## Open (found, not fixed)
 
