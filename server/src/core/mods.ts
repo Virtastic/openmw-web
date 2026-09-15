@@ -190,8 +190,32 @@ export const pluginRank = (f: string): number => (/\.(esm|omwgame)$/i.test(f) ? 
  * meshes and textures are wanted even when its plugin is not. That is the subtle case, and
  * dropping the directory with the plugin would silently un-install half a mod.
  */
+// A PLUGIN AFTER EVERY MASTER IT DECLARES. Mods were appended in INSTALL order and only sorted
+// esm-before-esp: the landmass installed before its data master gave "TR_Mainland.esm,
+// Tamriel_Data.esm". The engine does not refuse that -- it searches only EARLIER files for a
+// master and falls back to the plugin itself, so every landmass reference to a Tamriel_Data
+// object was re-pointed at the landmass: a quietly corrupt world, and the same on every
+// engine so the content gate saw nothing wrong. Stable: files with no unmet master keep
+// their order.
+function orderByMasters(files: string[], declared: Map<string, string[]>): string[] {
+  const out: string[] = [];
+  const placed = new Set<string>();
+  const remaining = [...files];
+  let guard = remaining.length + 1;
+  while (remaining.length > 0 && guard-- > 0) {
+    const i = remaining.findIndex((f) => (declared.get(f.toLowerCase()) ?? [])
+      .every((m) => placed.has(m) || !files.some((x) => x.toLowerCase() === m)));
+    const pick = i < 0 ? 0 : i; // a cycle or a missing master: give up on order, keep every file
+    const f = remaining.splice(pick, 1)[0]!;
+    out.push(f);
+    placed.add(f.toLowerCase());
+  }
+  return [...out, ...remaining];
+}
+
 export function resolveMods(doc: ModDoc): ModStack {
   const dataDirs: string[] = [];
+  const declaredMasters = new Map<string, string[]>();
   const masters: string[] = [];
   const plugins: string[] = [];
   const archives: string[] = [];
@@ -216,12 +240,13 @@ export function resolveMods(doc: ModDoc): ModStack {
       contentSeen.set(key, owners);
       if (owners.length > 1) continue;
       (pluginRank(p.file) === 0 ? masters : plugins).push(p.file);
+      if (Array.isArray(p.masters)) declaredMasters.set(key, p.masters.map((m) => m.toLowerCase()));
     }
   }
 
   return {
     dataDirs,
-    content: [...masters, ...plugins],
+    content: orderByMasters([...masters, ...plugins], declaredMasters),
     archives,
     bsaCollisions: [...bsaSeen].filter(([, o]) => o.length > 1).map(([name, owners]) => ({ name, owners })),
     contentCollisions: [...contentSeen].filter(([, o]) => o.length > 1).map(([file, owners]) => ({ file, owners })),

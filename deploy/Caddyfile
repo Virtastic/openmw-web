@@ -97,7 +97,16 @@
 		#
 		# X-Forwarded-For is NOT stripped: Caddy APPENDS the peer it saw, so a client's own
 		# entry stays to the left of the one added here and the server reads from the right.
-		header_up -CF-Connecting-IP
+		# ...EXCEPT CF-Connecting-IP, when Cloudflare is the front door. Stripping it here left
+		# the gateway reading X-Forwarded-For's LAST entry -- the edge container's docker
+		# address -- for every player: one login budget for the whole server (the sixth sign-in
+		# in a minute refused), maxConnsPerIp counting everyone as one household, an /ipban
+		# banning the world. Cloudflare rewrites this header on every request it proxies, and
+		# the shared edge only reaches this container from Cloudflare, so the header that
+		# arrives here is Cloudflare's word. The gateway still ignores it unless
+		# [limits] trustCloudflareIp = true (config.toml), and warns when it sees the header
+		# while that is off -- which is the signal the operator needs. A forged one only gets
+		# in past the edge, which is the edge's origin-guard problem, not this hop's.
 		header_up -X-Omw-Client-IP
 		header_up -True-Client-IP
 		# Preserve the ORIGINAL scheme from the public edge. Caddy defaults X-Forwarded-Proto

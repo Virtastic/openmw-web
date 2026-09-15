@@ -251,3 +251,17 @@ test('a missing folder is dropped from the config, never from the document', () 
   presentMods(gd, doc);
   assert.deepEqual(doc.mods.map((m) => m.slug), ['gone'], 'the document must be untouched');
 });
+
+// A PLUGIN AFTER EVERY MASTER IT DECLARES. The landmass installed before its data master gave
+// "TR_Mainland.esm, Tamriel_Data.esm"; the engine does not refuse that -- it searches only
+// EARLIER files for a master and falls back to the plugin itself, re-pointing every landmass
+// reference at the landmass: a quietly corrupt world, identical on every engine, so the
+// content gate saw nothing wrong.
+test('a plugin is ordered after the masters it declares, whatever the install order', () => {
+  const s = resolveMods({ ...emptyDoc(), mods: [
+    mod({ slug: 'tr-mainland', plugins: [{ file: 'TR_Mainland.esm', enabled: true, masters: ['Tamriel_Data.esm'] }] }),
+    mod({ slug: 'tamriel-data', plugins: [{ file: 'Tamriel_Data.esm', enabled: true }] }),
+    mod({ slug: 'patch', plugins: [{ file: 'TR_Patch.esp', enabled: true, masters: ['TR_Mainland.esm', 'Morrowind.esm'] }] }),
+  ] });
+  assert.deepEqual(s.content, ['Tamriel_Data.esm', 'TR_Mainland.esm', 'TR_Patch.esp']);
+});
