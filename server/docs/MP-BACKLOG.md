@@ -8,7 +8,7 @@ States: **open** (found, not started) · **fixed** (committed on the branch, no 
 · **baking** (in a Jenkins sweep) · **done** (green in a sweep, or unit-tested where the harness
 cannot reach) · **wontfix** (design decision, reason given).
 
-Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15), #90 queued.
+Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9/17), #90 running (14 scenarios), #91 next with s160.
 
 ## Found by the 2026-09-14/15 audits
 
@@ -41,6 +41,14 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15), 
 | 25 | A heal in the frame a peer report lands was erased before measurement | identity.lua | baking | s150, s146 |
 | 26 | Cloud-locker page could not change world a second time (mplocker dropped) | index.html | baking | s141 (green locally) |
 | 27 | Guest death seen by the host (puppet falls, gets up) | s131 | done | s131 PASS #89 |
+| 36 | Magic at a puppet: only Damage/Restore H/M/F forwarded; Calm/Soultrap/Paralyze/Levitate-on-NPC applied to the local copy only | spelleffects.cpp | fixed | needs a target-spell mint hook + scenario |
+| 37 | PvP swing/kill read as assault/murder by witnesses | mechanicsmanagerimp.cpp | fixed | (scenario: pvp on, hit B before a guard, bounty stays 0) |
+| 38 | Guest's welcome carried its own doc's bounty; peer's guards read the world's | connection.ts, quests.ts | done (unit) | standing.test.ts |
+| 39 | A drop carried record+count only: a pristine copy for the friend (free recharge) | objects.lua, worldstate.ts | fixed | s160, worldstate.test.ts |
+| 40 | Equipment relayed at join before RecordsSync; made item never re-declared under its net id | connection.ts, global.lua | fixed | — |
+| 41 | Sweep #89: a heal in the frame a peer report lands was erased before measurement | identity.lua | baking | s150 |
+| 42 | Sweep #89: second world change on a cloud-locker page died with "no locker session" | index.html | baking | s141 |
+| 43 | Sweep #89: scripted-lock poll covered the player's own cell only | objects.lua | baking | s158 |
 
 ## Open (found, not fixed)
 
@@ -53,7 +61,24 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15), 
 | 32 | Social OK notices ("Invitation sent.", "Sent home.") never mirrored to the feed | social.lua status |
 | 33 | Dying inside a dialogue: lock release unverified | quests.lua |
 | 34 | No harness hook opens Training/Travel/SpellCreation/Enchanting (`svc:open:<Mode>`) | player.lua |
-| 35 | PvP kill: no attribution, no bounty; no scenario kills a player with PvP on | combat.ts |
+| 35 | PvP kill: no attribution; no scenario kills a player with PvP on | combat.ts |
+| 44 | Resist arrest: MP_OpenDialogue bypasses the dialogue lock; guard puppets never report "fights me" | global.lua, puppet.lua, quests.lua | 
+| 45 | Jail: time skip is a local advanceTime, not through the server clock; skill loss/confiscation unverified | jailscreen path, world.lua |
+| 46 | Pickpocket caught: victim's startCombat happens on an AI-off puppet, never reported | puppet.lua |
+| 47 | Guest rest under timeSkip=owner: the clock is refused but the local heal is claimed (free full heal) | identity.lua / world.lua timeRefused |
+| 48 | Guest's local advanceTime changes weather; holder re-sends only on change | world.lua tickWeather (clear lastWeatherSent every ~60 s) |
+| 49 | dayspassed never written by writeLocalTime: TimeStamp goes backwards (powers/day, corpse timers, disease) | world.lua TIME_FIELDS |
+| 50 | Map exploration/markers not persisted (blank map every login, solo included); custom markers not shared | identity.lua, playerstore.ts |
+| 51 | Dialogue topics relayed, never persisted | quests.ts |
+| 52 | Cell reset: vanilla loot never reappears on a running engine (only future joiners) | objects.lua |
+| 53 | Weather region freezes when the holder goes indoors (no handoff) | weather.ts |
+| 54 | Item condition: peer wholesale report can undo a fresh repair in the merge window | playerstate.ts handleAvatarItemStatesBatch |
+| 55 | Enchant charge oscillates (both engines run passive recharge) | cosmetic |
+| 56 | Mixed stacks (one damaged of five) collapse into one stack on relog | global.lua restore (create one object per state entry) |
+| 57 | Container put/take carries no item state | objects.lua snapshotContainer, worldstate.ts |
+| 58 | Bound items recorded in the inventory doc; a relog inside the window grants a permanent one | identity.lua snapInventory (skip sMagicBound*ID) |
+| 59 | Summon: holder loss mid-effect leaves no local creature until recast | global.lua |
+| 60 | Alchemy: identical potions brewed by two players are two records (doc bloat) | m7.ts (dedupe by content) |
 
 ## Wontfix / by design
 
