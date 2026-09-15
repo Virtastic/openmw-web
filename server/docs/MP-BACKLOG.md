@@ -347,6 +347,11 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 395 | #280 vs s154: guestSpawn returns null whenever positions[worldId] exists (any guest who ever flushed here) → a returning guest is never placed beside the host | server.ts:978 skip the spawn only when positions[worldId].at is younger than 60 s (a reboot) |
 | 396 | #366 vs #343: the arrest window sends no DialogueLock, so with crime shared paying the fine never lowers the bounty (guards re-arrest forever) | connection.ts:802 stamp target.lastDialogueAt on the PlayerArrest relay |
 | 397 | Peer image skew: a hand-run harness on a peer image baked before proto 3 = BAD_PROTO everywhere; the Jenkins job rebuilds both | note |
+| 398 | PROTOCOL.md drifted from the code across ~17 messages (pose window 300 ms vs 2 s; bars fresh 1 s vs 5 s; ActorAI documented shape does not exist; JournalSync borrowed/journalLog, CrimeUpdate raise-only/echo/byId, attackerId/fromId, first-open caps, DialogueLock gates, kd/blk/speed all undocumented; CombatProjectile and ObjectMove C→S dead; ~40 undocumented names) | PROTOCOL.md rewrite per the wire audit line list |
+| 399 | A human ObjectSpawnRequest{actor} refused for reach/rate prints "That drop was refused." (tempId 0 falls to the drop notice table) | objects.lua:714 notice table for reach/rate |
+| 400 | StateRefused for PlayerMark / PlayerItemAcquired / PlayerActiveSpells is never re-sent (KIND_OF_EVENT lacks them) | identity.lua:619 |
+| 401 | ActorDisposition.ai from the HOLDER path is relayed unvalidated (the dialogue path clamps 0..100) — a compromised peer is trusted anyway, but clamp for symmetry | worldstate.ts:866 |
+| 402 | ReportPlayer.voice is a dead field (Lua never sets it; server compares to the string "true") | social.ts / player.lua:583 |
 
 ## Open (found, not fixed)
 
