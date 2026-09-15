@@ -80,6 +80,9 @@ end
 
 local playerId = nil -- set for remote-player puppets
 local actorKey = nil -- set for M4 NPC puppets (refKey the holder addresses)
+-- Backlog 310: the last local swing at this puppet; the stats drop it caused plays the feel.
+local lastSwingAt, lastSwingPos = 0, nil
+local SWING_FEEL_WINDOW_S = 1.0
 local interp = Interp.new()
 local lastSnapReq = 0
 -- Steering hysteresis. STEER_START must stay comfortably above the distance a puppet can
@@ -232,17 +235,12 @@ local function onHitIntercept(attack)
         hitPos = attack.hitPos and { x = attack.hitPos.x, y = attack.hitPos.y, z = attack.hitPos.z } or nil,
         mpTest = attack.mpTest == true, -- Phase 4C: test-hook hits always ride the relay
     })
-    -- THE FEEL OF THE BLOW stays local: the cancelled chain is what played the hit sound and
-    -- the blood (omw/combat/local.lua onHit), so co-op melee was silent. Only the cosmetics
-    -- are replayed here -- never Actor._onHit, which is the crime/actorAttacked path.
-    pcall(function()
-        if attack.successful and ((attack.damage or {}).health or 0) > 0 then
-            core.sound.playSound3d('Health Damage', self)
-            if attack.hitPos and I.Combat.spawnBloodEffect then I.Combat.spawnBloodEffect(attack.hitPos) end
-        else
-            core.sound.playSound3d('miss', self)
-        end
-    end)
+    -- THE FEEL OF THE BLOW is NOT this roll's to give (backlog 310): the local swing and the
+    -- avatar's on the peer are independent rolls, so a hit sound here was a coin flip against
+    -- what actually landed, and a bare-handed hit (fatigue only) played 'miss'. Remember the
+    -- swing; the MP_Stats drop that follows plays the sound (and the blood, at this position).
+    lastSwingAt = core.getRealTime()
+    lastSwingPos = attack.hitPos
     return false -- cancel local damage; the owner applies it
 end
 
@@ -511,14 +509,34 @@ return {
             -- death pose stop updating for the rest of the session, long after the despawn
             -- that caused it. Seen during a peer outage, where puppets churn.
             local function apply(stat, v)
+                local before = stat and stat.current
                 if stat and v then
                     stat.base = v.b
                     stat.current = v.c
                 end
+                return before ~= nil and v and v.c ~= nil and v.c < before
             end
-            apply(d.health(self), data.hp)
+            local hpDrop = apply(d.health(self), data.hp)
             apply(d.magicka(self), data.mp)
-            apply(d.fatigue(self), data.ft)
+            local ftDrop = apply(d.fatigue(self), data.ft)
+            -- THE FEEL OF THE BLOW (backlog 310): the bar drop is what actually landed on the
+            -- holder, so this is where the sound belongs. Health down = a hit (blood at the
+            -- last local swing's position if it was recent; a drop from elsewhere has no
+            -- position, so no blood). Fatigue-only down after a recent local swing = a punch
+            -- (combat.cpp getHandToHandDamage's sounds). Nothing plays 'miss': no engine
+            -- knows a miss for certain, and running drains fatigue too, hence the window.
+            pcall(function()
+                local recent = core.getRealTime() - lastSwingAt <= SWING_FEEL_WINDOW_S
+                if hpDrop then
+                    core.sound.playSound3d('Health Damage', self)
+                    if recent and lastSwingPos and I.Combat and I.Combat.spawnBloodEffect then
+                        I.Combat.spawnBloodEffect(lastSwingPos)
+                    end
+                elseif ftDrop and recent then
+                    core.sound.playSound3d(math.random(2) == 1 and 'Hand To Hand Hit' or 'Hand To Hand Hit 2', self)
+                end
+                if hpDrop or ftDrop then lastSwingAt = 0 end
+            end)
             -- Speed is the one attribute the body needs: on the template's Speed a fast
             -- friend's puppet fell 128 units behind and teleported (backlog 134).
             if data.speed then

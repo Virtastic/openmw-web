@@ -277,7 +277,10 @@ namespace MWMP
             const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
             if (ptr.isEmpty() || !ptr.getClass().isActor())
                 return false;
-            return ptr.getClass().getCreatureStats(ptr).getKnockedDown();
+            // Hit recovery counts too (backlog 309): a staggered body cannot swing, so a use
+            // tap consumed then was lost, and the owner walked while the avatar stood still.
+            const MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
+            return stats.getKnockedDown() || stats.getHitRecovery();
         };
         // Drain the harmful magic effects the engine declined to apply to THIS actor, so its
         // puppet script can forward them to whoever owns it. Per-object on purpose: the puppet

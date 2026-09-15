@@ -127,8 +127,24 @@ local function equipTick(now)
     end
 end
 
+-- THE TANK'S PROGRESSION (backlog 307). I.SkillProgression is a PLAYER script, so a hit on
+-- this NPC body's armour (omw/combat/local.lua applyArmor) or a block (combat.cpp) counted
+-- for nobody. Only the armour/block family is forwarded -- the owner's own client already
+-- claims weapon, spell and movement uses -- to the owner's I.SkillProgression via the server
+-- (AvatarSkillUse -> SelfSkillUse, player.lua). Block arrives through the engine's
+-- _onSkillUse; armour through the I.MPAvatar interface local.lua calls when it finds no
+-- SkillProgression on the body.
+local SKILL_USE_FORWARDED = { block = true, lightarmor = true, mediumarmor = true, heavyarmor = true, unarmored = true }
+local function forwardSkillUse(skillid, useType)
+    if not SKILL_USE_FORWARDED[skillid] then return end
+    core.sendGlobalEvent('mpAvatarSkillUse', { obj = self.object, skill = skillid, useType = useType or 0 })
+end
+
 return {
+    interfaceName = 'MPAvatar',
+    interface = { version = 1, skillUsed = forwardSkillUse },
     engineHandlers = {
+        _onSkillUse = forwardSkillUse,
         onActive = function()
             self:enableAI(false)
             registerHitVeto()
@@ -179,7 +195,10 @@ return {
             -- now because combat.lua no longer forwards a real swing while the peer holds
             -- the cell -- so a blow lands exactly once, here.
             self.controls.use = (useLatch or bit(input.flags, 3)) and 1 or 0
-            useLatch = false
+            -- ...BUT NOT WHILE STAGGERED (backlog 309). A body in hit recovery or on the floor
+            -- cannot start a swing, so a latch consumed there was a tap lost for good. Hold it
+            -- until the body can act; mp.isKnockedDown covers hit recovery too.
+            if not (mp.isKnockedDown and mp.isKnockedDown(self.object)) then useLatch = false end
             -- THE OWNER'S STANCE, OR THE USE BIT IS INERT: an attack only starts from a drawn
             -- weapon (character.cpp, UpperBodyState::WeaponEquipped). Spell stance maps to
             -- Nothing on purpose -- the avatar must never cast; the owner's client casts and

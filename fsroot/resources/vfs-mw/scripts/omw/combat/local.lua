@@ -185,6 +185,10 @@ local function applyArmor(attack)
         local skillid = I.Combat.getArmorSkill(item)
         if I.SkillProgression then
             I.SkillProgression.skillUsed(skillid, {useType = I.SkillProgression.SKILL_USE_TYPES.Armor_HitByOpponent})
+        elseif I.MPAvatar then
+            -- openmw-web: an NPC body embodying a player on the sim peer (scripts/mp/avatar.lua)
+            -- has no SkillProgression; the use is routed to the owner's (Armor_HitByOpponent = 0).
+            I.MPAvatar.skillUsed(skillid, 0)
         end
         if item and Armor.objectIsInstance(item) then
             local attackerIsUnarmedCreature = attack.attacker and not attack.weapon and not attack.ammo and Creature.objectIsInstance(attack.attacker)

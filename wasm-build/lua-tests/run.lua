@@ -1260,5 +1260,44 @@ do
     and ac:find('function actors.heldCells()', 1, true) ~= nil)
 end
 
+print('melee depth -- armour/block progression rides the avatar, the stagger keeps the tap, the bar drop plays the blow (307, 309, 310)')
+do
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  local cl = io.open('./openmw/files/data-mw/scripts/omw/combat/local.lua'):read('*a')
+  local clm = io.open('./fsroot/resources/vfs-mw/scripts/omw/combat/local.lua'):read('*a')
+  -- #307: the engine's combat script asks the avatar interface when it has no SkillProgression.
+  check('omw/combat/local.lua routes an armour use to I.MPAvatar when SkillProgression is absent',
+    cl:find('elseif I.MPAvatar then', 1, true) ~= nil and cl:find('I.MPAvatar.skillUsed(skillid, 0)', 1, true) ~= nil)
+  check('the fsroot mirror of combat/local.lua is the same file', cl == clm)
+  check('avatar.lua provides the MPAvatar interface and takes _onSkillUse',
+    av:find("interfaceName = 'MPAvatar'", 1, true) ~= nil and av:find('skillUsed = forwardSkillUse', 1, true) ~= nil
+    and av:find('_onSkillUse = forwardSkillUse', 1, true) ~= nil)
+  local fam = av:match('local SKILL_USE_FORWARDED = (%b{})')
+  check('avatar.lua forwards the armour/block family only',
+    fam ~= nil and fam:find('block = true', 1, true) ~= nil and fam:find('unarmored = true', 1, true) ~= nil
+    and fam:find('heavyarmor = true', 1, true) ~= nil and not fam:find('blade', 1, true)
+    and av:find('if not SKILL_USE_FORWARDED[skillid] then return end', 1, true) ~= nil, tostring(fam))
+  check('global.lua sends the use to the server as AvatarSkillUse with the owner id',
+    g:find("mp.sendEvent('AvatarSkillUse', { id = id, skill = data.skill, useType = data.useType or 0 })", 1, true) ~= nil)
+  check('player.lua counts MP_SelfSkillUse through I.SkillProgression',
+    p:find('MP_SelfSkillUse = function(data)', 1, true) ~= nil
+    and p:find('pcall(I.SkillProgression.skillUsed, data.skill, { useType = data.useType or 0 })', 1, true) ~= nil)
+  -- #309: the use latch survives a stagger.
+  check('avatar.lua keeps useLatch armed while the body is knocked down or in hit recovery',
+    av:find('if not (mp.isKnockedDown and mp.isKnockedDown(self.object)) then useLatch = false end', 1, true) ~= nil
+    and not av:find('\n            useLatch = false\n', 1, true))
+  -- #310: the feel comes from the bar drop, never from the local roll.
+  check('puppet.lua no longer plays the local roll (no miss sound at all)',
+    not pp:find("playSound3d('miss'", 1, true) and pp:find('lastSwingAt = core.getRealTime()', 1, true) ~= nil)
+  check('puppet.lua plays Health Damage on an hp drop and a hand-to-hand hit on a fatigue-only drop after a swing',
+    pp:find("if hpDrop then", 1, true) ~= nil and pp:find("core.sound.playSound3d('Health Damage', self)", 1, true) ~= nil
+    and pp:find("elseif ftDrop and recent then", 1, true) ~= nil
+    and pp:find("'Hand To Hand Hit' or 'Hand To Hand Hit 2'", 1, true) ~= nil
+    and pp:find('if recent and lastSwingPos and I.Combat and I.Combat.spawnBloodEffect then', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

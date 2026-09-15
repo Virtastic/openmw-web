@@ -671,7 +671,13 @@ namespace MWClass
             if (!weapon.isEmpty())
                 weapskill = weapon.getClass().getEquipmentSkill(weapon);
             skillUsageSucceeded(ptr, weapskill, ESM::Skill::Weapon_SuccessfulHit);
+        }
 
+        // The sneak-attack critical is the avatar's too (backlog 308): the peer swings for a
+        // player, and the row-90 fix reached ranged only. The weapon skill use above stays
+        // player-only (the owner's client claims its own), the message box too.
+        if (MWMechanics::isPlayerOrAvatar(ptr))
+        {
             const MWMechanics::AiSequence& seq = victim.getClass().getCreatureStats(victim).getAiSequence();
 
             bool unaware
@@ -679,7 +685,8 @@ namespace MWClass
             if (unaware)
             {
                 damage *= store.find("fCombatCriticalStrikeMult")->mValue.getFloat();
-                MWBase::Environment::get().getWindowManager()->messageBox("#{sTargetCriticalStrike}");
+                if (ptr == MWMechanics::getPlayer())
+                    MWBase::Environment::get().getWindowManager()->messageBox("#{sTargetCriticalStrike}");
                 if (healthdmg)
                 {
                     MWBase::Environment::get().getSoundManager()->playSound3D(

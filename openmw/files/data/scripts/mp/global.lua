@@ -3196,6 +3196,17 @@ local eventHandlers = {
         end
     end,
 
+    -- Backlog 307 (peer): an armour/block skill use on an avatar, to its owner's progression.
+    mpAvatarSkillUse = function(data)
+        if not (data and data.obj and data.skill) then return end
+        for id, p in pairs(puppets) do
+            if p.obj and p.obj:isValid() and p.obj.id == data.obj.id then
+                mp.sendEvent('AvatarSkillUse', { id = id, skill = data.skill, useType = data.useType or 0 })
+                return
+            end
+        end
+    end,
+
     mpRemoveTestKill = function(data)
         if data.obj and data.obj:isValid() then
             data.obj:removeScript('scripts/mp/testkill.lua')

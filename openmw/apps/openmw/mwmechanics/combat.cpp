@@ -25,6 +25,8 @@
 #include "../mwworld/globals.hpp"
 #include "../mwworld/inventorystore.hpp"
 
+#include "../mwmp/puppets.hpp"
+
 #include "actorutil.hpp"
 #include "difficultyscaling.hpp"
 #include "movement.hpp"
@@ -169,7 +171,9 @@ namespace MWMechanics
 
             blockerStats.setBlock(true);
 
-            if (blocker == getPlayer())
+            // An avatar blocks on the peer (backlog 307): the use reaches the owner's
+            // I.SkillProgression through omw/combat/local.lua -> I.MPAvatar.skillUsed.
+            if (isPlayerOrAvatar(blocker))
                 blocker.getClass().skillUsageSucceeded(blocker, ESM::Skill::Block, ESM::Skill::Block_Success);
 
             return true;
@@ -399,9 +403,16 @@ namespace MWMechanics
             // Note swapped victim and attacker, since the attacker takes the damage here.
             x = scaleDamage(x, victim, attacker);
 
-            MWMechanics::DynamicStat<float> health = attackerStats.getHealth();
-            health.setCurrent(health.getCurrent() - x);
-            attackerStats.setHealth(health);
+            // A peer-ruled player's body takes the reflection on the avatar and gets it back
+            // through the bars (mwmp/puppets.hpp peerRulesBody; the fall-damage gate in
+            // character.cpp). Applied here too it raced that report and could kill the local
+            // body first (backlog 311). The sound stays: it is what the player feels.
+            if (!(attacker == getPlayer() && MWMP::peerRulesBody()))
+            {
+                MWMechanics::DynamicStat<float> health = attackerStats.getHealth();
+                health.setCurrent(health.getCurrent() - x);
+                attackerStats.setHealth(health);
+            }
 
             MWBase::Environment::get().getSoundManager()->playSound3D(
                 attacker, ESM::RefId::stringRefId("Health Damage"), 1.0f, 1.0f);

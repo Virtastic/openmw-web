@@ -1315,6 +1315,12 @@ return {
                 d.fatigue(self).current = data.ft.c
             end)
         end,
+        -- Backlog 307: the avatar's armour took a hit, or blocked, on the peer. This is the
+        -- only engine with our SkillProgression, so the use is counted here.
+        MP_SelfSkillUse = function(data)
+            if not (data and data.skill and I.SkillProgression) then return end
+            pcall(I.SkillProgression.skillUsed, data.skill, { useType = data.useType or 0 })
+        end,
         MP_UiChatMessage = pushMessage,
         -- M2 rejoin restore: global.lua forwards SessionWelcome.playerRecord here (after
         -- granting the inventory and teleporting us to record.position).

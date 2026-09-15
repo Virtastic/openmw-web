@@ -608,6 +608,35 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
   }
 }
 
+// Backlog 307: the peer's avatar took a hit on its armour, or blocked. I.SkillProgression is a
+// PLAYER script, so an NPC avatar's Armor/Unarmored/Block uses fell on the floor and a tank
+// never progressed. The peer forwards ONLY that family (avatar.lua); the owner's client feeds
+// it to its own I.SkillProgression (player.lua MP_SelfSkillUse). World peer only, and bounded
+// per owner: a hit lands a few times a second at most, so 10/s is generous for play and
+// useless as a trainer.
+const SKILL_USE_SKILLS = new Set(['block', 'lightarmor', 'mediumarmor', 'heavyarmor', 'unarmored']);
+const SKILL_USE_WINDOW_MS = 1_000;
+const SKILL_USE_PER_WINDOW = 10;
+const skillUseWindow = new WeakMap<Player, { at: number; n: number }>();
+
+export function handleAvatarSkillUse(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
+  if (sender.system !== true || sender !== ctx.worldPeer()) return;
+  const e = tbl(value);
+  if (!e) return;
+  const id = finite(e.get('id'));
+  const skill = e.get('skill');
+  const useType = finite(e.get('useType'));
+  if (id === undefined || typeof skill !== 'string' || !SKILL_USE_SKILLS.has(skill)) return;
+  if (useType === undefined || !Number.isInteger(useType) || useType < 0 || useType > 3) return;
+  const p = ctx.roster.get(id);
+  if (!p || p.system === true || !p.inWorld) return;
+  const now = Date.now();
+  const w = skillUseWindow.get(p);
+  if (!w || now - w.at >= SKILL_USE_WINDOW_MS) skillUseWindow.set(p, { at: now, n: 1 });
+  else if (++w.n > SKILL_USE_PER_WINDOW) return;
+  p.peer.sendEvent('SelfSkillUse', { skill, useType });
+}
+
 // Phase 4D: the peer's avatar item-state reports (wear, enchantment charge, soul) -- the
 // peer swings the weapon (4C), so the peer is where wear happens. Same shape the doc keeps
 // (record id -> positional bucket), same one-writer gate as bars, same owner forward.
