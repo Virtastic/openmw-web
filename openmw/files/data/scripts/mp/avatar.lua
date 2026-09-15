@@ -191,8 +191,10 @@ return {
             local okL, errL = pcall(function()
                 if stats.level then types.Actor.stats.level(self).current = stats.level end
                 for name, v in pairs(stats.attributes or {}) do
-                    local a = types.Actor.stats.attributes[name]
-                    if a then a(self).base = v end
+                    local base = name:match('^(.-)_damage$') -- identity.lua snapProgression
+                    local a = types.Actor.stats.attributes[base or name]
+                    if a and base then a(self).damage = v
+                    elseif a then a(self).base = v end
                 end
                 if types.NPC.objectIsInstance(self) then
                     for name, v in pairs(stats.skills or {}) do

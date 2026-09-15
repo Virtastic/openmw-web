@@ -817,6 +817,20 @@ local function dispatch(cmd)
             local ok, v = pcall(function() return types.NPC.stats.skills[skRead](self).base end)
             mp.set('skillOf', tostring(ok and v or -1))
         end
+        -- attrof:<id>: base/damage/modifier of an attribute. damageattr:<id>:<n>: what a Damage
+        -- Attribute effect leaves behind once it has run (s159: it must survive a relog).
+        local atRead = cmd:match('^attrof:([%w_]+)$')
+        if atRead then
+            local ok, v = pcall(function()
+                local st = types.Actor.stats.attributes[atRead](self)
+                return string.format('%g/%g/%g', st.base or 0, st.damage or 0, st.modifier or 0)
+            end)
+            mp.set('attrOf', ok and v or ('err:' .. tostring(v)))
+        end
+        local dmgId, dmgN = cmd:match('^damageattr:([%w_]+):(%d+)$')
+        if dmgId then
+            pcall(function() types.Actor.stats.attributes[dmgId](self).damage = tonumber(dmgN) end)
+        end
         -- sethpbase:<n>: what a level-up does to the maximum (s121).
         local hpb = cmd:match('^sethpbase:(-?[%d.]+)$')
         if hpb then

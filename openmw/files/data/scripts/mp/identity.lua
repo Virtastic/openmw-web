@@ -204,7 +204,13 @@ end
 local function snapProgression()
     local attributes, skills = {}, {}
     for _, id in ipairs(ATTRIBUTES) do
-        attributes[id] = Actor.stats.attributes[id](self).base
+        local st = Actor.stats.attributes[id](self)
+        attributes[id] = st.base
+        -- DAMAGE RIDES ALONG, as "<id>_damage" in the same map (no new wire shape): a Damage
+        -- Attribute that outlives its spell, and the Restore that heals it, are facts about
+        -- the character the avatar and the next login must carry, and .base alone lost them.
+        local dmg = st.damage or 0
+        if dmg ~= 0 then attributes[id .. '_damage'] = dmg end
     end
     for _, id in ipairs(skillIds()) do
         skills[id] = NPC.stats.skills[id](self).base
@@ -622,8 +628,10 @@ local function applyPhase2(record)
         local stats = record.stats or {}
         if stats.level then Actor.stats.level(self).current = stats.level end
         for id, v in pairs(stats.attributes or {}) do
-            local stat = Actor.stats.attributes[id]
-            if stat then stat(self).base = v end
+            local base = id:match('^(.-)_damage$')
+            local stat = Actor.stats.attributes[base or id]
+            if stat and base then stat(self).damage = v
+            elseif stat then stat(self).base = v end
         end
         for id, v in pairs(stats.skills or {}) do
             local stat = NPC.stats.skills[id]
