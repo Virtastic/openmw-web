@@ -109,6 +109,19 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 166 | MAX_GOLD_DELTA 1,000,000 lets any client zero/fill a merchant purse; no moderation note on the gold branch | worldstate.ts:48, :1221 noteAnomaly |
 | 167 | Custom record bodies unvalidated (chopMaxDamage=9999, Fortify Health 10000 for 10^6 s replayed to the peer, the avatar fights with it) | m7.ts:191 recordCreate caps |
 | 168 | Harness gap: no hook trades inside a real barter window (barter:sell:/barter:buy: on barterTarget) — blocks proving 160/162/164 | player.lua:669 |
+| 169 | TR NIGHT BLOCKER: gateway worlds read modlist.json / config.dashboard.toml from their own EMPTY data dir (spawned with --data /data/worlds/<id> --shared /data): the peer runs vanilla, becomes the canonical content list, every player is refused BAD_CONTENT; every dashboard setting ignored by worlds | server.ts:1191/1220/1356 readModDoc(sharedDir); config.ts:810 merge dashboardLayers(sharedDir) when sharedDir !== dataDir |
+| 170 | TR NIGHT BLOCKER: the MP image has no 7z (Dockerfile.simpeer:145) and TR/Tamriel_Data ship as .7z: "this server cannot open .7z archives" | Dockerfile.simpeer apt p7zip-full |
+| 171 | TR NIGHT BLOCKER: the server front door `/` boots #mp=wss://host/ws on a gateway (only /w/<id> is accepted → 502 → "could not be reached" forever); Caddy redirects /launcher.html to / unless OMW_ENABLE_LAUNCHER=1 | web/play.js:127 → /launcher.html in multiplayer mode; caddy-config.ts:118 |
+| 172 | "Internal / LAN party" hosting is plain HTTP = not a secure context: COOP/COEP ignored, crossOriginIsolated false, StreamFS throws, "Browser not supported" for everyone but the server box | caddy-config.ts:229, wizard copy app.js:915 — say so in the wizard |
+| 173 | The dashboard "update engine" fetches the v1.3.0 GitHub release; a branch peer against a v1.3.0 client (wire skew: speed, CombatCast, pitch, dayspassed) | update-engine.ts:32 — operator copies the Jenkins bake into play/ |
+| 174 | Gateway HTTP server keeps Node's 5-min requestTimeout: a 2.7 GB Tamriel_Data upload slower than ~9 MB/s dies as "connection dropped" (world server sets 6 h in http.ts:473) | directory.ts:163 server.requestTimeout |
+| 175 | Cloudflare in front of the dashboard: 100 MB body cap refuses Morrowind.bsa and TR archives; 100 s origin timeout 524s the commit — uploads over the LAN only | ops note; fsstorage.ts:200 |
+| 176 | BSA packing hard-fails above 4 GiB (Tamriel_Data HD) and reports "folder may be full"; install rolled back | bsa-pack.ts:29 split into <slug>-N.bsa; mod-install.ts:460 surface the real error |
+| 177 | Peer start timeout 120 s vs a TR-loaded cold peer (serialised cold starts): SIGKILL and an unsimulated cell; peerCostMb 487 is a vanilla number | config.default.toml:570 startTimeoutMs 300000; ops note |
+| 178 | Re-installing a mod serves the old .esm from the browser cache (/mwdata/* immutable, same slug URL) | mwdata-routes.ts:191 version the URL by mtime |
+| 179 | MAX_ABS_COORD 512000 = 62.5 cells: TR at y≈-60 cells has 2.5 cells of headroom; past ±62 the player is invisible/frozen to others with no message | movement.ts:26 → 4,000,000 |
+| 180 | No self-serve sign-up (/auth/password signs in existing accounts only): the owner creates the friend in the dashboard; both need a public username on first launcher login | ops note; auth/routes.ts:322 |
+| 181 | Internal hosting mints locker URLs on http://127.0.0.1:8080 (no domain): server-side saves/locker uploads from another machine fail; publicBase hidden from the dashboard | fsstorage.ts:166; api-settings.ts DERIVED_FIELDS |
 
 ## Open (found, not fixed)
 
