@@ -24,6 +24,15 @@ const PLAYER_MIGRATIONS = [
       )`);
     },
   },
+  {
+    // A DELETION OUTLIVES THE PROCESSES THAT STILL HOLD THE DOC. Every world has the store
+    // open and caches whole docs; the gateway deleting a character cleared only its own cache,
+    // and a world the character was a guest in wrote the doc straight back at its next flush
+    // -- a row with no slot pointing at it. The tombstone tells any flush to drop the doc
+    // instead. Lifted when a NEW character takes the key (chargen begins under it).
+    name: '002-erased',
+    up: (db: DatabaseSync) => { db.exec('CREATE TABLE erased (key TEXT PRIMARY KEY, at INTEGER NOT NULL)'); },
+  },
 ];
 import { log } from '../log';
 import { timeFlush } from '../metrics';
@@ -129,7 +138,11 @@ export class PlayerStore {
   // what comes back is not what was saved. Cleared by allowSaves() on ChargenComplete.
   private creating = new Set<string>();
 
-  suppressSaves(key: string): void { this.creating.add(key); }
+  suppressSaves(key: string): void {
+    this.creating.add(key);
+    // A new character under this key: whatever was erased before is not this one.
+    try { this.db.prepare('DELETE FROM erased WHERE key = ?').run(key); } catch { /* best effort */ }
+  }
   allowSaves(key: string): void { this.creating.delete(key); }
 
   private cache = new Map<string, PlayerDoc>(); // key = account nameLower
@@ -167,6 +180,7 @@ export class PlayerStore {
     await Promise.resolve();
     try {
       this.db.prepare('DELETE FROM players WHERE key = ?').run(key);
+      this.db.prepare('INSERT OR REPLACE INTO erased (key, at) VALUES (?, ?)').run(key, Date.now());
     } catch (err) {
       log('warn', 'playerstore.erase_failed', { key, error: String(err) });
     }
@@ -299,6 +313,12 @@ export class PlayerStore {
     }
     const doc = this.cache.get(key);
     if (!doc) return;
+    if (this.erased(key)) {
+      // Deleted from another process while this one still held it: not ours to bring back.
+      this.cache.delete(key);
+      log('info', 'players.flush_dropped_erased', { player: key });
+      return;
+    }
     const live = this.livePosition(key);
     if (live) doc.position = { ...live };
     // Fold this world's position back into the per-world map before it hits disk, so a doc
@@ -319,6 +339,11 @@ export class PlayerStore {
       this.dirty.add(key); // retry on the next flush point
       log('error', 'players.flush_failed', { player: key, error: String(err) });
     }
+  }
+
+  private erased(key: string): boolean {
+    try { return this.db.prepare('SELECT 1 FROM erased WHERE key = ?').get(key) !== undefined; }
+    catch { return false; }
   }
 
   async flushAll(): Promise<void> {

@@ -278,3 +278,34 @@ test('a character adopted through an earlier reference still reaches disk', asyn
   assert.equal(seen?.characters?.[0]?.name, 'Virtastic');
   assert.equal(seen?.characters?.[0]?.completed, true);
 });
+
+// THE DOC, NOT ONLY THE SLOT. The merge above keeps a deleted SLOT deleted; the character
+// doc had no such guard. Every world holds the store open and caches whole docs, so a
+// character deleted at the front door while it was a guest in a friend's world came back as
+// a row with no slot at that world's next flush. A deletion is a tombstone every process
+// honours -- until a new character begins under the key.
+test('a character deleted in one process is not written back by another that still holds it', async () => {
+  const dir = tmpDataDir();
+  const key = 'c-doomed';
+  const guestWorld = new PlayerStore(dir, 'world-friend');
+  guestWorld.update(key, (d) => { d.inventory = [{ id: 'gold_001', n: 10 }]; });
+  await guestWorld.flushAll();
+
+  const frontDoor = new PlayerStore(dir, 'gateway');
+  await frontDoor.erase(key);
+
+  // The guest keeps playing for a while, then the world flushes on logout.
+  guestWorld.update(key, (d) => { d.inventory = [{ id: 'gold_001', n: 11 }]; });
+  await guestWorld.flushAll();
+  const later = new PlayerStore(dir, 'world-later');
+  assert.equal(await later.get(key), undefined, 'the deleted character was resurrected by the stale flush');
+
+  // A NEW character under the same key (a standalone stack keys by account) is not the ghost.
+  const reborn = new PlayerStore(dir, 'world-reborn');
+  reborn.suppressSaves(key); // chargen begins
+  reborn.allowSaves(key);
+  reborn.update(key, (d) => { d.inventory = [{ id: 'iron_dagger', n: 1 }]; });
+  await reborn.flushAll();
+  assert.deepEqual((await new PlayerStore(dir, 'world-check').get(key))?.inventory, [{ id: 'iron_dagger', n: 1 }],
+    'a fresh character under the old key must persist again');
+});
