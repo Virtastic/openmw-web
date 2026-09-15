@@ -418,9 +418,18 @@ function objects.onActivate(object, actor)
     end
 
     if types.Door.objectIsInstance(object) and not types.Door.isTeleport(object) then
-        -- Rotating door: state flips over the next frames; read the RESULT shortly after.
+        -- Rotating door: the builtin activation handler ran before us, so the swing has
+        -- already STARTED -- send the intended state now (#199: waiting ~1-1.5 s for Idle
+        -- let the owner walk through while the peer's avatar was stopped by the closed
+        -- door and rubber-banded). The settle read below confirms the result once Idle.
         -- (Teleport doors need no sync — each client walks through locally.)
-        doorPending[object.id] = { obj = object, at = now + DOOR_READ_DELAY }
+        local pending = { obj = object, at = now + DOOR_READ_DELAY, activatedAt = now }
+        local okS, st = pcall(types.Door.getDoorState, object)
+        if okS and (st == types.Door.STATE.Opening or st == types.Door.STATE.Closing) then
+            pending.sent = st == types.Door.STATE.Opening
+            sendAddressed('DoorState', object, { open = pending.sent })
+        end
+        doorPending[object.id] = pending
     end
 
     if types.Lockable.objectIsInstance(object) then
@@ -859,7 +868,15 @@ handlers.MP_DoorState = function(data)
     if isOwnEcho(data) then return end
     local obj = resolveBody(data)
     if not (obj and types.Door.objectIsInstance(obj)) then return end
-    doorPending[obj.id] = nil -- network wins over a pending local read
+    -- Network wins over a pending local read -- except the stale-open race: a DoorState
+    -- for a door WE just activated that contradicts what we already sent is the other
+    -- side's echo of the state before our touch (#199); keep ours.
+    local pending = doorPending[obj.id]
+    if pending and pending.sent ~= nil and pending.sent ~= data.open
+        and core.getRealTime() - (pending.activatedAt or 0) < 1.5 then
+        return
+    end
+    doorPending[obj.id] = nil
     if type(data.open) == 'boolean' and types.Door.isOpen(obj) ~= data.open then
         pcall(function() types.Door.activateDoor(obj, data.open) end)
         -- activateDoor swings it silently (the sound lives in Door::activate): backlog 135.
@@ -1182,7 +1199,7 @@ function objects.tick(now)
                     doorPending[id] = pending
                 else
                     local open = not types.Door.isClosed(obj)
-                    sendAddressed('DoorState', obj, { open = open })
+                    if pending.sent ~= open then sendAddressed('DoorState', obj, { open = open }) end
                 end
             end
         end

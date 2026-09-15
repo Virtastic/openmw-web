@@ -18,10 +18,11 @@ import type { Social } from '../core/social';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { socketRttMs } from './ws';
+import { netDelayFromEnv } from './netdelay';
 import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { MSG_PLAYER_INPUT, MSG_AVATAR_MOVE_BATCH, INPUT_PAYLOAD_BYTES, packInputForward, unpackAvatarMoveBatch } from '../proto/input';
 import { unpackMove } from '../proto/movement';
-import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible } from '../core/movement';
+import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible, acceptPeerPose } from '../core/movement';
 
 /** Distinct cells one session may enter. Vanilla Morrowind is around 1,800 cells in total and
  *  a long session sees a few hundred, so this is far above honest play — it exists only to
@@ -216,6 +217,11 @@ export class Connection implements Peer {
   private chatWarned = false; // told once per flood, not once per dropped line
   private readonly openedAt = Date.now(); // join-latency origin (== the conn.open log line)
   private closeCounted = false; // exactly one omwmp_disconnects_total sample per session
+  // Harness link shaping (netdelay.ts, OMWMP_NET_DELAY_MS / OMWMP_NET_STALL); undefined in
+  // production, so the hot paths cost one branch.
+  static netDelay = netDelayFromEnv();
+  private readonly inQ = Connection.netDelay?.();
+  private readonly outQ = Connection.netDelay?.();
 
   constructor(
     private readonly ws: WebSocket,
@@ -235,7 +241,10 @@ export class Connection implements Peer {
     this.helloTimer = setTimeout(() => {
       if (this.state === 'CONNECTED') this.disconnect('BAD_PROTO', 'SessionHello not received in time');
     }, ctx.config.limits.helloTimeoutMs);
-    ws.on('message', (data: Buffer, isBinary: boolean) => this.onMessage(data, isBinary));
+    ws.on('message', (data: Buffer, isBinary: boolean) => {
+      if (this.inQ) this.inQ.push(() => this.onMessage(data, isBinary));
+      else this.onMessage(data, isBinary);
+    });
     ws.on('error', (err) => log('warn', 'conn.socket_error', { ip: this.ip, error: String(err) }));
     // M4: feed the server-measured RTT to the authority fitness tracker. The measurement
     // itself lives in net/ws.ts (ping stamp echo); this only attaches it to a playerId.
@@ -247,13 +256,21 @@ export class Connection implements Peer {
 
   // ---------------------------------------------------------------- sending
 
+  // Every outbound frame leaves through here: the harness delay FIFO sits in front of the
+  // socket, and the socket may have closed while a frame waited.
+  private wsSend(frame: string | Buffer, opts?: { compress: boolean }): void {
+    const go = () => { if (this.ws.readyState === this.ws.OPEN) this.ws.send(frame, opts ?? {}); };
+    if (this.outQ) this.outQ.push(go);
+    else go();
+  }
+
   private sendText(json: string): void {
-    if (this.ws.readyState === this.ws.OPEN) this.ws.send(json);
+    if (this.ws.readyState === this.ws.OPEN) this.wsSend(json);
   }
 
   sendEvent(name: string, body: JsLike): void {
     if (this.ws.readyState !== this.ws.OPEN) return;
-    this.ws.send(packEvent(++this.outSeq, name, lserEncode(jsToL(body))));
+    this.wsSend(packEvent(++this.outSeq, name, lserEncode(jsToL(body))));
   }
 
   // Bytes `ws` is holding for this client because it has not read them yet. Read through a
@@ -301,7 +318,7 @@ export class Connection implements Peer {
     // per-message deflate buys nothing on them — but permessage-deflate allocates a ~256 KB
     // zlib context PER SOCKET, which is ~19 MB at 64 players. Skipping it is a memory fix
     // that happens to shave a little latency too.
-    this.ws.send(frame, { compress: false });
+    this.wsSend(frame, { compress: false });
     return true;
   }
 
@@ -935,8 +952,7 @@ export class Connection implements Peer {
           id: e.id, name: p.name, x: Math.round(e.pose.x), y: Math.round(e.pose.y),
           z: Math.round(e.pose.z), lastInputSeq: e.lastInputSeq });
       }
-      p.pose = e.pose;
-      p.poseVersion++;
+      acceptPeerPose(p, e.pose);
       p.lastPoseAt = now;
       p.peerPoseAt = now;
       p.lastInputSeq = e.lastInputSeq;

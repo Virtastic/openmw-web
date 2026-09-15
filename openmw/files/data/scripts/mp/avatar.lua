@@ -31,10 +31,17 @@ local avatarObjIds = {}
 
 local input = nil -- latest {seq, move, side, yaw, pitch, flags}
 local inputAt = 0
-local INPUT_HOLD_S = 0.35 -- coast to a stop when the stream stops
+-- 1.0, not 0.35: a TCP retransmit stall (300 ms RTO, seconds on a Wi-Fi roam) must not stop
+-- the avatar while the owner keeps running -- the burst collapses to the newest input and the
+-- owner is snapped back by v x stall (#205).
+local INPUT_HOLD_S = 1.0 -- coast to a stop when the stream stops
 local USE_HOLD_S = 2.0 -- ...but keep a held attack/draw this long (see the hold branch)
 
 local prevJump = false
+-- EDGES ARE LATCHED UNTIL CONSUMED. The owner sends ~30 Hz, this engine ticks at 20 Hz: the
+-- second input of a tick overwrote the first and one jump in three (or a short use click)
+-- never reached the avatar while observers, who latch, saw it (#198).
+local jumpLatch, useLatch = false, false
 local hitHandlerRegistered = false
 
 -- Veto player-on-player damage while pvp is off: the peer resolves avatar-vs-avatar melee
@@ -163,14 +170,16 @@ return {
             self.controls.pitchChange = (input.pitch or curPitch) - curPitch
             self.controls.run = bit(input.flags, 0)
             self.controls.sneak = bit(input.flags, 1)
-            local jump = bit(input.flags, 2)
+            local jump = jumpLatch or bit(input.flags, 2)
+            jumpLatch = false
             self.controls.jump = jump and not prevJump
             prevJump = jump
             -- Phase 4C: THE AVATAR SWINGS. The owner's use bit drives the attack control, and
             -- this engine computes the hit natively against the actors it simulates. Safe
             -- now because combat.lua no longer forwards a real swing while the peer holds
             -- the cell -- so a blow lands exactly once, here.
-            self.controls.use = bit(input.flags, 3) and 1 or 0
+            self.controls.use = (useLatch or bit(input.flags, 3)) and 1 or 0
+            useLatch = false
             -- THE OWNER'S STANCE, OR THE USE BIT IS INERT: an attack only starts from a drawn
             -- weapon (character.cpp, UpperBodyState::WeaponEquipped). Spell stance maps to
             -- Nothing on purpose -- the avatar must never cast; the owner's client casts and
@@ -230,6 +239,8 @@ return {
             if input and data.seq and input.seq and data.seq <= input.seq then return end
             input = data
             inputAt = core.getRealTime()
+            if bit(data.flags, 2) then jumpLatch = true end
+            if bit(data.flags, 3) then useLatch = true end
         end,
         -- Same three-step contract as puppet.lua: re-enable AI HERE, then ask the global
         -- script to remove this script. Removing it synchronously from global would leave

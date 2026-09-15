@@ -44,9 +44,13 @@ local TIER_NEAR, TIER_MID = 0, 1
 -- idle-box numbers (0.177 ms/avatar fully simulated vs 0.086 ms with the cap). The ORDERING
 -- held up on re-measurement — frequent repositioning is still the expensive path — which is
 -- why these thresholds stay wide.
-local SNAP_BY_TIER = { [0] = 128, [1] = 1024, [2] = 2048 }
+-- Near tier 256, not 128: on a lossy link any stall >= 350 ms at run speed crossed 128 and
+-- the puppet teleported at every 1 s cooldown (#211).
+local SNAP_BY_TIER = { [0] = 256, [1] = 1024, [2] = 2048 }
 local SNAP_COOLDOWN_BY_TIER = { [0] = 1.0, [1] = 2.0, [2] = 3.0 }
-local SNAP_DISTANCE = 128 -- near-tier divergence before asking for a teleport (legacy name)
+local SNAP_DISTANCE = 256 -- near-tier divergence before asking for a teleport (legacy name)
+local RUN_HOLD_S = 0.3 -- keep the run flag this long after the target stops advancing (#211: anim popping per burst)
+local runUntil = 0
 local STUCK_SECONDS = 0.7 -- commanded to move but no progress this long -> snap
 local IDLE_TIMEOUT = 1.0 -- no snapshots this long -> stand still
 local SNAP_COOLDOWN = 1.0 -- let a requested teleport land before asking again
@@ -413,7 +417,9 @@ local function onUpdate(dt)
     self.controls.sideMovement = 0
     -- Mirror the remote player's run flag, but never while closing the last few units: running
     -- is what turns a small correction into an overshoot.
-    self.controls.run = bit(target.flags, 0) and steering and dist2d > STEER_START
+    local run = bit(target.flags, 0) and steering and dist2d > STEER_START
+    if run then runUntil = now + RUN_HOLD_S end
+    self.controls.run = run or now < runUntil
     self.controls.sneak = bit(target.flags, 1)
     -- Posture: a friend with a sword out looks like it. Purely visual here -- the puppet never
     -- swings (its controls.use stays 0); the peer's avatar does the hitting.

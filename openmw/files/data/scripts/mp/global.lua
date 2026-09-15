@@ -2357,6 +2357,7 @@ local eventHandlers = {
     -- relay comes back too — ignore it (PROTOCOL.md).
     MP_PlayerCellChange = function(data)
         if not data.id or data.id == net.playerId then return end
+        local prevCell = remoteCell[data.id]
         remoteCell[data.id] = data.cellKey
         actors.catchUpCell(data.cellKey) -- backlog 142: newcomer hears the room's dispositions
         -- A CELL CHANGE WITHOUT A POSITION IS NOT A TELEPORT ORDER. On the peer the branch
@@ -2385,6 +2386,13 @@ local eventHandlers = {
                 -- the mover is genuinely visible.
                 local dest = (mp.isSystem and mp.isSystem()) and inviteCellArg(data.cellKey) or destCellArg()
                 local from = p.obj.position -- the leader's position BEFORE the move
+                -- AN EXTERIOR BORDER IS NOT A DOOR. The body walked across it on its own; a
+                -- follow-teleport there popped every friend's puppet and zeroed the avatar's
+                -- fall height on the peer (no fall damage across a border, #200). Interiors
+                -- and load doors still teleport.
+                local walked = parseExteriorKey(prevCell) ~= nil and parseExteriorKey(data.cellKey) ~= nil
+                    and (from - util.vector3(data.x, data.y, data.z)):length2() <= 256 * 256 -- player.lua SNAP_DIST
+                if walked then return end
                 local moved = tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z))
                 if mp.isSystem and mp.isSystem() then
                     print(string.format('[mp] avatar #%d follow-teleport to (%.0f,%.0f,%.0f) ok=%s',

@@ -19,7 +19,7 @@ import {
   type PlayerPose,
   type BatchEntry,
 } from '../src/proto/movement';
-import { cellsVisible, MoveBroadcaster, interestFromLimits, type InterestSettings } from '../src/core/movement';
+import { cellsVisible, MoveBroadcaster, interestFromLimits, acceptPeerPose, type InterestSettings } from '../src/core/movement';
 import { ProtoError, unpackEnvelope, MSG_PLAYER_MOVE_BATCH } from '../src/proto/envelope';
 import { startServer } from '../src/server';
 import type { Player, Roster } from '../src/core/players';
@@ -304,6 +304,27 @@ test('broadcaster unit: no empty batches, per-recipient dirty tracking', () => {
   assert.equal(h.recv.get(1)!.frames.length, 1);
   assert.equal(h.recv.get(2)!.frames.length, 2);
   void p2;
+});
+
+// #202: two avatar samples inside one 66 ms tick, the first carrying the jump edge -- the
+// broadcast pose must still carry it; the sample after the tick clears it.
+test('broadcaster unit: jump/use edge bits survive being overwritten before a tick', () => {
+  const h = harness();
+  const p1 = h.add(1, '0,0');
+  h.add(2, '0,0');
+  h.bc.tick(); // first sighting delivered; p1 is now "sent"
+  const sample = (flags: number) => acceptPeerPose(p1, { ...p1.pose!, flags });
+  sample(4); // jump edge
+  sample(0); // the next 50 ms sample, before the broadcaster ticked
+  assert.equal(p1.pose!.flags & 4, 4, 'the edge rode into the newer sample');
+  h.bc.tick();
+  const frames = h.recv.get(2)!.frames;
+  const last = frames[frames.length - 1]!.entries.find((e) => e.id === 1)!;
+  assert.equal(last.pose.flags & 4, 4, 'observers got the jump');
+  sample(0); // after the tick: the edge has gone out, the next sample clears it
+  assert.equal(p1.pose!.flags & 4, 0);
+  sample(8); sample(0);
+  assert.equal(p1.pose!.flags & 8, 8, 'the use bit is carried the same way');
 });
 
 test('interest management: beyond the radius is culled, inside is not', () => {

@@ -14,7 +14,7 @@
 import type { Player, Roster } from './players';
 import type { Config } from '../config';
 import { MSG_PLAYER_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
-import { packMoveBatch, type BatchEntry } from '../proto/movement';
+import { packMoveBatch, type BatchEntry, type PlayerPose } from '../proto/movement';
 import { MSG_PLAYER_STATE_BATCH, packPlayerStateBatch } from '../proto/input';
 
 // Phase 3: how long a peer-authored pose stays authoritative without a refresh. Comfortably
@@ -185,6 +185,17 @@ class CellIndex {
   }
 }
 
+// Pose flag bits that are EVENTS, not states: jump (4) and use (8) are set for one avatar
+// sample. The peer streams at 20 Hz and the broadcaster ticks at 66 ms, so a sample that
+// landed between two ticks was overwritten before it went out and observer puppets missed
+// ~25% of jumps (#202). Until a tick has carried the pose, a newer sample inherits them.
+export const POSE_EDGE_BITS = 4 | 8;
+export function acceptPeerPose(p: Player, pose: PlayerPose): void {
+  if (p.pose && p.poseSentVersion !== p.poseVersion) pose.flags |= p.pose.flags & POSE_EDGE_BITS;
+  p.pose = pose;
+  p.poseVersion++;
+}
+
 // Per-(recipient, sender) relay state. Presence in the recipient's map IS the hysteresis
 // "currently in view" bit.
 interface View {
@@ -296,6 +307,7 @@ export class MoveBroadcaster {
       this.sweep(recipient, views, tickNo);
       this.flush(recipient, seq, tickNo);
     }
+    for (const p of inWorld) p.poseSentVersion = p.poseVersion; // acceptPeerPose: the edge bits went out
   }
 
   // Splits the cell-visible senders into in-interest (inSet) and culled (outSet), then

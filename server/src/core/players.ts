@@ -138,6 +138,7 @@ export interface Player {
   statsDropLogged?: boolean; // one simpeer.avatar_stats_gated log per streak // simpeer.avatar_first_pose emitted for this session
   peerPoseAt?: number;
   poseVersion: number;
+  poseSentVersion?: number; // poseVersion as of the last MoveBroadcaster tick (acceptPeerPose)
   // Phase 3.6: wall-clock of the last accepted pose, for the plausible-speed envelope.
   lastPoseAt?: number;
   /** CONSECUTIVE implausible speed WINDOWS. A single one is ordinary, so enforcement waits for

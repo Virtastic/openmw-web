@@ -397,6 +397,29 @@ do
   check('combat.lua sends CombatCast with spellId, casterId and kind',
     cb:find("mp.sendEvent('CombatCast', { spellId = data.spellId, casterId = id, kind = 'spell' })", 1, true) ~= nil
     and g:find('eventHandlers.mpCombatCast = combat.onCast', 1, true) ~= nil)
+  -- Backlog 197-202, 205, 211: movement feel on a real link.
+  check('player.lua reconciles against where it stood at lastInputSeq, not where it is now (197)',
+    pl:find('posRing[inputSeq % POS_RING_N] = { seq = inputSeq, x = p.x, y = p.y, z = p.z }', 1, true) ~= nil
+    and pl:find('local pos = posAt(e.lastInputSeq) or self.position', 1, true) ~= nil)
+  check('avatar.lua latches the jump and use edges until onUpdate consumes them (198)',
+    av:find('if bit(data.flags, 2) then jumpLatch = true end', 1, true) ~= nil
+    and av:find('local jump = jumpLatch or bit(input.flags, 2)', 1, true) ~= nil
+    and av:find('(useLatch or bit(input.flags, 3)) and 1 or 0', 1, true) ~= nil)
+  check('avatar.lua holds the last input through a retransmit stall (205)',
+    av:find('local INPUT_HOLD_S = 1.0', 1, true) ~= nil)
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  check('objects.lua sends the intended door state at activation and keeps it over a stale echo (199)',
+    ob:find('pending.sent = st == types.Door.STATE.Opening', 1, true) ~= nil
+    and ob:find("if pending.sent ~= open then sendAddressed('DoorState', obj, { open = open }) end", 1, true) ~= nil
+    and ob:find('pending.sent ~= data.open', 1, true) ~= nil)
+  check('global.lua does not follow-teleport across an exterior border the body walked (200)',
+    g:find('if walked then return end', 1, true) ~= nil
+    and g:find('parseExteriorKey(prevCell) ~= nil and parseExteriorKey(data.cellKey) ~= nil', 1, true) ~= nil)
+  check('identity.lua diffs active effects at 0.1 s (201)',
+    idn:find('active = 0.1 }', 1, true) ~= nil)
+  check('puppet.lua near-tier snap 256 and a held run flag (211)',
+    pp:find('local SNAP_BY_TIER = { [0] = 256', 1, true) ~= nil
+    and pp:find('self.controls.run = run or now < runUntil', 1, true) ~= nil)
 end
 
 -- ============================== every server->client event, generically, the same way

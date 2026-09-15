@@ -21,7 +21,10 @@ local json = require('scripts.mp.json')
 local Actor = types.Actor
 local NPC = types.NPC
 
-local INTERVALS = { appearance = 1.0, equipment = 0.5, dynamic = 0.25, progression = 1.0, inventory = 2.0, active = 0.5 }
+-- active 0.1, not 0.5: movement effects (Levitate, Slowfall, Water Walking, Fortify
+-- Acrobatics) must reach and leave the avatar within a tick, or the owner hangs after the
+-- expiry and dips on the cast while the peer catches up (#201).
+local INTERVALS = { appearance = 1.0, equipment = 0.5, dynamic = 0.25, progression = 1.0, inventory = 2.0, active = 0.1 }
 local INVENTORY_CAP = 4096 -- the server's MAX_INVENTORY; 512 silently dropped a collector's later record ids from every declaration and restore
 -- ACQUISITION REPORTING, and why it is a separate faster pass rather than a smaller INTERVAL.
 --

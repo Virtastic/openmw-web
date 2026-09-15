@@ -165,6 +165,19 @@ local inputSeq = 0
 local lastInputSend = 0
 local jumpLatched = false -- a jump edge seen between two input frames (inputTick)
 local INPUT_EVERY = 1 / 30
+-- WHERE WE STOOD WHEN EACH INPUT LEFT. The peer's pose acknowledges lastInputSeq, i.e. it is
+-- one RTT old; compared with where we stand NOW every stop, jump and doorway rubber-banded
+-- by RTT x speed on a real link (invisible on the LAN harness, #197). Reconciliation
+-- compares the sample with where we were at that seq instead. ~2 s at 30 Hz.
+local POS_RING_N = 64
+local posRing = {} -- [seq % POS_RING_N] = {seq, x, y, z}
+local function posAt(seq)
+    seq = tonumber(seq)
+    if seq == nil then return nil end
+    local r = posRing[seq % POS_RING_N]
+    if r and r.seq == seq then return r end
+    return nil -- older than the ring (a long stall): the caller uses the current position
+end
 
 local tookControlsSaid = false -- once per session: the rejoin position hold lets go
 local function inputTick(now)
@@ -187,6 +200,8 @@ local function inputTick(now)
     if now - lastInputSend < INPUT_EVERY then return end
     lastInputSend = now
     inputSeq = inputSeq + 1
+    local p = self.position
+    posRing[inputSeq % POS_RING_N] = { seq = inputSeq, x = p.x, y = p.y, z = p.z }
     local c = self.controls
     local flags = 0
     if c.run then flags = flags + 1 end
@@ -297,7 +312,8 @@ local function selfReconcileTick()
     local e = latestSelf
     if not e then return end
     latestSelf = nil
-    local pos = self.position
+    -- the position the sample is answering, not where we are now (posRing, #197)
+    local pos = posAt(e.lastInputSeq) or self.position
     local dx, dy, dz = e.x - pos.x, e.y - pos.y, e.z - pos.z
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
     mp.set('selfDivergence', string.format('%.1f', dist))
