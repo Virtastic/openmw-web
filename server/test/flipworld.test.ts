@@ -267,3 +267,42 @@ test('the host sends one guest home without blocking them; a guest cannot kick; 
   back.login('Guest', 'hunter22');
   await back.waitDisconnect('AUTH_FAILED');
 });
+
+// AN INVITE FROM SOLO IS "COME IN" (backlog 354). invited() only lifted a send-home
+// cooldown, so a host inviting from their Solo world sent a friend to a door that admits
+// nobody: the accept ended in not_open. The invite flips the world to party first.
+test('the owner inviting from a Solo world flips it to party', async (t) => {
+  const shared = tmpDataDir();
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
+  t.after(() => pub.close());
+  const alice0 = await TestClient.connect(pub.port);
+  await alice0.joinAsNew('Alice');
+  alice0.close();
+  // Bob stays online in the public world: an invite needs a reachable target.
+  const bob = await TestClient.connect(pub.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  await pub.flush();
+  const store = new SocialStore(shared);
+  store.addFriend('alice', 'bob', Date.now());
+  store.close();
+
+  const world = await startServer({ requireGameData: false,
+    dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
+    worldId: 'priv-alice', worldMode: 'private', worldOwner: 'alice',
+  });
+  t.after(() => world.close());
+  const alice = await TestClient.connect(world.port);
+  t.after(() => alice.close());
+  await alice.joinExisting('Alice');
+
+  alice.sendEvent('InviteSend', { acct: 'bob' });
+  const sent = await alice.waitEvent('SocialResult', (v) => (v as { op?: string }).op === 'InviteSend');
+  assert.equal((sent.value as { ok?: boolean }).ok, true, JSON.stringify(sent.value));
+  await alice.waitEvent('WorldMode', (v) => (v as { mode?: string }).mode === 'party');
+
+  // The door is open: Bob's accept lands somewhere that admits him.
+  const bob2 = await TestClient.connect(world.port);
+  t.after(() => bob2.close());
+  await bob2.joinExisting('Bob');
+});

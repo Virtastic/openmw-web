@@ -191,3 +191,41 @@ test('a host who leaves on purpose closes the world at once; a hostless world ad
   assert.equal((closed.value as { reason?: string }).reason, 'owner_left', 'a deliberate exit must close the world now, not after the grace');
   back.close();
 });
+
+// A RETURNING GUEST IS NOT A NEWCOMER (backlog 352). The no-host-no-newcomers rule in
+// mayJoinWorld applied to a resume too, so a shared wifi blip that dropped both -- and let
+// the guest's reconnect beat the host's -- sent the guest home "this world is private" from
+// a world that was about to reopen.
+test('a guest resuming inside the host grace is admitted', async (t) => {
+  const dataDir = tmpDataDir();
+  const social = new SocialStore(dataDir);
+  social.addFriend('host', 'guest', Date.now());
+  social.close();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host', ownerGraceMs: 5000,
+    configOverride: { login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+
+  const owner = await TestClient.connect(server.port);
+  await owner.joinAsNew('Host', 'hunter22');
+  await owner.waitEvent('PlayerList');
+  const guest = await TestClient.connect(server.port);
+  const { welcome } = await guest.joinAsNew('Guest', 'hunter22');
+  await guest.waitEvent('PlayerList');
+  const token = welcome['sessionToken'] as string;
+
+  // Both drop; the guest's redial arrives first, while the grace runs.
+  owner.close();
+  await owner.closed;
+  guest.close();
+  await guest.closed;
+
+  const back = await TestClient.connect(server.port);
+  t.after(() => back.close());
+  back.hello();
+  await back.waitJson('SessionHelloOk');
+  back.sendJson({ t: 'SessionResume', token });
+  await back.waitJson('SessionWelcome');
+});

@@ -16,7 +16,8 @@ const PEER_PASS = 'peer-secret-1';
 async function bootWithCharacter(t: { after(fn: () => unknown): void }) {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { server: { password: PEER_PASS } },
+    // crime is PERSONAL by default since backlog 353; the shared-bounty test below opts in.
+    configOverride: { server: { password: PEER_PASS }, sharing: { crime: true } },
   });
   t.after(() => server.close());
 

@@ -63,13 +63,14 @@ enforce = "warn"
 pin = ""
 
 [rules]
-# Where the respawn plugin sends the dead (M2). Defaults = the Example Suite demo's
-# Village spawn point (the ?start=Village drop, verified by scenario s22); operators
-# hosting other content override these in <dataDir>/config.toml.
-respawnCellKey = "26,25"
-respawnX = 216831.0
-respawnY = 204909.0
-respawnZ = 513.0
+# Where the respawn plugin sends the dead (M2). Empty = where you fell (health restored in
+# place, no warning). Operators who want a fixed point set a cell key + coordinates in
+# <dataDir>/config.toml; the browser harness sets the Example Suite village
+# (wasm-build/mp-harness.mjs) so `?nomw` runs keep their respawn.
+respawnCellKey = ""
+respawnX = 0.0
+respawnY = 0.0
+respawnZ = 0.0
 # Death penalty applied by the death-penalty plugin: "none" (M2 default; hook is a
 # documented no-op seed for operators/plugins to extend).
 deathPenalty = "none"
@@ -78,7 +79,7 @@ deathPenalty = "none"
 pvp = false
 # Phase 3 zoning (only consulted when pvp = true). "all" keeps M5 behaviour; "wilderness"
 # allows it in exteriors only, minus safeCells, and never indoors — so towns, shops and
-# guildhalls stay places you can stand still in. Party members never hit each other.
+# guildhalls stay places you can stand still in.
 pvpZone = "all"
 safeCells = []
 # Chat scope for plain say. Default "world": four friends spread across Vvardenfell must
@@ -102,7 +103,10 @@ difficulty = 0
 journal = true
 questVars = true      # MWScript globals (the time globals are owned by M7, never here)
 factions = true
-crime = true
+# Personal by default (backlog 353): a guest's guards hunt the guest, and the host is not
+# arrested for a guest's theft after the guest has gone home. true = one record for the
+# party, persisted on the host's campaign.
+crime = false
 map = true            # M7 WorldMapExplored; the toggle exists now so operators see it
 # Quest ids whose journal index may legitimately go DOWN (some MW quests regress).
 # Everything else is arbitrated monotonic-max: a lagging client can never rewind a quest.

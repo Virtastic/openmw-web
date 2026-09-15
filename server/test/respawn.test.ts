@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // WHERE YOU COME BACK, which is a gameplay decision rather than a technicality.
 //
-// It used to be an unconditional teleport to [rules] respawnCellKey, whose shipped default is the
-// EXAMPLE SUITE demo's village — a coordinate from a different game world. On retail Morrowind
-// that is an arbitrary point on the grid, so every death threw the player somewhere meaningless,
-// and nothing in the deploy docs or the logs ever said so.
+// It used to be an unconditional teleport to [rules] respawnCellKey, whose shipped default WAS
+// the EXAMPLE SUITE demo's village — a coordinate from a different game world. The default is
+// "" now (where you fell, backlog 355); the fixture keeps the village as an operator's choice.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { respawn } from '../src/plugins/builtin/respawn';
@@ -59,47 +58,19 @@ test('solo: the configured respawn point is used', () => {
 // but recoverable — and strictly better than a teleport to a coordinate from another game.
 test('no configured point: back where you fell', () => {
   const here = { cellKey: 'balmora, guild of mages', x: 5, y: 6, z: 7 };
-  const { api, events } = fakeApi({ respawnCellKey: '', positions: { 1: here } });
+  const { api, events, logs } = fakeApi({ respawnCellKey: '', positions: { 1: here } });
   respawn.onPlayerDeath!(api, DEAD);
   assert.deepEqual(events[0]!.body, { ...here, restoreHp: true });
+  // "" is the SHIPPED default (backlog 355): a valid choice, not a misconfiguration.
+  assert.equal(logs.filter((l) => l.event.startsWith('respawn.') && l.event !== 'respawn.sent').length, 0,
+    'where-you-fell is the default and must not warn');
 });
 
-// THE WARNING THAT WOULD HAVE CAUGHT THIS. A world running real game data with the demo's
-// coordinate still set is misconfigured, and it is invisible until somebody dies.
-test('boot warns when a real world still has the demo respawn point', () => {
-  const { api, logs } = fakeApi({ simPeer: true });
-  respawn.onServerStart!(api);
-  assert.ok(logs.some((l) => l.event === 'respawn.demo_default_on_real_world'),
-    'a retail server silently kept the Example Suite village as its respawn point');
-});
-
-test('...and does not warn on the demo itself', () => {
-  const { api, logs } = fakeApi({ simPeer: false });
-  respawn.onServerStart!(api);
-  assert.equal(logs.filter((l) => l.event === 'respawn.demo_default_on_real_world').length, 0);
-});
-
-// THE WARNING HAS TO MEAN SOMETHING WHEN SOMEBODY ACTUALLY DIES.
-//
-// onServerStart says the demo coordinate on real content is misconfigured — and onPlayerDeath
-// used it anyway, teleporting the first player who died into a cell their game does not
-// contain. The warning fired on every world boot of the shipped default, so the misconfigured
-// state was the DEFAULT one, not an unusual one.
-test('on real content the demo respawn point is ignored, not teleported into', () => {
-  const here = { cellKey: 'imperial prison ship', x: 61, y: -135, z: -104 };
-  const { api, events, logs } = fakeApi({ simPeer: true, positions: { 1: here } });
-  respawn.onPlayerDeath!(api, DEAD);
-  const res = events.find((e) => e.name === 'PlayerResurrect');
-  assert.deepEqual(res!.body, { ...here, restoreHp: true },
-    'a world running real content must not send a player to the Example Suite village');
-  assert.ok(logs.some((l) => l.event === 'respawn.demo_default_ignored'),
-    'and it must say why it disregarded the configured point');
-});
-
-// The control: on the demo itself the configured point is exactly right, and still used.
-test('on the demo the configured respawn point is still honoured', () => {
-  const { api, events } = fakeApi({ simPeer: false, positions: { 1: { cellKey: 'x', x: 9, y: 9, z: 9 } } });
+// An operator who set the Example Suite village on real content chose it: honoured, no warning.
+test('a configured point is honoured on real content too', () => {
+  const { api, events, logs } = fakeApi({ simPeer: true, positions: { 1: { cellKey: 'x', x: 9, y: 9, z: 9 } } });
   respawn.onPlayerDeath!(api, DEAD);
   const res = events.find((e) => e.name === 'PlayerResurrect');
   assert.deepEqual(res!.body, { cellKey: '26,25', x: 216831, y: 204909, z: 513, restoreHp: true });
+  assert.equal(logs.filter((l) => l.event.includes('demo')).length, 0);
 });

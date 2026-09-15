@@ -9,6 +9,11 @@
 import assert from 'node:assert/strict';
 
 export const managedPeer = true;
+// Crime is PERSONAL by default (backlog 353); this scenario is about the shared record.
+export const serverRules = `
+[sharing]
+crime = true
+`;
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const cellOf = async (c) => String(await c.eval('window.omw.state.cell||""'));

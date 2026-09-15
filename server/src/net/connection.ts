@@ -131,7 +131,8 @@ export interface ServerCtx {
   // World access control (F3): may this account be in THIS world at all? Private = owner
   // only, party = owner + friends of the owner + admins. Checked at auth, after the account
   // is resolved.
-  mayJoinWorld(accountKey: string, rank: number): boolean;
+  // returning: a resume, or a character with a stored position in this world -- not a newcomer.
+  mayJoinWorld(accountKey: string, rank: number, returning?: boolean): boolean;
   /** Is this account inside a "send home" cooldown here (server.ts kickGuest)? */
   isSentHome?(accountKey: string): boolean;
   // Owner-only in-place flip of THIS world between 'private' (solo) and 'party' (joinable
@@ -1708,7 +1709,8 @@ export class Connection implements Peer {
     // World access control: knowing the port + valid credentials is NOT an invitation.
     // A private world admits its owner (and admins); a party world admits the party.
     // System peers are operator infrastructure and exempt.
-    if (!this.isSystem && !this.ctx.mayJoinWorld(accountKey, account.rank)) {
+    if (!this.isSystem && !this.ctx.mayJoinWorld(accountKey, account.rank,
+      op === 'resume' || !!doc?.positions?.[this.ctx.worldId])) {
       // SAY WHICH. A guest the host sent home is told so, not "private" -- the client turns
       // the detail into the notice on the way home, and "the host has gone solo" is a lie.
       const detail = this.ctx.isSentHome?.(accountKey) ? 'you were sent home' : 'this world is private';

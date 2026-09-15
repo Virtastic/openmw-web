@@ -516,8 +516,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     p.peer.sendEvent('WorldClosed',
       { reason, by: roster.activeForAccount(worldOwner)?.name ?? '' });
     // Long enough for the trip: the client answers WorldClosed by minting a home ticket
-    // and rebooting, and a slow mint lost the race to 5 s -- "you were kicked" in place of
-    // going home (backlog 281). A guest who has left is no longer in `connections`.
+    // and rebooting, and a slow mint lost the race to the old 5 s -- "you were kicked" in
+    // place of going home (backlog 281); it is 30 s now. A guest who has left is no longer
+    // in `connections`.
     const t = setTimeout(() => {
       if (connections.has(conn)) conn.disconnect('KICKED', 'this world is no longer open to your party');
     }, opts.guestKickGraceMs ?? 30_000);
@@ -741,8 +742,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (a === worldOwner) closeToGuest(b, 'unfriended');
       else if (b === worldOwner) closeToGuest(a, 'unfriended');
     },
-    // "Send home" holds until the host changes their mind, and an invite IS that.
-    invited: (from, to) => { if (from === worldOwner) kickedUntil.delete(to); },
+    // "Send home" holds until the host changes their mind, and an invite IS that. And an
+    // invite from a Solo world is "come in": without the flip the invitee's accept dialled a
+    // world that admits nobody and ended in not_open (backlog 354). Same path as the O-panel
+    // flip, so the directory and every panel hear it.
+    invited: (from, to) => {
+      if (from !== worldOwner) return;
+      kickedUntil.delete(to);
+      if (worldMode !== 'party') ctx.setWorldMode(from, 0, 'party');
+    },
     // A4/3.8: the context-menu report writes to the same queue as /report.
     report: (doc) => moderation.reports.write({
       ts: new Date().toISOString(),
@@ -798,7 +806,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Admins always (moderation must be able to enter anywhere). A standalone stack has no
     // owner and admits its own accounts; an unowned GATEWAY world fails closed.
     isSentHome: (accountKey: string): boolean => (kickedUntil.get(accountKey) ?? 0) > Date.now(),
-    mayJoinWorld: (accountKey: string, rank: number): boolean => {
+    mayJoinWorld: (accountKey: string, rank: number, returning = false): boolean => {
       if (rank >= 1) return true;
       if (worldOwner === '') return !process.env.OMW_WORLD_ID;
       if (accountKey === worldOwner) return true;
@@ -807,8 +815,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // NO HOST, NO NEWCOMERS -- while the host's crash grace runs. A newcomer used to be
       // admitted into a world whose host had just dropped (no guestSpawn, the host's own
       // controls on their panel) and evicted a minute later. A world the host is still
-      // booting into has no grace armed and admits friends as before.
-      if (ownerGraceTimer && !roster.activeForAccount(worldOwner)) return false;
+      // booting into has no grace armed and admits friends as before. A RETURNING guest is
+      // not a newcomer (backlog 352): a shared wifi blip drops both, and the guest's resume
+      // beat the host's -- refusing it sent them home "this world is private" from a world
+      // that was about to reopen. Same test guestSpawn uses: a resume, or a doc that holds
+      // a position here.
+      if (ownerGraceTimer && !returning && !roster.activeForAccount(worldOwner)) return false;
       return socialStore.areFriends(worldOwner, accountKey);
       // NO CAPACITY CHECK HERE. "May this account be in this world" and "is there room" are
       // different questions with different answers, and answering the second one here made a
@@ -892,7 +904,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     worldHost: hostOf,
     // "Send home": the host's ordinary kick. Not a block (the friendship stands, the door
     // stays open), not a flip (the other guests stay). The guest gets the same WorldClosed
-    // notice with its own reason, and the 5 s drop behind it.
+    // notice with its own reason, and the 30 s drop behind it.
     kickGuest: (byAccountKey: string, rank: number, targetName: string): 'ok' | 'not_owner' | 'no_such_player' | 'self' => {
       if (rank < 1 && (worldOwner === '' || byAccountKey !== worldOwner)) return 'not_owner';
       const wanted = targetName.trim().toLowerCase();

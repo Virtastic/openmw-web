@@ -105,7 +105,9 @@ async function startGameServer(extraRules = '', extraEnv = {}, opts = {}) {
   // Per-run MOTD so scenario asserts can prove THIS server's welcome line reached the client
   // (not a stale mirror from a previous run). Merged over config.default.toml.
   const motd = `MOTD-${RUN_ID} welcome`;
-  // Respawn coords = the ?start=Village drop point (measured; see M1/M2 scenarios).
+  // Respawn coords = the ?start=Village drop point (measured; see M1/M2 scenarios). The
+  // shipped default is "" (where you fell, backlog 355); the Example Suite village lives
+  // HERE so `?nomw` runs keep their respawn.
   // Merge by SECTION rather than concatenating TOML text. A scenario that wants one more
   // key in a table the harness already wrote (e.g. [server] maxPlayers alongside our motd)
   // would otherwise emit a second [server] header, and TOML rejects a redefined table —

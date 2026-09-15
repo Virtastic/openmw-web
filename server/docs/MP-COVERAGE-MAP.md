@@ -107,7 +107,7 @@ scenario is a code trace only.
 | Rejoin after dying and closing the tab | doc has hp 0 (death flushes); restored at 10% health on both the client and the peer's avatar, where they fell | FIXED 09-11 (was: die again on arrival, second "has fallen", respawn loop) |
 | Join a friend FROM THE LAUNCHER | GET /auth/friends-playing (locker Bearer): friends whose world is open to friends and occupied, the world they are IN; the character screen shows "Friends playing now -- Join as <last played>" and bootGame dials that world with our own as mphome. One boot instead of two full reloads | ADDED 09-13. Live: s142 (cold boot straight into the friend's world, lands beside the host, way home holds) |
 | Join a friend (party) | joinFriend -> ownerWorld (occupied, LIVE mode from the world's /status) -> switch -> mayJoinWorld -> chargen gate -> guestSpawn beside owner | FIXED 09-11 (the 09-10 pre-switch mode check read a mode fixed at process start, so every join was refused as not_open; caught live by s95) |
-| Owner flips party -> private | WorldClosed, 5 s grace, guests switched home | OK. Live: s102 |
+| Owner flips party -> private | WorldClosed, 30 s grace, guests switched home | OK. Live: s102 |
 | Owner's tab closes (no Solo flip) | owner_left, 90 s grace while guests keep playing, then owner_gone -> WorldClosed('owner_left') -> guests home | OK. Live: s129 |
 | Leave / kick / ban | terminal codes; SUPERSEDED for a second tab | OK |
 | Save / Load / quicksave | refused at StateManager while Joined; menu items hidden | OK |
@@ -148,7 +148,7 @@ scenario is a code trace only.
 | Being hit: damage, disease, paralysis | peer bars -> SelfStats; AvatarEffectsBatch -> SelfSpells/SelfActiveSpells | FIXED 09-11 |
 | Being dispelled by an NPC | owner-applied records are tracked by instance on the avatar; one that vanishes before the owner removed it (Dispel, absorb) is reported back as a removal and the owner's engine drops it | FIXED 09-11 |
 | PvP | server veto (pvp rules) + avatar hit veto on the peer; a summon's blow is vetoed when its master is another player's avatar | FIXED 09-11 (summons bypassed pvp-off) |
-| Death | death edge flushed; respawn plugin; avatar rebuilt; puppet rebuilt on other screens | FIXED 09-10 |
+| Death | death edge flushed; respawn plugin (default: where you fell, no warning; a configured [rules] respawnCellKey is honoured; the harness sets the Example Suite village); avatar rebuilt; puppet rebuilt on other screens | FIXED 09-10, respawn default 09-15 (backlog 355) |
 | Activating another player's body (alive or dead) | refused: no blank dialogue on a friend, no loot window on a fallen one (that copy is per-screen and unbacked); player-to-player exchange is drop + pickup | FIXED 09-11 |
 | Kill credit / GetDeadCount | ActorDeath tally shared | OK (attribution logs only) |
 | Companions fight beside you | siding-with on the peer | OK |
@@ -164,7 +164,7 @@ scenario is a code trace only.
 | Skill use from cancelled swings | skill use runs before the Lua cancel | OK |
 | Diseases (caught) | AvatarEffectsBatch -> doc.spells + owner | FIXED 09-11 |
 | Vampirism / lycanthropy | spell list / appearance; werewolf form set on rebuilt bodies | FIXED 09-11 (looked human) |
-| Bounty | live per session; shared crime = party record on every avatar | FIXED 09-11 (host hunted) |
+| Bounty | live per session; crime PERSONAL by default (backlog 353): a guest's bounty is their own doc's and survives their relog, the host is never arrested for it; [sharing] crime = true makes it one party record on every avatar | FIXED 09-15. Unit: standing.test.ts |
 | Faction rank/expulsion | routed like the journal | OK |
 | Attribute DAMAGE (Damage/Restore Attribute) | the attribute map carried .base only, so a curse was a relog away from cured; "<id>_damage" now rides in the same map, applied as damage by the restore and the avatar | FIXED 09-15. Live: s159 |
 | What OTHERS see of your effects (Invisibility, Chameleon, Light) | the effect op went to the peer alone; every client now gets it and keeps the visible part for the puppet; the server replays each player's live set to a late joiner | FIXED 09-15. Live: s156. Unit: avatarstats.test.ts |
@@ -176,6 +176,7 @@ scenario is a code trace only.
 | Levitate / torch / fall damage / drowning on the ruling body | levitation climbs (look up + walk); the avatar dispels; s147 fall and s149 drowning still OPEN: the peer's avatar reports breath=-1 forever (updateDrowning never runs for it; probe now prints range/AI gates) | OPEN 09-15. Live: s147 s148 s149 |
 | A player-made record (potion, enchanted ring) after a relog | the inventory declaration went out raw; mapped through the registry now, and the restore waits for RecordsSync | FIXED 09-14. Live: s153 |
 | Chargen sanctuary cells | the peer spawned a frozen avatar in the Census office and pinned the new character to the deck; no avatar there now | FIXED 09-14. Live: s155 |
+| Chargen cells are local-only for the party | the Census Office and the Prison Ship are never simulated or relayed: two party members standing there never see each other, by design (creation happens alone in your private world; the chargen gate keeps an unfinished character out of shared worlds) | BY DESIGN. Documented 09-15 (backlog 357) |
 
 ## 5. Inventory and world objects
 
@@ -231,7 +232,7 @@ scenario is a code trace only.
 | Globals (quest gates) | peer's write wins within the driving window; dialogue-result names client-owned | OK |
 | Member variables on cell scripts | MemberVarUpdate relay | OK |
 | Faction standing, bounty | routed to the campaign | OK |
-| Host sends a guest home (kick) | WorldKick (owner/admin only) -> closeToGuest('kicked'): that one guest gets WorldClosed + the 5 s drop, the friendship and the open door stand (they can come back), the other guests stay. UI: "send home" on a guest's row for the host; the guest's panel says "Visiting <host>'s world" with a Leave button (WorldMode now carries the host's character name and isOwner) | ADDED 09-13. Live: s141 |
+| Host sends a guest home (kick) | WorldKick (owner/admin only) -> closeToGuest('kicked'): that one guest gets WorldClosed + the 30 s drop, the friendship and the open door stand (they can come back), the other guests stay. UI: "send home" on a guest's row for the host; the guest's panel says "Visiting <host>'s world" with a Leave button (WorldMode now carries the host's character name and isOwner) | ADDED 09-13. Live: s141 |
 | A kicked guest STAYS out; the host's invite lets them back | kickedUntil (10 min) on the world, cleared by invited(); the refused dial says "you were sent home" and goes home with the reason across the reload | FIXED 09-14. Live: s141 (rewritten). Unit: flipworld.test.ts |
 | A returning guest lands beside the host | the rejoin restore re-asserted the stored far spot for 8 s over the invite teleport; the invite releases the hold | FIXED 09-14. Live: s154 |
 | The owner's grace vs an empty world | onWorldEmpty respected the 90 s grace; newcomers refused only while the owner is absent in grace | FIXED 09-14. Unit: ownerleft.test.ts |
@@ -240,7 +241,7 @@ scenario is a code trace only.
 | Rolling restart after a mode flip | the observed party mode became the boot mode (chargen gate, no revert, bots public); restarts use the boot mode | FIXED 09-15. Unit: worlds.test.ts |
 | Drop, then disconnect before the inventory diff | the doc still held the dropped item; the drop debits the doc in the same op | FIXED 09-15. Unit: provenance.test.ts |
 | An item dropped across a cell border | cell state went out for the entered cell only; entry yields the 3x3 | FIXED 09-15. Unit: holderhears.test.ts |
-| Host blocks / unfriends a guest mid-session | Social.friendshipEnded -> closeToGuest: WorldClosed(unfriended) + kick after 5 s; the other guests stay; either side ending it sends the GUEST home, the owner never moves | FIXED 09-13 (was: door-only check, the blocked guest stayed). Live: s139 |
+| Host blocks / unfriends a guest mid-session | Social.friendshipEnded -> closeToGuest: WorldClosed(unfriended) + kick after 30 s; the other guests stay; either side ending it sends the GUEST home, the owner never moves | FIXED 09-13 (was: door-only check, the blocked guest stayed). Live: s139 |
 | OnDeath / GetDeadCount | shared tally | OK |
 | Scripted PlaceAt / PositionCell of NPCs | see runtime-spawned actors | GAP |
 | Scripted AddItem/RemoveItem on NPCs | runs on every engine identically (deterministic) | OK (by construction) |

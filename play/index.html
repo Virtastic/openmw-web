@@ -4722,8 +4722,10 @@ window.omw = (function(){
           // are in ANOTHER world that is open to friends (backlog 103). A friend here, or one
           // playing solo, gets no button rather than a refusal.
           if (f.joinable) acts.push(['join', function(){ cmd('joinfriend:'+f.acct); watchJoin(f.name); }, true]);
-          // "come to me": the same InviteSend the O-key hub sends (backlog 105).
-          acts.push(['invite', function(){ cmd('social:InviteSend:'+f.acct); setStatus('Inviting '+f.name+'…'); }]);
+          // "come to me": the same InviteSend the O-key hub sends (backlog 105). HOST ONLY
+          // (backlog 354): a guest's invite routed the invitee to the guest's idle home
+          // world, which answered not_open.
+          if (amHost) acts.push(['invite', function(){ cmd('social:InviteSend:'+f.acct); setStatus('Inviting '+f.name+'…'); }]);
           if (f.playerId != null) acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.acct; openChat(); renderChans(); }]);
         }
         acts.push(['remove', function(){ cmd('social:FriendRemove:'+f.acct); }]);

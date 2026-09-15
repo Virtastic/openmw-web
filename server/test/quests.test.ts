@@ -130,7 +130,8 @@ test('journal and factions in individual mode', async (t) => {
 });
 
 test('shared factions and crime relay', async (t) => {
-  const { server } = await boot(t);
+  // crime is PERSONAL by default since backlog 353; this test is about the shared relay.
+  const { server } = await boot(t, { sharing: { crime: true } });
   const { a, b, aId } = await twoInCell(server);
 
   await t.test('faction update relays with full state', async () => {
