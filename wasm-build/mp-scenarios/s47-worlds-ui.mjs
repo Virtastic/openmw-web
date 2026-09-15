@@ -77,7 +77,7 @@ export default async function run(ctx) {
   const SHOTS = mkdtempSync(join(tmpdir(), 'omw-s47-'));
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-s47-worlds-'));
   const gwPort = GW_PORT;
-  const basePort = gwPort + 200;
+  const basePort = gwPort + 2000; // clear of the gateway band (see _gateway.mjs)
 
   // A real gateway supervising real world processes. The scenario's own server (ctx) is a
   // separate world; this one is what the browser client will BROWSE.

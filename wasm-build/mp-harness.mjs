@@ -816,6 +816,7 @@ for (const file of files) {
   let isCritical = false;
   const childLogs = []; // scenario-spawned processes (gateways), dumped on failure
   const peerBufs = []; // every sim peer's full stdout (ctx.peerLogTail)
+  let ceilingTimer; // the per-scenario ceiling, cleared in the finally
   console.log(`\n=== scenario ${file} ===`);
   try {
     // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
@@ -823,7 +824,16 @@ for (const file of files) {
     isCritical = !!critical;
     const envForRun = typeof serverEnv === 'function' ? serverEnv(RUN_ID) : (serverEnv ?? {});
     server = await startGameServer(serverRules, envForRun, { managedPeer: !!managedPeer });
-    await run({
+    // A CEILING PER SCENARIO. run() was awaited bare: a scenario looping on a cheap eval with
+    // no deadline hung the whole sweep, and Jenkins killed the job with no summary at all.
+    // Twenty minutes is longer than any honest scenario (the slowest boots twice and waits
+    // 300 s at the door); a scenario that needs more declares `export const timeoutMs`.
+    const { timeoutMs: declaredTimeout } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    const ceiling = Number(declaredTimeout) > 0 ? Number(declaredTimeout) : 20 * 60_000;
+    const ceilingHit = new Promise((_, reject) => {
+      ceilingTimer = setTimeout(() => reject(new Error(`scenario exceeded its ${Math.round(ceiling / 1000)} s ceiling (the harness's, not a waitFor)`)), ceiling);
+    });
+    await Promise.race([ceilingHit, run({
       // CAPTURE ANY CHILD A SCENARIO SPAWNS. Gateways were started with stdio:'ignore', so a
       // gateway that came up healthy while every world it spawned crashed on startup looked
       // identical to a working one — the scenario then failed on an unrelated downstream
@@ -865,6 +875,9 @@ for (const file of files) {
       // The sim peers' stdout so far (all of it, not the 40-line failure tail): a scenario
       // can read the peer's side of a mechanism it cannot see from the client.
       peerLogTail: (n = 4000) => peerBufs.map((b) => b.join('').split(NL).slice(-n).join(NL)).join(NL),
+      // Deliberately the same shape for the peer as for the gateway (childLogTail): the peer
+      // watcher used to register no `full`, so ctx.childLogTail('simpeer') answered empty.
+      peerLogFull: () => peerBufs.map((b) => b.join('')).join(NL),
       // A watched child's whole stdout (a gateway's, which carries its worlds' and their
       // managed peers' lines) -- for a scenario that needs the far side's narration.
       childLogTail: (label, n = 6000) => childLogs.filter((c) => c.label === label && c.full).map((c) => c.full(n)).join(NL),
@@ -914,7 +927,7 @@ for (const file of files) {
         clients.push(c);
         return c;
       },
-    });
+    })]);
   } catch (e) {
     err = e;
   } finally {
@@ -939,6 +952,15 @@ for (const file of files) {
     if (jsErrs.length && !err) {
       err = new Error(`${jsErrs.length} uncaught JS exception(s) on the page — the rest of the`
         + ` throwing callback never ran:\n` + jsErrs.slice(0, 5).map((l) => '  ' + l.trim()).join('\n'));
+    }
+    clearTimeout(ceilingTimer);
+    // THE PEER'S LUA ERRORS TOO. Only the browsers' consoles were scanned: a throwing
+    // avatar.lua or actors.lua handler on the simulator -- the half of the game the client
+    // cannot see -- left the suite green. Same rule as the client: reported, never silent.
+    const peerLuaErrs = [...new Set(peerBufs.flatMap((b) => b.join('').split(NL).filter((l) => /Lua error|lua]: .*error|stack traceback/i.test(l))))];
+    if (peerLuaErrs.length) {
+      console.error(`[harness] ${file}: ${peerLuaErrs.length} distinct LUA ERROR(s) on the SIM PEER during this scenario:`);
+      for (const l of peerLuaErrs.slice(0, 5)) console.error('  ' + l.trim());
     }
     const luaErrs = [...new Set(clients.flatMap((c) => c.luaErrors?.() ?? []))];
     if (luaErrs.length) {

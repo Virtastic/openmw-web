@@ -117,7 +117,11 @@ export async function startGatewayAndClient(ctx, opts = {}) {
     // and parties live there, and a world that cannot see them refuses the very players it
     // was created for. A deployment requirement, not a test detail.
     '--shared', ctx.serverDataDir,
-    '--base-port', String(gwPort + 200),
+    // FAR from every gateway port. Gateways sit at 18860..19150 in steps of ten, and worlds
+    // used to start at gwPort+200 -- s100's worlds (19100..) landed ON s142's gateway port,
+    // s97's on s141's. A world ignores TERM, so one that outlived its scenario made the next
+    // gateway fail to bind, and that read as a product failure. +2000 clears the whole band.
+    '--base-port', String(gwPort + 2000),
     '--max-worlds', String(maxWorlds),
     // No public world: the flag AND the mode died with the Solo/Party model. Worlds exist
     // only when an authed account creates one, which is what this helper does below --
