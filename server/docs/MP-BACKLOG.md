@@ -71,6 +71,10 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 97 | Harness: the peer's Lua errors were never scanned | mp-harness.mjs | fixed | — |
 | 98 | Harness: worlds spawned on GW_PORT+200, onto other scenarios' gateway ports | _gateway.mjs, s47, s48 | fixed | — |
 | 99 | Stat values unbounded, level +1 sixty times a second, a container's first open canonical however absurd | playerstate.ts, worldstate.ts | done (unit) | adversarial.test.ts |
+| 116 | Arrows landed twice (owner's phantom + the peer's); knockdown not relayed (owner rubber-banded) | objects.lua, global.lua, player.lua, luabindings.cpp, playerstate.ts | fixed | avatarstats.test.ts (kd) |
+| 117 | Companions lost on a world restart; memberVars persisted but never replayed | worldstate.ts, cellstore.ts, objects.lua | done (unit) | actor.test.ts, quests.test.ts |
+| 118 | TR landmass installed before Tamriel Data loaded in that order: a quietly corrupt world on every engine | mods.ts | done (unit) | mods.test.ts |
+| 119 | PROD: the inner Caddy stripped CF-Connecting-IP -- every player was the edge's IP (one login budget, one household, /ipban bans everyone) | deploy/Caddyfile | fixed | needs [limits] trustCloudflareIp = true in the prod config.toml + a deploy |
 
 ## Open (found, not fixed)
 
@@ -134,6 +138,15 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 113 | Mirrors that are never cleared (hitFwd, spellFwd, castAt, doorEnter, takeOwned, chestOp) let a second wait pass instantly | scenarios: clear before waiting |
 | 114 | SKIP detection by log text; a sweep of skips exits 0 | mp-harness.mjs |
 | 115 | Peer clock is load-dependent (fixed dt 1/20 per tick): duration-based asserts compare two clocks | engine.cpp headless |
+| 120 | Tamriel Data: 54k loose files, one blocking round trip each on first read -- multi-second freezes per new TR cell | mod-install.ts: pack into a BSA at install (fixer running) |
+| 121 | Ban in world A never kicks the account from world B (only the resume ticket is refused later) | worlds poll bans.isAccountBanned every 10 s |
+| 122 | Account delete leaves locker sessions and unspent tickets; a re-registered same name inherits the old device's Bearer | erase.ts |
+| 123 | Ticket TTL (15 min) starts at the SSO callback: idling on the tile screen boots with a dead ticket (rescue reload saves it, expensively) | launcher.html mint at boot |
+| 124 | One session per ACCOUNT, not character: phone on char A and laptop on char B kick each other; presence PK is per account | connection.ts activeForAccount, socialstore |
+| 125 | /auth/link puts the session token in a query the edge logs; dead in gateway mode | routes.ts |
+| 126 | ActorBatch is one uncapped message per cell per frame: a TR metropolis exterior is ~100 KB/s per client | actors.lua |
+| 127 | No TR scenario in the harness; builder gamedata has no mods | harness |
+| 128 | Dashboard-disabled expansion (Tribunal) refuses every browser client (page load order includes all masters present) | index.html buildLoadOrder vs gamedata.ts |
 
 ## Wontfix / by design
 
