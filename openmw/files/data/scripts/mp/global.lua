@@ -189,7 +189,10 @@ local function tryTeleport(obj, cellArg, pos)
     if ok then
         teleportRetry[obj] = nil
     else
-        teleportRetry[obj] = { cellArg = cellArg, pos = pos, until_ = core.getRealTime() + 3 }
+        -- Long enough for a COLD interior load on the peer (a Tamriel Rebuilt town takes well
+        -- over three seconds): an avatar that never followed left the friend with no puppet
+        -- in the room and the server saying avatar_never_arrived.
+        teleportRetry[obj] = { cellArg = cellArg, pos = pos, until_ = core.getRealTime() + 30 }
     end
     return ok
 end

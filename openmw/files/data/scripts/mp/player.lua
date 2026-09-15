@@ -154,6 +154,7 @@ end
 -- reconciles the difference. Sequence numbers are what tie the two together.
 local inputSeq = 0
 local lastInputSend = 0
+local jumpLatched = false -- a jump edge seen between two input frames (inputTick)
 local INPUT_EVERY = 1 / 30
 
 local forceUseUntil = 0 -- harness: attack:<ms> holds the use bit without a real keypress
@@ -170,6 +171,12 @@ local function inputTick(now)
             core.sendGlobalEvent('mpPlayerTookControls', {})
         end
     end
+    -- A JUMP IS ONE FRAME. playercontrols.lua sets controls.jump for the frame the key went
+    -- down and clears it at the end of that frame; this sender runs every other frame at
+    -- 60 fps, so half of all real jumps never reached the avatar -- the owner rose, the
+    -- avatar did not, and reconciliation dragged the owner back down mid-air. Latch the
+    -- edge until it has ridden an input frame.
+    if self.controls.jump then jumpLatched = true end
     if now - lastInputSend < INPUT_EVERY then return end
     lastInputSend = now
     inputSeq = inputSeq + 1
@@ -177,7 +184,8 @@ local function inputTick(now)
     local flags = 0
     if c.run then flags = flags + 1 end
     if c.sneak then flags = flags + 2 end
-    if c.jump then flags = flags + 4 end
+    if c.jump or jumpLatched then flags = flags + 4 end
+    jumpLatched = false
     if (c.use and c.use ~= 0) or now < forceUseUntil then flags = flags + 8 end
     -- THE STANCE RIDES THE INPUT, or the avatar never swings. The engine only starts an attack
     -- from UpperBodyState::WeaponEquipped (mwmechanics/character.cpp), and nothing on the peer
