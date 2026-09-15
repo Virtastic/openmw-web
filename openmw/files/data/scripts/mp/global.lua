@@ -206,6 +206,43 @@ local function teleportRetryTick(now)
     end
 end
 
+-- Apply one record's item-state bucket onto the stacks the inventory holds for it (#234).
+-- Entries are one per stack, in inventory order, each carrying its stack size `n`; a stateless
+-- one ({n=k}) only advances the walk. When a stateful entry is SMALLER than the stack it lands
+-- on, the stack is split first and the state written to the piece BEFORE it goes back into
+-- the inventory (a partly-used or souled item never restacks: ContainerStore::stacks), so one
+-- Soultrap kill fills one gem, not the whole stack. An entry without `n` (a pre-#234 doc)
+-- takes the whole stack, as it always did. Returns how many entries wrote a state.
+local function applyItemStates(inventory, localId, bucket)
+    local stacks = {}
+    for _, item in ipairs(inventory:getAll()) do
+        if item.recordId == localId then stacks[#stacks + 1] = item end
+    end
+    local si, left, applied = 1, stacks[1] and (stacks[1].count or 1) or 0, 0
+    for _, st in ipairs(bucket) do
+        local item = stacks[si]
+        if not item then break end
+        local n = st.n or left
+        local stateful = st.condition ~= nil or st.charge ~= nil or st.soul ~= nil
+        local piece = item
+        if stateful and n < left then piece = item:split(n) end
+        if stateful then
+            local d = piece.itemData
+            if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
+            if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
+            if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
+            applied = applied + 1
+        end
+        if piece ~= item then piece:moveInto(inventory) end
+        left = left - n
+        if left <= 0 then
+            si = si + 1
+            left = stacks[si] and (stacks[si].count or 1) or 0
+        end
+    end
+    return applied
+end
+
 -- Throttle for MP_CombatRefused: one explanation per situation, not one per swing.
 -- Which cell the sim peer is currently standing in, so it only relocates when that changes.
 local peerStandingIn = nil
@@ -605,20 +642,7 @@ local function applyAvatarDoc(id)
         end
         -- Per-item state, best-effort, after the grant (see restoreTick for the reasoning).
         for recId, bucket in pairs(doc.itemStates or {}) do
-            local localId = worldmp.toLocal(recId)
-            local idx = 0
-            for _, item in ipairs(inventory:getAll()) do
-                if item.recordId == localId then
-                    idx = idx + 1
-                    local st = bucket[idx]
-                    if st then
-                        local d = item.itemData
-                        if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
-                        if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
-                        if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
-                    end
-                end
-            end
+            pcall(applyItemStates, inventory, worldmp.toLocal(recId), bucket)
         end
     end)
     -- SHED THE TEMPLATE'S KIT. The body is built from an NPC record (villager_00 or the
@@ -825,24 +849,25 @@ local avatarItemStatesLast = {} -- id -> serialized last report
 local avatarItemStatesSentAt = {}
 local AVATAR_ITEMSTATES_REFRESH_S = 10.0
 
+-- One entry PER STACK with its size, stateless stacks included (#234): the owner's applier
+-- walks the record's stacks positionally, and a skipped empty stack would shift every state
+-- after it onto the wrong item.
 local function snapAvatarItemStates(obj)
     local states = {}
     local inv = types.Actor.inventory(obj)
     for _, item in ipairs(inv:getAll()) do
         local d = item.itemData
-        local one = {}
+        local one = { n = item.count or 1 }
         local okC, cond = pcall(function() return d.condition end)
         if okC and cond ~= nil then one.condition = cond end
         local okE, charge = pcall(function() return d.enchantmentCharge end)
         if okE and charge ~= nil and charge >= 0 then one.charge = charge end
         local okS, soul = pcall(function() return d.soul end)
         if okS and soul ~= nil and soul ~= '' then one.soul = soul end
-        if next(one) ~= nil then
-            local rid = worldmp.toNet and worldmp.toNet(item.recordId) or item.recordId
-            states[rid] = states[rid] or {}
-            local bucket = states[rid]
-            bucket[#bucket + 1] = one
-        end
+        local rid = worldmp.toNet and worldmp.toNet(item.recordId) or item.recordId
+        states[rid] = states[rid] or {}
+        local bucket = states[rid]
+        bucket[#bucket + 1] = one
     end
     return states
 end
@@ -1426,23 +1451,8 @@ local function restoreTick()
     -- aborting the rest of the restore over it.
     local restored = 0
     for recId, bucket in pairs(record.itemStates or {}) do
-        local localId = worldmp.toLocal(recId)
-        local idx = 0
-        local okAll = pcall(function()
-            for _, item in ipairs(inventory:getAll()) do
-                if item.recordId == localId then
-                    idx = idx + 1
-                    local st = bucket[idx]
-                    if st then
-                        local d = item.itemData
-                        if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
-                        if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
-                        if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
-                        restored = restored + 1
-                    end
-                end
-            end
-        end)
+        local okAll, n = pcall(applyItemStates, inventory, worldmp.toLocal(recId), bucket)
+        if okAll then restored = restored + n end
         if not okAll then
             print('[mp] restore: item state for "' .. tostring(recId) .. '" did not apply')
         end
@@ -1841,20 +1851,18 @@ local eventHandlers = {
     end,
 
     -- Phase 4D: our item states as the peer simulated them (weapon wear from 4C swings,
-    -- charge spent, souls captured). Same hop; applier in player.lua.
+    -- charge spent, souls captured). Applied HERE, not forwarded: the applier splits stacks
+    -- (#234) and split() is global-context, as is the itemData write (the setcond: test hook
+    -- already hops here for it). worldmp maps the record ids too (a dynamic enchanted/soul
+    -- record never matched under its raw netId).
     MP_SelfItemStates = function(data)
-        -- Map record ids to LOCAL here: worldmp lives only in the global script, so
-        -- player.lua's applier saw raw netIds and never matched a dynamic (enchanted/soul)
-        -- record -- exactly the items that carry charge/soul. Content records worked by
-        -- accident (identity mapping).
-        if data and type(data.itemStates) == 'table' then
-            local mapped = {}
-            for rid, bucket in pairs(data.itemStates) do
-                mapped[worldmp.toLocal(rid)] = bucket
-            end
-            data = { itemStates = mapped }
+        local player = playerScript()
+        if not player or not data or type(data.itemStates) ~= 'table' then return end
+        local inventory = types.Actor.inventory(player)
+        for rid, bucket in pairs(data.itemStates) do
+            pcall(applyItemStates, inventory, worldmp.toLocal(rid), bucket)
         end
-        toPlayer('MP_SelfItemStates', data)
+        player:sendEvent('MP_SelfItemStatesApplied', { any = next(data.itemStates) ~= nil })
     end,
 
     -- Phase 4A/2: the peer replaced this player's avatar body after a respawn; resurrect the

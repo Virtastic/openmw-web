@@ -174,3 +174,53 @@ test("the peer's report merges per field: a charge the client spent is not refun
     (v) => (v as { itemStates?: Record<string, { charge?: number }[]> })?.itemStates?.ring_of_fire?.[0]?.charge === 40);
   assert.ok(drained, "the peer's drain must still lower the charge");
 });
+
+test("an `own` record (lockpick, torch) keeps the client's condition under a fresh peer report (backlog 233)", async (t) => {
+  const { peer, a } = await world(t);
+  drive(t, a);
+  a.sendEvent('PlayerInventory', { items: [{ id: 'pick_apprentice', n: 1 }] });
+  await new Promise((r) => setTimeout(r, 150));
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { pick_apprentice: [{ n: 1, condition: 25 }] } }],
+  });
+  await a.waitEvent('SelfItemStates', (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.pick_apprentice));
+  // The client used the pick: 10 uses left. The avatar never picks a lock, so its copy still
+  // says 25 -- the raise-only rule refused the drop and the next report refilled it.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerInventory', {
+    items: [{ id: 'pick_apprentice', n: 1 }],
+    itemStates: { pick_apprentice: [{ n: 1, condition: 10, own: true }] },
+  });
+  const st = await peer.waitEvent('AvatarState', (v) => (v as { id?: number })?.id === a.playerId);
+  const body = st.value as { itemStates?: Record<string, { condition?: number; own?: boolean }[]> };
+  assert.equal(body.itemStates?.pick_apprentice?.[0]?.condition, 10, 'the spent use must land, not be raise-only');
+  assert.equal(body.itemStates?.pick_apprentice?.[0]?.own, true, 'the tag persists in the doc');
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { pick_apprentice: [{ n: 1, condition: 25 }] } }],
+  });
+  const kept = await a.waitEvent('SelfItemStates', (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.pick_apprentice));
+  assert.equal((kept.value as { itemStates: Record<string, { condition?: number }[]> }).itemStates.pick_apprentice?.[0]?.condition, 10,
+    "the peer's untouched copy must not refill the pick");
+});
+
+test('item-state entries are per stack with n: a bare {n} keeps the positions and round-trips (backlog 234)', async (t) => {
+  const { peer, a } = await world(t);
+  drive(t, a);
+  peer.inbox.events.length = 0;
+  // Three common gems: one stack of 1 holding a soul, one stateless stack of 2.
+  a.sendEvent('PlayerInventory', {
+    items: [{ id: 'misc_soulgem_common', n: 3 }],
+    itemStates: { misc_soulgem_common: [{ n: 1, soul: 'scamp' }, { n: 2 }] },
+  });
+  const st = await peer.waitEvent('AvatarState', (v) => (v as { id?: number })?.id === a.playerId);
+  const body = st.value as { itemStates?: Record<string, { n?: number; soul?: string }[]> };
+  assert.deepEqual(body.itemStates?.misc_soulgem_common, [{ n: 1, soul: 'scamp' }, { n: 2 }],
+    'the stateless stack must survive as {n} so the filled gem stays at its position');
+  // The peer's report of the same layout merges positionally and reaches the owner intact.
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { misc_soulgem_common: [{ n: 1, soul: 'scamp' }, { n: 2 }] } }],
+  });
+  const got = await a.waitEvent('SelfItemStates', (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.misc_soulgem_common));
+  assert.deepEqual((got.value as { itemStates: Record<string, unknown> }).itemStates.misc_soulgem_common,
+    [{ n: 1, soul: 'scamp' }, { n: 2 }]);
+});

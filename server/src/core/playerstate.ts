@@ -8,7 +8,7 @@
 import type { LValue, LTable, JsLike } from '../proto/lser';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
-import type { PlayerStore, PlayerAppearanceDoc, PlayerDoc, DynamicStatDoc } from '../persist/playerstore';
+import type { PlayerStore, PlayerAppearanceDoc, PlayerDoc, DynamicStatDoc, ItemStateDoc } from '../persist/playerstore';
 import { cellsVisible } from './movement';
 import { log } from '../log';
 import { metrics } from '../metrics';
@@ -450,33 +450,9 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   // PER-ITEM STATE, carried alongside rather than folded into the counts. `out` keeps its exact
   // shape because the client's restore grants the SHORTFALL between it and countOf(); changing
   // how entries aggregate would make that subtraction duplicate or destroy real items. States
-  // are keyed by record id and positional within it, and are advisory: a bad state costs
+  // are keyed by record id, one entry per stack (#234), and are advisory: a bad state costs
   // fidelity, never an item. Bounded by the same entry cap so it cannot grow unchecked.
-  const rawStates = tbl(body.get('itemStates'));
-  const states: Record<string, { condition?: number; charge?: number; soul?: string }[]> = {};
-  if (rawStates) {
-    for (const [k, v] of rawStates) {
-      const id = typeof k === 'string' ? recordId(k) : undefined;
-      const list = tbl(v);
-      if (!id || !list) continue;
-      const bucket: { condition?: number; charge?: number; soul?: string }[] = [];
-      for (const [, e] of list) {
-        const t = tbl(e);
-        if (!t) continue;
-        const cond = finite(t.get('condition'));
-        const charge = finite(t.get('charge'));
-        const soul = recordId(t.get('soul'));
-        const one: { condition?: number; charge?: number; soul?: string } = {};
-        if (cond !== undefined && cond >= 0) one.condition = cond;
-        if (charge !== undefined && charge >= 0) one.charge = charge;
-        if (soul) one.soul = soul;
-        if (Object.keys(one).length > 0) bucket.push(one);
-        if (bucket.length >= MAX_COUNT) break;
-      }
-      if (bucket.length > 0) states[id] = bucket;
-      if (Object.keys(states).length >= MAX_INVENTORY) break;
-    }
-  }
+  const states = parseItemStatesL(tbl(body.get('itemStates')));
   ctx.store.update(player.charId, (doc) => {
     doc.inventory = out;
     // Phase 4D one-writer rule for item STATE: while the peer reports the avatar's wear /
@@ -496,14 +472,16 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
       // the avatar spends it only on cast-on-strike, which its own report still lowers --
       // and condition may be RAISED by the client (repair) while wear stays the peer's. The
       // soul stays the peer's: the trap resolves where the kill happens, in the avatar's gem.
-      const merged: Record<string, { condition?: number; charge?: number; soul?: string }[]> = { ...(doc.itemStates ?? {}) };
+      // A record tagged `own` (#233: lockpick/probe/repair uses, torch burn) wears only on the
+      // client -- the avatar's copy is never used -- so its condition is copied wholesale.
+      const merged: Record<string, ItemStateDoc[]> = { ...(doc.itemStates ?? {}) };
       for (const [recId, bucket] of Object.entries(states)) {
         const have = merged[recId] ?? [];
         merged[recId] = bucket.map((mine, i) => {
           const theirs = have[i] ?? {};
-          const out = { ...theirs };
+          const out: ItemStateDoc = { ...theirs, ...(mine.n !== undefined ? { n: mine.n } : {}), ...(mine.own ? { own: true } : {}) };
           if (mine.charge !== undefined) out.charge = mine.charge;
-          if (mine.condition !== undefined && (theirs.condition === undefined || mine.condition > theirs.condition)) {
+          if (mine.condition !== undefined && (mine.own || theirs.condition === undefined || mine.condition > theirs.condition)) {
             out.condition = mine.condition;
           }
           return out;
@@ -620,29 +598,35 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
 // Phase 4D: the peer's avatar item-state reports (wear, enchantment charge, soul) -- the
 // peer swings the weapon (4C), so the peer is where wear happens. Same shape the doc keeps
 // (record id -> positional bucket), same one-writer gate as bars, same owner forward.
-// ponytail: the parse duplicates handleInventory's inline itemStates parse rather than
-// refactoring it blind; fold both into one helper when that block is next touched.
-function parseItemStatesL(raw: LTable | undefined): Record<string, { condition?: number; charge?: number; soul?: string }[]> {
-  const states: Record<string, { condition?: number; charge?: number; soul?: string }[]> = {};
+// Shared by the client's PlayerInventory and the peer's report. Every entry may carry `n`
+// (its stack size, #234) and a stateless stack is a bare {n} -- kept, so the positions of the
+// stateful ones stay aligned with the inventory walk. `own` (#233) survives the parse.
+function parseItemStatesL(raw: LTable | undefined): Record<string, ItemStateDoc[]> {
+  const states: Record<string, ItemStateDoc[]> = {};
   if (!raw) return states;
   for (const [k, v] of raw) {
     const id = typeof k === 'string' ? recordId(k) : undefined;
     const list = tbl(v);
     if (!id || !list) continue;
-    const bucket: { condition?: number; charge?: number; soul?: string }[] = [];
+    const bucket: ItemStateDoc[] = [];
     for (const [, e] of list) {
       const t = tbl(e);
       if (!t) continue;
+      const n = finite(t.get('n'));
       const cond = finite(t.get('condition'));
       const charge = finite(t.get('charge'));
       const soul = recordId(t.get('soul'));
-      const one: { condition?: number; charge?: number; soul?: string } = {};
+      const one: ItemStateDoc = {};
+      if (n !== undefined && Number.isInteger(n) && n >= 1 && n <= (id === GOLD ? MAX_GOLD : MAX_COUNT)) one.n = n;
       if (cond !== undefined && cond >= 0) one.condition = cond;
       if (charge !== undefined && charge >= 0) one.charge = charge;
       if (soul) one.soul = soul;
-      if (Object.keys(one).length > 0) bucket.push(one);
+      if (t.get('own') === true) one.own = true;
+      bucket.push(one);
+      if (bucket.length >= MAX_COUNT) break;
     }
     if (bucket.length > 0) states[id] = bucket;
+    if (Object.keys(states).length >= MAX_INVENTORY) break;
   }
   return states;
 }
@@ -671,15 +655,23 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
     // peer's); the soul is the peer's outright (the kill resolves in the avatar's gem).
     // ponytail: a client raise (repair, recharge) that lands between two peer reports is
     // clipped to the older figure once; a seq stamp on AvatarState would close that window.
-    const merged: Record<string, { condition?: number; charge?: number; soul?: string }[]> = {};
+    const merged: Record<string, ItemStateDoc[]> = {};
     ctx.store.update(p.charId, (doc) => {
       const have = doc.itemStates ?? {};
       for (const [rid, bucket] of Object.entries(states)) {
         merged[rid] = bucket.map((theirs, i) => {
           const mine = have[rid]?.[i] ?? {};
-          const out = { ...theirs };
+          const out: ItemStateDoc = { ...theirs };
           if (theirs.charge !== undefined && mine.charge !== undefined) out.charge = Math.min(theirs.charge, mine.charge);
-          if (theirs.condition !== undefined && mine.condition !== undefined) out.condition = Math.min(theirs.condition, mine.condition);
+          // `own` (#233): the avatar never uses a lockpick or burns a torch, so its copy's
+          // condition is the untouched original -- the doc's (the client's) stands.
+          if (mine.own) {
+            out.own = true;
+            if (mine.condition !== undefined) out.condition = mine.condition;
+            else delete out.condition;
+          } else if (theirs.condition !== undefined && mine.condition !== undefined) {
+            out.condition = Math.min(theirs.condition, mine.condition);
+          }
           return out;
         });
       }

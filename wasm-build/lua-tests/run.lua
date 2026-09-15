@@ -847,6 +847,123 @@ for _, path in ipairs(mpFiles) do
   check(path:match('([^/]+)$') .. ' calls no local function above its declaration', #bad == 0, table.concat(bad, '; '))
 end
 
+-- ============================================ item states: one entry per stack (233, 234)
+-- An index over stateful stacks was not an identity: one Soultrap kill on the peer filled all
+-- three gems of a stack, two daggers of one record swapped conditions on every relog. Every
+-- stack now sends {n=count,...}; the appliers walk the stacks in order and split a stack that
+-- is bigger than its entry. A lockpick/probe/repair/light is tagged `own` (233): it wears only
+-- on the client, so the server must not treat the drop as a raise-only refusal.
+print('identity.lua -- item states carry n per stack, own for tools')
+do
+  fresh()
+  env = stubs.install({})
+  env.types.Lockpick = { name = 'Lockpick' }
+  local id = require('scripts.mp.identity')
+  id.markBaselineReady()
+  env.setInventory({
+    { recordId = 'pick_apprentice', count = 1, type = env.types.Lockpick, itemData = { condition = 10 } },
+    { recordId = 'misc_soulgem_common', count = 1, itemData = { soul = 'scamp' } },
+    { recordId = 'misc_soulgem_common', count = 2, itemData = {} },
+    { recordId = 'gold_001', count = 40 },
+  })
+  id.tick(0)
+  local inv
+  for _, c in ipairs(env.calls.events) do if c.name == 'mpInventoryOut' then inv = c.body end end
+  check('an inventory snapshot went out (mpInventoryOut, via global for the record registry)', inv ~= nil)
+  local st = inv and inv.itemStates or {}
+  local pick = st.pick_apprentice and st.pick_apprentice[1]
+  check('a lockpick entry is tagged own with its condition and n',
+    pick ~= nil and pick.own == true and pick.condition == 10 and pick.n == 1,
+    pick and (tostring(pick.own) .. '/' .. tostring(pick.condition) .. '/' .. tostring(pick.n)) or 'nil')
+  local gems = st.misc_soulgem_common or {}
+  check('a filled gem and a stateless stack of two are two entries, in order',
+    #gems == 2 and gems[1].n == 1 and gems[1].soul == 'scamp' and gems[2].n == 2 and gems[2].soul == nil,
+    '#gems=' .. #gems)
+  local gold = st.gold_001 or {}
+  check('a stateless stack is a bare {n} (positions stay stable)', #gold == 1 and gold[1].n == 40 and gold[1].own == nil)
+end
+
+print('global.lua -- applyItemStates splits a stack to fit an entry; the peer report round-trips')
+do
+  local f = io.open('./openmw/files/data/scripts/mp/global.lua')
+  local src = f:read('*a'):gsub('\r\n', '\n'); f:close()
+  local applyChunk = src:match('(local function applyItemStates%(.-\nend\n)')
+  local snapChunk = src:match('(local function snapAvatarItemStates%(.-\nend\n)')
+  check('applyItemStates and snapAvatarItemStates were found', applyChunk ~= nil and snapChunk ~= nil)
+  -- A fake inventory with the two engine behaviours that matter: split() hands back a NEW
+  -- object carrying the same itemData and removes the count from the source only later in the
+  -- frame (mwlua objectbindings.cpp: DelayedRemovalFn), and moveInto appends.
+  local function fakeInventory(items)
+    local inv = { items = items }
+    function inv:getAll() return self.items end
+    local function mk(recordId, count, data)
+      local it = { recordId = recordId, count = count, itemData = data }
+      function it:split(n)
+        local copy = {}
+        for k, v in pairs(self.itemData) do copy[k] = v end
+        local piece = mk(self.recordId, n, copy)
+        piece.fromSplit = self
+        return piece
+      end
+      function it:moveInto(target)
+        if self.fromSplit then self.fromSplit.count = self.fromSplit.count - self.count end
+        target.items[#target.items + 1] = self
+      end
+      return it
+    end
+    for i, it in ipairs(items) do items[i] = mk(it.recordId, it.count, it.itemData or {}) end
+    return inv
+  end
+  local ok, applyItemStates = pcall(function()
+    return assert((loadstring or load)(applyChunk .. '\nreturn applyItemStates'))()
+  end)
+  check('applyItemStates loads', ok and type(applyItemStates) == 'function', tostring(applyItemStates))
+  if type(applyItemStates) == 'function' then
+    local inv = fakeInventory({ { recordId = 'misc_soulgem_common', count = 3 } })
+    local n = applyItemStates(inv, 'misc_soulgem_common', { { n = 1, soul = 'scamp' }, { n = 2 } })
+    check('one entry wrote a state', n == 1, 'n=' .. tostring(n))
+    check('the stack of 3 became a souled 1 and an empty 2',
+      #inv.items == 2 and inv.items[1].count == 2 and inv.items[1].itemData.soul == nil
+        and inv.items[2].count == 1 and inv.items[2].itemData.soul == 'scamp',
+      #inv.items .. ' stacks')
+    -- Two daggers, two conditions: each lands on its own stack, none on both.
+    local inv2 = fakeInventory({ { recordId = 'iron_dagger', count = 1 }, { recordId = 'iron_dagger', count = 1 } })
+    applyItemStates(inv2, 'iron_dagger', { { n = 1, condition = 300 }, { n = 1, condition = 12 } })
+    check('two same-record stacks keep their own conditions',
+      inv2.items[1].itemData.condition == 300 and inv2.items[2].itemData.condition == 12)
+    -- A pre-234 doc entry (no n) still takes the whole stack.
+    local inv3 = fakeInventory({ { recordId = 'iron_dagger', count = 1 } })
+    applyItemStates(inv3, 'iron_dagger', { { condition = 5 } })
+    check('an entry without n applies to the whole stack, as before', inv3.items[1].itemData.condition == 5 and #inv3.items == 1)
+    -- The peer's report of that inventory: exactly one filled entry, the empty stack kept as {n}.
+    local ok2, snap = pcall(function()
+      return assert((loadstring or load)('local types, worldmp = ...\n' .. snapChunk .. '\nreturn snapAvatarItemStates'))(
+        { Actor = { inventory = function(obj) return obj end } }, {})
+    end)
+    check('snapAvatarItemStates loads', ok2 and type(snap) == 'function', tostring(snap))
+    if type(snap) == 'function' then
+      local states = snap(inv)
+      local gems = states.misc_soulgem_common or {}
+      local filled = 0
+      for _, e in ipairs(gems) do if e.soul then filled = filled + 1 end end
+      check('the peer reports the 3-stack as two entries with exactly one filled gem',
+        #gems == 2 and filled == 1 and gems[1].n == 2 and gems[2].n == 1 and gems[2].soul == 'scamp',
+        '#gems=' .. #gems .. ' filled=' .. filled)
+    end
+  end
+  -- Wiring: the owner's copy is applied in the GLOBAL script (split() is global-context), and
+  -- every applier goes through the one walker.
+  check('MP_SelfItemStates applies in global.lua and no longer forwards to player.lua',
+    src:find("MP_SelfItemStates = function(data)\n        local player = playerScript()", 1, true) ~= nil
+      and not src:find("toPlayer('MP_SelfItemStates'", 1, true))
+  local uses = 0
+  for _ in src:gmatch('pcall%(applyItemStates, inventory') do uses = uses + 1 end
+  check('avatar apply, relog restore and MP_SelfItemStates all use applyItemStates', uses == 3, 'uses=' .. uses)
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  check('player.lua no longer carries its own item-state applier', not p:find('d.enchantmentCharge = st.charge', 1, true))
+  check("player.lua answers itemstates:<id> with every stack's state", p:find("'^itemstate(s?):(.+)$'", 1, true) ~= nil)
+end
+
 -- ============================================ mp.omwscripts: one line per script path
 -- The engine keeps only the LAST line naming a path (components/lua/configuration.cpp), so
 -- `NPC: x.lua` followed by `CREATURE: x.lua` attaches x.lua to creatures only. companion.lua

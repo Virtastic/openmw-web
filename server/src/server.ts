@@ -463,6 +463,20 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       const left = inv[at]!.n - fromDoc;
       if (left > 0) inv[at]!.n = left;
       else inv.splice(at, 1);
+      // ...and its STATE (#236): the entries are one per stack, so the dropped count comes
+      // off the tail -- whole entries while they fit, then the last one shrinks. Leaving them
+      // restored the survivor of two same-record items with the dropped one's wear.
+      const bucket = doc.itemStates?.[recordId];
+      if (!bucket) return;
+      let debit = fromDoc;
+      while (debit > 0 && bucket.length > 0) {
+        const tail = bucket[bucket.length - 1]!;
+        const size = tail.n ?? 1;
+        if (size > debit) { tail.n = size - debit; break; }
+        bucket.pop();
+        debit -= size;
+      }
+      if (bucket.length === 0) delete doc.itemStates![recordId];
     });
   });
   world.setModerationNote((accountKey, kind) => moderation.noteAnomaly(accountKey, kind));

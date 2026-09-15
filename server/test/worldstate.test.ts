@@ -133,10 +133,15 @@ test('world objects and containers end to end', async (t) => {
     const upB = (await b.waitEvent('ContainerUpdate')).value as { stateSeq: number };
     assert.equal(upB.stateSeq, 2);
 
+    // Bob took optimistically and his acquisition diff already credited it (backlog 235).
+    b.sendEvent('PlayerItemAcquired', { id: 'gold_001', n: 400 });
+    await new Promise((r) => setTimeout(r, 50));
     b.sendEvent('ContainerOpRequest', { ref: CONT_REF, cellKey: '0,0', opId: 2, op: 'take', itemId: 'gold_001', n: 400 }); // only 300 left
     const r2 = (await b.waitEvent('ContainerOpResult')).value as { ok: boolean; reason?: string };
     assert.equal(r2.ok, false);
     assert.equal(r2.reason, 'gone');
+    const bob = [...server.roster.inWorld()].find((p) => p.name === 'Bob');
+    assert.equal(bob?.pendingAcquired?.get('gold_001'), undefined, 'a refused take must give its credit back');
 
     b.sendEvent('ContainerOpRequest', { ref: CONT_REF, cellKey: '0,0', opId: 3, op: 'put', itemId: 'iron_dagger', n: 2 });
     assert.equal(((await b.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);

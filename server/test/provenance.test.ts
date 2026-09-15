@@ -174,3 +174,32 @@ test('a drop out of the declared pack leaves the character doc without it, at on
   const inv = readPlayerDoc(dataDir, charId)?.['inventory'] as { id: string; n: number }[];
   assert.deepEqual(inv, [{ id: 'gold_001', n: 20 }], `the doc still holds what was dropped: ${JSON.stringify(inv)}`);
 });
+
+// ...AND ITS STATE. The debit trimmed the count but left doc.itemStates alone, so dropping one
+// of two same-record items and losing the connection restored the survivor with the DROPPED
+// one's wear (backlog 236). Entries are one per stack (#234): the tail comes off.
+test('a drop out of the declared pack takes its item-state entry with it', async (t) => {
+  const { readPlayerDoc } = await import('./helpers');
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  const { welcome } = await c.joinAsNew('Giver');
+  const charId = welcome['characterId'] as string;
+  await c.waitEvent('PlayerList');
+  c.sendCellChange(CELL, 0, 0, 0);
+  await c.waitEvent('PlayerCellChange');
+  c.sendEvent('PlayerInventory', {
+    items: [{ id: 'iron_dagger', n: 2 }, { id: 'gold_001', n: 30 }],
+    itemStates: { iron_dagger: [{ n: 1, condition: 300 }, { n: 1, condition: 12 }] },
+  });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(await tryDrop(c, 'iron_dagger', 1, 40), true);
+  c.ws.close();
+  await new Promise((r) => setTimeout(r, 300));
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId);
+  assert.deepEqual(doc?.['inventory'], [{ id: 'iron_dagger', n: 1 }, { id: 'gold_001', n: 30 }]);
+  assert.deepEqual(doc?.['itemStates'], { iron_dagger: [{ n: 1, condition: 300 }] },
+    `the dropped dagger's state must go with it: ${JSON.stringify(doc?.['itemStates'])}`);
+});

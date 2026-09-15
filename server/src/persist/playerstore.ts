@@ -65,6 +65,8 @@ export type DynamicStatDoc = {
   b: number;
 };
 
+export type ItemStateDoc = { n?: number; condition?: number; charge?: number; soul?: string; own?: true };
+
 export interface PlayerDoc {
   appearance?: PlayerAppearanceDoc;
   equipment?: Record<number, string>; // slot -> recordId (keys stringify in JSON; normalized on load)
@@ -74,7 +76,11 @@ export interface PlayerDoc {
   // counts above remain the authority on how much a character owns, so a wrong state costs
   // fidelity and never an item. Without this, every relog silently repaired all gear,
   // recharged every enchantment and emptied every soul gem.
-  itemStates?: Record<string, { condition?: number; charge?: number; soul?: string }[]>;
+  // One entry PER STACK (#234), in inventory order, each carrying its stack size `n` so the
+  // walk stays aligned when a stack has no state at all ({n} alone). `own` marks a record
+  // whose wear only the client can author (lockpick/probe/repair uses, torch burn: #233) --
+  // the peer's copy never depletes and must not refill it.
+  itemStates?: Record<string, ItemStateDoc[]>;
   stats?: {
     dynamic?: { hp: DynamicStatDoc; mp: DynamicStatDoc; ft: DynamicStatDoc };
     attributes?: Record<string, number>;

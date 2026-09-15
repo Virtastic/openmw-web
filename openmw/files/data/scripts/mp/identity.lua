@@ -320,20 +320,36 @@ end
 
 -- Per-item state the record id cannot express: wear, remaining enchantment charge, and which
 -- soul is in a gem. Read through itemData (mwlua/itemdata.cpp exposes condition,
--- enchantmentCharge and soul as read/write properties). nil means "engine default", which is
--- the common case and costs nothing to carry.
+-- enchantmentCharge and soul as read/write properties). ONE ENTRY PER STACK (#234), always
+-- carrying the stack size `n`: a stateless stack is a bare {n=k}, so the appliers can walk the
+-- record's stacks in order and split a stack that is bigger than its entry -- an index alone
+-- is not an identity (one Soultrap filled all three gems of a stack; two daggers swapped
+-- conditions per relog).
+--
+-- `own` (#233): a lockpick, probe, repair tool or light wears only HERE -- the avatar never
+-- picks a lock or burns a torch -- so the server copies its condition wholesale instead of
+-- raise-only, and the peer's untouched copy must not refill it.
+local OWN_WEAR_TYPES = {}
+for _, name in ipairs({ 'Lockpick', 'Probe', 'Repair', 'Light' }) do
+    if types[name] then OWN_WEAR_TYPES[#OWN_WEAR_TYPES + 1] = types[name] end
+end
 local function itemState(item)
+    local st = { n = item.count or 1 }
     local ok, d = pcall(function() return item.itemData end)
-    if not ok or d == nil then return nil end
-    local st, any = {}, false
+    if not ok or d == nil then return st end
     local okc, c = pcall(function() return d.condition end)
-    if okc and type(c) == 'number' then st.condition = c; any = true end
+    if okc and type(c) == 'number' then st.condition = c end
     local oke, e = pcall(function() return d.enchantmentCharge end)
-    if oke and type(e) == 'number' then st.charge = e; any = true end
+    if oke and type(e) == 'number' then st.charge = e end
     local oks, sl = pcall(function() return d.soul end)
-    if oks and type(sl) == 'string' and sl ~= '' then st.soul = sl; any = true end
-    if any then return st end
-    return nil
+    if oks and type(sl) == 'string' and sl ~= '' then st.soul = sl end
+    local okt, t = pcall(function() return item.type end)
+    if okt and t ~= nil then
+        for _, own in ipairs(OWN_WEAR_TYPES) do
+            if t == own then st.own = true; break end
+        end
+    end
+    return st
 end
 
 -- BOUND ITEMS ARE NOT POSSESSIONS. A Bound Dagger exists for the spell's duration and the
@@ -371,12 +387,9 @@ local function snapInventory()
                 order[#order + 1] = item.recordId
             end
             counts[item.recordId] = (counts[item.recordId] or 0) + item.count
-            local st = itemState(item)
-            if st then
-                local bucket = states[item.recordId]
-                if not bucket then bucket = {}; states[item.recordId] = bucket end
-                bucket[#bucket + 1] = st
-            end
+            local bucket = states[item.recordId]
+            if not bucket then bucket = {}; states[item.recordId] = bucket end
+            bucket[#bucket + 1] = itemState(item)
         end
     end
     local items = {}

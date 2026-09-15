@@ -913,19 +913,23 @@ local function dispatch(cmd)
         -- drop must carry (s160). itemData is writable from the global script only.
         local condId, condN = cmd:match('^setcond:(.+):([%d.]+)$')
         if condId then core.sendGlobalEvent('mpSetItemCondition', { id = condId, condition = tonumber(condN) }) end
-        local stateId = cmd:match('^itemstate:(.+)$')
+        -- itemstate: the first stack; itemstates: every stack of the record, `;`-joined with
+        -- its count first (s163: does a spent lockpick stay spent; #234: did a split land).
+        local allStates, stateId = cmd:match('^itemstate(s?):(.+)$')
         if stateId then
-            local out = 'none'
+            local out = {}
             pcall(function()
                 for _, item in ipairs(types.Actor.inventory(self):getAll()) do
                     if item.recordId == stateId then
                         local d = item.itemData
-                        out = string.format('%s/%s/%s', tostring(d and d.condition), tostring(d and d.enchantmentCharge), tostring(d and d.soul))
-                        break
+                        local one = string.format('%s/%s/%s', tostring(d and d.condition), tostring(d and d.enchantmentCharge), tostring(d and d.soul))
+                        if allStates == 's' then one = tostring(item.count) .. 'x' .. one end
+                        out[#out + 1] = one
+                        if allStates ~= 's' then break end
                     end
                 end
             end)
-            mp.set('itemState', out)
+            mp.set(allStates == 's' and 'itemStates' or 'itemState', #out > 0 and table.concat(out, ';') or 'none')
         end
         local takeNet = cmd:match('^takenet:(%d+)$')
         if takeNet then core.sendGlobalEvent('mpTakeNet', { netId = tonumber(takeNet) }) end
@@ -1253,30 +1257,10 @@ return {
         -- spells all land on the avatar). Current values only -- base stats still travel
         -- through the progression path. identity.lua's own dynamic broadcast keeps running
         -- as the degraded-mode fallback; the server ignores it while these are fresh.
-        -- Phase 4D: apply peer-reported item states positionally per record id -- the
-        -- exact idiom applyAvatarDoc / restoreTick use, on self. Counts are untouched.
-        MP_SelfItemStates = function(data)
-            if not data or type(data.itemStates) ~= 'table' then return end
-            pcall(function()
-                local inventory = types.Actor.inventory(self)
-                for recId, bucket in pairs(data.itemStates) do
-                    local localId = recId -- already mapped to LOCAL by global.lua's forwarder
-                    local idx = 0
-                    for _, item in ipairs(inventory:getAll()) do
-                        if item.recordId == localId then
-                            idx = idx + 1
-                            local st = bucket[idx]
-                            if st then
-                                local d = item.itemData
-                                if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
-                                if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
-                                if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
-                            end
-                        end
-                    end
-                end
-            end)
-            mp.set('selfItemStates', tostring(next(data.itemStates) ~= nil))
+        -- Phase 4D: peer-reported item states are applied in global.lua (MP_SelfItemStates:
+        -- split() and itemData writes are global-context); this is the test-hook echo.
+        MP_SelfItemStatesApplied = function(data)
+            mp.set('selfItemStates', tostring(data and data.any == true))
         end,
         -- Arrest (global.lua MP_PlayerArrest): the guard that reached our avatar, resolved
         -- to our copy of it. UI modes are player-script-only, hence the hop.

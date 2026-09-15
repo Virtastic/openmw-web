@@ -1263,6 +1263,16 @@ export class WorldState {
     const item = cont.items.find((i) => i.id === itemId);
     if (op === 'take') {
       if (!item || item.n < n) {
+        // The client took optimistically and its 0.25 s acquisition diff has already credited
+        // pendingAcquired; the undo it does on this refusal never debits it (#235), so a
+        // disconnect before the next snapshot folded the credit into the doc -- a dup with
+        // the race winner.
+        const led = player.pendingAcquired;
+        const had = led?.get(itemId) ?? 0;
+        if (led && had > 0) {
+          if (had > n) led.set(itemId, had - n);
+          else led.delete(itemId);
+        }
         reply(false, 'gone', cont.stateSeq); // losing racer / stale client view
         return;
       }
