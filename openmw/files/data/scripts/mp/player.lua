@@ -903,7 +903,16 @@ local function dispatch(cmd)
         -- dispel:<spellId>: end one of our own active spells (levitation off mid-air = a fall
         -- the engine measures, unlike a teleport; s147).
         local dispelId = cmd:match('^dispel:(.+)$')
-        if dispelId then pcall(function() types.Actor.activeSpells(self):remove(dispelId) end) end
+        if dispelId then
+            -- By RECORD: an active spell is keyed by a generated instance id, so remove(recordId)
+            -- silently did nothing and the player kept flying after the "dispel" (s147).
+            pcall(function()
+                local spells = types.Actor.activeSpells(self)
+                for _, sp in pairs(spells) do
+                    if sp.id == dispelId and sp.activeSpellId then spells:remove(sp.activeSpellId) end
+                end
+            end)
+        end
         local killNpc = cmd:match('^killnpc:(.+)$')
         if killNpc then core.sendGlobalEvent('mpKillNpc', { id = killNpc }) end
         if cmd == 'door:toggle' then core.sendGlobalEvent('mpDoorToggle', {}) end

@@ -26,8 +26,10 @@ export default async function run(ctx) {
   assert.match(cell.toLowerCase(), /census/, 'A must start in the Census office');
   await ctx.sleep(4_000); // long enough for a spawned avatar to start streaming, if one were
 
-  // Walk. Try both directions along the ship; the bunk room is narrow.
-  let moved = 0;
+  // Walk in each direction. The office is cramped (desks, walls): a free player covers a
+  // few dozen units before something stops them; a PINNED one covers almost nothing and,
+  // the tell, has a live divergence from an avatar that should not exist here.
+  let moved = 0, maxDiv = 0;
   for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
     const p0 = await pose(a);
     await a.cmd(`walk:${dx},${dy},3000`);
@@ -35,9 +37,9 @@ export default async function run(ctx) {
     const d = dist2(p0, await pose(a));
     const div = Number(await a.eval('window.omw.state.selfDivergence||0'));
     ctx.log(`walk ${dx},${dy}: covered ${d.toFixed(0)} units, divergence ${div.toFixed(0)}, stale=${await a.eval('window.omw.state.selfStale||""')}`);
-    moved = Math.max(moved, d);
-    if (d > 150) break;
+    moved = Math.max(moved, d); maxDiv = Math.max(maxDiv, div);
   }
-  assert.ok(moved > 150, `A could not walk in the chargen cell (best ${moved.toFixed(0)} units): the peer streams a frozen avatar there and reconciliation pins the player`);
+  assert.ok(moved > 30, `A could not walk in the chargen cell (best ${moved.toFixed(0)} units): the peer streams a frozen avatar there and reconciliation pins the player`);
+  assert.ok(maxDiv < 30, `an avatar is being streamed for a player in the chargen sanctuary (divergence ${maxDiv.toFixed(0)})`);
   ctx.log('PASS: a new character walks freely in the chargen sanctuary with a live peer');
 }
