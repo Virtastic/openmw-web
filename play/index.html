@@ -722,6 +722,18 @@ window.omw = (function(){
  // other forever (it presents as a character screen stuck on "Creating..."). Only the client
  // can see the fragment, so only the client can tell "launched into multiplayer" from
  // "typed the URL".
+ // F5 MID-PLAY. The boot fragment is scrubbed from the address bar the moment it is read (a
+ // credential must not sit in history), so a plain reload arrived here with no hash, bounced
+ // to the launcher, and the player re-picked a tile -- a fresh ticket, a fresh session, not
+ // the resume the parked token was waiting for. The fragment minus the single-use ticket is
+ // kept in sessionStorage (this tab only, gone when it closes) and put back before the
+ // launcher check runs, so a reload rejoins the same world in the same role.
+ try {
+   if (!location.hash && (location.search === '' || location.search === '?')) {
+     var savedFrag = sessionStorage.getItem('omwmp:bootfrag');
+     if (savedFrag) history.replaceState(null, '', location.pathname + location.search + '#' + savedFrag);
+   }
+ } catch (e) {}
  if (location.pathname.endsWith('/index.html')
      && (location.search === '' || location.search === '?')
      // `cloud` is listed EXPLICITLY. A cloud-locker boot (#locker=&mplocker=&cloud=1) already
@@ -1468,6 +1480,11 @@ window.omw = (function(){
                  // mpaccount, mpchar, mpcharname) was dropped. Held in memory instead, minus
                  // the single-use credential itself.
                  window.__omwBootFrag = String(location.hash || '').replace(/^#/, '');
+                 // For F5 (see the launcher check at the top): everything but the ticket.
+                 try {
+                   sessionStorage.setItem('omwmp:bootfrag', window.__omwBootFrag.split('&')
+                     .filter(function(kv){ return !/^(mpticket|mpnew|mpclosed|mpclosedby|mperror)=/.test(kv); }).join('&'));
+                 } catch (e) {}
                  history.replaceState(null, '', location.pathname + location.search);
                }
              } catch(e){ append('[mp sso err] ' + e, 'err'); }
@@ -1517,7 +1534,7 @@ window.omw = (function(){
                  + 'letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
                // ON PURPOSE: tell the world before going, so a Party world closes to its
                // guests now rather than after the crash grace (see net.lua switchTo).
-               btn.onclick = function(){ window.__omwAllowLeave = true; try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = 'launcher.html'; }, 150); };
+               btn.onclick = function(){ window.__omwAllowLeave = true; try { sessionStorage.removeItem('omwmp:bootfrag'); } catch(e){} try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = 'launcher.html'; }, 150); };
                box.appendChild(btn); wrap.appendChild(box); document.body.appendChild(wrap);
              }
              (function(){
