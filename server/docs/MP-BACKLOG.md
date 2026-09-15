@@ -100,6 +100,15 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 156 | Sleep ambush spawned a creature only the sleeper sees (spawnRandomCreature not gated on localSpawnsEnabled) | waitdialog.cpp onWaitingInterrupted gated on MWMP::localSpawnsEnabled(), as transformationextensions.cpp / creaturelevlist.cpp | fixed | needs a bake (the peer does not roll the ambush for an avatar: no ambush at all under a holder) |
 | 158 | No "contracted disease" message when the avatar caught it | global.lua MP_SelfSpells: a Disease/Blight record added to the player goes through notice() (sMagicContractDisease with the record name); global context has no openmw.ui | fixed | needs a bake |
 | 159 | Peer follow-teleport ignored vanilla follower rules (in combat, stayoutside, >800 units): a stay-outside guar rode the strider indoors | global.lua canFollowThroughDoor (actionteleport.cpp getFollowers rules); actors.inCombat tracks the follower's own mpActorCombat report since global context cannot read an AI stack; stayoutside read from the mirrored local (#107) | fixed | needs a bake |
+| 160 | A service window open longer than 15 s stops syncing (live/barter watches share the chest's 15 s expiry): stock dupes, the gold delta is never sent, training paid into a per-client purse | objects.lua:490 until_ = live and math.huge |
+| 161 | Player-made records (potions, enchanted items) never map toNet/toLocal on the container/barter wire: a friend sees your potion as their own `Generated:` record, restock re-adds the bogus id forever | objects.lua:226-236, :283, :318, :350, :466 |
+| 162 | The dialogue lock is released the moment a service window opens (Dialogue→Barter fires mpDialogueClosed): bribe/admire after the trade never travels; two players trade at once | player.lua:1320 talking(mode) predicate incl. GOLD_SERVICE_MODES |
+| 163 | Peer item-state report is wholesale: a cast-when-used charge spend (or a repair) is refunded within 2 s | playerstate.ts:653 merge per field (charge/condition = min) |
+| 164 | Losing a barter race costs the item AND the gold (three independent ops, refusal does not know the price); unreachable once 162 holds the lock | worldstate.ts, objects.lua:908 |
+| 165 | 24 h restock refills one-off stock (unique Creeper/Jobasha items come back daily), not just restocking entries | worldstate.ts:1171 |
+| 166 | MAX_GOLD_DELTA 1,000,000 lets any client zero/fill a merchant purse; no moderation note on the gold branch | worldstate.ts:48, :1221 noteAnomaly |
+| 167 | Custom record bodies unvalidated (chopMaxDamage=9999, Fortify Health 10000 for 10^6 s replayed to the peer, the avatar fights with it) | m7.ts:191 recordCreate caps |
+| 168 | Harness gap: no hook trades inside a real barter window (barter:sell:/barter:buy: on barterTarget) — blocks proving 160/162/164 | player.lua:669 |
 
 ## Open (found, not fixed)
 
