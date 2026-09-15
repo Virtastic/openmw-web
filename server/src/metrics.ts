@@ -247,9 +247,10 @@ export const metrics = {
     new Counter('omwmp_simpeer_refused_total', 'Sim peer starts declined.', ['reason'])),
 
   // GATEWAY-ONLY (these render on the gateway process, which supervises worlds; a world
-  // process leaves them at zero). worldRefused is the one to alert on: reason="memory" means
-  // the box is full and a player was told to come back later, which is honest but is also the
-  // signal to provision. Without it the only evidence of a full platform was a 503 the player
+  // process leaves them at zero). worldRefused is the one to alert on: reason="memory" (the
+  // static price), "mem" (measured RSS past the budget) or "cpu" (loadavg past the cores, #270)
+  // means the box is full and a player was told to come back later, which is honest but is
+  // also the signal to provision. Without it the only evidence of a full platform was a 503 the player
   // saw and nobody else did.
   worldsRunning: reg(new Gauge('omwmp_worlds_running', 'World processes currently supervised.')),
   worldsCapacity: reg(new Gauge('omwmp_worlds_capacity', 'Worlds this gateway may run at once (the binding ceiling).')),

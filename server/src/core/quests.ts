@@ -770,9 +770,12 @@ export class Quests {
       return;
     }
     const held = this.dialogueLocks.get(ref.key);
-    if (!player.system) player.lastDialogueAt = Date.now(); // #361/#366: a conversation, either edge
+    // #361/#366 (403): lastDialogueAt is stamped only on a GRANTED lock or a real release --
+    // a refused request (far cell, held by someone else) is not a conversation and must not
+    // buy the same-cell jump or bounty-drop passes.
     if (!want) {
       if (held?.playerId === player.id) {
+        if (!player.system) player.lastDialogueAt = Date.now();
         this.dialogueLocks.delete(ref.key);
         // A dialogue's consequences land AFTER the window closes -- a taunted NPC or a guard
         // whose arrest was resisted starts combat on "Goodbye" -- and the client's report of
@@ -793,7 +796,7 @@ export class Quests {
       player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: false });
       return;
     }
-    if (!player.system) this.releaseDialogueLocks(player.id);
+    if (!player.system) { this.releaseDialogueLocks(player.id); player.lastDialogueAt = Date.now(); }
     this.dialogueLocks.set(ref.key, { playerId: player.id, cellKey });
     player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: true });
   }
@@ -808,13 +811,20 @@ export class Quests {
     }
   }
 
-  private readonly recentlyHeld = new Map<string, { playerId: number; at: number }>();
+  private readonly recentlyHeld = new Map<string, { playerId: number; at: number; ttl?: number }>();
   private static readonly RECENT_LOCK_MS = 5_000;
+  private static readonly FORCED_DIALOGUE_MS = 120_000;
+  // #44: an arrest dialogue is forced onto the wanted player's screen by the peer (no lock is
+  // requested, backlog 343), yet "the guard now fights me" needs the holder gate to pass.
+  // The peer names the guard and the player; the player counts as its holder for a while.
+  noteForcedDialogue(refKey: string, playerId: number): void {
+    this.recentlyHeld.set(refKey, { playerId, at: Date.now(), ttl: Quests.FORCED_DIALOGUE_MS });
+  }
   dialogueHolder(refKey: string): number | undefined {
     const live = this.dialogueLocks.get(refKey)?.playerId;
     if (live !== undefined) return live;
     const recent = this.recentlyHeld.get(refKey);
-    if (recent && Date.now() - recent.at <= Quests.RECENT_LOCK_MS) return recent.playerId;
+    if (recent && Date.now() - recent.at <= (recent.ttl ?? Quests.RECENT_LOCK_MS)) return recent.playerId;
     if (recent) this.recentlyHeld.delete(refKey);
     return undefined;
   }

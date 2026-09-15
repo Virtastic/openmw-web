@@ -59,6 +59,7 @@ test('a pin survives the server emptying; an adopted canonical does not', () => 
 //
 // Refusing it is the worst available failure: no holder for any cell, every NPC frozen, and a
 // server that reports itself perfectly healthy while nothing in the world moves.
+import { onLog } from '../src/log';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
 
@@ -109,6 +110,27 @@ test('a proto-1 client is refused with BAD_PROTO naming the version', async (t) 
   assert.equal((bye as { code?: string }).code, 'BAD_PROTO');
   assert.match(String((bye as { detail?: string }).detail ?? ''), /1/,
     'the refusal must name the offered version');
+  c.close();
+});
+
+// #397: a peer image baked before the current proto would be refused BAD_PROTO, exit, and be
+// respawned every backoff for ever with only a generic conn.disconnect line to explain it.
+test('a pre-proto-3 PEER is refused by name and the supervisor stops retrying', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: 'peer-secret-1' } },
+  });
+  t.after(() => server.close());
+  const seen: Record<string, unknown>[] = [];
+  t.after(onLog((e) => { if (e.event === 'simpeer.bad_proto' || e.event === 'simpeer.disabled_permanently') seen.push(e); }));
+  const c = await TestClient.connect(server.port);
+  c.sendJson({ t: 'SessionHello', proto: 2, engineHash: '', lserVersion: 0, manifest: [], system: true, simulatesActors: true });
+  const bye = await c.waitJson('SessionDisconnect');
+  assert.equal((bye as { code?: string }).code, 'BAD_PROTO');
+  const bad = seen.find((e) => e.event === 'simpeer.bad_proto');
+  assert.deepEqual([bad?.peerProto, bad?.serverProto], [2, 3], 'the event names both versions');
+  assert.match(String(seen.find((e) => e.event === 'simpeer.disabled_permanently')?.reason ?? ''), /BAD_PROTO/,
+    'the supervisor was left to crash-loop the old image');
   c.close();
 });
 

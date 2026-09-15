@@ -2673,11 +2673,15 @@ function wireSettings() {
  *  "restart the container" and leaving them to work out how is not a finished feature. */
 function restartPrompt() {
   const b = $('#banner');
+  // On the platform this button restarts the multiplayer server and EVERY game with it;
+  // the rolling restart reaches the same settings one game at a time (#381a).
+  const rolling = platform() && !gameId;
   b.innerHTML = html`<div class="callout callout-warning d-flex align-items-center">
     <div class="flex-grow-1"><strong>Saved, not live yet.</strong>
-      The server reads its settings at startup, so it needs a restart.</div>
+      The server reads its settings at startup, so it needs a restart.${raw(rolling
+        ? ' This restarts every game at once; to keep the platform up, use the <a href="#rolling">rolling restart</a> instead.' : '')}</div>
     <button class="btn btn-warning btn-sm" id="doRestart">
-      <i class="bi bi-arrow-repeat me-1"></i>Restart now</button></div>`;
+      <i class="bi bi-arrow-repeat me-1"></i>${rolling ? 'Restart everything now' : 'Restart now'}</button></div>`;
   $('#doRestart').onclick = async () => {
     const ok = await confirmAction({
       title: 'Restart the server?',
@@ -3074,6 +3078,7 @@ function wireMods(m) {
         await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });
         toast('Installed. Restart to load it.');
         route();
+        restartPrompt(); // #381g: the toast fades; the banner stays until the restart happens
       } catch (e) {
         stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
       } finally {
@@ -3939,7 +3944,10 @@ async function pageLogs(filter = '', title = 'Logs', lead = 'Recent activity fro
   setTitle(title, lead);
   const draw = async () => {
     const { entries } = await api(`/logs?limit=500&filter=${encodeURIComponent(filter)}`);
-    const rows = entries.slice().reverse().map((e) => {
+    // #381b: a text box narrows the 500 lines in the browser; matched against the whole
+    // rendered line (event and fields), case-insensitively.
+    const needle = ($('#logFind')?.value ?? '').trim().toLowerCase();
+    const rows = entries.slice().reverse().filter((e) => !needle || JSON.stringify(e).toLowerCase().includes(needle)).map((e) => {
       const { ts, level, event, ...rest } = e;
       const extra = Object.entries(rest).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ');
       // Time in its own column, message in another. As one run of inline text the timestamp
@@ -3954,7 +3962,8 @@ async function pageLogs(filter = '', title = 'Logs', lead = 'Recent activity fro
     <div class="card card-secondary card-outline">
       <div class="card-header">
         <h3 class="card-title"><i class="bi ${raw(filter ? 'bi-clipboard-check' : 'bi-journal-text')} me-2"></i>${title}</h3>
-        <div class="card-tools">
+        <div class="card-tools d-flex align-items-center">
+          <input class="form-control form-control-sm me-2" id="logFind" placeholder="filter" style="width:12em">
           <label class="me-2 small text-secondary">
             <input type="checkbox" class="form-check-input me-1" id="logAuto">auto-refresh</label>
           <button class="btn btn-tool" id="logRefresh" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
@@ -3962,6 +3971,7 @@ async function pageLogs(filter = '', title = 'Logs', lead = 'Recent activity fro
       </div>
       <div class="card-body"><div class="vt-log vt-mono" id="logBox">Loading…</div></div></div>`;
   $('#logRefresh').onclick = draw;
+  $('#logFind').oninput = draw;
   // A live tail without a websocket: poll while the box is ticked and the page is open.
   let timer = null;
   $('#logAuto').onchange = (e) => {
@@ -4092,14 +4102,16 @@ async function pageRolling() {
         going down at once. Empty games go first and the busiest last. If a game does not come
         back the roll stops there and says so in the log, rather than turning one failure into
         an outage. Players in a game being restarted are disconnected and can rejoin as soon as
-        it is back.</p>
+        it is back: seconds for a vanilla game, minutes where the sim peer reloads Tamriel
+        Rebuilt.</p>
       <button class="btn btn-warning" id="rollGo">Restart every game, one at a time</button>
     </div></div></div></div>`;
   $('#rollGo').onclick = async () => {
     const ok = await confirmAction({
       title: 'Start a rolling restart?',
       body: html`<p>Every game restarts in turn. Each one's players are disconnected while it
-        does, for a few seconds each.</p>`,
+        does: a few seconds for a vanilla game, minutes for one whose sim peer reloads
+        Tamriel Rebuilt.</p>`,
       danger: 'Start',
     });
     if (!ok) return;

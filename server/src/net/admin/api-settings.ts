@@ -168,6 +168,9 @@ export const DERIVED_FIELDS = [
   // binary is editing config.toml on a box they have a shell on, and has the context for it.
   'simPeer.binary', 'simPeer.configDir', 'simPeer.userDataDir',
   'simPeer.osgStatsFile', 'simPeer.navmeshTemplate',
+  // DERIVED AT BOOT (server.ts: game data ok AND a binary), never read from the file. As a
+  // switch it did nothing either way and read as "simulation is off" on a working server.
+  'simPeer.enabled',
   // A CELL KEY AND THREE WORLD COORDINATES ARE NOT SOMETHING ANYONE KNOWS. Nobody can type
   // where Balmora is, the shipped default is the DEMO's cell (respawn.ts warns it is wrong for
   // real content, which concedes the field was unusable), and a number typed slightly wrong

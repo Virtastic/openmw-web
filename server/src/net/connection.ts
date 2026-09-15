@@ -52,7 +52,8 @@ import type { BanStore } from '../persist/banstore';
 import type { ResumeStore, ResumeTicket } from '../core/resume';
 import type { LoginTicketStore, SessionIndex } from '../auth/identities';
 import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
-import { lserDecode, lserEncode, jsToL, lToJs, LserError, type JsLike, type LValue } from '../proto/lser';
+import { lserDecode, lserEncode, jsToL, lToJs, LserError, type JsLike, type LValue, type LTable } from '../proto/lser';
+import { parseObjRef } from '../proto/ref';
 import {
   parseSessionMessage,
   helloOk,
@@ -333,7 +334,7 @@ export class Connection implements Peer {
   // for a human, but a SYSTEM peer refused here is a misconfiguration that will refuse the
   // same way every time — so the supervisor is told to stop trying rather than respawning a
   // ~360 MB process forever while players sit with frozen NPCs and nothing explains why.
-  private refuseSetup(code: 'BAD_ENGINE' | 'BAD_CONTENT', detail: string): void {
+  private refuseSetup(code: 'BAD_ENGINE' | 'BAD_CONTENT' | 'BAD_PROTO', detail: string): void {
     if (this.isSystem) {
       this.ctx.simPeers?.disablePermanently(`${code}: ${detail}`);
     }
@@ -802,6 +803,9 @@ export class Connection implements Peer {
       // #396: the arrest window sends no DialogueLock, and #366 admits a bounty drop only out
       // of a conversation -- so the fine paid there is one, or guards re-arrest forever.
       target.lastDialogueAt = Date.now();
+      // #44: the arrest window takes no lock; let the target's "guard now fights me" pass.
+      const guardRef = parseObjRef(new Map([['ref', guard]]) as LTable);
+      if (guardRef) this.ctx.quests.noteForcedDialogue(guardRef.key, target.id);
       target.peer.sendEvent('PlayerArrest', { guard: lToJs(guard) as JsLike });
       return;
     }
@@ -1279,7 +1283,10 @@ export class Connection implements Peer {
     // BAD_PROTO with the version number is the honest refusal (the engine-hash pin would
     // also catch it, but with a "wrong engine build" message that misleads).
     if (msg.proto !== 3) {
-      this.disconnect('BAD_PROTO', `unsupported protocol version ${msg.proto}`);
+      // #397: a peer image baked before this proto is a misconfiguration, not a crash --
+      // say so by name and stop the supervisor from respawning it every backoff.
+      if (this.isSystem) log('error', 'simpeer.bad_proto', { peerProto: msg.proto, serverProto: 3, hint: 'rebuild the peer image (openmw-mp:tier2) against this server' });
+      this.refuseSetup('BAD_PROTO', `unsupported protocol version ${msg.proto} (server speaks 3)`);
       return;
     }
     if (msg.lserVersion !== 0) {

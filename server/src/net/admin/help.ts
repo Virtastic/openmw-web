@@ -209,6 +209,7 @@ export const HELP: Record<string, FieldHelp> = {
   },
   'worlds.maxWorlds': { text: 'Multiplayer server only: hard ceiling on games running at once.' },
   'worlds.memBudgetMb': { text: 'Multiplayer server only: total memory it may commit to games and their sim peers. 0 disables the memory governor.' },
+  'worlds.idleReapSec': { text: 'Multiplayer server only: how long an empty game is kept running before it is stopped. 0 means the default, two minutes.' },
 };
 
 export function helpFor(section: string, key: string): FieldHelp | undefined {

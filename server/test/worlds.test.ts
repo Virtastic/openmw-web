@@ -49,9 +49,13 @@ function harness(over: Partial<WorldSettings> = {}) {
   // Ports whose /status the fake fetch refuses to answer — a world that is alive as a process
   // but serving nothing, which is a different state from down-and-gone or idle-and-empty.
   const down = new Set<number>();
+  // #270: what the box measures (RSS of the worlds, load average). Zero = an idle box, so the
+  // static budget alone decides, as every test before the measured governor assumed.
+  const box = { rssMb: 0, load1: 0, pids: [] as number[] };
   const sup = new WorldSupervisor({
     settings,
     now: () => clock,
+    sample: (pids) => { box.pids = pids; return { rssMb: box.rssMb, load1: box.load1 }; },
     spawner: (id, args) => {
       const child = new FakeChild();
       spawned.push({ id, args, child });
@@ -65,7 +69,7 @@ function harness(over: Partial<WorldSettings> = {}) {
       name: `w${port}`,
     }),
   });
-  return { sup, spawned, counts, peers, down, settings, advance: (ms: number) => { clock += ms; } };
+  return { sup, spawned, counts, peers, down, box, settings, advance: (ms: number) => { clock += ms; } };
 }
 
 test('worlds: each world gets its own data dir and port', () => {
@@ -365,6 +369,27 @@ test('capacity: with no budget configured only the count cap applies', () => {
   assert.ok(sup.ensure('b', 'private', 'bob'));
   assert.ok(sup.ensure('c', 'private', 'cid'), 'the third world that the budget refused');
   assert.equal(sup.running, 3);
+});
+
+// #270: the static price is a guess; the box is the truth. A TR world weighs three vanilla
+// ones and a saturated CPU admits nobody, whatever the arithmetic says.
+test('capacity: measured RSS past the budget, or a saturated CPU, caps at what is running', () => {
+  const { sup, box } = harness({
+    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 640, gatewayReserveMb: 256,
+  });
+  assert.ok(sup.ensure('a', 'private', 'ann'));
+  assert.equal(sup.capacity().cap, 3, 'the static price alone admits three');
+  box.rssMb = 2100; // one TR world ate the whole usable budget
+  assert.deepEqual({ cap: sup.capacity().cap, reason: sup.capacity().reason }, { cap: 1, reason: 'mem' });
+  assert.equal(sup.ensure('b', 'private', 'bob'), null, 'admitted past the measured RSS');
+  box.rssMb = 0;
+  box.load1 = 1e6; // every core busy
+  assert.deepEqual({ cap: sup.capacity().cap, reason: sup.capacity().reason }, { cap: 1, reason: 'cpu' });
+  assert.equal(sup.ensure('b', 'private', 'bob'), null, 'admitted on a saturated box');
+  box.load1 = 0;
+  assert.ok(sup.ensure('b', 'private', 'bob'), 'the pressure gone, the static price rules again');
+  sup.capacity();
+  assert.equal(box.pids.length, 2, 'the sampler is handed every running world pid');
 });
 
 // A budget too small for one world must still run one. Refusing everything would make a

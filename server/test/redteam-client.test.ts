@@ -261,6 +261,64 @@ test('#396 the arrest window counts as the conversation the fine is paid in', as
   assert.equal(((await b.waitEvent('CrimeUpdate')).value as { bounty: number }).bounty, 0, 'the fine paid under arrest lowers the shared bounty');
 });
 
+test('#403 a REFUSED DialogueLock buys neither the same-cell jump nor the bounty drop', async (t) => {
+  const { server } = await boot(t, {}, { sharing: { crime: true } });
+  const { c: a } = await join(t, server, 'Faker');
+  const { c: b } = await join(t, server, 'Watcher');
+  server.roster.get(a.playerId)!.joinedWorldAt = Date.now() - 60_000;
+  a.sendEvent('CrimeUpdate', { bounty: 40 });
+  await b.waitEvent('CrimeUpdate', (v) => (v as { bounty: number }).bounty === 40);
+  a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '9,9', want: true }); // far cell: refused
+  assert.equal(((await a.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, false);
+  b.inbox.events.length = 0;
+  a.sendCellChange('0,0', 3000, 0, 0);
+  a.sendEvent('CrimeUpdate', { bounty: 0 });
+  await fence(a, b);
+  assert.equal(b.inbox.events.filter((e) => e.name === 'PlayerCellChange' && (e.value as { id?: number }).id === a.playerId).length, 0,
+    'a refused lock bought the same-cell jump');
+  assert.equal(b.inbox.events.filter((e) => e.name === 'CrimeUpdate').length, 0, 'a refused lock bought the bounty drop');
+  // A lock held by someone else is refused the same way.
+  b.sendEvent('DialogueLock', { ref: NPC2_REF, cellKey: '0,0', want: true });
+  assert.equal(((await b.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, true);
+  a.sendEvent('DialogueLock', { ref: NPC2_REF, cellKey: '0,0', want: true });
+  assert.equal(((await a.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, false);
+  b.inbox.events.length = 0;
+  a.sendCellChange('0,0', 0, 3000, 0);
+  await fence(a, b);
+  assert.equal(b.inbox.events.filter((e) => e.name === 'PlayerCellChange' && (e.value as { id?: number }).id === a.playerId).length, 0,
+    "somebody else's lock bought the same-cell jump");
+});
+
+test('#44 an arrest forced by the peer lets the arrested player claim that guard now fights them', async (t) => {
+  const { server } = await boot(t);
+  const { c: a } = await join(t, server, 'Wanted');
+  const { c: b } = await join(t, server, 'Bystander');
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  await peer.waitEvent('AvatarState', (v) => (v as { id?: number })?.id === a.playerId, 8000);
+  peer.sendEvent('PlayerArrest', { id: a.playerId, guard: NPC_REF });
+  await a.waitEvent('PlayerArrest');
+  b.inbox.events.length = 0;
+  a.sendEvent('ActorAI', { ref: NPC2_REF, cellKey: '0,0', combat: a.playerId }); // a guard nobody forced on a
+  a.sendEvent('ActorAI', { ref: NPC_REF, cellKey: '0,0', combat: a.playerId }); // the arresting guard
+  await fence(a, b);
+  const claims = b.inbox.events.filter((e) => e.name === 'ActorAI').map((e) => (e.value as { ref: { __refnum: { index: number } } }).ref.__refnum.index);
+  assert.deepEqual(claims, [NPC_REF.__refnum.index], 'the arrest window did not stand in for the lock (or another guard passed)');
+});
+
+test('#363 position claims are bounded to five a minute', async (t) => {
+  const { server } = await boot(t);
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+  const { c } = await join(t, server, 'Scripter');
+  peer.inbox.events.length = 0;
+  for (let i = 0; i < 6; i++) c.sendEvent('ActorAI', { ref: NPC_REF, cellKey: '0,0', position: { x: i, y: 0, z: 0 } });
+  await fence(c, peer);
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorAI').length, 5, 'the sixth position claim in a minute reached the holder');
+});
+
 test('#367 a lock is granted only in view, one at a time', async (t) => {
   const { server } = await boot(t);
   const { c: a } = await join(t, server, 'Talker');

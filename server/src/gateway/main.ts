@@ -134,7 +134,8 @@ const worlds = new WorldSupervisor({
     worldCostMb: config.worlds.worldCostMb,
     peerCostMb: config.worlds.peerCostMb,
     gatewayReserveMb: config.worlds.gatewayReserveMb,
-    idleReapMs: positiveInt(values['idle-reap-ms'], 120_000, 'idle-reap-ms'),
+    // #381e: the flag wins, then [worlds] idleReapSec (the dashboard's door), then 120 s.
+    idleReapMs: positiveInt(values['idle-reap-ms'], config.worlds.idleReapSec > 0 ? config.worlds.idleReapSec * 1000 : 120_000, 'idle-reap-ms'),
     startTimeoutMs: 120_000,
     restartBackoffMs: 15_000,
     sharedDir,

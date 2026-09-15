@@ -19,6 +19,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { cpus, loadavg } from 'node:os';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
@@ -147,6 +148,25 @@ export interface WorldDeps {
   // normalises the absence to 1 rather than making every caller restate the default.
   fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[]; mode?: WorldMode; ownerPresent?: boolean } | null>;
   now?: () => number;
+  // #270: the box as it IS, beside the static price. RSS of the world processes (their sim
+  // peers are children of them and counted by the pid sum) and the 1-minute load average.
+  // Injected by tests; the default reads /proc/<pid>/status (Linux, where prod runs) and
+  // os.loadavg(), and answers 0 where it cannot measure so the static budget stays the rule.
+  sample?: (pids: number[]) => { rssMb: number; load1: number };
+}
+
+export type CapReason = 'count' | 'memory' | 'mem' | 'cpu';
+
+function procRssMb(pid: number): number {
+  try {
+    const m = /^VmRSS:\s+(\d+)\s+kB/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
+    return m ? Number(m[1]) / 1024 : 0;
+  } catch { return 0; }
+}
+function defaultSample(pids: number[]): { rssMb: number; load1: number } {
+  let rssMb = process.memoryUsage().rss / 1048576;
+  for (const pid of pids) rssMb += procRssMb(pid);
+  return { rssMb, load1: loadavg()[0] ?? 0 };
 }
 
 export class WorldSupervisor {
@@ -216,14 +236,24 @@ export class WorldSupervisor {
    *  a ceiling derived once from `usable / worldCostMb` describes a deployment that stopped
    *  existing when peers went per-cell. The number this returns therefore MOVES as players
    *  spread across cells — and it must, because that is when the box actually fills up. */
-  capacity(): { cap: number; reason: 'count' | 'memory'; fromMemory: number } {
+  capacity(): { cap: number; reason: CapReason; fromMemory: number } {
     const s = this.deps.settings;
     const budget = s.memBudgetMb ?? 0;
     const cost = s.worldCostMb ?? 0;
     const usable = budget - (s.gatewayReserveMb ?? 0);
+    const running = this.worlds.size;
+    // #270: MEASURED pressure first. The static price cannot know that a TR world weighs three
+    // times a vanilla one, or that the CPU is already saturated; when the box says it is full
+    // the answer is "what is running, no more" (never below one), and the reason names the
+    // resource. Only ever binds with a budget set (mem) or with worlds running (cpu).
+    if (budget > 0 || running > 0) {
+      const pids = [...this.worlds.values()].map((w) => w.child.pid).filter((p): p is number => typeof p === 'number');
+      const { rssMb, load1 } = (this.deps.sample ?? defaultSample)(pids);
+      if (budget > 0 && rssMb > usable) return { cap: Math.max(1, running), reason: 'mem', fromMemory: Math.max(1, running) };
+      if (running > 0 && load1 > cpus().length) return { cap: Math.max(1, running), reason: 'cpu', fromMemory: Number.POSITIVE_INFINITY };
+    }
     let fromMemory = Number.POSITIVE_INFINITY;
     if (budget > 0 && cost > 0) {
-      const running = this.worlds.size;
       // How many MORE worlds fit beside what is already committed. Floor, and never negative:
       // once the running worlds have overspent the budget the answer is "no more", which
       // pins the cap at the current count instead of going backwards and reading as a cap

@@ -427,6 +427,22 @@ test('every settings group has a sidebar entry, and the orphaned pages are reach
   assert.match(app, /hash: '#rolling', label: 'Rolling restart'/);
 });
 
+// #381 (dashboard notes a, b, d, e, f, g): source checks on the page, settingsView for the
+// derived switch, loadConfig for the reap window.
+test('#381 the dashboard notes: rolling offered from the banner, log filter, derived peer switch, reap in config, minutes copy, install banner', () => {
+  assert.match(app, /Saved, not live yet[\s\S]{0,400}href="#rolling"/, 'a: the restart banner does not offer the rolling restart');
+  assert.match(app, /id="logFind"/, 'b: the log page has no filter box');
+  assert.match(app, /\$\('#logFind'\)\.oninput = draw/, 'b: the filter box redraws nothing');
+  const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), { setup: { deploymentMode: 'multiplayer' }, simPeer: { enabled: true, maxPeers: 1 } });
+  const peer = v.sections.find((s) => s.name === 'simPeer');
+  assert.ok(peer && !peer.fields.some((f) => f.key === 'enabled'), 'd: simPeer.enabled is offered as a switch it is not');
+  const dir = mkdtempSync(join(tmpdir(), 'cfg-'));
+  assert.equal(loadConfig(dir).worlds.idleReapSec, 0, 'e: the default leaves the CLI/120 s rule');
+  assert.equal(loadConfig(dir, { worlds: { idleReapSec: 30 } }).worlds.idleReapSec, 30, 'e: [worlds] idleReapSec is not a setting');
+  assert.match(app, /Tamriel Rebuilt/, 'f: the rolling-restart copy still promises seconds');
+  assert.match(app, /Installed\. Restart to load it\.'\);\s*route\(\);\s*restartPrompt\(\)/, 'g: the install toast has no restart banner');
+});
+
 test('the console renders the fields the server actually sends', () => {
   // Reports: ts/reporter/target/reason. The page read at/by/about/text, so every column was
   // blank whenever a report existed.
