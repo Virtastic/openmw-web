@@ -166,6 +166,16 @@ scenario is a code trace only.
 | Vampirism / lycanthropy | spell list / appearance; werewolf form set on rebuilt bodies | FIXED 09-11 (looked human) |
 | Bounty | live per session; shared crime = party record on every avatar | FIXED 09-11 (host hunted) |
 | Faction rank/expulsion | routed like the journal | OK |
+| Attribute DAMAGE (Damage/Restore Attribute) | the attribute map carried .base only, so a curse was a relog away from cured; "<id>_damage" now rides in the same map, applied as damage by the restore and the avatar | FIXED 09-15. Live: s159 |
+| What OTHERS see of your effects (Invisibility, Chameleon, Light) | the effect op went to the peer alone; every client now gets it and keeps the visible part for the puppet; the server replays each player's live set to a late joiner | FIXED 09-15. Live: s156. Unit: avatarstats.test.ts |
+| Posture on other screens (run/sneak/jump/weapon/spell) | the avatar stream dropped the flag bits; forwarded, puppets mirror | FIXED 09-14. Live: s145 |
+| Potions and scrolls on a peer-ruled body | UseItem heals the client; MP_AvatarRestore mirrors the raise; the scroll is consumed | ADDED 09-14. Live: s146 |
+| Two potions of one kind | the peer removed BY RECORD so the first expiry cancelled the second; one instance per removal now | FIXED 09-14. Live: s152 |
+| Over-encumbered on every screen | the avatar carries the declared pack, so both engines apply the weight | ADDED 09-14. Live: s151 |
+| Sleep heals | mp.restHours (the wait dialog's exact loop); the raise mirrors like a potion | ADDED 09-14. Live: s150 (PASS run14; run15 regression under investigation) |
+| Levitate / torch / fall damage / drowning on the ruling body | levitation climbs (look up + walk); the avatar dispels; s147 fall and s149 drowning still OPEN: the peer's avatar reports breath=-1 forever (updateDrowning never runs for it; probe now prints range/AI gates) | OPEN 09-15. Live: s147 s148 s149 |
+| A player-made record (potion, enchanted ring) after a relog | the inventory declaration went out raw; mapped through the registry now, and the restore waits for RecordsSync | FIXED 09-14. Live: s153 |
+| Chargen sanctuary cells | the peer spawned a frozen avatar in the Census office and pinned the new character to the deck; no avatar there now | FIXED 09-14. Live: s155 |
 
 ## 5. Inventory and world objects
 
@@ -214,12 +224,22 @@ scenario is a code trace only.
 | Mechanism | MP path | Status |
 |---|---|---|
 | Journal | shared per instance; guests borrow the host's | OK. Live: s63 (friend path, retail) |
+| Quest globals on the SIMULATOR and a GUEST | both were seeded from their own doc (the peer's empty one, the guest's home campaign) and a human's write never reached the peer live; seeded from the campaign doc, human writes relayed to the peer | FIXED 09-15. Unit: questpeer.test.ts |
+| A lock a SCRIPT sets | only watched for 4 s after an activation; the 1 Hz cell poll carries lock state now | FIXED 09-15. Live: s158 |
 | Guest loot goes home | inventory diffs write to the GUEST's charId; the home world restores it | Live: s127 (a vanilla item) -- FAILED first, twice, for real: (1) the first dial went out before the cell load and a slow retail load killed the session as BAD_PROTO; (2) the reboot into the friend's world wrote start=Seyda+Neen and the boot reader did not decode the '+', so the engine died at new game and the page sat at the loading screen forever. GAP: a record MINTED in the host's world (an enchanted item, a potion the host brewed) is a per-world record id; the guest's home world has no definition for it and the restore drops it silently. Fix needs record definitions to travel with the character doc |
 | Topics learned | shared with the journal | OK |
 | Globals (quest gates) | peer's write wins within the driving window; dialogue-result names client-owned | OK |
 | Member variables on cell scripts | MemberVarUpdate relay | OK |
 | Faction standing, bounty | routed to the campaign | OK |
 | Host sends a guest home (kick) | WorldKick (owner/admin only) -> closeToGuest('kicked'): that one guest gets WorldClosed + the 5 s drop, the friendship and the open door stand (they can come back), the other guests stay. UI: "send home" on a guest's row for the host; the guest's panel says "Visiting <host>'s world" with a Leave button (WorldMode now carries the host's character name and isOwner) | ADDED 09-13. Live: s141 |
+| A kicked guest STAYS out; the host's invite lets them back | kickedUntil (10 min) on the world, cleared by invited(); the refused dial says "you were sent home" and goes home with the reason across the reload | FIXED 09-14. Live: s141 (rewritten). Unit: flipworld.test.ts |
+| A returning guest lands beside the host | the rejoin restore re-asserted the stored far spot for 8 s over the invite teleport; the invite releases the hold | FIXED 09-14. Live: s154 |
+| The owner's grace vs an empty world | onWorldEmpty respected the 90 s grace; newcomers refused only while the owner is absent in grace | FIXED 09-14. Unit: ownerleft.test.ts |
+| One character in TWO worlds | two processes flushed one doc last-writer-wins; the presence row arbitrates and the older session is SUPERSEDED on the next heartbeat | FIXED 09-15. Unit: onecharacteroneworld.test.ts |
+| Delete a character while it is a GUEST elsewhere | the guest's world wrote the doc back at its next flush; erase leaves a tombstone every process honours | FIXED 09-15. Unit: staledoc.test.ts |
+| Rolling restart after a mode flip | the observed party mode became the boot mode (chargen gate, no revert, bots public); restarts use the boot mode | FIXED 09-15. Unit: worlds.test.ts |
+| Drop, then disconnect before the inventory diff | the doc still held the dropped item; the drop debits the doc in the same op | FIXED 09-15. Unit: provenance.test.ts |
+| An item dropped across a cell border | cell state went out for the entered cell only; entry yields the 3x3 | FIXED 09-15. Unit: holderhears.test.ts |
 | Host blocks / unfriends a guest mid-session | Social.friendshipEnded -> closeToGuest: WorldClosed(unfriended) + kick after 5 s; the other guests stay; either side ending it sends the GUEST home, the owner never moves | FIXED 09-13 (was: door-only check, the blocked guest stayed). Live: s139 |
 | OnDeath / GetDeadCount | shared tally | OK |
 | Scripted PlaceAt / PositionCell of NPCs | see runtime-spawned actors | GAP |
@@ -244,6 +264,10 @@ scenario is a code trace only.
 |---|---|---|
 | Forged peer-only events (AvatarStats/ItemStates/Effects, PlayerArrest/Crime) | world-peer-only gates, tested | OK |
 | Non-holder actor claims (follow/escort/travel/combat/disposition) | bounded to self / lock holder; follower cap 8 | OK |
+| A companion across the player's RELOG | the claim named a session id and the peer dropped the follow when it left; claims carry the character and are rebound on the returning session's first cell change | FIXED 09-15. Unit: actor.test.ts |
+| The dead stay dead across a PEER restart | the client replayed deaths by the wire key against a table keyed by object id (matched nothing) and the holder never got the cell record; both fixed, the holder kills recorded corpses for real | FIXED 09-15. Live: s157 |
+| The holder HEARS its far cells (doors, locks, placed objects) | relays were gated on the peer's avatar neighbourhood; a holder hears every relay for a cell it holds and asks for the record at grant | FIXED 09-15. Unit: holderhears.test.ts |
+| Scripted enable/disable ping-pong | two engines disagreeing on a global flipped a ref forever; the peer's write wins for the driving window | FIXED 09-15. Unit: holderhears.test.ts |
 | Client effect floods | PlayerActiveSpells budget 40 ops / 5 s | OK |
 | LSER node ceiling | RecordsSync chunked; cell frame caps | OK |
 | Per-IP cap for households | default 8; IP_CAP transient | FIXED 09-11 |
