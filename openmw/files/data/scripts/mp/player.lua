@@ -1372,6 +1372,7 @@ return {
         MP_ApplyRecord = function(record)
             identity.applyRecord(record)
         end,
+        MP_SelfTalkedTo = function(data) identity.applyTalkedTo(data.list) end, -- backlog 230
         -- Chargen finished on a BRAND NEW character (global.lua watches chargenstate hit -1).
         -- There is no record to restore for one of these, so this is the only signal that the
         -- player has stopped being the engine's template and its stats are worth persisting.

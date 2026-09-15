@@ -141,6 +141,9 @@ namespace MWMechanics
 
         /// Has a package been completed during the last update?
         bool isPackageDone() const;
+        /// Multiplayer (backlog 221): a puppet's AI never executes, so the holder's completion
+        /// is written here for the client's GetAiPackageDone pollers. Sticky until AI resumes.
+        void setPackageDone(bool done) { mDone = done; }
 
         /// Removes all pursue packages until first non-pursue or stack empty.
         void stopPursuit();

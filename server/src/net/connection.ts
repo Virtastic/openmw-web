@@ -75,6 +75,7 @@ import {
   type DisconnectCode,
 } from '../proto/session';
 import { log } from '../log';
+import { parseRefKey, objRefToJs, type ObjRef } from '../proto/ref';
 import { HARNESS_PASSWORD } from '../auth/harness';
 import { metrics } from '../metrics';
 
@@ -1911,6 +1912,12 @@ export class Connection implements Peer {
     // arrived as a net id the joiner could not resolve yet (RecordsSync came four lines
     // later) and the puppet was dressed once, with a placeholder, and never again.
     this.ctx.m7.onJoinWorld(this.player); // M7 clock + weather + RecordsSync at join
+    // Backlog 230: who this character has talked to. The doc keeps ref KEYS and the welcome
+    // is JSON, so it goes as its own LSER event, where a ref decodes to an object the client
+    // can flag again.
+    const talkedTo = (this.ctx.players.getCached(this.player.charId)?.talkedTo ?? [])
+      .map(parseRefKey).filter((r): r is ObjRef => r !== null).map(objRefToJs);
+    if (talkedTo.length > 0) this.player.peer.sendEvent('SelfTalkedTo', { list: talkedTo });
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.quests.sendGlobalSync(this.player); // Phase 4 character-shadowed quest globals

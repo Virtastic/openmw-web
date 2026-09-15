@@ -153,6 +153,12 @@ end
 -- pcall targets, module-level: a closure per actor per tick was garbage at 20 Hz x N (#267).
 local function speedsOf(obj) return types.Actor.getWalkSpeed(obj), types.Actor.getCurrentSpeed(obj) end
 local function stanceOf(obj) return types.Actor.getStance(obj) end
+-- Bit 3 (use, the player pose's bit): the AI's wind-up-to-release window, plus a spell cast
+-- in flight -- setAttackingOrSpell drops the moment the cast animation starts, so the 10 Hz
+-- sample would miss every spell without the animation read (#288).
+local function attackingOf(obj)
+    return (mp.isAttacking and mp.isAttacking(obj)) or require('openmw.animation').isPlaying(obj, 'spellcast')
+end
 
 local function actorPose(obj)
     local pos = obj.position
@@ -174,6 +180,8 @@ local function actorPose(obj)
         if stance == types.Actor.STANCE.Weapon then flags = flags + 16 end
         if stance == types.Actor.STANCE.Spell then flags = flags + 32 end
     end
+    local okU, using = pcall(attackingOf, obj)
+    if okU and using then flags = flags + 8 end
     local netId = deps and deps.netIdOf and deps.netIdOf(obj)
     return {
         obj = (not netId) and obj or nil,
@@ -780,6 +788,48 @@ function actors.notePosition(obj, cellName, pos)
     if body then mp.sendEvent('ActorAI', body) end
 end
 
+-- SCRIPTED SAY (backlog 217). "Say" from a script the peer runs (Dagoth Ur's lines) played to
+-- the peer's headless engine and nobody else. The engine notes it (mwscript OpSay -> ScriptNote
+-- 'say', file as recordId, subtitle as cellName); the holder relays, puppets play the line.
+function actors.noteSay(n)
+    local obj = n.ref
+    local cellKey = type(n.cellKey) == 'string' and n.cellKey ~= '' and n.cellKey or nil
+    if not (obj and obj:isValid() and cellKey and held[cellKey] and type(n.recordId) == 'string') then return end
+    local body = withAddr({ cellKey = cellKey, epoch = held[cellKey].epoch, file = n.recordId, text = n.cellName }, obj)
+    if body then mp.sendEvent('ActorSay', body) end
+end
+
+-- AI PACKAGE DONE (backlog 221). GetAiPackageDone reads a one-frame flag the AI sets when
+-- its top package finishes; a puppet's AI never runs, so a client-side poller (Fargoth's
+-- lookout, HentusTravel) waited forever. The holder's engine notes the completion; the flag
+-- is written onto the puppet, sticky until its AI resumes.
+function actors.noteAiDone(n)
+    local obj = n.ref
+    local cellKey = type(n.cellKey) == 'string' and n.cellKey ~= '' and n.cellKey or nil
+    if not (obj and obj:isValid() and cellKey and held[cellKey]) then return end
+    local body = withAddr({ cellKey = cellKey, epoch = held[cellKey].epoch, done = true }, obj)
+    if body then mp.sendEvent('ActorAI', body) end
+end
+
+-- A WITNESS PICKED A FIGHT OVER A CRIME (backlog 146). Theft and trespass are judged on the
+-- thief's client, where the victim is an AI-off puppet: commitCrime started combat on a body
+-- that never executes it, so a Fight-70 NPC that would attack a thief just barked. Claimed to
+-- the holder like a taunt's combat result; the server admits it because it names ourselves.
+function actors.noteCrimeCombat(n)
+    local obj = n.ref
+    local cellKey = type(n.cellKey) == 'string' and n.cellKey ~= '' and n.cellKey or nil
+    local me = deps and deps.ownIdFn and deps.ownIdFn()
+    if not (obj and obj:isValid() and cellKey and me) or held[cellKey] then return end
+    local body = withAddr({ cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, combat = me, crime = true }, obj)
+    if body then mp.sendEvent('ActorAI', body) end
+end
+
+actors.handlers.MP_ActorSay = function(data)
+    local obj = actorOf(data)
+    if not obj or not puppetActors[refKeyOf(obj)] or type(data.file) ~= 'string' then return end
+    pcall(core.sound.say, data.file, obj, type(data.text) == 'string' and data.text or nil)
+end
+
 local function aimAt(obj, target, escort)
     if type(escort) == 'table' and type(escort.x) == 'number' then
         pcall(function()
@@ -835,6 +885,10 @@ actors.handlers.MP_ActorAI = function(data)
         -- holder only. An empty cell name is the default exterior, resolved from x,y.
         local p = data.position
         pcall(function() obj:teleport(tostring(p.cell or ''), util.vector3(p.x, p.y or 0, p.z or 0)) end)
+        return
+    end
+    if data.done == true then
+        if puppetActors[refKeyOf(obj)] and mp.setAiPackageDone then pcall(mp.setAiPackageDone, obj) end
         return
     end
     if type(data.travel) == 'table' and type(data.travel.x) == 'number' then

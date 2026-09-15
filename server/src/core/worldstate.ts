@@ -115,8 +115,9 @@ const WORLD_EVENTS = new Set([
 // one player has to reach the others or the world stops agreeing about who likes whom.
 // ActorEffects (#296): the magic that SHOWS on an NPC (invisibility, chameleon, paralyze,
 // levitate...), diffed by the holder; puppets add/remove the same active effects.
+// ActorSay (#217): a scripted Say the peer's engine played to nobody; puppets play the line.
 const ACTOR_RELAY_EVENTS = new Set([
-  'ActorStatsDynamic', 'ActorEquip', 'ActorAI', 'ActorDisposition', 'ActorCellChange', 'ActorEffects',
+  'ActorStatsDynamic', 'ActorEquip', 'ActorAI', 'ActorDisposition', 'ActorCellChange', 'ActorEffects', 'ActorSay',
 ]);
 // ActorRevive (#293) is ActorDeath's inverse: the doc forgets the death, then it relays.
 const ACTOR_EVENTS = new Set([...ACTOR_RELAY_EVENTS, 'ActorSnapshot', 'ActorDeath', 'ActorRevive']);
@@ -798,7 +799,11 @@ export class WorldState {
         const ref = parseObjRef(body);
         const combat = finite(body.get('combat'));
         if (!cellKey || !ref || combat !== player.id) { this.invalid(player, name); return; }
-        if (player.system || this.dialogueHolder?.(ref.key) !== player.id || !cellsVisible(player.cellKey, cellKey)) {
+        // `crime` (#146): theft/trespass are judged on the thief's client, where the witness
+        // that decided to fight is an AI-off puppet. No conversation to hold a lock on; the
+        // claim still names only the claimant as the target, so it can hurt nobody else.
+        const crime = body.get('crime') === true;
+        if (player.system || (!crime && this.dialogueHolder?.(ref.key) !== player.id) || !cellsVisible(player.cellKey, cellKey)) {
           log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'combat claim without the conversation' });
           return;
         }

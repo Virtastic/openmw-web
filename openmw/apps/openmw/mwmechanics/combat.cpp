@@ -571,7 +571,11 @@ namespace MWMechanics
     int getFightTerm(const MWWorld::Ptr& actor, const MWWorld::Ptr& target)
     {
         const auto mechanicsManager = MWBase::Environment::get().getMechanicsManager();
-        int disposition = actor.getClass().isNpc() ? mechanicsManager->getDerivedDisposition(actor) : 50;
+        // Backlog 145: toward the avatar itself when the target is one, not the peer's dummy.
+        const bool avatar = target.getClass().isNpc() && MWMP::isAvatar(target.getCellRef().getRefNum());
+        int disposition = actor.getClass().isNpc()
+            ? mechanicsManager->getDerivedDisposition(actor, avatar ? target : MWWorld::Ptr())
+            : 50;
         int fight = actor.getClass().getCreatureStats(actor).getAiSetting(AiSetting::Fight).getModified()
             + static_cast<int>(
                 getFightDistanceBias(actor, target) + getFightDispositionBias(static_cast<float>(disposition)));

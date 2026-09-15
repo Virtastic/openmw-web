@@ -613,6 +613,17 @@ local function applyAvatarDoc(id)
     -- Seeded here as well as on live CrimeUpdate, so a player who arrives ALREADY wanted is
     -- pursued on sight instead of only after their next offence.
     if mp.setAvatarBounty then pcall(function() mp.setAvatarBounty(obj, doc.bounty or 0) end) end
+    -- Faction ranks too (#145): an NPC's aggression toward the avatar reads ITS memberships,
+    -- and an avatar in no faction was a stranger to every guild hall its owner belongs to.
+    if mp.setAvatarFactions and type(doc.factions) == 'table' then
+        local list = {}
+        for fid, f in pairs(doc.factions) do
+            if type(f) == 'table' then
+                list[#list + 1] = { id = fid, rank = f.rank or 1, reputation = f.reputation or 0, expelled = f.expelled == true }
+            end
+        end
+        if #list > 0 then pcall(function() mp.setAvatarFactions(obj, list) end) end
+    end
     -- Stats first: a fight against a default-statted mannequin is the bug this fixes.
     -- IN THE AVATAR'S OWN SCRIPT. Every stat setter in mwlua/stats.cpp is Self-gated
     -- ("Allowed only in local scripts for 'openmw.self'"); writing them from here threw on
@@ -1121,6 +1132,12 @@ local function scriptNotesTick()
     for _, n in ipairs(notes) do
         if n.kind == 'position' then
             actors.notePosition(n.ref, n.cellName, n)
+        elseif n.kind == 'say' then
+            actors.noteSay(n)
+        elseif n.kind == 'aidone' then
+            actors.noteAiDone(n)
+        elseif n.kind == 'crimecombat' then
+            actors.noteCrimeCombat(n)
         else
             objects.onScriptNote(n)
         end
@@ -1732,6 +1749,7 @@ local function start()
         aiSettingsFn = actors.aiSettings, -- #229: Fight/Flee/Alarm snapshot at lock grant
         netIdOf = objects.netIdOf, -- a script-placed quest NPC is a net actor; lock it like any other
         objOfNet = objects.objOfNet,
+        heldCellsFn = function() return actors.heldCells() end, -- #217: the peer watches scripted locals there
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         noticeFn = notice,
@@ -2005,6 +2023,12 @@ local eventHandlers = {
         revivePuppet(data.id, remoteCell[data.id] and inviteCellArg(remoteCell[data.id]), pose)
     end,
 
+    -- Who this character has talked to (backlog 230), refs decoded here; identity.lua keeps
+    -- the set and re-flags each NPC as it comes near.
+    MP_SelfTalkedTo = function(data)
+        local player = playerScript()
+        if player and type(data) == 'table' then player:sendEvent('MP_SelfTalkedTo', data) end
+    end,
     -- The world did something to our avatar on the peer (see avatarEffectsTick): a disease
     -- goes into our spell list; an effect is applied to our own body. Effects applied here
     -- are flagged to the player script so identity.lua's owner->avatar diff does not send them

@@ -9,6 +9,7 @@
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
+#include "../mwmp/puppets.hpp"
 #include "../mwworld/class.hpp"
 #include "actorutil.hpp"
 #include "aiactivate.hpp"
@@ -359,7 +360,15 @@ namespace MWMechanics
                 erase(activePackageIt);
 
                 if (isActualAiPackage(packageTypeId))
+                {
                     mDone = true;
+                    // Multiplayer (backlog 221): the flag is one frame here and never set on a
+                    // client's AI-off puppet, so GetAiPackageDone pollers there (Fargoth's
+                    // lookout, HentusTravel) stalled. Noted; the holder relays it (ActorAI done).
+                    if (actor.isInCell())
+                        MWMP::recordScriptNote(
+                            { "aidone", actor.getCellRef().getRefNum(), false, {}, 1, MWMP::cellKeyOf(*actor.getCell()) });
+                }
             }
             else
             {

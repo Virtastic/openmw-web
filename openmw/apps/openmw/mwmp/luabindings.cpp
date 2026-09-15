@@ -20,6 +20,7 @@
 #include <components/esm/refid.hpp>
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadclas.hpp>
+#include <components/esm3/loadfact.hpp>
 #include <components/esm3/loadrace.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/serialization.hpp>
@@ -242,6 +243,46 @@ namespace MWMP
             setAvatarBounty(obj.as<MWLua::Object>().id(), bounty);
         };
         api["clearAvatars"] = []() { clearAvatars(); };
+        // Backlog 145: the owner's faction ranks on their avatar, so an NPC's disposition toward
+        // it (getDerivedDisposition with the avatar as "player") sees the same memberships the
+        // owner's own engine does. Lua's joinFaction/setFactionRank are player-only. Entries
+        // {{id, rank (1-based, as types.NPC.getFactionRank), reputation, expelled}, ...}.
+        api["setAvatarFactions"] = [luaManager = context.mLuaManager](const sol::object& obj, const sol::table& list) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            MWWorld::Ptr ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isNpc())
+                return;
+            struct Entry { ESM::RefId mId; int mRank; int mRep; bool mExpelled; };
+            std::vector<Entry> entries;
+            for (size_t i = 1; i <= list.size(); ++i)
+            {
+                sol::optional<sol::table> e = list[i];
+                sol::optional<std::string> id = e ? (*e).get<sol::optional<std::string>>("id") : sol::nullopt;
+                if (!id)
+                    continue;
+                entries.push_back({ ESM::RefId::stringRefId(*id), (*e).get_or("rank", 1), (*e).get_or("reputation", 0),
+                    (*e).get_or("expelled", false) });
+            }
+            luaManager->addAction(
+                [ptr, entries = std::move(entries)] {
+                    MWMechanics::NpcStats& stats = ptr.getClass().getNpcStats(ptr);
+                    for (const Entry& e : entries)
+                    {
+                        if (!MWBase::Environment::get().getESMStore()->get<ESM::Faction>().search(e.mId))
+                            continue;
+                        if (!stats.isInFaction(e.mId))
+                            stats.joinFaction(e.mId);
+                        stats.setFactionRank(e.mId, std::max(0, e.mRank - 1));
+                        stats.setFactionReputation(e.mId, e.mRep);
+                        if (e.mExpelled)
+                            stats.expell(e.mId, false);
+                        else
+                            stats.clearExpelled(e.mId);
+                    }
+                },
+                "MPAvatarFactions");
+        };
         // Backlog 140: paying a fine only calmed the owner's witnesses. The engine records the
         // paid crime id from Player.setCrimeLevel(0), which the peer never calls (avatar
         // bounties live in the registry above), so its guards kept pursuing. Same call the
@@ -311,6 +352,47 @@ namespace MWMP
             // tap consumed then was lost, and the owner walked while the avatar stood still.
             const MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
             return stats.getKnockedDown() || stats.getHitRecovery();
+        };
+        // Backlog 288: an NPC/creature's attack is not in the Lua stats API either. The holder
+        // samples this into bit 3 of the actor pose (the player's use bit), and puppets swing
+        // on its edges. True from AiCombat's wind-up to its release, like a held mouse button.
+        api["isAttacking"] = [](const sol::object& obj) -> bool {
+            if (!obj.is<MWLua::Object>())
+                return false;
+            const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return false;
+            return ptr.getClass().getCreatureStats(ptr).getAttackingOrSpell();
+        };
+        // Backlog 230: TalkedToPc lives on CreatureStats, per engine, and no save carries it in
+        // multiplayer -- every NPC greeted a returning player as a stranger. The player script
+        // reads it off the NPCs around it, persists the set, and re-applies it on relog.
+        api["talkedTo"] = [](const sol::object& obj) -> bool {
+            if (!obj.is<MWLua::Object>())
+                return false;
+            const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return false;
+            return ptr.getClass().getCreatureStats(ptr).hasTalkedToPlayer();
+        };
+        api["setTalkedTo"] = [luaManager = context.mLuaManager](const sol::object& obj) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            MWWorld::Ptr ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return;
+            luaManager->addAction([ptr] { ptr.getClass().getCreatureStats(ptr).talkedToPlayer(); }, "MPSetTalkedTo");
+        };
+        // Backlog 221: the holder's "top AI package finished", written onto a client's puppet
+        // (AI off, so nothing there would ever set it) for the mwscript GetAiPackageDone pollers.
+        api["setAiPackageDone"] = [luaManager = context.mLuaManager](const sol::object& obj) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            MWWorld::Ptr ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return;
+            luaManager->addAction(
+                [ptr] { ptr.getClass().getCreatureStats(ptr).getAiSequence().setPackageDone(true); }, "MPAiDone");
         };
         // Drain the harmful magic effects the engine declined to apply to THIS actor, so its
         // puppet script can forward them to whoever owns it. Per-object on purpose: the puppet

@@ -10,6 +10,7 @@ import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
 import type { PlayerStore, PlayerAppearanceDoc, PlayerDoc, DynamicStatDoc, ItemStateDoc } from '../persist/playerstore';
 import { cellsVisible } from './movement';
+import { parseObjRef } from '../proto/ref';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
@@ -376,6 +377,26 @@ function handleMark(ctx: StateCtx, player: Player, body: LTable): boolean {
   const x = finite(body.get('x')), y = finite(body.get('y')), z = finite(body.get('z'));
   if (!cell || x === undefined || y === undefined || z === undefined) return false;
   ctx.store.update(player.charId, (doc) => (doc.mark = { cell, x, y, z }));
+  return true;
+}
+
+// Backlog 230: the NPCs this character has spoken to (TalkedToPc), as content refs; the
+// welcome record hands them back (connection.ts) and the client re-flags each NPC it meets.
+const MAX_TALKED_TO = 2048;
+function handleTalkedTo(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const list = body.get('list');
+  if (!(list instanceof Map) || list.size === 0 || list.size > 64) return false;
+  const keys: string[] = [];
+  for (const [, v] of list) {
+    const ref = v instanceof Map ? parseObjRef(v) : null;
+    if (!ref || ref.kind !== 'ref') return false;
+    keys.push(ref.key);
+  }
+  ctx.store.update(player.charId, (doc) => {
+    const set = new Set(doc.talkedTo ?? []);
+    for (const k of keys) set.add(k);
+    doc.talkedTo = [...set].slice(-MAX_TALKED_TO);
+  });
   return true;
 }
 
@@ -984,6 +1005,7 @@ const HANDLERS: Record<string, (ctx: StateCtx, player: Player, body: LTable) => 
   PlayerSkills: (c, p, b) => handleNumberMap(c, p, b, 'skills'),
   PlayerLevel: handleLevel,
   PlayerMark: handleMark,
+  PlayerTalkedTo: handleTalkedTo,
   PlayerSpellbook: handleSpellbook,
   PlayerInventory: handleInventory,
   PlayerItemAcquired: handleItemAcquired,

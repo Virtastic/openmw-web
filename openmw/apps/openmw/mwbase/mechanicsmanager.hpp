@@ -105,6 +105,9 @@ namespace MWBase
         ///< NPC.
 
         virtual int getDerivedDisposition(const MWWorld::Ptr& ptr, bool clamp = true) = 0;
+        /// Multiplayer (backlog 145): the same read with `toward` standing in for the player
+        /// (a remote player's avatar on the sim peer). Empty = the player.
+        virtual int getDerivedDisposition(const MWWorld::Ptr& ptr, const MWWorld::Ptr& toward, bool clamp = true) = 0;
         ///< Calculate the diposition of an NPC toward the player.
 
         virtual int countDeaths(const ESM::RefId& id) const = 0;

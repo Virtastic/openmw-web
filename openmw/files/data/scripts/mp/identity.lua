@@ -415,6 +415,35 @@ local function fingerprint(v)
     return '{' .. table.concat(parts, ',') .. '}'
 end
 
+-- TALKED-TO (backlog 230). TalkedToPc is a flag on each NPC's CreatureStats, per engine, and
+-- nothing in multiplayer saves it: every NPC greeted a returning character as a stranger.
+-- Read off the actors around us (a conversation happens within reach), sent as it is learned,
+-- persisted on the doc, and put back on every NPC we meet again after a relog.
+local talkedTo = {} -- obj.id -> true (own doc's set; the record seeds it)
+local function talkedToTick()
+    if not (mp.talkedTo and mp.setTalkedTo) then return end
+    local fresh = {}
+    for _, obj in ipairs(require('openmw.nearby').actors) do
+        if obj.contentFile and obj.id ~= self.id then
+            local ok, said = pcall(mp.talkedTo, obj)
+            if ok and said and not talkedTo[obj.id] then
+                talkedTo[obj.id] = true
+                fresh[#fresh + 1] = { ref = obj }
+            elseif ok and not said and talkedTo[obj.id] then
+                pcall(mp.setTalkedTo, obj)
+            end
+        end
+    end
+    if #fresh > 0 then mp.sendEvent('PlayerTalkedTo', { list = fresh }) end
+end
+-- The doc's set at join (SelfTalkedTo): keyed by object id, re-applied as they come near.
+function identity.applyTalkedTo(list)
+    for _, e in ipairs(type(list) == 'table' and list or {}) do
+        local okId, id = pcall(function() return e.ref and e.ref.id end)
+        if okId and id then talkedTo[id] = true end
+    end
+end
+
 -- --- broadcast tick ----------------------------------------------------------------------
 
 -- `sender` overrides the default direct send: M7 routes PlayerEquipment through the global
@@ -496,6 +525,7 @@ function identity.tick(now)
 
     if baselineReady and now >= nextAt.progression then
         nextAt.progression = now + INTERVALS.progression
+        talkedToTick()
         local prog = snapProgression()
         -- Server contract (playerstate.ts parseNumberMap): the body IS the flat map.
         local fp = fingerprint(prog.attributes)
@@ -664,6 +694,7 @@ function identity.reset()
     wasDead = false
     restoring = false
     pendingPhase2 = nil
+    talkedTo = {}
     -- SHUT THE GATE AGAIN. reset() runs every tick while we are not Joined -- a disconnect, a
     -- reconnect, a world hop -- and leaving baselineReady true across that reopens the exact
     -- hole it exists to close: the engine is the raw template again until the new world's

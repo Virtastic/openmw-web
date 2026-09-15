@@ -438,17 +438,46 @@ local function flushMemberVars(watch)
             watch.last[name] = value
             -- No cellKey in the body: the server infers it from our current cell.
             local a = npcAddr(watch.obj)
-            if a then mp.sendEvent('MemberVarUpdate', { ref = a.ref, net = a.net, name = name, value = value }) end
+            if a then mp.sendEvent('MemberVarUpdate', { ref = a.ref, net = a.net, name = name, value = value, cellKey = watch.cellKey }) end
+        end
+    end
+end
+
+-- THE PEER'S SCRIPTS RUN ALL THE TIME (backlog 217). Nobody activates anything on the peer, so
+-- the 6 s window never opened there and a local a peer-run script advanced (the Heart's
+-- countHits, a lookout's state) never travelled and was lost on a restart. Every scripted
+-- object in a held cell gets an open-ended watch, at a slower beat: the object count is a
+-- whole cell's, not one conversation's. cellKey rides along because the peer's own cell is
+-- rarely the object's.
+local HELD_WATCH_POLL = 1.0
+local heldScanAt = 0
+local function armHeldWatches(now)
+    if now < heldScanAt or not (mp.isSystem and mp.isSystem()) or not deps.heldCellsFn then return end
+    heldScanAt = now + SCRIPTED_SCAN_INTERVAL
+    for _, cell in ipairs(deps.heldCellsFn()) do
+        local cellKey = cell.isExterior and (cell.gridX .. ',' .. cell.gridY) or string.lower(cell.name)
+        local okc, list = pcall(function() return cell:getAll() end)
+        for _, obj in ipairs(okc and list or {}) do
+            if not memberWatch[obj.id] and npcAddr(obj) then
+                local oks, script = pcall(world.mwscript.getLocalScript, obj)
+                if oks and script and next(script.variables) then
+                    memberWatch[obj.id] = {
+                        obj = obj, script = script, last = scriptVarSnapshot(script), cellKey = cellKey,
+                        nextPoll = now + HELD_WATCH_POLL, poll = HELD_WATCH_POLL, until_ = math.huge,
+                    }
+                end
+            end
         end
     end
 end
 
 local function tickMemberVars(now)
+    armHeldWatches(now)
     for id, watch in pairs(memberWatch) do
         if now > watch.until_ or not watch.obj:isValid() then
             memberWatch[id] = nil
         elseif now >= watch.nextPoll then
-            watch.nextPoll = now + MEMBER_POLL
+            watch.nextPoll = now + (watch.poll or MEMBER_POLL)
             flushMemberVars(watch)
         end
     end
@@ -624,6 +653,9 @@ handlers.MP_JournalSync = function(data)
         local idx = asInt(index)
         if type(questId) == 'string' and idx then applyJournalEntry(questId, idx) end
     end
+    -- The campaign's learned topics (backlog 51), through the same path a live TopicsLearned
+    -- takes -- so they land in the baseline and are never re-announced as a discovery.
+    if type(data.topics) == 'table' then quests.applyTopics(data.topics) end
     journalSynced = true
     -- Anything we observed locally before the sync landed is now diffed AGAINST it.
     for questId, index in pairs(pendingJournal) do

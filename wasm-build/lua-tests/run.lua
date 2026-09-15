@@ -1597,5 +1597,74 @@ do
   check('no page hashes = the old manifest shape', plain and plain.manifest[1].sha256 == nil)
 end
 
+print('creature swings, peer-run scripts, topics/talked-to persisted, AI done, avatar factions, crime witnesses (288, 217, 51, 230, 221, 145, 146)')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
+  local ws = io.open('./server/src/core/worldstate.ts'):read('*a')
+  local qs = io.open('./server/src/core/quests.ts'):read('*a')
+  local ps = io.open('./server/src/core/playerstate.ts'):read('*a')
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  local snd = io.open('./openmw/apps/openmw/mwscript/soundextensions.cpp'):read('*a')
+  local ai = io.open('./openmw/apps/openmw/mwmechanics/aisequence.cpp'):read('*a')
+  local mm = io.open('./openmw/apps/openmw/mwmechanics/mechanicsmanagerimp.cpp'):read('*a')
+  local cb = io.open('./openmw/apps/openmw/mwmechanics/combat.cpp'):read('*a')
+  -- #288: the holder samples the AI's attack window into bit 3; creature puppets swing attack1..3.
+  check('the holder sets the use bit from mp.isAttacking/spellcast and creature puppets play attack1..3',
+    ac:find('if okU and using then flags = flags + 8 end', 1, true) ~= nil
+    and ac:find("isPlaying(obj, 'spellcast')", 1, true) ~= nil
+    and lb:find('api["isAttacking"]', 1, true) ~= nil
+    and pp:find("anim.hasGroup(self, 'attack' .. i)", 1, true) ~= nil
+    and pp:find("startKey = 'max attack', stopKey = 'stop'", 1, true) ~= nil)
+  -- #217: the peer watches every scripted object in a held cell; a scripted Say is relayed.
+  check('the peer arms open-ended member watches over held cells, with the cell key on the wire',
+    g:find('heldCellsFn = function() return actors.heldCells() end, -- #217', 1, true) ~= nil
+    and q:find('local function armHeldWatches(now)', 1, true) ~= nil
+    and q:find('poll = HELD_WATCH_POLL, until_ = math.huge,', 1, true) ~= nil
+    and q:find('value = value, cellKey = watch.cellKey }', 1, true) ~= nil
+    and qs:find("(player.system === true && str(body.get('cellKey'))) || player.cellKey", 1, true) ~= nil)
+  check('OpSay on the peer becomes ActorSay and puppets core.sound.say the line',
+    snd:find('MWMP::recordScriptNote({ "say"', 1, true) ~= nil
+    and g:find("elseif n.kind == 'say' then", 1, true) ~= nil
+    and ac:find("mp.sendEvent('ActorSay', body)", 1, true) ~= nil
+    and ac:find('actors.handlers.MP_ActorSay = function(data)', 1, true) ~= nil
+    and ac:find('pcall(core.sound.say, data.file, obj', 1, true) ~= nil
+    and ws:find("'ActorEffects', 'ActorSay'", 1, true) ~= nil)
+  -- #51: topics persist on the journal's doc and ride JournalSync through applyTopics.
+  check('TopicsLearned is persisted (doc.topics) and JournalSync replays it via applyTopics',
+    qs:find('doc.topics = [...set].slice(-MAX_TOPICS);', 1, true) ~= nil
+    and qs:find("sendEvent('JournalSync', { quests, borrowed, journalLog, topics })", 1, true) ~= nil
+    and q:find("if type(data.topics) == 'table' then quests.applyTopics(data.topics) end", 1, true) ~= nil)
+  -- #230: TalkedToPc read/written through the binding, persisted, re-applied by object id.
+  check('talked-to NPCs are reported, persisted and re-flagged on relog',
+    lb:find('api["talkedTo"]', 1, true) ~= nil and lb:find('api["setTalkedTo"]', 1, true) ~= nil
+    and idn:find("mp.sendEvent('PlayerTalkedTo', { list = fresh })", 1, true) ~= nil
+    and idn:find('elseif ok and not said and talkedTo[obj.id] then', 1, true) ~= nil
+    and idn:find('function identity.applyTalkedTo(list)', 1, true) ~= nil
+    and ps:find('PlayerTalkedTo: handleTalkedTo,', 1, true) ~= nil
+    and g:find('MP_SelfTalkedTo = function(data)', 1, true) ~= nil)
+  -- #221: the holder's package completion reaches the puppet's flag.
+  check('AiSequence completion is noted on the holder and written onto puppets',
+    ai:find('{ "aidone", actor.getCellRef().getRefNum()', 1, true) ~= nil
+    and ac:find('function actors.noteAiDone(n)', 1, true) ~= nil
+    and ac:find('if puppetActors[refKeyOf(obj)] and mp.setAiPackageDone then pcall(mp.setAiPackageDone, obj) end', 1, true) ~= nil
+    and lb:find('api["setAiPackageDone"]', 1, true) ~= nil)
+  -- #145: disposition toward an avatar reads the avatar; the doc's factions land on it.
+  check('getFightTerm reads disposition toward the avatar and AvatarState applies factions',
+    cb:find('getDerivedDisposition(actor, avatar ? target : MWWorld::Ptr())', 1, true) ~= nil
+    and mm:find('MWWorld::Ptr playerPtr = towardAvatar ? toward : getPlayer();', 1, true) ~= nil
+    and lb:find('api["setAvatarFactions"]', 1, true) ~= nil
+    and g:find('mp.setAvatarFactions(obj, list)', 1, true) ~= nil)
+  -- #146: a witness that picked a fight on the thief's client is claimed to the holder.
+  check("a client's crime-combat witness is claimed as ActorAI combat+crime and the server admits it",
+    mm:find('MWMP::recordScriptNote({ "crimecombat"', 1, true) ~= nil
+    and ac:find('combat = me, crime = true }, obj)', 1, true) ~= nil
+    and ws:find("const crime = body.get('crime') === true;", 1, true) ~= nil
+    and ws:find('(!crime && this.dialogueHolder?.(ref.key) !== player.id)', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -115,6 +115,11 @@ export interface PlayerDoc {
   // Backlog 219: the campaign's running global scripts (Sleepers, VampireCheck...), started
   // again at join. Owned by journalTarget like the journal.
   scripts?: string[];
+  // Backlog 51: dialogue topics learned, re-added at join (a topic is journal knowledge and
+  // follows the journal's doc). Capped; never unlearned.
+  topics?: string[];
+  // Backlog 230: content-ref keys of the NPCs this character has talked to (TalkedToPc).
+  talkedTo?: string[];
   factions?: Record<string, { rank: number; reputation?: number; expelled?: boolean }>;
   bounty?: number;
 }

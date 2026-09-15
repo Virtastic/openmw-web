@@ -84,6 +84,7 @@ const WORLD_GLOBALS = new Set([
 // this feature is remembered for packet storms.
 const MAX_TOPIC_ID = 64;
 const MAX_TOPICS_PER_EVENT = 64;
+const MAX_TOPICS = 4096; // backlog 51: persisted per campaign doc
 
 export type ShareFamily = 'journal' | 'questVars' | 'factions' | 'crime' | 'map';
 
@@ -433,7 +434,8 @@ export class Quests {
     // message is sent on EVERY join, so a missed transition repairs itself on the next one.
     const owner = this.ctx.ownerCharId();
     const borrowed = this.ctx.isShared('journal') && owner !== undefined && owner !== player.charId;
-    player.peer.sendEvent('JournalSync', { quests, borrowed, journalLog });
+    const topics = [...(logChar === undefined ? [] : (this.ctx.players.getCached(logChar)?.topics ?? []))];
+    player.peer.sendEvent('JournalSync', { quests, borrowed, journalLog, topics });
   }
 
   // ---------------------------------------------------------------- globals
@@ -591,7 +593,9 @@ export class Quests {
     const ref = parseObjRef(body);
     const name = str(body.get('name'));
     const value = finite(body.get('value'));
-    const cellKey = player.cellKey;
+    // The peer names the cell (#217): it watches scripted objects in every cell it holds,
+    // which is rarely the one its dummy stands in. A client's body still infers its own.
+    const cellKey = (player.system === true && str(body.get('cellKey'))) || player.cellKey;
     // A content ref, or the net id of a runtime actor the holder named (a script-placed NPC
     // runs its own local script like any other).
     if (!ref || !name || value === undefined || !cellKey) {
@@ -751,6 +755,16 @@ export class Quests {
       const id = str(v, MAX_TOPIC_ID);
       if (!id) { this.drop(player, 'TopicsLearned', 'bad topic id'); return; }
       topics.push(id);
+    }
+    // Persisted with the journal (backlog 51): relayed live and then forgotten, so a relog
+    // greeted every NPC with the topics this character had already learned missing.
+    const target = this.ctx.isShared('journal') ? this.ctx.journalTarget(player) : player.charId;
+    if (target !== undefined) {
+      this.ctx.players.update(target, (doc) => {
+        const set = new Set(doc.topics ?? []);
+        for (const t of topics) set.add(t);
+        doc.topics = [...set].slice(-MAX_TOPICS);
+      });
     }
     if (!this.ctx.isShared('journal')) return; // topics follow the journal's sharing rule
     this.relayAll(player.id, 'TopicsLearned', { topics, byId: player.id });

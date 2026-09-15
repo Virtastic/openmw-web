@@ -11,6 +11,7 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/world.hpp"
+#include "../mwmp/puppets.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/inventorystore.hpp"
@@ -40,6 +41,14 @@ namespace MWScript
                 runtime.pop();
 
                 MWBase::Environment::get().getSoundManager()->say(ptr, Misc::ResourceHelpers::correctSoundPath(file));
+
+                // Multiplayer sim peer (backlog 217): a Say from a script only the peer runs
+                // (Dagoth Ur's lines, a scripted NPC's bark) played to a headless engine.
+                // Noted with the file as mRecordId and the subtitle as mCellName; scripts/mp
+                // relays it as ActorSay and every client core.sound.say()s the same line.
+                if (!MWMP::isClient() && ptr.getClass().isActor() && ptr.isInCell())
+                    MWMP::recordScriptNote({ "say", ptr.getCellRef().getRefNum(), false, std::string(file.value()), 1,
+                        MWMP::cellKeyOf(*ptr.getCell()), std::string(text), {} });
 
                 if (Settings::gui().mSubtitles)
                     context.messageBox(text);

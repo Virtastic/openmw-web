@@ -144,6 +144,21 @@ local function showSwing(release)
             end
             return
         end
+        -- A creature has no weapon group: it bites with attack1..3 (keys 'start' / 'max
+        -- attack' / 'stop', no chop/slash prefix). Any of the three it has, at random, as the
+        -- holder's engine picks (#288).
+        if types.Creature.objectIsInstance(self) then
+            local groups = {}
+            for i = 1, 3 do if anim.hasGroup(self, 'attack' .. i) then groups[#groups + 1] = 'attack' .. i end end
+            if #groups == 0 then return end
+            local group = groups[math.random(#groups)]
+            if release then
+                anim.playBlendedAnimation(self, group, { priority = anim.PRIORITY.Weapon, startKey = 'max attack', stopKey = 'stop' })
+            else
+                anim.playBlendedAnimation(self, group, { priority = anim.PRIORITY.Weapon, startKey = 'start', stopKey = 'max attack', autoDisable = false })
+            end
+            return
+        end
         local group = 'handtohand'
         local weapon = types.Actor.getEquipment(self, types.Actor.EQUIPMENT_SLOT.CarriedRight)
         if weapon and types.Weapon.objectIsInstance(weapon) then

@@ -94,6 +94,7 @@ namespace MWMechanics
         ///< NPC.
 
         int getDerivedDisposition(const MWWorld::Ptr& ptr, bool clamp = true) override;
+        int getDerivedDisposition(const MWWorld::Ptr& ptr, const MWWorld::Ptr& toward, bool clamp = true) override;
         ///< Calculate the diposition of an NPC toward the player.
 
         int countDeaths(const ESM::RefId& id) const override;

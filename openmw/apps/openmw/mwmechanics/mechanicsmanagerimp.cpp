@@ -486,11 +486,20 @@ namespace MWMechanics
 
     int MechanicsManager::getDerivedDisposition(const MWWorld::Ptr& ptr, bool clamp)
     {
+        return getDerivedDisposition(ptr, MWWorld::Ptr(), clamp);
+    }
+
+    int MechanicsManager::getDerivedDisposition(const MWWorld::Ptr& ptr, const MWWorld::Ptr& toward, bool clamp)
+    {
         const MWMechanics::NpcStats& npcStats = ptr.getClass().getNpcStats(ptr);
         float x = static_cast<float>(npcStats.getBaseDisposition() + npcStats.getCrimeDispositionModifier());
 
         MWWorld::LiveCellRef<ESM::NPC>* npc = ptr.get<ESM::NPC>();
-        MWWorld::Ptr playerPtr = getPlayer();
+        // Multiplayer (backlog 145): on the sim peer "the player" is a parked dummy; an NPC's
+        // feelings toward a remote player are computed against that player's AVATAR -- its
+        // race, Personality, factions -- and its bounty lives in the MP registry.
+        const bool towardAvatar = !toward.isEmpty() && toward.getClass().isNpc();
+        MWWorld::Ptr playerPtr = towardAvatar ? toward : getPlayer();
         MWWorld::LiveCellRef<ESM::NPC>* player = playerPtr.get<ESM::NPC>();
         const MWMechanics::NpcStats& playerStats = playerPtr.getClass().getNpcStats(playerPtr);
 
@@ -553,7 +562,8 @@ namespace MWMechanics
 
         static const float fDispCrimeMod = gmst.find("fDispCrimeMod")->mValue.getFloat();
         static const float fDispDiseaseMod = gmst.find("fDispDiseaseMod")->mValue.getFloat();
-        x -= fDispCrimeMod * playerStats.getBounty();
+        x -= fDispCrimeMod
+            * (towardAvatar ? MWMP::avatarBounty(playerPtr.getCellRef().getRefNum()) : playerStats.getBounty());
         if (playerStats.hasCommonDisease() || playerStats.hasBlightDisease())
             x += fDispDiseaseMod;
 
@@ -1469,6 +1479,12 @@ namespace MWMechanics
                     }
 
                     startCombat(actor, player, &playerFollowers);
+                    // Multiplayer client (backlog 146): theft and trespass are judged HERE, on
+                    // an AI-off copy of the witness, so the fight it just picked never ran.
+                    // Noted; scripts/mp claims it to the holder (ActorAI combat + crime).
+                    if (MWMP::isClient() && player == getPlayer() && actor.isInCell())
+                        MWMP::recordScriptNote({ "crimecombat", actor.getCellRef().getRefNum(), false, {}, 1,
+                            MWMP::cellKeyOf(*actor.getCell()) });
                     observerStats.setHitAttemptActor(player.getCellRef().getRefNum());
 
                     // Apply aggression value to the base Fight rating, so that the actor can continue fighting
