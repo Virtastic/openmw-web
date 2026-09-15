@@ -78,6 +78,8 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 120 | Tamriel Data: 54k loose files, one blocking round trip each on first read -- multi-second freezes per new TR cell | mod-install.ts, bsa-pack.ts (pack >500 loose assets into <slug>.bsa at install) | done (unit) | bsa-pack.test.ts, mod-install.test.ts |
 | 121 | Ban in world A never kicked the player from world B (ticket refused only later) | server.ts (ban poll on heartbeat) | done (unit) | admin.test.ts |
 | 122 | Account delete left locker sessions/tickets behind (erased account could still play out the ticket) | persist/erase.ts, playerstore.ts erased tombstone | done (unit) | staledoc.test.ts |
+| 123 | Ticket TTL (15 min) started at the SSO callback: idling on the tile screen booted with a dead ticket | launcher.html bootGame mints /auth/ticket right before navigating | done (unit) | authticket.test.ts |
+| 124 | One session per ACCOUNT, not character: phone on char A and laptop on char B kicked each other | players.ts activeForChar, connection.ts | done (unit) | session.test.ts (resume-over-live still resolves by account: SessionIndex has no charId) |
 
 ## Open (found, not fixed)
 
@@ -141,8 +143,6 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 113 | Mirrors that are never cleared (hitFwd, spellFwd, castAt, doorEnter, takeOwned, chestOp) let a second wait pass instantly | scenarios: clear before waiting |
 | 114 | SKIP detection by log text; a sweep of skips exits 0 | mp-harness.mjs |
 | 115 | Peer clock is load-dependent (fixed dt 1/20 per tick): duration-based asserts compare two clocks | engine.cpp headless |
-| 123 | Ticket TTL (15 min) starts at the SSO callback: idling on the tile screen boots with a dead ticket (rescue reload saves it, expensively) | launcher.html mint at boot |
-| 124 | One session per ACCOUNT, not character: phone on char A and laptop on char B kick each other; presence PK is per account | connection.ts activeForAccount, socialstore |
 | 125 | /auth/link puts the session token in a query the edge logs; dead in gateway mode | routes.ts |
 | 126 | ActorBatch is one uncapped message per cell per frame: a TR metropolis exterior is ~100 KB/s per client | actors.lua |
 | 127 | No TR scenario in the harness; builder gamedata has no mods | harness |
