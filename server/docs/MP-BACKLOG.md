@@ -149,6 +149,14 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 202 | Observer puppets miss ~25% of jump edges (20 Hz avatar stream sampled by the server's 66 ms tick); sub-66 ms use clicks lost too | connection.ts:930 OR the edge bits into p.pose.flags until broadcast once |
 | 203 | GAP: scripted movers (mod elevators, SetPos/Move on activators) are per-engine and unsynced; no client emits ObjectMove | objects.lua:819 holder-authoritative relay when a mod needs it |
 | 204 | Design ceiling: a WebSocket stall > 0.35 s collapses buffered inputs to the last one on the peer; the owner is dragged back by the stall length | avatar.lua:231 input queueing + #197 |
+| 205 | Avatar input hold 0.35 s: a TCP retransmit stall (300 ms RTO, 1-3 s Wi-Fi roam) stops the avatar while the owner keeps running; the burst collapses to the newest input and the owner is snapped back by v x stall (sibling of #197/#204) | avatar.lua:34 INPUT_HOLD_S 1.0 |
+| 206 | Actor LOD is measured from the peer's parked dummy, not the streamed cell: the second friend in another exterior gets NPCs in their OWN cell at 1 Hz (park/stutter/teleport) | worldstate.ts:782-796 measure from the cell centre or nearStride for the recipient's own cell |
+| 207 | PlayerInput frames (0x0102) draw from msgsPerSec: a >2 s stall then the burst empties the bucket and the player is kicked with terminal RATE | connection.ts:466-475 own shed bucket for MSG_PLAYER_INPUT |
+| 208 | mLastMoveSeqIn survives an in-process reconnect while the new world process's broadcast counter restarts at 0: after a world restart every pose is dropped as stale for hours (password/self-hosted worlds, harness) | netmanager.cpp:148 reset in connect() |
+| 209 | The actor pose relay is enqueued on the world mutation chain behind DB-awaiting ops: every cold cell read stalls the 20 Hz NPC stream for everyone | worldstate.ts:750 validate holder/epoch synchronously, relay immediately |
+| 210 | Background tab: the 4 MB inbound cap drops whatever arrives next (events included) with no resync; a discarded tab that stops reading is kicked with terminal RATE "outbound buffer overflow" although a resume ticket was parked | netmanager.cpp:347 drop lossy types only / ResyncRequest on drop; connection.ts:290 distinct BACKLOG code in TRANSIENT_DISCONNECT |
+| 211 | Puppets on a lossy link: near-tier snap 128 crossed by any stall ≥ 350 ms (teleport at the 1 s cooldown); run flag dropped/re-raised per burst (anim popping) | puppet.lua:47 snap 256; hold the run flag ~0.3 s |
+| 212 | Harness has no latency/loss knob (raw CDP, no emulateNetworkConditions): every feel bug above is invisible on the LAN | connection.ts OMWMP_NET_DELAY_MS FIFO on send+receive (+ OMWMP_NET_STALL) |
 
 ## Open (found, not fixed)
 
