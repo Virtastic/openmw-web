@@ -32,11 +32,18 @@ const MAX_WEATHER_ID = 255;
 // global rather than per-session. Vanilla plus both expansions is a dozen or so regions and
 // the largest landmass mods add tens: 256 is far above honest play and far below harm.
 const MAX_REGIONS = 256;
+// #53: the holder re-says its weather every ~60 s (world.lua tickWeather). A holder that has
+// said nothing for three of those is indoors (the engine stops the outdoor weather sim in an
+// interior, and the client only declares REGION changes, never cell ones here), so the region
+// would otherwise freeze for everyone outside. Release it and let the longest-present
+// occupant inherit -- the same handoff a region change makes.
+export const HOLDER_SILENCE_MS = 3 * 60_000;
 
 export interface WeatherCtx {
   roster: Roster;
   weather: Record<string, WeatherState>; // lives in the CellStore global doc
   save(): void;
+  now?: () => number; // tests drive the clock
 }
 
 function region(v: LValue | undefined): string | undefined {
@@ -56,11 +63,16 @@ export class WeatherRegions {
   // restart cannot be used to reset the bound.
   private readonly known: Set<string>;
   private floodLogged = false;
+  // region -> when its holder last sent WorldWeather (or was granted); #53 silence clock.
+  private lastSaidAt = new Map<string, number>();
+  private readonly now: () => number;
 
   constructor(private readonly ctx: WeatherCtx) {
+    this.now = ctx.now ?? Date.now;
     this.known = new Set(Object.keys(ctx.weather));
     this.authority = new Authority({
       grant: (playerId, key, _epoch, snapshot) => {
+        this.lastSaidAt.set(key, this.now());
         this.send(playerId, 'WorldWeatherAuthority', { region: key, holderId: playerId });
         // Continuity: hand the new holder the region's last known weather.
         //
@@ -188,11 +200,33 @@ export class WeatherRegions {
         ...(transition !== undefined ? { transition } : {}),
       };
       this.ctx.weather[name] = state;
+      this.lastSaidAt.set(name, this.now());
       this.authority.setSnapshot(name, state as unknown as JsLike);
       this.ctx.save();
       const out = { region: name, ...stateBody(state) };
       for (const p of this.ctx.roster.inWorld()) if (p.id !== player.id) p.peer.sendEvent('WorldWeather', out);
     });
+  }
+
+  // #53: a holder silent for HOLDER_SILENCE_MS with someone else in the region hands the
+  // region over: leave-and-re-enter puts the holder at the back of the occupant order, so the
+  // longest-present OTHER occupant inherits (authority.onLeave). A lone silent holder keeps
+  // the seat -- nobody else is looking at the sky, and a release would only churn. Driven
+  // from m7's 1 s tick.
+  sweepSilent(): void {
+    const now = this.now();
+    for (const [name, at] of this.lastSaidAt) {
+      if (now - at < HOLDER_SILENCE_MS) continue;
+      const holder = this.authority.holderOf(name);
+      if (holder === undefined || this.authority.occupants(name).length < 2) continue;
+      this.lastSaidAt.set(name, now); // one handoff per silence, not one per tick
+      log('info', 'weather.silent_holder', { region: name, holderId: holder });
+      this.enqueue(async () => {
+        if (this.playerRegion.get(holder) !== name) return; // moved on meanwhile
+        await this.authority.onLeave(holder, name, true);
+        await this.authority.onEnter(holder, name);
+      });
+    }
   }
 
   // Join: replay every known region's weather so a fresh client isn't blank until the

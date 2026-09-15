@@ -366,6 +366,17 @@ test('server-issued custom records', async (t) => {
     assert.equal(b.inbox.events.filter((e) => e.name === 'RecordsSync').length, 0);
   });
 
+  // #60/#323: two players brewing the SAME potion get the SAME record -- the second creator is
+  // acked with the existing id, nothing is minted, and nobody is pushed a sync.
+  await t.test('an identical body is acked with the existing id, not minted again', async () => {
+    b.sendEvent('RecordCreate', { tempId: 7, kind: 'enchantment', data: { name: 'ench2', cost: 20 } });
+    const ack = (await b.waitEvent('RecordCreateAck')).value as { tempId: number; recordNetId: string };
+    assert.equal(ack.tempId, 7);
+    assert.equal(ack.recordNetId, ids[1], 'the id ench2 was minted under');
+    await fence(b, a);
+    assert.equal(a.inbox.events.filter((e) => e.name === 'RecordsSync').length, 0, 'no new record to push');
+  });
+
   await t.test('a late joiner gets the COMPLETE record set with data intact', async () => {
     const { c } = await join(server, 'LateJoiner');
     const sync = (await c.waitEvent('RecordsSync')).value as
@@ -417,6 +428,9 @@ test('absurd record bodies are refused, sane ones minted', async (t) => {
   await fence(a, b);
   const acks = a.inbox.events.filter((e) => e.name === 'RecordCreateAck').map((e) => (e.value as { tempId: number }).tempId);
   assert.deepEqual(acks, [13, 14], 'only the two within-cap records are acked');
+  // #323: a refused create is SAID, so the client can fail loudly instead of waiting forever.
+  const refused = a.inbox.events.filter((e) => e.name === 'RecordCreateRefused').map((e) => e.value);
+  assert.deepEqual(refused, [{ tempId: 11, reason: 'beyond caps' }, { tempId: 12, reason: 'beyond caps' }]);
   assert.equal(b.inbox.events.filter((e) => e.name === 'RecordsSync').length, 2, 'the peer learns only those two');
   a.close(); b.close();
   await a.closed; await b.closed;
@@ -605,6 +619,9 @@ test('a world full of custom records is still joinable, and stops accepting more
   assert.equal(c.inbox.events.filter((e) => e.name === 'RecordCreateAck'
     && (e.value as { tempId?: number }).tempId === 999).length, 0,
     'a record past the ceiling must not be acked');
+  // #323: and it is told why, so the client can fail loudly.
+  assert.deepEqual(c.inbox.events.filter((e) => e.name === 'RecordCreateRefused').map((e) => e.value),
+    [{ tempId: 999, reason: 'record ceiling reached' }]);
   c.close();
   await c.closed;
 });

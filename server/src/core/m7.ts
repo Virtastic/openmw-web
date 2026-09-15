@@ -156,7 +156,7 @@ export class WorldM7 {
   start(): void {
     this.clock.start();
     if (!this.resetTimer) {
-      this.resetTimer = setInterval(() => void this.sweepResets(), RESET_TICK_MS);
+      this.resetTimer = setInterval(() => { this.weather.sweepSilent(); void this.sweepResets(); }, RESET_TICK_MS);
       this.resetTimer.unref();
     }
   }
@@ -255,18 +255,6 @@ export class WorldM7 {
       log('warn', 'records.dropped', { from: player.name, why: 'invalid shape' });
       return;
     }
-    if (this.ctx.records.count() >= MAX_CUSTOM_RECORDS) {
-      // Refused the same way a malformed one is: logged, and no ack. The creator's client
-      // treats an unacked tempId as a failed creation, which is what happened.
-      if (!this.recordFloodLogged) {
-        this.recordFloodLogged = true;
-        log('error', 'records.dropped', {
-          from: player.name, why: 'record ceiling reached', cap: MAX_CUSTOM_RECORDS,
-          note: 'no further custom records are stored in this world; every join replays them all',
-        });
-      }
-      return;
-    }
     const playerId = player.id;
     const accountKey = player.accountKey;
     const jsData = lToJs(data) as JsLike;
@@ -275,10 +263,36 @@ export class WorldM7 {
       // unacked tempId as a failed creation).
       metrics.recordsRefused.inc();
       log('warn', 'records.dropped', { from: player.name, account: accountKey, kind, why: 'beyond caps' });
+      player.peer.sendEvent('RecordCreateRefused', { tempId, reason: 'beyond caps' });
       return;
     }
+    const json = JSON.stringify(jsData);
     this.recordQueue = this.recordQueue
       .then(async () => {
+        // #60/#323: an identical body (same kind, same data) is the SAME record -- two players
+        // brewing the same potion share one id instead of bloating the doc. Looked up inside
+        // the queue so two identical creates in flight cannot both mint.
+        // ponytail: O(n) scan on a rare op (a brew, a spell); index by hash if it ever shows.
+        const existing = this.ctx.records.all().find((r) => r.kind === kind && JSON.stringify(r.data) === json);
+        if (existing) {
+          log('info', 'records.deduped', { recordNetId: existing.recordNetId, kind, by: accountKey });
+          this.ctx.roster.get(playerId)?.peer.sendEvent('RecordCreateAck', { tempId, recordNetId: existing.recordNetId });
+          return;
+        }
+        if (this.ctx.records.count() >= MAX_CUSTOM_RECORDS) {
+          // Refused after the dedupe: a duplicate mints nothing, so it is never the record
+          // that hits the ceiling. #323: the client is told, so it can fail loudly instead of
+          // waiting on an ack that never comes (OpenMW drops an event with no handler).
+          if (!this.recordFloodLogged) {
+            this.recordFloodLogged = true;
+            log('error', 'records.dropped', {
+              from: player.name, why: 'record ceiling reached', cap: MAX_CUSTOM_RECORDS,
+              note: 'no further custom records are stored in this world; every join replays them all',
+            });
+          }
+          this.ctx.roster.get(playerId)?.peer.sendEvent('RecordCreateRefused', { tempId, reason: 'record ceiling reached' });
+          return;
+        }
         const record = await this.ctx.records.create(kind as RecordKind, jsData, accountKey);
         log('info', 'records.created', { recordNetId: record.recordNetId, kind, by: accountKey });
         // Ack the creator first (per-connection FIFO maps tempId -> recordNetId before

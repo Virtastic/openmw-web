@@ -588,7 +588,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       }));
     },
     onPlayerDeath: (player) => {
-      log('info', 'player.death', { id: player.id, name: player.name });
+      // #35: PvP attribution -- the last player to land a harmful hit, if within 10 s.
+      const hit = player.lastHitBy;
+      const killedBy = hit && Date.now() - hit.at < 10_000 ? { id: hit.id, name: hit.name } : undefined;
+      log('info', 'player.death', { id: player.id, name: player.name, ...(killedBy ? { killedBy } : {}) });
       hooks.playerDeath({ id: player.id, name: player.name, rank: player.rank });
     },
   };

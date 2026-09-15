@@ -242,6 +242,7 @@ export class Combat {
         return null;
       }
       if (!beneficial && !this.ctx.allowPlayerHit(attacker, victim.id, name)) return null; // pvp plugin veto (harm only)
+      if (!beneficial && !attacker.system) victim.lastHitBy = { id: attacker.id, name: attacker.name, at: Date.now() }; // #35
       // Phase 4B: while the victim is DRIVING the input tier, their own stat assertions are
       // ignored (4A one-writer rule) -- so damage applied on their client would vanish. The
       // world peer applies the hit to the victim's AVATAR instead, and the damage travels

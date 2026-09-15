@@ -10,6 +10,7 @@ const PEER_PASS = 'peer-secret-1';
 import { startServer } from '../src/server';
 import type { JsLike } from '../src/proto/lser';
 import { TestClient, tmpDataDir } from './helpers';
+import { onLog, type LogEntry } from '../src/log';
 
 const ACTOR_REF = { __refnum: { index: 42, contentFile: 0 } };
 
@@ -158,6 +159,25 @@ test('combat routing with pvp enabled', async (t) => {
     await fence(atk, atk, far);
     assert.equal(atk.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0); // no echo
     assert.equal(far.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0); // no bystander
+  });
+
+  // #35: PvP attribution. The relayed harmful hit stamps the victim's lastHitBy; a death
+  // within 10 s of it logs killedBy, an older one does not.
+  await t.test('a death within 10 s of a player hit is attributed to that player', async () => {
+    const victim = server.roster.get(vicId)!;
+    assert.deepEqual({ id: victim.lastHitBy?.id, name: victim.lastHitBy?.name }, { id: atkId, name: 'Attacker' });
+    const deaths: LogEntry[] = [];
+    const off = onLog((e) => { if (e.event === 'player.death') deaths.push(e); });
+    try {
+      vic.sendEvent('PlayerDeath', {});
+      await fence(vic, vic);
+      assert.deepEqual(deaths.at(-1)?.['killedBy'], { id: atkId, name: 'Attacker' });
+      victim.lastHitBy!.at -= 11_000; // the hit is stale now
+      vic.sendEvent('PlayerDeath', {});
+      await fence(vic, vic);
+      assert.equal(deaths.length, 2);
+      assert.equal(deaths.at(-1)?.['killedBy'], undefined, 'an 11 s old hit is not the killer');
+    } finally { off(); }
   });
 
   await t.test('actor target reaches the authority holder only', async () => {

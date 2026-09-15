@@ -123,6 +123,9 @@ export interface Player {
   // When this player's time skip (a rest) was refused: the rest still healed their LOCAL body
   // for hours that never passed, and the raise claim that follows must not land (playerstate).
   restRefusedAt?: number;
+  // #35: the last player whose harmful hit/spell was relayed at this player (PvP kill
+  // attribution in server.ts onPlayerDeath, when fresh).
+  lastHitBy?: { id: number; name: string; at: number };
   // When the level last stepped up: one step per window (playerstate.ts handleLevel).
   levelStepAt?: number;
   // When each bar's MAXIMUM last stepped (a level-up); one step per window per stat.
