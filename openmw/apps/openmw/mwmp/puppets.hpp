@@ -139,6 +139,14 @@ namespace MWMP
      *  its own copy with a RefNum nobody else has: an AI-off statue next to the real one. */
     inline void setLocalSpawns(bool enabled) { setLocalSummons(enabled); }
     inline bool localSpawnsEnabled() { return localSummonsEnabled(); }
+    /** CLIENT ONLY: the same switch read the other way round. While a holder simulates the
+     *  world, the PLAYER's body here is a prediction and the avatar on the peer is the one
+     *  that takes environmental damage (a fall, drowning) and reports it back through the
+     *  bars (MP_SelfStats). Applying it locally too raced that report: the local body hit
+     *  zero and DIED -- respawn, teleport, the lot -- before the peer had even landed the
+     *  avatar. Gate the local decrement on this; the sound, the knockdown and the hit
+     *  overlay stay, they are what the player feels. */
+    inline bool peerRulesBody() { return !localSummonsEnabled(); }
 }
 
 #endif

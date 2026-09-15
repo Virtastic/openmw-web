@@ -33,6 +33,7 @@
 
 #include <components/sceneutil/positionattitudetransform.hpp>
 
+#include "../mwmp/puppets.hpp"
 #include "../mwrender/animation.hpp"
 
 #include "../mwbase/environment.hpp"
@@ -2252,8 +2253,13 @@ namespace MWMechanics
                         {
                             DynamicStat<float> health = cls.getCreatureStats(mPtr).getHealth();
                             float realHealthLost = healthLost * (1.0f - 0.25f * fatigueTerm);
-                            health.setCurrent(health.getCurrent() - realHealthLost);
-                            cls.getCreatureStats(mPtr).setHealth(health);
+                            // The avatar on the peer takes the fall for a peer-ruled player
+                            // (mwmp/puppets.hpp peerRulesBody); the report lands in the bars.
+                            if (!(isPlayer && MWMP::peerRulesBody()))
+                            {
+                                health.setCurrent(health.getCurrent() - realHealthLost);
+                                cls.getCreatureStats(mPtr).setHealth(health);
+                            }
                             sndMgr->playSound3D(mPtr, ESM::RefId::stringRefId("Health Damage"), 1.0f, 1.0f);
                             if (isPlayer)
                                 MWBase::Environment::get().getWindowManager()->activateHitOverlay();

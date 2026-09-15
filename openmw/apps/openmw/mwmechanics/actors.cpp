@@ -1026,9 +1026,14 @@ namespace MWMechanics
                 // If drowning, apply 3 points of damage per second
                 static const float fSuffocationDamage
                     = world->getStore().get<ESM::GameSetting>().find("fSuffocationDamage")->mValue.getFloat();
-                DynamicStat<float> health = stats.getHealth();
-                health.setCurrent(health.getCurrent() - fSuffocationDamage * duration);
-                stats.setHealth(health);
+                // A peer-ruled player drowns on the peer (mwmp/puppets.hpp peerRulesBody);
+                // the report lands in the bars. The breath timer above still runs for the UI.
+                if (!(isPlayer && MWMP::peerRulesBody()))
+                {
+                    DynamicStat<float> health = stats.getHealth();
+                    health.setCurrent(health.getCurrent() - fSuffocationDamage * duration);
+                    stats.setHealth(health);
+                }
 
                 // Play a drowning sound
                 MWBase::SoundManager* sndmgr = MWBase::Environment::get().getSoundManager();
