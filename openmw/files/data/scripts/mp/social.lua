@@ -449,6 +449,7 @@ return {
                 local why = {
                     not_friends = 'You are not friends with them.',
                     not_online = 'They are offline.',
+                    in_chargen = 'Finish creating your character first.',
                     blocked = 'You cannot join them.',
                     not_open = 'Their world is not open to friends yet. Ask them to switch to Party.',
                     self = 'That is you.',

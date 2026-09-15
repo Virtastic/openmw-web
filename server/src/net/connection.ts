@@ -429,7 +429,12 @@ export class Connection implements Peer {
     // PlayerMove and ActorMoveBatch frames bypass the general msg bucket, and draw from two
     // SEPARATE movement budgets (bytes still count against bytesPerSec).
     const binType = isBinary && data.byteLength >= 2 ? data.readUInt16LE(0) : -1;
-    if (!this.byteBucket.take(data.byteLength)) {
+    // THE SIMULATOR IS NOT A PLAYER. It streams every cell it anchors at 20 Hz -- three busy
+    // cells is more than a player's byte budget, and a budget breach disconnects: the peer
+    // died with RATE, the supervisor restarted it, every cell froze, and it happened again.
+    // Post-auth `system` (the Hello claim alone is no exemption, see the internal-error path).
+    const authedPeerIn = this.player?.system === true;
+    if (!authedPeerIn && !this.byteBucket.take(data.byteLength)) {
       metrics.rateLimited.inc({ budget: 'bytes' });
       log('warn', 'conn.byte_budget_exceeded', {
         ip: this.ip,
@@ -453,7 +458,7 @@ export class Connection implements Peer {
         metrics.rateLimited.inc({ budget: actor ? 'actor_shed' : 'move_shed' });
         return;
       }
-    } else if (!this.msgBucket.take(1)) {
+    } else if (!authedPeerIn && !this.msgBucket.take(1)) {
       metrics.rateLimited.inc({ budget: 'msgs' });
       this.disconnect('RATE', 'message rate limit exceeded');
       return;

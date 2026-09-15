@@ -185,12 +185,10 @@ namespace MWGui
         // launcher's #characters entry shows the tile screen from the stored session.
         if (std::getenv("OPENMW_MP_URL") != nullptr)
         {
-            EM_ASM({
-                globalThis.__omwAllowLeave = true;
-                if (typeof Module !== 'undefined')
-                    Module.__omwRunning = false;
-                globalThis.location.href = 'launcher.html#characters';
-            });
+            // One page-side function (index.html __omwExitToLauncher): it tells the server we
+            // are LEAVING (a Party host's guests go home now, not after the crash grace) and
+            // then navigates. No commas inside EM_ASM -- the macro splits on them.
+            EM_ASM({ globalThis.__omwExitToLauncher(); });
             return;
         }
 #endif

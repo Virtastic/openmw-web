@@ -808,6 +808,9 @@ export class Social {
       player.peer.sendEvent('JoinFriend', { ok: false, error: detail });
     };
     if (targetAcct === '' || targetAcct === me) return fail('self');
+    // Mid-creation there is nothing to bring: the destination refuses at its door (the chargen
+    // gate) and the reboot threw the unfinished character away. Refuse here, in place.
+    if (player.inChargen === true) return fail('in_chargen');
     if (!this.d.store.areFriends(me, targetAcct)) return fail('not_friends');
     if (this.d.store.blockedEitherWay(me, targetAcct)) return fail('blocked');
     if (!this.isAvailable(targetAcct)) return fail('not_online');

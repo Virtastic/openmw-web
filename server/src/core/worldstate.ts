@@ -675,6 +675,8 @@ export class WorldState {
     if ((deaths[ref.key] ?? -Infinity) >= deathNo) return; // duplicate death event
     deaths[ref.key] = deathNo;
     this.cells.markDirty(cellKey);
+    // A corpse follows nobody: a restarted peer replayed the claim and stood the companion up.
+    this.followedBy.delete(ref.key);
     this.relayCellExcept(cellKey, player.id, 'ActorDeath', lToJs(body) as Record<string, JsLike>);
     // Shared kill tally. Counted for EVERY death that names a record, not only
     // player-attributed ones: vanilla `GetDeadCount` counts deaths of a record regardless
