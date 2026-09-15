@@ -385,3 +385,27 @@ test('#370 a resync reads only what the player can see', async (t) => {
   assert.equal(c.inbox.events.filter((e) => e.name === 'WorldCellState' && (e.value as { cellKey: string }).cellKey === 'Vivec, Hlaalu Vault').length, 0,
     'a far cell doc was read');
 });
+
+// Review of the 2026-09-15 wave: a lock-less `crime` combat claim (#146) shares #363's bucket,
+// and ActorSay (#217) is the system peer's alone, strings bounded.
+test('#146 crime combat claims are rate-bounded; ActorSay is the peer\'s alone', async (t) => {
+  const { server } = await boot(t);
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  const epoch = ((await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { epoch: number }).epoch;
+  const { c } = await join(t, server, 'Thief');
+  const { c: w } = await join(t, server, 'Watcher');
+  peer.inbox.events.length = 0;
+  for (let i = 0; i < 6; i++) c.sendEvent('ActorAI', { ref: { __refnum: { index: 300 + i, contentFile: 0 } }, cellKey: '0,0', combat: c.playerId, crime: true });
+  await fence(c, peer);
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorAI').length, 5, 'the sixth crime claim in a minute reached the holder');
+
+  w.inbox.events.length = 0;
+  c.sendEvent('ActorSay', { ref: NPC_REF, cellKey: '0,0', epoch, file: 'x', text: 'free text' }); // a human, even if it held the cell
+  peer.sendEvent('ActorSay', { ref: NPC_REF, cellKey: '0,0', epoch, file: 'vo/x.mp3', text: 'y'.repeat(600) });
+  await fence(c, w);
+  const says = w.inbox.events.filter((e) => e.name === 'ActorSay').map((e) => e.value as { text: string });
+  assert.equal(says.length, 1, "a human's ActorSay was relayed");
+  assert.equal(says[0]!.text.length, 256, 'the subtitle was not bounded');
+});

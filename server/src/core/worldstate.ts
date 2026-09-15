@@ -597,7 +597,22 @@ export class WorldState {
   private static readonly MAX_FOLLOWERS = 8;
   private static readonly MAX_ACTOR_SPAWNS_PER_MIN = 10; // a sleeper ambush is one or two
   private actorSpawnsBy = new Map<number, number[]>(); // playerId -> recent request times (spawn)
-  private positionClaimsBy = new Map<number, number[]>(); // #363: playerId -> recent position claims
+  private positionClaimsBy = new Map<number, number[]>(); // #363: playerId -> recent lock-less claims
+
+  /** #363: lock-less ActorAI claims (position, crime) share one MAX_POSITION_CLAIMS_PER_MIN
+   *  bucket per player -- a script fires once, a loop does not. */
+  private claimWithinRate(player: Player, name: string, cellKey: string, note: string): boolean {
+    const nowMs = Date.now();
+    const recent = (this.positionClaimsBy.get(player.id) ?? []).filter((t) => nowMs - t < 60_000);
+    if (recent.length >= MAX_POSITION_CLAIMS_PER_MIN) {
+      log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: note.replace('_', ' ') + ' rate' });
+      this.moderationNote?.(player.accountKey, note);
+      return false;
+    }
+    recent.push(nowMs);
+    this.positionClaimsBy.set(player.id, recent);
+    return true;
+  }
   private replayFollows(holderId: number, cellKey: string): void {
     const holder = this.roster.get(holderId);
     if (!holder) return;
@@ -746,15 +761,7 @@ export class WorldState {
         // #363: NOT dialogue-gated -- these come from scripts (216: Dagoth Ur to the Heart,
         // OnActivate, CellChanged) with no conversation to hold a lock on -- but rate-bounded
         // per player, same shape as actor spawns: a script fires once, a loop does not.
-        const nowMs = Date.now();
-        const recent = (this.positionClaimsBy.get(player.id) ?? []).filter((t) => nowMs - t < 60_000);
-        if (recent.length >= MAX_POSITION_CLAIMS_PER_MIN) {
-          log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'position claim rate' });
-          this.moderationNote?.(player.accountKey, 'position_claim');
-          return;
-        }
-        recent.push(nowMs);
-        this.positionClaimsBy.set(player.id, recent);
+        if (!this.claimWithinRate(player, name, cellKey, 'position_claim')) return;
         const holder = this.authority.holderOf(cellKey);
         const to = holder === undefined ? undefined : this.roster.get(holder);
         if (!to) return; // nobody simulates it: the client's own move stands
@@ -807,6 +814,9 @@ export class WorldState {
           log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'combat claim without the conversation' });
           return;
         }
+        // A lock-less claim is rate-bounded like a position claim (#363's bucket): one crime
+        // aggroes one witness; a loop aggroing every guard in town onto itself does not.
+        if (crime && !this.claimWithinRate(player, name, cellKey, 'crime_claim')) return;
         this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
         return;
       }
@@ -880,6 +890,15 @@ export class WorldState {
     const out = { ...lToJs(body) as Record<string, JsLike> };
     // #401: the holder's ActorDisposition.ai is bounded like the dialogue path's (0..100 per key).
     if (name === 'ActorDisposition' && out['ai'] !== null && typeof out['ai'] === 'object') out['ai'] = Object.fromEntries(Object.entries(out['ai'] as Record<string, JsLike>).map(([k, v]) => [k, Math.max(0, Math.min(100, typeof v === 'number' && Number.isFinite(v) ? v : 0))]));
+    // ActorSay (#217) is a script line the PEER's engine spoke: only the system peer sends it,
+    // and its strings are bounded -- a human holder in degraded mode must not push free text
+    // as an NPC subtitle past chat moderation.
+    if (name === 'ActorSay') {
+      if (player.system !== true) { this.invalid(player, name); return; }
+      const clip = (v: LValue | undefined, n: number) => (typeof v === 'string' ? v.slice(0, n) : '');
+      out['file'] = clip(body.get('file'), 128);
+      out['text'] = clip(body.get('text'), 256);
+    }
     this.relayCellExcept(cellKey, player.id, name, out);
   }
 
