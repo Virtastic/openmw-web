@@ -1154,9 +1154,10 @@ export class WorldState {
     // OBJECT's cell, not its own. Abuse buys little: an unlock or a delete is loot, a disable
     // is a hidden statue, and the peer's window still wins over a contrary human write.
     // ...but not ANY key (backlog 337): cells.get creates and persists a doc for whatever it
-    // is handed, so a far enable may name only a well-formed exterior inside the world's
-    // bounds or an interior this session has already been sent a cell state for, and no more
-    // than MAX_FAR_ENABLE_CELLS distinct far cells per session.
+    // is handed, so a far exterior must be well-formed inside the world's bounds, and a
+    // session names no more than MAX_FAR_ENABLE_CELLS distinct far cells. An interior needs
+    // no prior visit (backlog 384): a quest enable into a never-visited interior is the
+    // ordinary case, and refusing it left the enable on one client only.
     const farOk = name === 'ObjectEnabled' && (player.system === true || this.farEnableAllowed(player, cellKey));
     if (!player.system && !fare && !farOk && !cellsVisible(player.cellKey, cellKey)) {
       log('warn', 'object.out_of_reach', { from: player.name, name, at: player.cellKey ?? null, cellKey });
@@ -1195,10 +1196,7 @@ export class WorldState {
   private farEnableAllowed(player: Player, cellKey: string): boolean {
     if (cellsVisible(player.cellKey, cellKey)) return true;
     const ext = parseExterior(cellKey);
-    const wellFormed = ext
-      ? Math.abs(ext.x) <= MAX_FAR_CELL_COORD && Math.abs(ext.y) <= MAX_FAR_CELL_COORD
-      : player.knownCells?.has(cellKey) === true;
-    if (!wellFormed) return false;
+    if (ext && (Math.abs(ext.x) > MAX_FAR_CELL_COORD || Math.abs(ext.y) > MAX_FAR_CELL_COORD)) return false;
     const far = (player.farEnableCells ??= new Set());
     if (!far.has(cellKey) && far.size >= MAX_FAR_ENABLE_CELLS) return false;
     far.add(cellKey);
@@ -1614,7 +1612,6 @@ export class WorldState {
   }
 
   sendCellState(player: Player, cellKey: string): void {
-    if (!parseExterior(cellKey)) (player.knownCells ??= new Set()).add(cellKey); // backlog 337
     this.enqueue(async () => {
       const doc = this.cells.getCached(cellKey) ?? (await this.cells.get(cellKey)) ?? emptyCellDoc();
       const deaths = this.liveDeaths(doc, cellKey); // before placed is read: an expired corpse takes its spawn entry with it

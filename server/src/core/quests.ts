@@ -683,8 +683,12 @@ export class Quests {
     // DialogueLock traffic (pay the fine / go to jail) stands, any other is refused.
     const talked = player.lastDialogueAt !== undefined && Date.now() - player.lastDialogueAt <= Quests.GUEST_WRITE_GRACE_MS;
     if (player.system !== true && !talked && this.ctx.isShared('crime') && bounty < (this.ctx.cells.sharedQuest().bounty ?? 0)) {
-      log('warn', 'quest.crime_drop_refused', { from: player.name, have: this.ctx.cells.sharedQuest().bounty, got: bounty });
+      const have = this.ctx.cells.sharedQuest().bounty ?? 0;
+      log('warn', 'quest.crime_drop_refused', { from: player.name, have, got: bounty });
       this.ctx.noteAnomaly?.(player.accountKey, 'crime_drop');
+      // The refusal is not silent (backlog 386): a script pardon on the host is the honest
+      // case, and its client would otherwise keep 0 while the peer keeps hunting.
+      player.peer.sendEvent('CrimeUpdate', { bounty: have, shared: true });
       return;
     }
     // Shared: routed like the journal — see factionUpdate above — a bounty earned in someone

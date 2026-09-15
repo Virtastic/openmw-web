@@ -43,11 +43,13 @@ const EXTERIOR_RE = /^(-?\d+),(-?\d+)$/;
 //     chargen actors and disable their AI, after which nobody advances the sequence at all.
 //
 // Matched by NAME because that is all either side has in common: the client reports a cellKey
-// string and the server has no cell records. The same test exists in scripts/mp/objects.lua;
-// keep the two in step.
+// string and the server has no cell records. EXACT names (backlog 385): a substring on
+// "census" made every Tamriel Rebuilt Census and Excise office a sanctuary. The same test
+// exists in scripts/mp/objects.lua and global.lua; keep the three in step. The `?nomw` demo
+// (Example Suite) has no chargen cell -- it boots straight into the Village exterior.
 export function isChargenCell(cellKey: string | undefined): boolean {
   const k = String(cellKey ?? '').toLowerCase();
-  return k.includes('census') || k.includes('prison ship');
+  return k === 'seyda neen, census and excise office' || k === 'imperial prison ship';
 }
 
 export function parseExterior(cellKey: string): { x: number; y: number } | null {

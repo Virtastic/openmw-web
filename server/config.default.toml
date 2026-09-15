@@ -362,9 +362,10 @@ contextLines = 20
 rttProbeSec = 5        # ping cadence; ~6 B/s/player. The 50 s keepalive deadline is unchanged.
 reviewSec = 10         # how often a held cell is checked for liveness (cheap: a scan)
 # The peer has held a cell with NPCs in it this long without producing a single actor frame:
-# it is not simulating. Reported loudly (authority.silent_peer) and left holding the cell —
-# there is nobody to hand it to, and revoking would remove the NPCs as well as freeze them.
-actorSilenceSec = 15
+# it is not simulating: reported (authority.silent_peer) and the managed peer is restarted.
+# Longer than a cold 3x3 load of dense Tamriel Rebuilt exteriors, or a healthy peer is killed
+# mid-load. Silence is never judged within 60 s of a SimAnchors change either.
+actorSilenceSec = 75
 
 [metrics]
 # Prometheus text-format scrape endpoint at GET /metrics. OFF by default: the numbers are
@@ -579,8 +580,10 @@ startCell = "Seyda Neen"
 # Setting a finite number here is a deliberate risk, and the server logs simpeer.at_cap as an
 # ERROR when it bites, because somebody is playing an unsimulated cell at that moment.
 maxPeers = 0
-# Hold a cell's anchor this many seconds after the last player leaves it, so walking a cell
-# border does not flap the peer's grid. Dropping an anchor is cheap; this is pure hysteresis.
+# Hold an EXTERIOR cell's anchor this many seconds after the last player leaves it, so walking
+# a cell border does not flap the peer's grid. Dropping an anchor is cheap; this is pure
+# hysteresis. An interior's anchor goes the pass its last player leaves (each one is a whole
+# extra active cell on the peer).
 anchorIdleSec = 60
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
 # A cold peer loading Tamriel Rebuilt takes minutes, and cold starts are serialised: at 120 s

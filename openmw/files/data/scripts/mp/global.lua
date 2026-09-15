@@ -345,8 +345,10 @@ local wasJoined = false
 -- scripts on the actors in these cells, so nothing of ours belongs in them. Kept in step with
 -- isChargenCell in scripts/mp/objects.lua and server/src/core/movement.ts.
 local function isChargenCell(cellKey)
+    -- Exact names (backlog 385): a substring on 'census' made every Tamriel Rebuilt Census
+    -- and Excise office a sanctuary.
     local k = string.lower(tostring(cellKey or ''))
-    return (k:find('census', 1, true) ~= nil) or (k:find('prison ship', 1, true) ~= nil)
+    return k == 'seyda neen, census and excise office' or k == 'imperial prison ship'
 end
 
 local PUPPET_TEMPLATE_ID = 'villager_00' -- demo NPC record (race "Imperial"), neutral kit

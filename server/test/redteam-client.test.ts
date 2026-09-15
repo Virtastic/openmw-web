@@ -190,6 +190,10 @@ test('#366 a human lowers the party bounty only out of a conversation', async (t
   await b.waitEvent('CrimeUpdate', (v) => (v as { bounty: number }).bounty === 40);
   b.inbox.events.length = 0;
   a.sendEvent('CrimeUpdate', { bounty: 0 }); // forgiveness by declaration
+  // #386: the refusal echoes the party's record to the sender, so a script pardon's client
+  // does not keep 0 while the peer keeps hunting.
+  const echo = (await a.waitEvent('CrimeUpdate')).value as { bounty: number; shared: boolean };
+  assert.deepEqual(echo, { bounty: 40, shared: true }, 'the refused drop was not corrected on the sender');
   await fence(a, b);
   assert.equal(b.inbox.events.filter((e) => e.name === 'CrimeUpdate').length, 0, "a bare drop cleared the party's record");
   a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true }); // the guard

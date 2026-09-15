@@ -19,6 +19,8 @@ import {
   Authority,
   authorityTuning,
   setOnSilentPeer,
+  noteAnchorsChanged,
+  ANCHOR_CHANGE_GRACE_MS,
   type AuthoritySenders,
   type ActorSnapshot,
 } from '../src/core/authority';
@@ -171,6 +173,28 @@ test('authority: onSilentPeer fires once when every actor-bearing held cell is s
   now += authorityTuning.actorSilenceMs * 2;
   auth.reviewAll();
   assert.equal(fired.length, 2, 'a new silence after a frame is a new report');
+});
+
+// Backlog 383: a TR region cold-load (a synchronous 3x3 of dense exteriors) outlasts a short
+// silence window, and the restart it triggers loops grant -> load -> kill. The default is
+// 75 s, and no cell is judged within 60 s of a SimAnchors change at all.
+test('authority: silence is not judged for 60 s after a SimAnchors change', async (t) => {
+  assert.equal(authorityTuning.actorSilenceMs, 75_000, 'longer than a TR 3x3 cold load');
+  let now = 1_000_000;
+  const fired: number[] = [];
+  setOnSilentPeer((holder) => fired.push(holder));
+  t.after(() => { setOnSilentPeer(undefined); noteAnchorsChanged(-Infinity); });
+  const { auth } = makeAuthority({ now: () => now });
+  await auth.onEnter(PEER, 'cell');
+  auth.setSnapshot('cell', { actors: [{ ref: 'guard' }] } as unknown as ActorSnapshot);
+  now += authorityTuning.actorSilenceMs * 2;
+  noteAnchorsChanged(now); // the anchor set just changed: the peer is loading
+  now += ANCHOR_CHANGE_GRACE_MS - 1;
+  auth.reviewAll();
+  assert.equal(fired.length, 0, 'a peer mid-load after an anchor change is not wedged');
+  now += 2;
+  auth.reviewAll();
+  assert.equal(fired.length, 1, 'past the window the standing silence is judged again');
 });
 
 test('authority: an empty cell never reports a silent holder', async () => {

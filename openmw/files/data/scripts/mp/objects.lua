@@ -171,8 +171,10 @@ end
 -- same world ("the papers never appear"). Nothing in these cells is reported out either: a
 -- tutorial prop has no business in shared world state.
 local function isChargenCell(cellKey)
+    -- Exact names (backlog 385): a substring on 'census' made every Tamriel Rebuilt Census
+    -- and Excise office a sanctuary.
     local k = string.lower(tostring(cellKey or ''))
-    return (k:find('census', 1, true) ~= nil) or (k:find('prison ship', 1, true) ~= nil)
+    return k == 'seyda neen, census and excise office' or k == 'imperial prison ship'
 end
 
 local function sendAddressed(eventName, obj, extra)

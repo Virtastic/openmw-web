@@ -25,7 +25,10 @@ const MAX_CELL_KEY = 128;
 // Vvardenfell and Solstheim, and exceeding it dropped the whole map sync while reporting
 // 'invalid shape' -- which is not what happened and sends anyone debugging it the wrong way.
 const MAX_MAP_CELLS = 8192;
-const MAX_EXPLORED = 1024; // exterior keys kept on a character doc (backlog 260)
+// Exterior keys kept on a character doc (backlog 260), FIFO. 8192 (backlog 388): 1024 was
+// inside one Vvardenfell + mainland campaign, and the oldest -- Seyda Neen -- went first.
+// ~64 KB per doc at the cap; the welcome record stays well under maxMsgBytes.
+const MAX_EXPLORED = 8192;
 const MAX_RECORD_FIELDS = 128;
 // A DEPLOYMENT-WIDE CEILING ON CUSTOM RECORDS (the store is shared by every world since backlog
 // 315), for the same reason regions have one and for a worse consequence. Every RecordCreate is appended to the store, INSERTed into SQLite, and -- this is

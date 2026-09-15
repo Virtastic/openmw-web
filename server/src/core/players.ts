@@ -182,10 +182,8 @@ export interface Player {
    *  a real scenario — which is why unowned drops were only ever COUNTED. Credit arrives per
    *  event instead, and is cleared by the next snapshot (which now includes it). */
   pendingAcquired?: Map<string, number>;
-  // Backlog 337: interior cells this session has been sent a WorldCellState for, and the
-  // distinct far cells its ObjectEnabled messages have named. A far enable may name only a
-  // well-formed exterior or an interior it has seen, and at most MAX_FAR_ENABLE_CELLS of them.
-  knownCells?: Set<string>;
+  // Backlog 337/384: the distinct far cells this session's ObjectEnabled messages have named.
+  // A far exterior must be well-formed; at most MAX_FAR_ENABLE_CELLS distinct far cells.
   farEnableCells?: Set<string>;
 }
 

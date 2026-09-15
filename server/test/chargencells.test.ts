@@ -28,7 +28,10 @@ test('the chargen cells are recognised, in the casing the client actually sends'
 });
 
 test('ordinary cells are not', () => {
-  for (const c of ['-2,-9', 'Balmora, Council Club', 'Seyda Neen, Arrille\'s Tradehouse', '']) {
+  // Backlog 385: TR's own Census and Excise offices are ordinary cells, as is the ship's
+  // hold or a modded prison ship.
+  for (const c of ['-2,-9', 'Balmora, Council Club', 'Seyda Neen, Arrille\'s Tradehouse', '',
+    'Old Ebonheart, Census and Excise Office', 'Andothren, Census and Excise Office', 'Imperial Prison Ship, Hold']) {
     assert.equal(isChargenCell(c), false, `${c} must not be sanctuary`);
   }
   assert.equal(isChargenCell(undefined), false);

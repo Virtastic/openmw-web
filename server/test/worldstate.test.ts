@@ -330,12 +330,8 @@ test("a human's far-cell disable persists and replays; a later enable persists a
   host.sendCellChange('0,0', 0, 0, 0);
   await host.waitEvent('PlayerCellChange');
   const gares = { __refnum: { index: 4242, contentFile: 0 } };
-  // Backlog 337: a far INTERIOR must be one this session has been sent a cell state for
-  // (an exterior only has to be well-formed). The host has been through the cave.
-  host.sendCellChange('ilunibi, soul\'s rattle', 0, 0, 0);
-  await host.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === 'ilunibi, soul\'s rattle');
-  host.sendCellChange('0,0', 0, 0, 0);
-  await host.waitEvent('PlayerCellChange');
+  // Backlog 384: the host has NEVER been through the cave; a quest enable into an unvisited
+  // interior is the ordinary case.
   host.sendEvent('ObjectEnabled', { ref: gares, cellKey: 'ilunibi, soul\'s rattle', enabled: false }); // Startup, far away
   await new Promise((r) => setTimeout(r, 200));
 
@@ -359,9 +355,10 @@ test("a human's far-cell disable persists and replays; a later enable persists a
   assert.deepEqual(second.enabled, ['c:4242:0'], 'the enable did not persist as a reveal');
 });
 
-// Backlog 337: a far enable creates a cell doc for whatever key it names, so the key has to be
-// a real exterior inside the world, or an interior this session has been sent.
-test('a far enable persists for a real exterior and is refused for a made-up key', async (t) => {
+// Backlog 337/384: a far enable creates a cell doc for whatever key it names, so a far exterior
+// has to be a real one inside the world; an interior needs no visit, and the per-session
+// distinct-cell cap is what bounds the doc count.
+test('a far enable persists for a real exterior, is refused past the world bound, and stops at the session cap', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
@@ -372,16 +369,21 @@ test('a far enable persists for a real exterior and is refused for a made-up key
   await host.waitEvent('PlayerCellChange');
   const ref = { __refnum: { index: 4242, contentFile: 0 } };
   host.sendEvent('ObjectEnabled', { ref, cellKey: '17,-9', enabled: false });
-  host.sendEvent('ObjectEnabled', { ref, cellKey: 'zzz random key 7b3f', enabled: false });
+  host.sendEvent('ObjectEnabled', { ref, cellKey: 'ilunibi, soul\'s rattle', enabled: false }); // never visited
   host.sendEvent('ObjectEnabled', { ref, cellKey: '9999,0', enabled: false }); // outside the world
-  await new Promise((r) => setTimeout(r, 200));
+  // Two bursts under the 60 msg/s session bucket, so every enable reaches the cap check.
+  for (let i = 0; i < 35; i++) host.sendEvent('ObjectEnabled', { ref, cellKey: `far interior ${i}`, enabled: false });
+  await new Promise((r) => setTimeout(r, 1100));
+  for (let i = 35; i < 70; i++) host.sendEvent('ObjectEnabled', { ref, cellKey: `far interior ${i}`, enabled: false });
+  await new Promise((r) => setTimeout(r, 300));
   await server.flush();
   const store = new CellStore(dataDir);
   t.after(() => store.close());
   const stored = store.cellsWithDeltas();
   assert.deepEqual((await store.get('17,-9')).enabled, { 'c:4242:0': false }, 'a legitimate far exterior persists');
-  assert.ok(!stored.includes('zzz random key 7b3f'), 'a random far key must not create a doc');
-  assert.ok(!stored.includes('9999,0'), 'an exterior past the world bound must not either');
+  assert.deepEqual((await store.get('ilunibi, soul\'s rattle')).enabled, { 'c:4242:0': false }, 'an unvisited interior persists (384)');
+  assert.ok(!stored.includes('9999,0'), 'an exterior past the world bound must not create a doc');
+  assert.equal(stored.filter((k) => k.startsWith('far interior ')).length, 64 - 2, 'the 64-per-session cap bounds the doc count');
 });
 
 // Backlog 338: a human's actor spawn is placed beside the asker, a few at a time.

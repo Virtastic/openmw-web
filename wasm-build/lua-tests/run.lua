@@ -1446,6 +1446,11 @@ do
   -- #227: the provoking shout on the puppet, through the new binding.
   check('MP_ActorAI combat rolls iVoiceAttackOdds into mp.say(obj, attack)',
     ac:find("mp.say(obj, 'attack')", 1, true) ~= nil and lb:find('api["say"]', 1, true) ~= nil)
+  -- #385: the chargen sanctuary is the two vanilla cells by exact name, not any 'census'.
+  check('isChargenCell exact-matches the two vanilla chargen cells in global.lua and objects.lua',
+    g:find("return k == 'seyda neen, census and excise office' or k == 'imperial prison ship'", 1, true) ~= nil
+    and ob:find("return k == 'seyda neen, census and excise office' or k == 'imperial prison ship'", 1, true) ~= nil
+    and g:find("k:find('census', 1, true)", 1, true) == nil and ob:find("k:find('census', 1, true)", 1, true) == nil)
   -- #312: a block on the peer reaches the owner as a sound.
   check('the stats report drains mp.takeBlock and the owner plays it',
     g:find('mp.takeBlock and mp.takeBlock(p.obj)', 1, true) ~= nil

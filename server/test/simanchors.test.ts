@@ -38,6 +38,37 @@ function anchorsFor(players: { cellKey: string; pose: Pose }[]): {
 
 const at = (cellKey: string, x: number, y: number, z = 0) => ({ cellKey, pose: { x, y, z } });
 
+// The expiry rule server.ts simPeerPass applies to held anchors (backlog 382): an exterior
+// outlives its last human by anchorIdleSec; an interior is dropped the pass its last human
+// leaves; the dummy only ever stands in an exterior.
+type Held = Map<string, { pose: Pose; until: number }>;
+function passFor(held: Held, players: { cellKey: string; pose: Pose }[], now: number, idleMs: number): {
+  held: Held; stand: string | undefined;
+} {
+  for (const p of players) if (!isChargenCell(p.cellKey)) held.set(p.cellKey, { pose: p.pose, until: now + idleMs });
+  const occupied = new Set(players.map((p) => p.cellKey));
+  for (const [ck, a] of [...held]) if (a.until <= now || (!parseExterior(ck) && !occupied.has(ck))) held.delete(ck);
+  const stand = players.find((p) => held.has(p.cellKey) && parseExterior(p.cellKey) !== null)?.cellKey;
+  return { held, stand };
+}
+
+test('an interior expires the pass its last human leaves; an exterior keeps anchorIdleSec; the dummy stays outdoors', () => {
+  const held: Held = new Map();
+  const shop = 'balmora, ravirr: trader', club = 'balmora, council club';
+  let r = passFor(held, [at(shop, 1, 1), at(club, 2, 2), at('-3,-2', 3, 3)], 0, 60_000);
+  assert.deepEqual([...r.held.keys()].sort(), ['-3,-2', club, shop], 'both interiors anchored while occupied');
+  assert.equal(r.stand, '-3,-2');
+
+  // The shopper leaves the trader; the walker steps indoors. Next pass, 5 s on.
+  r = passFor(held, [at(club, 2, 2), at(club, 4, 4)], 5_000, 60_000);
+  assert.deepEqual([...r.held.keys()].sort(), ['-3,-2', club], 'the emptied interior is gone at once; the exterior lingers');
+  assert.equal(r.stand, undefined, 'the dummy never stands indoors, even with everyone inside');
+
+  // The exterior outlives its last human by anchorIdleSec, then goes too.
+  r = passFor(held, [at(club, 2, 2)], 65_000, 60_000);
+  assert.deepEqual([...r.held.keys()], [club]);
+});
+
 test('players in the same cell produce one anchor, at a real player position', () => {
   const r = anchorsFor([at('-2,-9', -10350, -71235, 167), at('-2,-9', -10000, -71000, 167)]);
   assert.deepEqual(r.anchors, [{ x: -10350, y: -71235, z: 167 }],

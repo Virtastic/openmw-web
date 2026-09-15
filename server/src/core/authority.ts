@@ -52,11 +52,20 @@ export interface AuthorityTuning {
 // use time, not captured).
 export const authorityTuning: AuthorityTuning = {
   reviewMs: 10_000,
-  // Comfortably longer than a stalled frame or a cell load, short enough that nobody plays
-  // for long beside frozen NPCs. The grace clock starts at the GRANT, so a peer that has just
-  // taken the cell is never judged before it could have produced anything.
-  actorSilenceMs: 15_000,
+  // Longer than a synchronous 3x3 cold-load of dense Tamriel Rebuilt exteriors (backlog 383:
+  // 15 s killed a healthy peer mid-load and looped grant→load→kill), short enough that nobody
+  // plays for long beside frozen NPCs. The grace clock starts at the GRANT, so a peer that has
+  // just taken the cell is never judged before it could have produced anything.
+  actorSilenceMs: 75_000,
 };
+
+// A SimAnchors set change (server.ts simPeerPass) makes the peer load new cells; nothing it
+// holds is judged for silence within this window of the change (backlog 383).
+export const ANCHOR_CHANGE_GRACE_MS = 60_000;
+let anchorsChangedAt = -Infinity;
+export function noteAnchorsChanged(now: number): void {
+  anchorsChangedAt = now;
+}
 
 // Fired once per holder when EVERY actor-bearing cell it holds has been silent past
 // actorSilenceMs (backlog 324): a wedged peer auto-pongs, so its socket never drops and the
@@ -375,6 +384,7 @@ export class Authority {
     const snap = c.lastSnapshot as { actors?: unknown[] } | null;
     const cellHasActors = Array.isArray(snap?.actors) && snap.actors.length > 0;
     if (!cellHasActors || authorityTuning.actorSilenceMs <= 0) return undefined;
+    if (now - anchorsChangedAt < ANCHOR_CHANGE_GRACE_MS) return false;
 
     // Grace runs from the GRANT, so a peer that has just taken the cell is never judged
     // before it could have produced anything.

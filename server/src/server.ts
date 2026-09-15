@@ -43,7 +43,7 @@ import { broadcastChat, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
 import { MoveBroadcaster, interestFromLimits } from './core/movement';
-import { configureAuthority, setOnSilentPeer } from './core/authority';
+import { configureAuthority, setOnSilentPeer, noteAnchorsChanged } from './core/authority';
 import { Connection, type ServerCtx } from './net/connection';
 import { attachWss } from './net/ws';
 import { createHttpServer, setTrustCloudflareIp, type HttpRoute } from './net/http';
@@ -1571,7 +1571,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         until: now + idleMs,
       });
     }
-    for (const [ck, a] of [...heldAnchors]) if (a.until <= now) heldAnchors.delete(ck);
+    // An EXTERIOR outlives its last human by anchorIdleSec (a door hop, a reconnect). An
+    // INTERIOR does not (backlog 382): every anchored interior is a whole cell the peer keeps
+    // active, and a shop run co-anchoring three of them per city sent TR NPCs into invisible
+    // walls. Its authority and state persist; only the anchor goes, the pass its last human
+    // leaves.
+    const occupied = new Set(humans.map((p) => p.cellKey!));
+    for (const [ck, a] of [...heldAnchors]) {
+      if (a.until <= now || (!parseExterior(ck) && !occupied.has(ck))) heldAnchors.delete(ck);
+    }
 
     // EVERY held cell is covered, interior or exterior, by ONE peer. Exteriors anchor by
     // position; interiors anchor by NAME, because an interior has no coordinate. Both are
@@ -1591,10 +1599,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Where the peer's own avatar stands: a real player's position, so a cold boot lands on
     // ground that exists rather than a computed point inside terrain. Vestigial for
     // simulation now that every anchor ticks — [simPeer].startCell covers the cold boot with
-    // nobody placed yet.
+    // nobody placed yet. Exteriors only: the dummy standing indoors is a third active
+    // interior nobody asked for (backlog 382).
     const stand = humans.find((p) => p.cellKey !== undefined && heldAnchors.has(p.cellKey)
-      && parseExterior(p.cellKey) !== undefined)
-      ?? humans.find((p) => p.cellKey !== undefined && heldAnchors.has(p.cellKey));
+      && parseExterior(p.cellKey) !== null);
     const place = stand
       ? { cellKey: stand.cellKey!, x: stand.pose?.x ?? 0, y: stand.pose?.y ?? 0, z: stand.pose?.z ?? 0 }
       : undefined;
@@ -1651,6 +1659,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const anchorLine = cells.join(',');
     if (anchorLine !== lastAnchorCells) {
       lastAnchorCells = anchorLine;
+      noteAnchorsChanged(now); // the peer is about to load cells: no silence verdict for a while (383)
       log('info', 'simpeer.anchors', {
         world: worldId, exteriors: anchors.length, interiors: interiors.length,
         occupied: humans.map((p) => `${p.name}@${p.cellKey}${p.inChargen === true ? ' [chargen]' : ''}`),
