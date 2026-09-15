@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 
 const STEP = 30_000;
+const BOOT = { retail: true, joinTimeoutMs: 420_000 }; // iron_cuirass is retail; the example suite has no armour by that name
 const ITEM = 'iron_cuirass';
 const WORN = 100;
 async function stateOf(c, id) {
@@ -19,7 +20,7 @@ async function stateOf(c, id) {
 const netObjs = async (c) => JSON.parse(await c.eval('window.omw.state.netObjects||"{}"'));
 
 export default async function run(ctx) {
-  const [a, b] = await Promise.all([ctx.launchClient('bot-a'), ctx.launchClient('bot-b')]);
+  const [a, b] = await Promise.all([ctx.launchClient('bot-a', '', BOOT), ctx.launchClient('bot-b', '', BOOT)]);
   await a.cmd(`give:${ITEM}`);
   await ctx.sleep(500);
   await a.cmd(`setcond:${ITEM}:${WORN}`);
