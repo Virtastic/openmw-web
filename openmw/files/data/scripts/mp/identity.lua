@@ -307,6 +307,26 @@ local function itemState(item)
     return nil
 end
 
+-- BOUND ITEMS ARE NOT POSSESSIONS. A Bound Dagger exists for the spell's duration and the
+-- engine takes it back; the doc recorded it like any dagger, so a relog inside the window
+-- granted a permanent one. The engine names every bound record in a GMST; skip those.
+local boundIds = nil
+local function isBoundRecord(id)
+    if boundIds == nil then
+        boundIds = {}
+        pcall(function()
+            for _, name in ipairs({ 'sMagicBoundBattleAxeID', 'sMagicBoundCuirassID', 'sMagicBoundDaggerID',
+                'sMagicBoundGlovesID', 'sMagicBoundHelmID', 'sMagicBoundLongbowID', 'sMagicBoundLongswordID',
+                'sMagicBoundMaceID', 'sMagicBoundShieldID', 'sMagicBoundSpearID', 'sMagicBoundBootsID',
+                'sMagicBoundLeftGauntletID', 'sMagicBoundRightGauntletID' }) do
+                local v = core.getGMST(name)
+                if type(v) == 'string' and v ~= '' then boundIds[string.lower(v)] = true end
+            end
+        end)
+    end
+    return boundIds[string.lower(tostring(id))] == true
+end
+
 local function snapInventory()
     local counts, order = {}, {}
     -- ADDITIVE, and deliberately so. `items` keeps its exact existing shape and arithmetic,
@@ -317,15 +337,17 @@ local function snapInventory()
     -- the grant. Getting the states wrong costs fidelity; it cannot cost items.
     local states = {}
     for _, item in ipairs(Actor.inventory(self):getAll()) do
-        if not counts[item.recordId] then
-            order[#order + 1] = item.recordId
-        end
-        counts[item.recordId] = (counts[item.recordId] or 0) + item.count
-        local st = itemState(item)
-        if st then
-            local bucket = states[item.recordId]
-            if not bucket then bucket = {}; states[item.recordId] = bucket end
-            bucket[#bucket + 1] = st
+        if not isBoundRecord(item.recordId) then
+            if not counts[item.recordId] then
+                order[#order + 1] = item.recordId
+            end
+            counts[item.recordId] = (counts[item.recordId] or 0) + item.count
+            local st = itemState(item)
+            if st then
+                local bucket = states[item.recordId]
+                if not bucket then bucket = {}; states[item.recordId] = bucket end
+                bucket[#bucket + 1] = st
+            end
         end
     end
     local items = {}

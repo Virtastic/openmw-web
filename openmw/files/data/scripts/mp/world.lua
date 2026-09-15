@@ -129,6 +129,13 @@ end
 local TIME_FIELDS = { 'gamehour', 'day', 'month', 'year' }
 local timeFields = nil
 local clockWarned = false
+-- DAYSPASSED MOVES WITH THE CALENDAR. The engine's TimeStamp is (gamehour, dayspassed), and
+-- everything that ages by days reads it -- powers once a day, corpse disposal, disease
+-- worsening, levelled respawn. The calendar fields above were written and this one never
+-- was, so a shared clock a day ahead of this engine's boot left every such timer a day
+-- late, and a slew across midnight ran them backwards. Kept relative to what the engine
+-- started with (the offset is learned on the first write), so every engine agrees.
+local daysPassedOffset = nil
 
 local function probeTimeFields()
     if timeFields then return timeFields end
@@ -175,6 +182,16 @@ local function writeLocalTime(t)
     local fields = probeTimeFields()
     local values = { gamehour = t.gameHour, day = t.day, month = t.month - 1, year = t.year }
     local wrote = false
+    pcall(function()
+        local totalDays = math.floor(absHours(t) / 24)
+        if daysPassedOffset == nil then
+            local have = store['dayspassed']
+            if type(have) ~= 'number' then return end
+            daysPassedOffset = have - totalDays
+        end
+        local want = totalDays + daysPassedOffset
+        if store['dayspassed'] ~= want then store['dayspassed'] = want end
+    end)
     for _, name in ipairs(TIME_FIELDS) do
         if fields[name] then
             local ok, err = pcall(function() store[name] = values[name] end)
