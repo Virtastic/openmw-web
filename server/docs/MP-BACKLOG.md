@@ -180,6 +180,8 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 228 | An NPC killed by a friend mid-conversation leaves the window open; results execute on the corpse (world not paused in MP) | MP_ActorDeath for lockHeld → removeMode Dialogue + releaseLock |
 | 229 | Persuasion/result-script Fight/Flee/Alarm changes stay on the talking client (no AI-setting field on ActorStats) | actors.lua |
 | 230 | TalkedToPc per engine and never persisted: every NPC greets a returning player as a stranger | needs a binding |
+| 231 | Any teleport of the avatar (SELF SNAP → PlayerCellChange → tryTeleport → teleportNotPlayer) calls stats.land(false): a snap mid-fall makes the rest of the fall free (exploit; the snap fires on every levitate release because the client's stream lags the climb) | objectbindings.cpp:122; global.lua:2361 skip land() for same-cell teleports or carry fall height |
+| 232 | s147 (#100) still open after 3 sweeps: peer bar unmoved after a 1300-unit avatar fall; #93 carries a peer fall probe ("avatar #n landed from z=... fell N hp=...") to tell "never airborne" from "landed, not charged" (suspect: mJumpState never InAir for the dynamically-created avatar record on the headless peer — refreshJumpAnims resets when the jump group is missing) | global.lua avatarFallProbe; character.cpp:2240/517-522 |
 
 ## Open (found, not fixed)
 
