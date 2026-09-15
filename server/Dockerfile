@@ -11,6 +11,7 @@ FROM deps AS build
 COPY tsconfig.json esbuild.mjs ./
 COPY src ./src
 COPY test ./test
+COPY bots ./bots
 COPY config.default.toml ./
 COPY web ./web
 RUN npm run build
