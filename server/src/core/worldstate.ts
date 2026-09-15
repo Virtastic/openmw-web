@@ -23,6 +23,10 @@ const MAX_RECORD_ID = 64;
 const MAX_COUNT = 10000;
 const MAX_CELL_KEY = 128;
 const MAX_CONTAINER_ENTRIES = 512;
+// A human's FIRST open of a container (the roll that becomes canonical): the largest vanilla
+// chest holds a couple of dozen stacks; the richest purse (Creeper, Mudcrab) is 5,000-10,000.
+const MAX_FIRST_OPEN_STACKS = 64;
+const MAX_FIRST_OPEN_GOLD = 50_000;
 // A CELL'S STATE IS ONE FRAME, AND THE WIRE HAS A CEILING. WorldCellState and CellSnapshotReplace
 // carry every placed object and every tombstone in a cell in a single LSER value, and LSER
 // refuses anything past 65,536 nodes. A placed object is ~19 nodes, so around 3,400 dropped
@@ -1076,6 +1080,20 @@ export class WorldState {
       if (contents === undefined) {
         this.invalid(player, 'ContainerOpen');
         return;
+      }
+      // A FIRST OPEN IS TRUSTED, so its shape is bounded like a hoard: a client that walked
+      // through a town declaring every chest full of 10,000 gold made that canonical for the
+      // world. No leveled roll produces more than a few dozen stacks or a merchant purse's
+      // worth of gold in a chest; over that is not a container, it is a declaration.
+      if (player.system !== true) {
+        const goldIn = contents.filter((i) => i.id === 'gold_001').reduce((n, i) => n + i.n, 0);
+        const declaredGold = finite(body.get('gold')) ?? 0;
+        if (contents.length > MAX_FIRST_OPEN_STACKS || goldIn > MAX_FIRST_OPEN_GOLD || declaredGold > MAX_FIRST_OPEN_GOLD) {
+          log('warn', 'world.container_first_open_implausible', { player: player.name, cellKey, key: ref.key, stacks: contents.length, gold: goldIn, purse: declaredGold });
+          this.moderationNote?.(player.accountKey, 'container_first_open');
+          this.invalid(player, 'ContainerOpen');
+          return;
+        }
       }
       // origin: a copy, not an alias — `items` is mutated in place by every take/put.
       cont = { items: contents, stateSeq: 1, origin: contents.map((i) => ({ ...i })) };

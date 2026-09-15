@@ -306,3 +306,36 @@ test('a non-holder forging ActorMoveBatch is rejected, counted, and reaches nobo
     await server.close();
   }
 });
+
+// TWO CHEAP DECLARATIONS a modified client could make, now bounded: Strength 999 (stored and
+// pushed to the avatar), and a level that climbs by one sixty times a second (255 in four
+// seconds). And the first open of a container is canonical for the world, so a chest declared
+// full of 10,000 gold on a walk through town is refused, not adopted.
+test('stat values are bounded, a level steps once per window, a first open is plausible', async (t) => {
+  const { startServer } = await import('../src/server');
+  const { TestClient, tmpDataDir, readPlayerDoc } = await import('./helpers');
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  const { welcome } = await c.joinAsNew('Cheater');
+  const charId = String(welcome['characterId']);
+  await c.waitEvent('PlayerList');
+  c.sendCellChange('0,0', 0, 0, 0);
+  await c.waitEvent('PlayerCellChange');
+  c.sendEvent('PlayerAttributes', { strength: 999 });
+  c.sendEvent('PlayerAttributes', { strength: 60 });
+  c.sendEvent('PlayerLevel', { level: 2 });
+  c.sendEvent('PlayerLevel', { level: 3 });
+  c.sendEvent('PlayerLevel', { level: 4 });
+  c.sendEvent('ContainerOpen', { ref: { __refnum: { index: 77, contentFile: 0 } }, cellKey: '0,0', contents: [{ id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }] });
+  c.sendEvent('ContainerOpen', { ref: { __refnum: { index: 78, contentFile: 0 } }, cellKey: '0,0', contents: [{ id: 'gold_001', n: 40 }] });
+  const st = (await c.waitEvent('ContainerState')).value as { items: { id: string; n: number }[] };
+  assert.deepEqual(st.items, [{ id: 'gold_001', n: 40 }], 'the plausible chest is canonical; the implausible one was refused (no state for it)');
+  await new Promise((r) => setTimeout(r, 200));
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId) as { stats?: { attributes?: Record<string, number>; level?: number } };
+  assert.equal(doc.stats?.attributes?.['strength'], 60, 'Strength 999 was refused, 60 landed');
+  assert.equal(doc.stats?.level, 3, 'the first declaration seeds; then one step per window (4 refused)');
+});

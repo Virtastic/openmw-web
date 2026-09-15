@@ -32,6 +32,8 @@ const GOLD = 'gold_001';
 const MAX_SPELLS = 1024;
 const MAX_STAT_ENTRIES = 64;
 const MAX_STAT_KEY = 32;
+const MAX_STAT_VALUE = 200; // attributes and skills: 100 is the game's ceiling; damage keys ("<id>_damage") share the map
+const LEVEL_STEP_MS = 10_000;
 export const MAX_EQUIPMENT_SLOT = 20;
 
 export interface StateCtx {
@@ -279,6 +281,10 @@ function parseNumberMap(body: LTable): Record<string, number> | undefined {
   for (const [k, v] of body) {
     const n = finite(v);
     if (typeof k !== 'string' || k.length === 0 || k.length > MAX_STAT_KEY || n === undefined) return undefined;
+    // An attribute or skill lives in [0, 100] in the game's own rules and fortifies past it
+    // only through effects, which never travel here (base values do). A DoS bound, like the
+    // inventory's: a modified client declaring Strength 999 was stored and pushed to the avatar.
+    if (n < 0 || n > MAX_STAT_VALUE) return undefined;
     out[k] = n;
   }
   return out;
@@ -299,6 +305,16 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   // A level moves by ONE at a time in Morrowind. Several at once is not a fast player, it is
   // a declaration — same absurd-only bar as the movement envelope, same non-rejecting answer.
   const had = ctx.store.getCached(player.charId)?.stats?.level;
+  // ...and by one per window. +1 was the legitimate step, and sixty of them a second reached
+  // 255 in four seconds; a level-up takes minutes of play.
+  const nowMs = Date.now();
+  if (had !== undefined && level > had) {
+    if (player.levelStepAt !== undefined && nowMs - player.levelStepAt < LEVEL_STEP_MS) {
+      noteGain(ctx, player, 'level_rate', { from: had, to: level });
+      return false;
+    }
+    player.levelStepAt = nowMs;
+  }
   if (had !== undefined && level - had >= LEVEL_JUMP_LIMIT) {
     // REFUSED, not merely counted. A level moves by one at a time in Morrowind: there is no
     // legitimate path that produces a jump this size, so unlike the inventory bar below there
