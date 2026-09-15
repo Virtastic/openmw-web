@@ -811,6 +811,26 @@ end
 --   * effects: temporary, not from equipment, and not a record the owner sent us -- diffed by
 --     instance so a second Burden is a second report and an expiry is a removal.
 local ownerActive = {} -- id -> { localRecordId -> count } effects the OWNER applied here
+
+-- The effects of a record that SHOW on another player's body: an invisible friend fades, a
+-- chameleoned one shimmers, a lit one lights the corridor. Everything else in the record is
+-- dropped on an observer's puppet (its bars are a mirror; a local Damage Health would fight it).
+local VISIBLE_EFFECT = { invisibility = true, chameleon = true, light = true }
+local function visibleEffectIndexes(localId, indexes)
+    local rec
+    pcall(function()
+        rec = core.magic.spells.records[localId]
+            or core.magic.enchantments.records[localId]
+            or (types.Potion.record and types.Potion.record(localId))
+    end)
+    if not (rec and rec.effects) then return {} end
+    local out = {}
+    for _, i in ipairs(indexes) do
+        local e = rec.effects[i + 1]
+        if e and e.id and VISIBLE_EFFECT[e.id] then out[#out + 1] = i end
+    end
+    return out
+end
 local avatarEffectsAt = 0
 local AVATAR_EFFECTS_EVERY = 1.0
 local avatarSpellsReported = {} -- id -> { localSpellId -> true }
@@ -1131,8 +1151,16 @@ local function mirrorPuppets()
             end
             local rec = types.NPC.records[p.obj.recordId]
             local okS, st = pcall(types.Actor.getStance, p.obj)
+            -- What this puppet is visibly under (MP_AvatarActiveSpells on an observer).
+            local actives = {}
+            pcall(function()
+                for _, sp in pairs(types.Actor.activeSpells(p.obj)) do
+                    if sp.temporary then actives[#actives + 1] = tostring(sp.id) end
+                end
+            end)
+            table.sort(actives)
             m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z,
-                name = rec and rec.name or p.name, eq = eq,
+                name = rec and rec.name or p.name, eq = eq, actives = actives,
                 flags = lastFlags[id] or 0, jumps = jumpEdges[id] or 0, stance = okS and st or -1 }
         end
     end
@@ -1848,18 +1876,26 @@ local eventHandlers = {
     -- says why). Applied with resistances/absorption/reflect ignored: the owner's engine has
     -- already rolled all of that once, and this is the same body. Stackable so a second
     -- potion of the same kind is a second instance, as it is on the owner.
+    --
+    -- On every OTHER client the same op arrives for the puppet, and only what is VISIBLE is
+    -- kept (invisibility, chameleon, light): a friend who drank an invisibility potion fades
+    -- on your screen too. The rest of the effect is the avatar's business; the puppet's bars
+    -- are mirrored, and a local Damage Health on it would fight that mirror.
     MP_AvatarActiveSpells = function(data)
-        if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
+        if not data or not data.id then return end
         local p = puppets[data.id]
         if not (p and p.obj and p.obj:isValid()) then return end
         local spells = types.Actor.activeSpells(p.obj)
+        local observer = not (mp.isSystem and mp.isSystem())
         ownerActive[data.id] = ownerActive[data.id] or {}
         for _, sp in ipairs(data.add or {}) do
             local localId = sp.id and worldmp.toLocal(sp.id)
-            if localId then ownerActive[data.id][localId] = (ownerActive[data.id][localId] or 0) + 1 end
-            if localId and #(sp.effects or {}) > 0 then
+            local effects = sp.effects or {}
+            if observer and localId then effects = visibleEffectIndexes(localId, effects) end
+            if localId and #effects > 0 then ownerActive[data.id][localId] = (ownerActive[data.id][localId] or 0) + 1 end
+            if localId and #effects > 0 then
                 local ok, err = pcall(function()
-                    spells:add({ id = localId, effects = sp.effects, caster = p.obj, stackable = true,
+                    spells:add({ id = localId, effects = effects, caster = p.obj, stackable = true,
                         ignoreResistances = true, ignoreSpellAbsorption = true, ignoreReflect = true, quiet = true })
                 end)
                 if not ok then print('[mp] avatar active effect add failed: ' .. tostring(err)) end

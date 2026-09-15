@@ -675,9 +675,15 @@ function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolea
     noteGain(ctx, player, 'active_spell_flood', { inWindow: player.activeOpsInWindow });
     return true; // consumed, not forwarded
   }
-  const worldPeer = ctx.worldPeer();
-  if (worldPeer && (add.length > 0 || remove.length > 0)) {
-    worldPeer.peer.sendEvent('AvatarActiveSpells', { id: player.id, add, remove });
+  if (add.length === 0 && remove.length === 0) return true;
+  player.actives ??= new Map();
+  for (const op of add) player.actives.set(op.key, op);
+  for (const op of remove) player.actives.delete(op.key);
+  // The peer applies the whole effect to the avatar; every other client gets the same op and
+  // keeps only what is VISIBLE on a puppet (invisibility, chameleon, light -- global.lua),
+  // so a friend who drank an invisibility potion fades on your screen too.
+  for (const other of ctx.roster.inWorld()) {
+    if (other.id !== player.id) other.peer.sendEvent('AvatarActiveSpells', { id: player.id, add, remove });
   }
   return true;
 }
@@ -796,6 +802,11 @@ export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
     const doc = ctx.store.getCached(other.charId);
     if (doc?.appearance) joiner.peer.sendEvent('PlayerAppearance', { id: other.id, ...doc.appearance });
     if (doc?.equipment) joiner.peer.sendEvent('PlayerEquipment', { id: other.id, slots: equipmentToL(doc.equipment) });
+    // What the others are under right now (a joining PEER gets these from each owner's
+    // resyncActive on SimReady instead, with their real instance keys).
+    if (joiner.system !== true && other.actives && other.actives.size > 0) {
+      joiner.peer.sendEvent('AvatarActiveSpells', { id: other.id, add: [...other.actives.values()], remove: [] });
+    }
     // Phase 2b: a JOINING PEER gets the whole character of everyone already here.
     if (joiner.system === true && !other.system && doc) {
       joiner.peer.sendEvent('AvatarState', avatarStateBody(other.id, doc, other.bounty));

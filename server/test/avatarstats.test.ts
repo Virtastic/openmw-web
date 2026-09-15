@@ -248,3 +248,37 @@ test("the peer's report of a disease and a hostile effect reaches the owner; a c
   await a.waitEvent('ChatMessage', (vv) => (vv as { text?: string }).text === 'cursefence');
   assert.equal(a.inbox.events.filter((e) => e.name === 'SelfSpells').length, 0, 'a client cursed another player');
 });
+
+// WHAT OTHERS SEE. Invisibility and Chameleon exist for other people's eyes, and the op went
+// to the peer alone: a friend who cast it stayed solid on every screen. Every other client
+// now gets the same op (and keeps the visible part for the puppet), and a late joiner is
+// handed what each player is under right now.
+test("a player's active effects reach the other clients, and a late joiner is caught up", async (t) => {
+  const { server, peer, a } = await world(t);
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Watcher');
+  await b.waitEvent('PlayerList');
+  b.inbox.events.length = 0;
+  a.sendEvent('PlayerActiveSpells', { add: [{ key: '7', id: 'invisibility', effects: [0] }], remove: [] });
+  const seen = await b.waitEvent('AvatarActiveSpells', (v) => (v as { id?: number })?.id === a.playerId);
+  assert.equal((seen.value as { add: { id: string }[] }).add[0]!.id, 'invisibility', 'the observer gets the op');
+  await peer.waitEvent('AvatarActiveSpells', (v) => (v as { id?: number })?.id === a.playerId);
+
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  await c.joinAsNew('Latecomer');
+  const catchUp = await c.waitEvent('AvatarActiveSpells', (v) => (v as { id?: number })?.id === a.playerId);
+  assert.deepEqual((catchUp.value as { add: { key: string; id: string }[] }).add.map((s) => s.id), ['invisibility'],
+    'a late joiner is told what A is under');
+
+  // Gone means gone: after the removal a newer joiner hears nothing about it.
+  a.sendEvent('PlayerActiveSpells', { add: [], remove: [{ key: '7', id: 'invisibility' }] });
+  await b.waitEvent('AvatarActiveSpells', (v) => ((v as { remove?: unknown[] })?.remove?.length ?? 0) > 0);
+  const d = await TestClient.connect(server.port);
+  t.after(() => d.close());
+  await d.joinAsNew('Later');
+  await d.waitEvent('PlayerList');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(d.inbox.events.filter((e) => e.name === 'AvatarActiveSpells').length, 0, 'nothing to catch up on');
+});

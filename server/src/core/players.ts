@@ -100,6 +100,9 @@ export interface Player {
   // PlayerActiveSpells budget (playerstate.ts handleActiveSpells).
   activeOpsWindowAt?: number;
   activeOpsInWindow?: number;
+  // The owner's live temporary effects (key = the owner's instance id), so a late joiner can
+  // be shown an invisible or lit friend. Session-only: an effect outlives nothing.
+  actives?: Map<string, { key: string; id: string; effects?: number[] }>;
   // Sliding-window budget for CLIENT-asserted restoration while the peer owns this player's
   // bars (potions, rest, self-heal -- all still client-side until the intent tier). Without a
   // bound, "a raise is a restoration" is an immortality exploit: a modified client claims full
