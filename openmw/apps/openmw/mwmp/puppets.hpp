@@ -122,8 +122,9 @@ namespace MWMP
         ESM::RefNum mAvatar;
         int mBounty; // the increment, not the total
         std::string mKind; // theft | assault | murder | trespass | pickpocket | sleeping
+        std::string mFaction; // the victim's primary faction (serialized RefId), or empty
     };
-    void recordCrime(ESM::RefNum avatar, int bounty, std::string kind);
+    void recordCrime(ESM::RefNum avatar, int bounty, std::string kind, std::string faction = {});
     std::vector<Crime> takeCrimesFor(ESM::RefNum avatar);
 
     /** CLIENT ONLY. While a peer simulates the cell the player stands in, the player's own

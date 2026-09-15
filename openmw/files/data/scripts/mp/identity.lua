@@ -130,6 +130,21 @@ local function snapAppearance()
             local ok, v = pcall(function() return NPC.isWerewolf(self) end)
             return (ok and v == true) or nil
         end)(),
+        -- VAMPIRE FACE. The head swap reads the Vampirism effect on the body, and a puppet never
+        -- had it: the disease spell rides the spellbook, which reaches the AVATAR only, never the
+        -- other players' puppets (backlog 154). Carry the id of the spell that grants it so
+        -- spawnPuppet can add that one spell to the puppet. nil when human.
+        vampireSpell = (function()
+            local found
+            pcall(function()
+                for _, spell in pairs(Actor.spells(self)) do
+                    for _, e in ipairs(spell.effects or {}) do
+                        if e.id == 'vampirism' then found = spell.id return end
+                    end
+                end
+            end)
+            return found
+        end)(),
         birthsign = (function()
             local ok, v = pcall(function() return types.Player.getBirthSign(self) end)
             if ok and type(v) == 'string' and v ~= '' then return v end
@@ -222,7 +237,14 @@ local function snapProgression()
     for _, id in ipairs(skillIds()) do
         skills[id] = NPC.stats.skills[id](self).base
     end
-    return { attributes = attributes, skills = skills, level = Actor.stats.level(self).current }
+    -- The Mark spell's spot (backlog 155): NpcStats only, so nothing carried it and Recall did
+    -- nothing after a relog. nil on an engine without the binding.
+    local mark
+    if mp.getMark then
+        local ok, m = pcall(mp.getMark)
+        if ok and type(m) == 'table' and m.cell ~= '' then mark = m end
+    end
+    return { attributes = attributes, skills = skills, level = Actor.stats.level(self).current, mark = mark }
 end
 
 local function snapSpells()
@@ -465,6 +487,14 @@ function identity.tick(now)
         if prog.level ~= last.level then
             last.level = prog.level
             mp.sendEvent('PlayerLevel', { level = prog.level })
+        end
+        -- The mark, when the engine can read one; only a SET mark is sent (nothing clears one).
+        if prog.mark then
+            local mfp = fingerprint(prog.mark)
+            if mfp ~= last.mark then
+                last.mark = mfp
+                mp.sendEvent('PlayerMark', prog.mark)
+            end
         end
         -- Spellbook add/remove diff on the same 1 s cadence.
         local spells = snapSpells()
@@ -713,6 +743,10 @@ local function applyPhase2(record)
                 pcall(function() spells:add(id) end)
             end
         end
+        -- The Mark spot (backlog 155). Its own pcall: an older engine has no setMark.
+        if record.mark and mp.setMark and type(record.mark.cell) == 'string' and record.mark.cell ~= '' then
+            pcall(mp.setMark, record.mark.cell, record.mark.x or 0, record.mark.y or 0, record.mark.z or 0)
+        end
         if record.equipment then
             -- Server doc shape: flat slot->recordId map (persist/playerstore.ts). Items are
             -- granted by global.lua (createObject+moveInto); equip once they land.
@@ -750,6 +784,7 @@ local function applyPhase2(record)
         last.progression = fingerprint(prog.attributes)
         last.skills = fingerprint(prog.skills)
         last.level = prog.level
+        last.mark = prog.mark and fingerprint(prog.mark) or nil
         last.spells = snapSpells()
         last.inventory = fingerprint(snapInventory())
     end)

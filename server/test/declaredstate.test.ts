@@ -249,3 +249,25 @@ test('a rich player keeps their inventory: big gold passes, and a refusal is ann
   assert.equal((ev.value as { kind?: string }).kind, 'PlayerInventory', 'the refusal must name the declaration so the client can re-send');
   c.close();
 });
+
+// The Mark spot (backlog 155) lives in NpcStats only, so nothing carried it and Recall did
+// nothing after a relog. A cell id and three finite numbers land in the doc; anything else
+// is refused (and named, so the client re-sends).
+test('a PlayerMark lands in the doc; a malformed one is refused', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  const { welcome } = await c.joinAsNew('Marker');
+  const charId = String(welcome['characterId']);
+  await c.waitEvent('PlayerList');
+  c.sendEvent('PlayerMark', { cell: 'Balmora, Guild of Mages', x: 1, y: 2.5, z: -3 });
+  const refused = c.waitEvent('StateRefused');
+  c.sendEvent('PlayerMark', { cell: '', x: 1, y: 2, z: 3 });
+  assert.equal(((await refused).value as { kind?: string }).kind, 'PlayerMark');
+  await new Promise((r) => setTimeout(r, 200));
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId) as { mark?: unknown };
+  assert.deepEqual(doc.mark, { cell: 'Balmora, Guild of Mages', x: 1, y: 2.5, z: -3 });
+});

@@ -355,6 +355,19 @@ do
   check('world.lua gives back the hours a refused rest adopted',
     w:find('function worldmp.timeRefused()', 1, true) ~= nil
     and w:find('targetAbs = targetAbs - pendingJump', 1, true) ~= nil)
+  -- Backlog 144/152/154/155: a guildmate's crime expels; form and fangs change on the standing
+  -- body instead of rebuilding it (the peer's avatar was torn down mid-fight); the Mark rides
+  -- the doc through the same restore as everything else.
+  check('global.lua MP_PlayerCrime expels from the victim faction',
+    g:find("types.NPC.expel(player, data.faction)", 1, true) ~= nil)
+  check('global.lua sets werewolf form / vampire spell in place on an appearance change',
+    g:find('types.NPC.setWerewolf(body, data.isWerewolf == true)', 1, true) ~= nil
+    and g:find("{ 'race', 'head', 'hair', 'isMale', 'class', 'birthsign', 'name' }", 1, true) ~= nil
+    and g:find('types.Actor.spells(obj):add(app.vampireSpell)', 1, true) ~= nil)
+  check('identity.lua carries the mark both ways, nil-guarded for older engines',
+    idn:find("mp.sendEvent('PlayerMark', prog.mark)", 1, true) ~= nil
+    and idn:find('record.mark and mp.setMark', 1, true) ~= nil
+    and idn:find('if mp.getMark then', 1, true) ~= nil)
   -- SocialNotice: server-side notices worth surfacing.
   check('global.lua forwards MP_SocialNotice',
     g:find('MP_SocialNotice', 1, true) ~= nil,

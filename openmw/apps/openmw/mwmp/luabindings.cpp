@@ -237,6 +237,34 @@ namespace MWMP
         // owner's client makes; the peer's player is the reference the witness check in
         // actors.cpp compares against anyway.
         api["recordCrimePaid"] = []() { MWBase::Environment::get().getWorld()->getPlayer().recordCrimeId(); };
+        // The player's Mark (backlog 155). NpcStats keeps just the cell id and the position,
+        // which is what the doc carries: {cell=<serialized cell id, '' when none>, x, y, z}.
+        // setMark takes the same id back (an interior name, '#x,y' for an exterior); a cell this
+        // world lacks never resolves in Player::getMarkedPosition, so Recall does nothing, as vanilla.
+        api["getMark"] = [](sol::this_state state) {
+            sol::table res(state, sol::create);
+            const MWWorld::Ptr player = MWMechanics::getPlayer();
+            const MWMechanics::NpcStats& stats = player.getClass().getNpcStats(player);
+            res["cell"] = stats.getMarkedCell().empty() ? std::string() : stats.getMarkedCell().serializeText();
+            res["x"] = stats.getMarkedPosition().pos[0];
+            res["y"] = stats.getMarkedPosition().pos[1];
+            res["z"] = stats.getMarkedPosition().pos[2];
+            return res;
+        };
+        api["setMark"] = [](std::string_view cell, float x, float y, float z) {
+            const MWWorld::Ptr player = MWMechanics::getPlayer();
+            MWMechanics::NpcStats& stats = player.getClass().getNpcStats(player);
+            if (cell.empty())
+            {
+                stats.clearMarkedPosition();
+                return;
+            }
+            ESM::Position pos{};
+            pos.pos[0] = x;
+            pos.pos[1] = y;
+            pos.pos[2] = z;
+            stats.setMarkedPosition(ESM::RefId::deserializeText(cell), pos);
+        };
         // Backlog 73: knockdown is not in the Lua stats API; the peer reports it with the avatar
         // bars so the owner stops driving a body that is lying on the floor.
         api["isKnockedDown"] = [](const sol::object& obj) -> bool {
@@ -293,6 +321,8 @@ namespace MWMP
                 sol::table e(state, sol::create);
                 e["bounty"] = c.mBounty;
                 e["kind"] = c.mKind;
+                if (!c.mFaction.empty())
+                    e["faction"] = c.mFaction;
                 out[i++] = e;
             }
             return out;

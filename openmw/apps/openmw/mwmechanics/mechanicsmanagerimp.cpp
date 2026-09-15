@@ -1499,7 +1499,12 @@ namespace MWMechanics
                 const char* kind = type == OT_Theft ? "theft" : type == OT_Assault ? "assault"
                     : type == OT_Murder ? "murder" : type == OT_Pickpocket ? "pickpocket"
                     : type == OT_Trespassing ? "trespass" : "sleeping";
-                MWMP::recordCrime(offender, bounty, kind);
+                // The victim's faction rides along (backlog 144): the owner's engine never ran
+                // commitCrime, so the expulsion vanilla does below happens in MP_PlayerCrime.
+                const ESM::RefId crimeFaction = (!victim.isEmpty() && victim.getClass().isNpc())
+                    ? victim.getClass().getPrimaryFaction(victim)
+                    : factionId;
+                MWMP::recordCrime(offender, bounty, kind, crimeFaction.serializeText());
                 return reported;
             }
             player.getClass().getNpcStats(player).setBounty(
@@ -1961,6 +1966,20 @@ namespace MWMechanics
         {
             inv.unequipSlot(MWWorld::InventoryStore::Slot_Robe);
             inv.ContainerStore::remove(ESM::RefId::stringRefId("werewolfrobe"), 1);
+        }
+
+        // An AVATAR on the peer fights with its owner's real form (backlog 152): the stat swap
+        // is actor-generic; the GUI and the witness check below stay with the owner's engine.
+        if (actor != player->getPlayer() && MWMP::isAvatar(actor.getCellRef().getRefNum()))
+        {
+            mActors.updateActor(actor, 0.f);
+            if (werewolf)
+            {
+                saveWerewolfStats(actor);
+                applyWerewolfStats(actor);
+            }
+            else
+                restoreWerewolfStats(actor);
         }
 
         if (actor == player->getPlayer())

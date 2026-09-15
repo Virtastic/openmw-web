@@ -139,6 +139,10 @@ test('a guard reaching an avatar on the peer reaches the owner as PlayerArrest; 
   peer.sendEvent('PlayerCrime', { id: a.playerId, bounty: 40, kind: 'assault' });
   const crime = await a.waitEvent('PlayerCrime');
   assert.deepEqual(crime.value, { bounty: 40, kind: 'assault' }, 'the increment and kind reach the owner');
+  // ...with the victim's faction when there is one (backlog 144: the owner expels itself).
+  peer.sendEvent('PlayerCrime', { id: a.playerId, bounty: 40, kind: 'assault', faction: 'mages guild' });
+  const guild = await a.waitEvent('PlayerCrime', (v) => (v as { faction?: string }).faction !== undefined);
+  assert.deepEqual(guild.value, { bounty: 40, kind: 'assault', faction: 'mages guild' });
 
   const b = await TestClient.connect(server.port);
   t.after(() => b.close());

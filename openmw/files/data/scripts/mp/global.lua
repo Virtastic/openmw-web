@@ -1017,7 +1017,7 @@ local function avatarArrestTick()
                 local okc, crimes = pcall(mp.takeCrimes, p.obj)
                 if okc and crimes then
                     for _, c in ipairs(crimes) do
-                        mp.sendEvent('PlayerCrime', { id = id, bounty = c.bounty, kind = c.kind })
+                        mp.sendEvent('PlayerCrime', { id = id, bounty = c.bounty, kind = c.kind, faction = c.faction })
                     end
                 end
             end
@@ -1100,6 +1100,11 @@ local function spawnPuppet(id, pose)
     local app = remoteIdentity[id] and remoteIdentity[id].appearance
     if app and app.isWerewolf then
         pcall(function() types.NPC.setWerewolf(obj, true) end)
+    end
+    -- THE FANGS (backlog 154): the head swap reads the Vampirism effect, and the spellbook only
+    -- reaches the avatar. The one spell that carries it goes on every puppet.
+    if app and type(app.vampireSpell) == 'string' and app.vampireSpell ~= '' then
+        pcall(function() types.Actor.spells(obj):add(app.vampireSpell) end)
     end
     if mp.isSystem and mp.isSystem() then actors.refollow(id, obj) end -- companions aim at the new body
     pushAvatarPolicy()
@@ -1906,6 +1911,15 @@ local eventHandlers = {
             local level = types.Player.getCrimeLevel(player) or 0
             types.Player.setCrimeLevel(player, math.max(0, math.floor(level + data.bounty + 0.5)))
         end)
+        -- A crime against a guildmate expels (backlog 144): vanilla does it in commitCrime,
+        -- which only the peer ran. Same test as vanilla: a rank in the victim's faction.
+        if type(data.faction) == 'string' and data.faction ~= '' then
+            pcall(function()
+                if (types.NPC.getFactionRank(player, data.faction) or 0) > 0 then
+                    types.NPC.expel(player, data.faction)
+                end
+            end)
+        end
         notice(string.format('Your %s was reported. Bounty +%d.', tostring(data.kind or 'crime'), math.floor(data.bounty + 0.5)))
     end,
 
@@ -2396,11 +2410,27 @@ local eventHandlers = {
         local prev = remoteIdentity[data.id].appearance
         local same = prev ~= nil
         if same then
-            for _, k in ipairs({ 'race', 'head', 'hair', 'isMale', 'class', 'isWerewolf', 'birthsign', 'name' }) do
+            for _, k in ipairs({ 'race', 'head', 'hair', 'isMale', 'class', 'birthsign', 'name' }) do
                 if prev[k] ~= data[k] then same = false break end
             end
         end
         remoteIdentity[data.id].appearance = data
+        -- FORM AND FANGS CHANGE IN PLACE (backlog 152/154): a transformation at moonrise, or
+        -- the vampirism spell arriving, used to rebuild the body -- on the peer that tore down
+        -- the avatar mid-fight. The engine can set both on the standing body.
+        local body = same and puppets[data.id] and puppets[data.id].obj
+        if body then
+            if (prev.isWerewolf == true) ~= (data.isWerewolf == true) then
+                pcall(function() types.NPC.setWerewolf(body, data.isWerewolf == true) end)
+            end
+            if prev.vampireSpell ~= data.vampireSpell then
+                pcall(function()
+                    local spells = types.Actor.spells(body)
+                    if prev.vampireSpell then spells:remove(prev.vampireSpell) end
+                    if data.vampireSpell then spells:add(data.vampireSpell) end
+                end)
+            end
+        end
         if not same then
             rebuildPuppet(data.id) -- no-op when not spawned; spawn applies the stored look
         end

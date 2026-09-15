@@ -102,6 +102,7 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
     // withholds playerRecord on every join and costs them their inventory and position.
     ...(recordId(body.get('birthsign')) ? { birthsign: recordId(body.get('birthsign'))! } : {}),
     ...(body.get('isWerewolf') === true ? { isWerewolf: true } : {}),
+    ...(recordId(body.get('vampireSpell')) ? { vampireSpell: recordId(body.get('vampireSpell'))! } : {}),
     ...(classSpecOf(body.get('classSpec')) ? { classSpec: classSpecOf(body.get('classSpec'))! } : {}),
   };
   // hair is OPTIONAL: bald/hairless heads are legal in the game data, and demanding it would
@@ -303,6 +304,15 @@ function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'at
   ctx.store.update(player.charId, (doc) => {
     doc.stats = { ...doc.stats, [field]: map };
   });
+  return true;
+}
+
+// The Mark spot (backlog 155): a cell id and three finite numbers, nothing else stored.
+function handleMark(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const cell = recordId(body.get('cell'));
+  const x = finite(body.get('x')), y = finite(body.get('y')), z = finite(body.get('z'));
+  if (!cell || x === undefined || y === undefined || z === undefined) return false;
+  ctx.store.update(player.charId, (doc) => (doc.mark = { cell, x, y, z }));
   return true;
 }
 
@@ -803,6 +813,7 @@ const HANDLERS: Record<string, (ctx: StateCtx, player: Player, body: LTable) => 
   PlayerAttributes: (c, p, b) => handleNumberMap(c, p, b, 'attributes'),
   PlayerSkills: (c, p, b) => handleNumberMap(c, p, b, 'skills'),
   PlayerLevel: handleLevel,
+  PlayerMark: handleMark,
   PlayerSpellbook: handleSpellbook,
   PlayerInventory: handleInventory,
   PlayerItemAcquired: handleItemAcquired,

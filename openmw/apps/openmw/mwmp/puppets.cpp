@@ -219,7 +219,7 @@ namespace MWMP
         return it == summoners().end() ? ESM::RefNum{} : it->second;
     }
 
-    void recordCrime(ESM::RefNum avatar, int bounty, std::string kind)
+    void recordCrime(ESM::RefNum avatar, int bounty, std::string kind, std::string faction)
     {
         auto& av = avatars();
         const auto it = av.find(avatar);
@@ -228,7 +228,7 @@ namespace MWMP
         it->second = std::max(0, it->second + bounty);
         if (crimes().size() >= sMaxPending)
             return;
-        crimes().push_back({ avatar, bounty, std::move(kind) });
+        crimes().push_back({ avatar, bounty, std::move(kind), std::move(faction) });
         Log(Debug::Info) << "[mp] avatar " << avatar.mIndex << " committed " << crimes().back().mKind << " bounty +" << bounty;
     }
 

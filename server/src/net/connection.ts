@@ -718,12 +718,18 @@ export class Connection implements Peer {
         return;
       }
       const body = value instanceof Map ? value : undefined;
-      const idv = body?.get('id'); const bv = body?.get('bounty'); const kv = body?.get('kind');
+      const idv = body?.get('id'); const bv = body?.get('bounty'); const kv = body?.get('kind'); const fv = body?.get('faction');
       const id = typeof idv === 'number' ? idv : undefined;
       const bounty = typeof bv === 'number' && Number.isFinite(bv) && Math.abs(bv) <= 100_000 ? bv : undefined;
       const target = id !== undefined ? this.ctx.roster.get(id) : undefined;
       if (!target || target.system === true || !target.inWorld || bounty === undefined) return;
-      target.peer.sendEvent('PlayerCrime', { bounty, ...(typeof kv === 'string' ? { kind: kv.slice(0, 16) } : {}) });
+      // The victim's faction (backlog 144): the owner's client expels itself from it.
+      const faction = typeof fv === 'string' && fv.length > 0 && fv.length <= 64 ? fv : undefined;
+      target.peer.sendEvent('PlayerCrime', {
+        bounty,
+        ...(typeof kv === 'string' ? { kind: kv.slice(0, 16) } : {}),
+        ...(faction ? { faction } : {}),
+      });
       return;
     }
     if (name === 'PlayerLeaving') {

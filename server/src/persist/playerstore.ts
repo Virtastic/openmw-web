@@ -54,6 +54,9 @@ export interface PlayerAppearanceDoc {
   // rides the spellbook; the form itself is a flag on NpcStats, so without this a werewolf
   // relogged as a human. Absent means human, so old docs need no migration.
   isWerewolf?: boolean;
+  // The spell that grants Vampirism, when the character has one: puppets get that one spell
+  // so the vampire head shows on other screens (the spellbook reaches only the avatar).
+  vampireSpell?: string;
 }
 
 // Type alias (not interface) so it structurally satisfies JsLike's index signature.
@@ -79,6 +82,10 @@ export interface PlayerDoc {
     level?: number;
   };
   spells?: string[];
+  // The Mark spell's spot: the engine's serialized cell id and a position. Lives in NpcStats
+  // only, so without this Recall did nothing after a relog. One per character, not per world:
+  // a cell the current world lacks never resolves, which is vanilla's "no mark" answer.
+  mark?: { cell: string; x: number; y: number; z: number };
   position?: { cellKey: string; x: number; y: number; z: number };
   // Character slots: one doc per CHARACTER, shared across worlds — but a position only
   // makes sense in the world it was recorded in. positions is keyed by world id;
