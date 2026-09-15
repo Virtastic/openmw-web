@@ -66,7 +66,7 @@ pipeline {
     stage('Multiplayer harness') {
       when { expression { params.RUN_HARNESS } }
       steps {
-        sh "SCENARIOS='${params.SCENARIOS}' /src/ci/jenkins/run-harness.sh"
+        sh "SCENARIOS='${params.SCENARIOS}' bash /src/ci/jenkins/run-harness.sh"
       }
       post {
         always {
