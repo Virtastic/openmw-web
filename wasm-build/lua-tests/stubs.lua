@@ -148,8 +148,6 @@ function M.install(opts)
     vector2 = function(a, b) return { a, b } end,
     vector3 = function(a, b, c) return { x = a, y = b, z = c } end,
   }
-  -- combat.lua pulls threat in at load; nothing in the combat tests exercises it.
-  package.loaded['scripts.mp.threat'] = { onHitTaken = function() end, note = function() end }
 
   return {
     mp = mp, core = core, types = types, calls = calls,

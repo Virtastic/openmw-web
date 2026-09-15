@@ -1498,5 +1498,57 @@ do
       and restRefusedHere(true, 'owner') == false and restRefusedHere(false, 'anyone') == false and restRefusedHere(false, 'off') == false)
 end
 
+print('recv watchdog, the dead do not talk, svc:open, threat.lua gone, same-cell snap is not a door, revive in place (31, 33, 34, 76, 138, 231)')
+do
+  local n = io.open('./openmw/files/data/scripts/mp/net.lua'):read('*a')
+  local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  -- #31: a half-open socket never fires onClose; the client hangs up itself when nothing
+  -- has arrived for 75 s, and onClose (state == Joined) redials.
+  check('net.lua stamps lastRecvAt on open and on every frame, and hangs up after 75 s of silence while Joined',
+    n:find('local RECV_TIMEOUT_SECONDS = 75', 1, true) ~= nil
+    and n:find('function net.onOpen()\n    lastRecvAt = core.getRealTime()', 1, true) ~= nil
+    and n:find('function net.onJson(str)\n    lastRecvAt = core.getRealTime()', 1, true) ~= nil
+    and n:find("if net.state ~= 'Joined' then return end\n    if now - lastRecvAt > RECV_TIMEOUT_SECONDS then", 1, true) ~= nil
+    and n:find('mp.disconnect() -- onClose sees state == Joined and schedules the redial', 1, true) ~= nil)
+  -- #33: the death edge closes the conversation client-side; the server drops the lock too
+  -- (quests.test.ts "the holder dying releases the lock").
+  check('identity.lua closes the Dialogue window on the death edge',
+    idn:find("mp.sendEvent('PlayerDeath', {})", 1, true) ~= nil
+    and idn:find("mp.sendEvent('PlayerDeath', {})", 1, true) < idn:find("pcall(function() I.UI.removeMode('Dialogue') end)", 1, true))
+  -- #34: svc:open:<Mode>[:<recordId>] / svc:close:<Mode>; barter:open/close stay as aliases.
+  check('player.lua opens any service window through svc:open and keeps barter:open as its alias',
+    p:find('local SERVICE_MODES = { Barter = true, Training = true, Travel = true, SpellCreation = true, Enchanting = true }', 1, true) ~= nil
+    and p:find("if cmd == 'barter:open' then svcMode = 'Barter'", 1, true) ~= nil
+    and p:find("svcMode, wantMerchant = cmd:match('^svc:open:(%a+):?(.*)$')", 1, true) ~= nil
+    and p:find('I.UI.addMode(svcMode, { target = best })', 1, true) ~= nil
+    and p:find("local closeMode = cmd == 'barter:close' and 'Barter' or cmd:match('^svc:close:(%a+)$')", 1, true) ~= nil
+    and p:find('I.UI.removeMode(closeMode)', 1, true) ~= nil)
+  -- #76: threat.lua was dead code (the relayed CombatHit shape never matched); gone with its
+  -- call sites and its CMake entry.
+  local cm = io.open('./openmw/files/data/CMakeLists.txt'):read('*a')
+  check('threat.lua is gone and nothing requires it',
+    io.open('./openmw/files/data/scripts/mp/threat.lua') == nil
+    and cm:find('threat.lua', 1, true) == nil)
+  for _, f in ipairs({ 'actors', 'combat', 'global', 'player', 'quests', 'puppet', 'avatar' }) do
+    local src = io.open('./openmw/files/data/scripts/mp/' .. f .. '.lua'):read('*a')
+    check(f .. ".lua does not require('scripts.mp.threat')", src:find("require('scripts.mp.threat')", 1, true) == nil)
+  end
+  -- #231/#74: a same-cell snap within SNAP_DIST is walked, not a door: no tryTeleport, so no
+  -- land(false) zeroing the avatar's fall height mid-fall.
+  check('MP_PlayerCellChange treats a same-cell snap within SNAP_DIST as walked',
+    g:find('local sameCell = prevCell == data.cellKey', 1, true) ~= nil
+    and g:find('local walked = (sameCell or (parseExteriorKey(prevCell) ~= nil and parseExteriorKey(data.cellKey) ~= nil))\n                    and (from - util.vector3(data.x, data.y, data.z)):length2() <= 256 * 256', 1, true) ~= nil
+    and g:find('if walked then return end', 1, true) ~= nil)
+  -- #138: revive in place through the per-actor resurrect (#293), on the peer and on clients.
+  check('revivePuppet resurrects the standing body, moves it to the pose, clears the dead latch and pushes the bars',
+    g:find('local function revivePuppet(id, cellArg, pose)', 1, true) ~= nil
+    and g:find('pcall(mp.resurrect, p.obj)\n    if pose then tryTeleport(p.obj, cellArg, util.vector3(pose.x, pose.y, pose.z)) end\n    pcall(function() p.obj:sendEvent(\'MP_Revive\', {}) end)\n    pushStatsToPuppet(id)', 1, true) ~= nil
+    and g:find('revivePuppet(data.id, remoteCell[data.id] and inviteCellArg(remoteCell[data.id]), pose)', 1, true) ~= nil
+    and g:find('revivePuppet(data.id, destCellArg(), lastPose[data.id])', 1, true) ~= nil
+    and g:find('THERE IS NO PER-ACTOR RESURRECT', 1, true) == nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

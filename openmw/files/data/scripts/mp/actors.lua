@@ -11,7 +11,6 @@ local world = require('openmw.world')
 local mp = require('openmw.mp')
 
 local json = require('scripts.mp.json')
-local threat = require('scripts.mp.threat')
 
 local actors = {}
 
@@ -205,10 +204,6 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
         cell.resynced = true
         mp.sendEvent('ResyncRequest', { cellKey = cellKey })
     end
-    -- Phase 4: threat decays continuously, so a hit landed a minute ago stops owning the
-    -- fight. Cheap: a multiply per tracked (actor, player) pair, and only for actors in
-    -- the cell we are simulating.
-    threat.decay(now)
     -- RUNTIME-SPAWNED ACTORS (levelled lists, PlaceAt, summons) exist on this engine only.
     -- Ask the server to name each one; it becomes a net object every client builds from the
     -- record (ObjectPlace with actor=true) and this stream addresses by net id. Until it is
@@ -236,17 +231,6 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
         tracked.obj = obj
         tracked.seen = now
         tracked.netId = deps.netIdOf and deps.netIdOf(obj) or nil
-
-        -- Sticky aggro: retarget only when a challenger clears the margin, which is what
-        -- stops the enemy strobing between two players and hitting neither.
-        local want = threat.targetOf(key)
-        if want then
-            local target = nil
-            for _, p in ipairs(world.players) do
-                if p:isValid() and deps.playerIdOfFn and deps.playerIdOfFn(p) == want then target = p end
-            end
-            if target then pcall(function() types.Actor.setStance(obj, types.Actor.STANCE.Weapon) end) end
-        end
 
         batch[#batch + 1] = actorPose(obj)
 
@@ -487,9 +471,6 @@ actors.handlers.MP_ActorAuthorityGrant = function(data)
     -- this and Revoke below run on the peer alone; a browser client only ever sees Info.
     -- There is no human holder and no handoff between clients -- the "previous holder" a
     -- snapshot comes from is this same peer's earlier life, or the cell doc.
-    -- Inherit the outgoing holder's threat state: without it every fight in the cell
-    -- visibly forgets who it was angry at the moment authority moves.
-    if data.snapshot and data.snapshot.threat then threat.import(data.snapshot.threat) end
     -- Becoming holder: detach any puppets we had on these actors, apply the snapshot, and
     -- the engine's own AI resumes (mDisableAI cleared by MP_Detach).
     detachActorPuppetsInCell(cellKey)

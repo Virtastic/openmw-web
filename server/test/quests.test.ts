@@ -330,6 +330,23 @@ test('dialogue lock', async (t) => {
     assert.deepEqual((await a.waitEvent('DialogueLockResult')).value, { ref: NPC_REF, granted: true });
   });
 
+  // Backlog 33: the holder died mid-conversation. Their client tears the window down, so
+  // the NPC must not stay refused to everyone else until the corpse changes cell.
+  await t.test('the holder dying releases the lock', async () => {
+    b.sendCellChange('0,0', 0, 0, 0); // Alice holds NPC_REF in 0,0 from the subtest above
+    await b.waitEvent('PlayerCellChange');
+    b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
+    assert.equal(((await b.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, false, 'precondition: Alice holds it');
+    a.sendEvent('PlayerDeath', {});
+    await a.waitEvent('PlayerResurrect');
+    b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
+    assert.deepEqual((await b.waitEvent('DialogueLockResult')).value, { ref: NPC_REF, granted: true }, 'a corpse kept the NPC');
+    b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: false });
+    await b.waitEvent('DialogueLockResult');
+    b.sendCellChange('5,5', 0, 0, 0);
+    await b.waitEvent('PlayerCellChange');
+  });
+
   await t.test('disconnect releases every lock the player held', async () => {
     a.close();
     await a.closed;

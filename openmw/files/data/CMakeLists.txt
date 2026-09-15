@@ -144,7 +144,6 @@ set(BUILTIN_DATA_FILES
     scripts/mp/quests.lua
     scripts/mp/social.lua
     scripts/mp/testkill.lua
-    scripts/mp/threat.lua
     scripts/mp/world.lua
 
     scripts/omw/activationhandlers.lua

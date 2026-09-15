@@ -613,6 +613,13 @@ handlers.MP_RecordCreateAck = function(data)
     localToNet[localId] = data.recordNetId
 end
 
+-- The server would not mint the record (caps or ceiling, backlog 323): forget the pending
+-- id so a later ack for a reused tempId cannot bind the wrong local record, and say why.
+handlers.MP_RecordCreateRefused = function(data)
+    pendingRecords[data.tempId] = nil
+    print('[mp] record refused: ' .. tostring(data.reason))
+end
+
 handlers.MP_RecordsSync = function(data)
     for _, entry in ipairs(data.records or {}) do
         applyRecord(entry)

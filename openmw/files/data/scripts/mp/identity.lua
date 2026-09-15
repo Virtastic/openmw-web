@@ -15,6 +15,7 @@ local core = require('openmw.core')
 local self = require('openmw.self')
 local types = require('openmw.types')
 local mp = require('openmw.mp')
+local I = require('openmw.interfaces')
 
 local json = require('scripts.mp.json')
 
@@ -451,6 +452,10 @@ function identity.tick(now)
         last.dynamic = fingerprint(snapDynamic())
         mp.sendEvent('PlayerStatsDynamic', snapDynamic())
         mp.sendEvent('PlayerDeath', {})
+        -- The dead do not talk (backlog 33): close a conversation the killer interrupted,
+        -- which also lets go of the DialogueLock this client holds; the server drops it on
+        -- PlayerDeath too, so a corpse never keeps an NPC refused to everyone else.
+        pcall(function() I.UI.removeMode('Dialogue') end)
     end
     wasDead = dead
 

@@ -105,7 +105,9 @@ local GOLD_SERVICE_MODES = {
     Companion = true,
 }
 
-local barterTarget = nil -- harness 'barter:open': the NPC whose purse is mirrored
+local barterTarget = nil -- harness 'barter:open' / 'svc:open': the NPC whose purse is mirrored
+-- The service windows the harness may open on an NPC (svc:open:<Mode>); the UI mode names.
+local SERVICE_MODES = { Barter = true, Training = true, Travel = true, SpellCreation = true, Enchanting = true }
 local walkCmd = nil -- harness 'walk:<dx>,<dy>,<ms>' injection
 local jumpFrames = 0 -- harness 'jump': frames left holding the jump control (an edge the input sender cannot miss)
 -- harness 'use:<ms>' -- wait, that name is taken by the inventory hook; this is 'press:<ms>':
@@ -696,9 +698,27 @@ local function dispatch(cmd)
         -- because a merchant's gold only moves through a GUI a bot has no other way to open.
         -- Nearest-NPC rather than a hardcoded id so the scenario does not depend on which
         -- cell the harness happens to start in.
-        -- barter:open:<recordId> names the merchant instead (the one a dlg: lock was taken on).
-        local wantMerchant = cmd:match('^barter:open:(.+)$')
-        if cmd == 'barter:open' or wantMerchant then
+        -- svc:open:<Mode>[:<recordId>] generalises it (backlog 34): Training, Travel,
+        -- SpellCreation and Enchanting are the same service-window shape and each has its
+        -- own shared-purse / skill / spell path a bot can only reach through the GUI.
+        -- barter:open[:<recordId>] and barter:close stay as aliases of the Barter mode.
+        -- <recordId> names the NPC instead of taking the nearest (the one a dlg: lock was
+        -- taken on).
+        local svcMode, wantMerchant
+        if cmd == 'barter:open' then svcMode = 'Barter'
+        else
+            wantMerchant = cmd:match('^barter:open:(.+)$')
+            if wantMerchant then svcMode = 'Barter'
+            else
+                svcMode, wantMerchant = cmd:match('^svc:open:(%a+):?(.*)$')
+                if wantMerchant == '' then wantMerchant = nil end
+            end
+        end
+        if svcMode and not SERVICE_MODES[svcMode] then
+            mp.set('barterGold', 'bad-mode:' .. svcMode)
+            svcMode = nil
+        end
+        if svcMode then
             local best, bestD2 = nil, nil
             -- nearby.actors, NOT cell:getAll(). getAll is a GLOBAL-script API; a player script
             -- is local and does not have it, so this read `attempt to call a nil value (method
@@ -722,13 +742,14 @@ local function dispatch(cmd)
             end
             if best then
                 barterTarget = best
-                pcall(function() I.UI.addMode('Barter', { target = best }) end)
+                pcall(function() I.UI.addMode(svcMode, { target = best }) end)
             else
                 mp.set('barterGold', 'no-npc') -- say so rather than time out silently
             end
         end
-        if cmd == 'barter:close' then
-            pcall(function() I.UI.removeMode('Barter') end)
+        local closeMode = cmd == 'barter:close' and 'Barter' or cmd:match('^svc:close:(%a+)$')
+        if closeMode then
+            pcall(function() I.UI.removeMode(closeMode) end)
         end
         -- barter:sell:<recordId> / barter:buy:<recordId>: one item moves between the pack and
         -- the barterTarget's inventory and the merchant's purse moves by its value -- what the

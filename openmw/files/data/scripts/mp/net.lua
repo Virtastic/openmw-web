@@ -38,6 +38,12 @@ local triedLogin = false
 local triedResume = false
 local triedTicket = false
 local lastSendTime = 0 -- real time; onUpdate dt pauses with the world, pings must not
+-- Receive watchdog (backlog 31). A half-open socket (NAT drop, laptop lid, a server that
+-- stopped answering without a FIN) never fires onClose, so the client sits Joined with a
+-- frozen world forever. Stamped on every frame; onUpdate hangs up when it goes stale and
+-- onClose then reconnects because state == Joined. 75 s = 2 missed 30 s pings + slack.
+local RECV_TIMEOUT_SECONDS = 75
+local lastRecvAt = 0
 -- F3: the world we are currently dialling. nil = the boot URL from the environment. Set by
 -- switchTo so that RECONNECTS after a world switch redial the new world, not the one the
 -- player originally launched into — otherwise a dropped connection would silently teleport
@@ -310,6 +316,7 @@ function net.dialNow(url)
 end
 
 function net.onOpen()
+    lastRecvAt = core.getRealTime()
     send({
         t = 'SessionHello',
         proto = 3, -- the 2026-09-15 wire (2 = mp912026 overhaul: input tier, Solo/Party)
@@ -686,6 +693,7 @@ dispatch.SessionDisconnect = function(msg)
 end
 
 function net.onJson(str)
+    lastRecvAt = core.getRealTime()
     local ok, msg = pcall(json.decode, str)
     if not ok or type(msg) ~= 'table' or type(msg.t) ~= 'string' then
         print('[mp] bad session frame: ' .. tostring(msg))
@@ -727,6 +735,11 @@ function net.tick()
         return
     end
     if net.state ~= 'Joined' then return end
+    if now - lastRecvAt > RECV_TIMEOUT_SECONDS then
+        print(string.format('[mp] nothing received for %d s — hanging up to reconnect', math.floor(now - lastRecvAt)))
+        mp.disconnect() -- onClose sees state == Joined and schedules the redial
+        return
+    end
     if now - lastSendTime >= PING_IDLE_SECONDS then
         send({ t = 'SessionPing', clientTime = nowMs() })
     end

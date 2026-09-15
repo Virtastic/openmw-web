@@ -1266,6 +1266,21 @@ local function rebuildPuppet(id)
     spawnPuppet(id, { x = pos.x, y = pos.y, z = pos.z })
 end
 
+-- A dead puppet/avatar stands back up where its owner respawned (backlog 138). Per-actor
+-- resurrect (#293) un-deads the body and refills health in one engine step; MP_Revive clears
+-- puppet.lua's dead latch; the bars follow. No body exists yet: spawn one instead.
+local function revivePuppet(id, cellArg, pose)
+    local p = puppets[id]
+    if not (p and p.obj:isValid()) then
+        if pose then spawnPuppet(id, pose) end
+        return
+    end
+    pcall(mp.resurrect, p.obj)
+    if pose then tryTeleport(p.obj, cellArg, util.vector3(pose.x, pose.y, pose.z)) end
+    pcall(function() p.obj:sendEvent('MP_Revive', {}) end)
+    pushStatsToPuppet(id)
+end
+
 local function despawnAllPuppets()
     for id in pairs(puppets) do
         despawnPuppet(id)
@@ -1964,19 +1979,18 @@ local eventHandlers = {
     -- reporting hp 0 and the server re-kills the player -- a death loop).
     MP_AvatarResurrect = function(data)
         if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
-        -- THERE IS NO PER-ACTOR RESURRECT IN THE LUA API. mp.resurrect() revives the local
-        -- PLAYER only (luabindings.cpp says so outright), and setting current = base on a
-        -- dead actor leaves a corpse that merely REPORTS healthy bars: no AI, no controls,
-        -- no melee, forever. Replace the body instead -- the same destroy-and-respawn
-        -- rebuildPuppet already uses for an appearance change. The doc is re-applied by
-        -- spawnPuppet, so the new avatar comes back with the character's real stats.
+        -- The body stands back up in place (backlog 138): mp.resurrect(obj) is the engine's
+        -- MechanicsManager::resurrect on THAT actor (#293), which un-deads it and refills
+        -- health to base in the same step, so its next bar report is alive and cannot
+        -- re-kill the respawned player. Setting current = base on a dead actor would not do
+        -- that -- it leaves a corpse that merely reports healthy bars -- which is why this
+        -- used to despawn+spawn (no get-up animation, followers and the doc re-applied).
         if data.cellKey then remoteCell[data.id] = data.cellKey end
         local pose = (data.x and { x = data.x, y = data.y, z = data.z })
             or lastPose[data.id]
         if not pose then return end
         lastPose[data.id] = pose
-        despawnPuppet(data.id)
-        spawnPuppet(data.id, pose)
+        revivePuppet(data.id, remoteCell[data.id] and inviteCellArg(remoteCell[data.id]), pose)
     end,
 
     -- The world did something to our avatar on the peer (see avatarEffectsTick): a disease
@@ -2540,7 +2554,13 @@ local eventHandlers = {
                 -- follow-teleport there popped every friend's puppet and zeroed the avatar's
                 -- fall height on the peer (no fall damage across a border, #200). Interiors
                 -- and load doors still teleport.
-                local walked = parseExteriorKey(prevCell) ~= nil and parseExteriorKey(data.cellKey) ~= nil
+                -- A SAME-CELL SNAP IS NOT A DOOR EITHER (#231, #74). player.lua re-sends the
+                -- cell change on a self-snap (a levitate release the stream lagged, a
+                -- reconcile), and the teleport that answered it zeroed the avatar's fall
+                -- height mid-fall: the rest of the fall was free. Within SNAP_DIST the
+                -- stream carries the body there on its own.
+                local sameCell = prevCell == data.cellKey
+                local walked = (sameCell or (parseExteriorKey(prevCell) ~= nil and parseExteriorKey(data.cellKey) ~= nil))
                     and (from - util.vector3(data.x, data.y, data.z)):length2() <= 256 * 256 -- player.lua SNAP_DIST
                 if walked then return end
                 -- COMPANIONS COME THROUGH THE DOOR TOO. The engine only carries followers
@@ -2628,17 +2648,11 @@ local eventHandlers = {
         -- the engine plays the death), and a later hp > 0 written onto a dead actor is the
         -- corpse-with-healthy-bars MP_AvatarResurrect describes: the friend respawned, but on
         -- every other screen they stayed a body on the floor while their poses steered a
-        -- corpse. Same answer as the peer's: replace the body. Not on the peer itself, where
-        -- AvatarResurrect already did exactly this for the avatar.
+        -- corpse. Same answer as the peer's: stand the body back up (#138). Not on the peer
+        -- itself, where AvatarResurrect already did exactly this for the avatar.
         local revived = was and was.hp and was.hp.c <= 0 and data.hp and data.hp.c > 0
         if revived and puppets[data.id] and not (mp.isSystem and mp.isSystem()) then
-            local pose = lastPose[data.id]
-            if pose then
-                despawnPuppet(data.id)
-                spawnPuppet(data.id, pose) -- re-applies look, equipment and these bars
-            else
-                rebuildPuppet(data.id)
-            end
+            revivePuppet(data.id, destCellArg(), lastPose[data.id])
             return
         end
         pushStatsToPuppet(data.id)

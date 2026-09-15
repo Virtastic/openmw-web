@@ -592,6 +592,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       const hit = player.lastHitBy;
       const killedBy = hit && Date.now() - hit.at < 10_000 ? { id: hit.id, name: hit.name } : undefined;
       log('info', 'player.death', { id: player.id, name: player.name, ...(killedBy ? { killedBy } : {}) });
+      // A dead player is out of the conversation: the client tears the Dialogue window
+      // down, so an NPC still locked to the corpse would refuse everyone else until the
+      // cell changed (backlog 33). `quests` is declared below; this runs long after.
+      quests.releaseDialogueLocks(player.id);
+
       hooks.playerDeath({ id: player.id, name: player.name, rank: player.rank });
     },
   };
