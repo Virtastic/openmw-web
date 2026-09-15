@@ -29,6 +29,7 @@
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+#include "../mwgui/mode.hpp"
 #include "../mwbase/world.hpp"
 
 #include "../mwlua/context.hpp"
@@ -491,6 +492,12 @@ namespace MWMP
                     MWBase::Environment::get().getMechanicsManager()->resurrect(player);
                     if (MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_Ended)
                         MWBase::Environment::get().getStateManager()->resumeGame();
+                    // A slow round-trip lets the death animation finish first, and with no
+                    // save to load the engine pushes the MAIN MENU (askLoadRecent). The player
+                    // was revived behind it. Pop it.
+                    MWBase::WindowManager* wm = MWBase::Environment::get().getWindowManager();
+                    if (wm->containsMode(MWGui::GM_MainMenu))
+                        wm->removeGuiMode(MWGui::GM_MainMenu);
                 },
                 "MPResurrect");
         };

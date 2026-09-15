@@ -753,6 +753,17 @@ const HANDLERS: Record<string, (ctx: StateCtx, player: Player, body: LTable) => 
 
 export function handleStateEvent(ctx: StateCtx, player: Player, name: string, value: LValue | undefined): boolean {
   if (name === 'PlayerDeath') {
+    // A death the peer does not confirm is not a death. The peer rules this player's bars,
+    // and the raise-only path already refuses a client's hp claim -- but the death EVENT
+    // used to be taken on faith, and a respawn is a free full heal and a teleport.
+    if (player.peerStatsAt !== undefined && Date.now() - player.peerStatsAt <= PEER_STATS_FRESH_MS) {
+      const hp = ctx.store.getCached(player.charId)?.stats?.dynamic?.hp?.c;
+      if (hp !== undefined && hp > 0) {
+        log('warn', 'state.death_unconfirmed', { from: player.name, hp });
+        ctx.noteAnomaly?.(player.accountKey, 'death_unconfirmed');
+        return true;
+      }
+    }
     ctx.onPlayerDeath(player); // body is {} and carries nothing
     return true;
   }

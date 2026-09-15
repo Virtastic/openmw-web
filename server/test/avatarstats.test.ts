@@ -282,3 +282,28 @@ test("a player's active effects reach the other clients, and a late joiner is ca
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(d.inbox.events.filter((e) => e.name === 'AvatarActiveSpells').length, 0, 'nothing to catch up on');
 });
+
+// A DEATH THE PEER DOES NOT CONFIRM IS NOT A DEATH. The raise-only path already refuses a
+// client's hp claim while the peer rules -- but the death EVENT was taken on faith, and a
+// respawn is a free full heal and a teleport. With the peer reporting a living body the
+// event is dropped and counted; once the peer reports zero it is honoured.
+test("a client's PlayerDeath is ignored while the peer reports it alive, honoured once the peer reports 0", async (t) => {
+  const { peer, a } = await world(t);
+  let seq = 0;
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  let hp = 42;
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(hp) }] }), 100);
+  t.after(() => clearInterval(reporter));
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 42);
+
+  a.inbox.events.length = 0;
+  a.sendEvent('PlayerDeath', {});
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(a.inbox.events.filter((e) => e.name === 'PlayerResurrect').length, 0, 'a free respawn on a client\'s say-so');
+
+  hp = 0;
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 0);
+  a.sendEvent('PlayerDeath', {});
+  await a.waitEvent('PlayerResurrect', () => true, 3000);
+});
