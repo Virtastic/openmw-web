@@ -8,16 +8,16 @@ States: **open** (found, not started) · **fixed** (committed on the branch, no 
 · **baking** (in a Jenkins sweep) · **done** (green in a sweep, or unit-tested where the harness
 cannot reach) · **wontfix** (design decision, reason given).
 
-Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9/17), #90 running (14 scenarios), #91 next with s160.
+Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (13/14; s147 open as #100), #91 running (31 scenarios).
 
 ## Found by the 2026-09-14/15 audits
 
 | # | Item | Where | State | Proof |
 |---|---|---|---|---|
-| 1 | Invisibility/Chameleon/Light invisible on other screens; late joiner not caught up | global.lua, playerstate.ts | baking | s156, avatarstats.test.ts |
-| 2 | Dead NPCs replayed by wire key vs object id (no-op); holder never got cell record | actors.lua, worldstate.ts | baking | s157, holderhears.test.ts |
+| 1 | Invisibility/Chameleon/Light invisible on other screens; late joiner not caught up | global.lua, playerstate.ts | done | s156, avatarstats.test.ts (green #90) |
+| 2 | Dead NPCs replayed by wire key vs object id (no-op); holder never got cell record | actors.lua, worldstate.ts | done | s157, holderhears.test.ts (green #90) |
 | 3 | Holder deaf to relays for far anchored cells (doors/locks/objects) | worldstate.ts | done (unit) | holderhears.test.ts |
-| 4 | Scripted Lock/Unlock never travelled (activation-only watch); then own-cell-only poll | objects.lua | baking | s158 |
+| 4 | Scripted Lock/Unlock never travelled (activation-only watch); then own-cell-only poll | objects.lua | done | s158 (green #90) |
 | 5 | Attribute damage lost on relog / not on avatar | identity.lua, avatar.lua | done | s159 PASS #89 |
 | 6 | Companion dropped on the player's relog (claim keyed by session id) | worldstate.ts | done (unit) | actor.test.ts |
 | 7 | Host's quest globals never reached the peer; guests/peer seeded from own doc | quests.ts | done (unit) | questpeer.test.ts |
@@ -38,7 +38,7 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9
 | 22 | Disposition lost on peer restart / handoff | actors.lua | fixed | (scenario: persuade, restart peer) |
 | 23 | Local fall/drown damage killed the client before the peer's verdict | character.cpp, actors.cpp | baking | s147 |
 | 24 | Peer avatar never drowned: OUT OF PROCESSING RANGE of a hand-started peer (harness) | harness | done | s149 PASS #90 (drowning cost 82 hp, both sides agree) |
-| 25 | A heal in the frame a peer report lands was erased before measurement | identity.lua | baking | s150, s146 |
+| 25 | A heal in the frame a peer report lands was erased before measurement | identity.lua | done | s150, s146 (green #90) |
 | 26 | Cloud-locker page could not change world a second time (mplocker dropped) | index.html | done | s141 PASS #90 |
 | 27 | Guest death seen by the host (puppet falls, gets up) | s131 | done | s131 PASS #89 |
 | 36 | Magic at a puppet: only Damage/Restore H/M/F forwarded; Calm/Soultrap/Paralyze/Levitate-on-NPC applied to the local copy only | spelleffects.cpp | fixed | needs a target-spell mint hook + scenario |
@@ -46,9 +46,9 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9
 | 38 | Guest's welcome carried its own doc's bounty; peer's guards read the world's | connection.ts, quests.ts | done (unit) | standing.test.ts |
 | 39 | A drop carried record+count only: a pristine copy for the friend (free recharge) | objects.lua, worldstate.ts | fixed | s160, worldstate.test.ts |
 | 40 | Equipment relayed at join before RecordsSync; made item never re-declared under its net id | connection.ts, global.lua | fixed | — |
-| 41 | Sweep #89: a heal in the frame a peer report lands was erased before measurement | identity.lua | baking | s150 |
-| 42 | Sweep #89: second world change on a cloud-locker page died with "no locker session" | index.html | baking | s141 |
-| 43 | Sweep #89: scripted-lock poll covered the player's own cell only | objects.lua | baking | s158 |
+| 41 | Sweep #89: a heal in the frame a peer report lands was erased before measurement | identity.lua | done | s150 (green #90) |
+| 42 | Sweep #89: second world change on a cloud-locker page died with "no locker session" | index.html | done | s141 (green #90) |
+| 43 | Sweep #89: scripted-lock poll covered the player's own cell only | objects.lua | done | s158 (green #90) |
 | 61 | Half of all real jumps never reached the avatar (one-frame trigger vs every-other-frame sender) | player.lua | fixed | scenario: tap-jump 10x, avatar rises 10/10 |
 | 62 | Avatar follow-teleport gave up after 3 s (cold interior load): no puppet in the room | global.lua | fixed | — |
 | 63 | Actor batches for far anchored cells refused as stale epoch: frozen NPCs everywhere the peer's avatar was not | authority.ts, worldstate.ts | done (unit) | holderhears.test.ts |
