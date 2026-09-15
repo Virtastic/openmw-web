@@ -280,3 +280,30 @@ test("a merchant restocks on the 24-hour rule, including across a month boundary
   a.close();
   b.close();
 });
+
+// THE FARE. A travel service moves the player and closes its window in the same breath; the
+// strider's purse delta goes out one frame after the cell change, from a cell the player is
+// no longer near, and the reach gate dropped it -- every fare paid to a caravaner was lost
+// to the world. The purse op alone may name the cell just left.
+test("a travel fare lands on the caravaner's purse from the destination cell", async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const REF = { __refnum: { index: 93, contentFile: 0 } };
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Traveller');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  a.sendEvent('ContainerOpen', { ref: REF, cellKey: '0,0', contents: [], gold: 100 });
+  await a.waitEvent('ContainerState');
+  a.sendCellChange('40,40', 0, 0, 0); // Balmora is far away
+  await a.waitEvent('PlayerCellChange', (v) => (v as { cellKey: string }).cellKey === '40,40');
+  a.sendEvent('ContainerOpRequest', { ref: REF, cellKey: '0,0', opId: 7, op: 'gold', goldDelta: 30 });
+  const r = (await a.waitEvent('ContainerOpResult', (v) => (v as { opId: number }).opId === 7, 3000)).value as { ok: boolean };
+  assert.equal(r.ok, true, 'the fare from the cell just left is accepted');
+  // Anything else from afar is still refused (silently: no result, the old rule).
+  a.inbox.events.length = 0;
+  a.sendEvent('ContainerOpRequest', { ref: REF, cellKey: '0,0', opId: 8, op: 'take', itemId: 'gold_001', n: 1 });
+  await new Promise((r2) => setTimeout(r2, 200));
+  assert.equal(a.inbox.events.filter((e) => e.name === 'ContainerOpResult').length, 0, 'a take from afar is still out of reach');
+});

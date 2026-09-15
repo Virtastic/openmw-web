@@ -52,6 +52,9 @@ export interface Player {
   // right after Ready). poseVersion bumps on every accepted pose/cell update so the batch
   // broadcaster can do per-recipient change detection + force-include-on-visibility.
   cellKey?: string;
+  // The cell before the last cell change: a travel fare's purse delta is sent as the window
+  // closes, one frame after the strider has already moved the player (worldstate.ts).
+  prevCellKey?: string;
   // Declared at Hello. Only a client that can actually simulate a cell's actors is eligible
   // to hold authority for one; see Authority.bestCandidate.
   simulatesActors?: boolean;

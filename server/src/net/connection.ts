@@ -1051,6 +1051,7 @@ export class Connection implements Peer {
     }
 
     const oldCell = player.cellKey;
+    if (oldCell !== undefined && oldCell !== cellKey) player.prevCellKey = oldCell;
 
     // TELEPORT-HOPPING, bounded without any game data.
     //

@@ -882,7 +882,11 @@ export class WorldState {
     // by the authority holder — but PROXIMITY is exactly right and already the rule every
     // relay uses: you may edit what you could see. The sim peer is exempt: it legitimately
     // acts on cells it does not stand in (anchored interiors), and it is server-run.
-    if (!player.system && !cellsVisible(player.cellKey, cellKey)) {
+    // THE FARE. A travel service moves the player and closes its window in the same breath,
+    // and the strider's purse delta goes out one frame after the cell change -- from a cell
+    // the player is no longer near. The merchant purse op alone may name the cell just left.
+    const fare = name === 'ContainerOpRequest' && body.get('op') === 'gold' && cellKey === player.prevCellKey;
+    if (!player.system && !fare && !cellsVisible(player.cellKey, cellKey)) {
       log('warn', 'object.out_of_reach', { from: player.name, name, at: player.cellKey ?? null, cellKey });
       return undefined;
     }
