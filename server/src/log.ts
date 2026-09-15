@@ -11,7 +11,7 @@
 // event log: this ships to Linux, Windows and macOS hosts, and a file behaves identically on
 // all three. Anything platform-native would work on one and silently do nothing on the others.
 
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, renameSync, statSync, unlinkSync, readFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -80,7 +80,15 @@ export function recentLogs(limit = 200, filter = ''): LogEntry[] {
 const MAX_BYTES = 8 * 1024 * 1024;
 const KEEP = 5;
 let logPath: string | undefined;
+// Opened ONCE (backlog 329): appendFileSync is open+write+close per line, three syscalls on
+// a path a chatty peer can walk thousands of times a minute. Reopened only by a rotation.
+let logFd: number | undefined;
 let failedOnce = false;
+
+function openLog(): void {
+  if (logFd !== undefined) { try { closeSync(logFd); } catch { /* already closed */ } }
+  logFd = openSync(logPath!, 'a');
+}
 
 /** Point the file sink at <dir>/logs/. Safe to call once at boot; no-op if it cannot. */
 export function enableFileLog(dir: string): void {
@@ -91,7 +99,9 @@ export function enableFileLog(dir: string): void {
     // Seed the counter from whatever a previous run left, so an existing file still rotates at
     // the right size rather than growing by another MAX_BYTES first.
     bytesWritten = existsSync(logPath) ? statSync(logPath).size : 0;
+    openLog();
   } catch (err) {
+    logPath = undefined;
     // A read-only or missing data dir must not stop the server from running; stdout still
     // works and that is enough to diagnose why this failed.
     process.stdout.write(JSON.stringify({
@@ -140,6 +150,9 @@ function rotateIfBig(pending: number): void {
   if (!logPath) return;
   if (bytesWritten + pending < MAX_BYTES) return;
   try {
+    // Closed first: an open handle pins the file on Windows, and the reopen below has to
+    // land on the fresh file either way.
+    if (logFd !== undefined) { try { closeSync(logFd); } catch { /* already closed */ } logFd = undefined; }
     const oldest = `${logPath}.${KEEP}`;
     if (existsSync(oldest)) unlinkSync(oldest);
     for (let i = KEEP - 1; i >= 1; i--) {
@@ -155,6 +168,7 @@ function rotateIfBig(pending: number): void {
     // whatever blocks the rename persists. Leaving it over the line means the next write
     // retries, which is what the stat-per-line version did.
   }
+  try { openLog(); } catch { /* the write below reports it, once */ }
 }
 
 // --- subscribers ------------------------------------------------------------------------
@@ -198,7 +212,8 @@ export function log(level: LogLevel, event: string, fields?: Record<string, unkn
       // does in JS, and a size counter that drifts under makes the file grow past its cap.
       const bytes = Buffer.byteLength(line) + 1;
       rotateIfBig(bytes);
-      appendFileSync(logPath, line + String.fromCharCode(10));
+      if (logFd === undefined) openLog();
+      writeSync(logFd!, line + String.fromCharCode(10));
       bytesWritten += bytes;
     } catch (err) {
       // Report the first failure to stdout and then stay quiet: a full disk would otherwise

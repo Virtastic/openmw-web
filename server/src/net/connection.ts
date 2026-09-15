@@ -441,6 +441,16 @@ export class Connection implements Peer {
       // NOT gated on cellKey: a peer holds cells via ANCHORS, so one that never sent a cell
       // change of its own still has a footprint to release.
       this.ctx.world.authorityReleaseEverything(this.player.id, this.player.cellKey, false);
+      // THE PEER LEAVING IS ANNOUNCED (backlog 325). SimReady only ever said true, so a
+      // client's peer-rules (no fall damage, no drowning, no local spawns) stayed pinned for
+      // the whole outage. Tell every human the world is unsimulated; the peer's return sends
+      // ready:true again through the join path above.
+      if (this.player.system === true) {
+        const ready = this.ctx.simReady?.() ?? false; // another peer may still be here
+        for (const p of this.ctx.roster.inWorld()) {
+          if (p.system !== true) p.peer.sendEvent('SimReady', { ready });
+        }
+      }
       if (this.player.cellKey) this.ctx.world.onCellVacated(this.player.cellKey);
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
       this.ctx.accounts.touchLastSeen(this.player.accountKey);

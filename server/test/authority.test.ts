@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import {
   Authority,
   authorityTuning,
+  setOnSilentPeer,
   type AuthoritySenders,
   type ActorSnapshot,
 } from '../src/core/authority';
@@ -135,6 +136,41 @@ test('authority: a silent peer is reported but KEEPS the cell', async () => {
   // cell to. The peer keeps it; the operator gets a loud log line.
   assert.equal(auth.holderOf('cell'), PEER,
     'a silent peer must keep the cell — there is no one to hand it to');
+});
+
+// Backlog 324: a wedged peer auto-pongs, so only liveness can notice it. Once EVERY
+// actor-bearing cell it holds is silent, onSilentPeer fires -- once per grant, not per sweep --
+// and one cell still producing keeps it quiet (the process is alive, merely slow somewhere).
+test('authority: onSilentPeer fires once when every actor-bearing held cell is silent', async (t) => {
+  let now = 1_000_000;
+  const fired: { holder: number; cells: string[] }[] = [];
+  setOnSilentPeer((holder, cells) => fired.push({ holder, cells }));
+  t.after(() => setOnSilentPeer(undefined));
+  const { auth } = makeAuthority({ now: () => now });
+  await auth.onEnter(PEER, 'a');
+  await auth.onEnter(PEER, 'b');
+  await auth.onEnter(PEER, 'empty'); // no actors: never counts either way
+  auth.setSnapshot('a', { actors: [{ ref: 'guard' }] } as unknown as ActorSnapshot);
+  auth.setSnapshot('b', { actors: [{ ref: 'rat' }] } as unknown as ActorSnapshot);
+
+  now += authorityTuning.actorSilenceMs * 2;
+  auth.noteActorFrame('b'); // b is alive
+  auth.reviewAll();
+  assert.equal(fired.length, 0, 'one producing cell means the peer is alive');
+
+  now += authorityTuning.actorSilenceMs * 2;
+  auth.reviewAll();
+  auth.reviewAll();
+  assert.equal(fired.length, 1, 'fires once, not once per sweep');
+  assert.equal(fired[0]!.holder, PEER);
+  assert.deepEqual(fired[0]!.cells.sort(), ['a', 'b']);
+  assert.equal(auth.holderOf('a'), PEER, 'the cell is not taken away');
+
+  // The peer comes back (a frame) and wedges again: a fresh silence fires again.
+  auth.noteActorFrame('a');
+  now += authorityTuning.actorSilenceMs * 2;
+  auth.reviewAll();
+  assert.equal(fired.length, 2, 'a new silence after a frame is a new report');
 });
 
 test('authority: an empty cell never reports a silent holder', async () => {

@@ -73,6 +73,24 @@ test('a player joining an already-simulated world never waits', async (t) => {
   assert.equal(((await b.waitEvent('SimReady')).value as { ready?: boolean }).ready, true);
 });
 
+// Backlog 325: SimReady only ever said true, so a client's peer rules (no fall damage, no
+// drowning, no local spawns) stayed pinned for the whole outage. The peer leaving is announced.
+test('when the peer goes away, every human is told the world is no longer simulated', async (t) => {
+  const server = await boot(t);
+  const peer = await TestClient.simPeer(server.port, PASS);
+  t.after(() => peer.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Insider', 'hunter22');
+  assert.equal(((await a.waitEvent('SimReady')).value as { ready?: boolean }).ready, true);
+  a.inbox.events.length = 0;
+
+  peer.close();
+  const gone = await a.waitEvent('SimReady');
+  assert.equal((gone.value as { ready?: boolean }).ready, false, 'the outage is announced');
+  // Its return rides the join path ('when the peer comes up, everyone already waiting is told').
+});
+
 test('the sim peer is not sent its own readiness', async (t) => {
   const server = await boot(t);
   const peer = await TestClient.simPeer(server.port, PASS);

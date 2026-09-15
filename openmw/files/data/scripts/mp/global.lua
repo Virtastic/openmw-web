@@ -1059,6 +1059,10 @@ end
 -- with local spawns OFF, before the first cell loads; only a confirmed degraded world (joined,
 -- nobody simulating) turns them on.
 local localSummonsOn = not (mp.isEnabled() and not (mp.isSystem and mp.isSystem()))
+-- The LAST SimReady the server sent (nil until one arrives), not the join-time flag
+-- (backlog 325): the join flag was true for the whole session, so a peer outage never
+-- turned the peer rules off -- no fall damage, no drowning, for as long as it lasted.
+local lastSimReady = nil
 local localSpawnsDbgAt = 0
 local localSpawnsGuardSaid = false
 local function localSummonsTick()
@@ -1074,6 +1078,7 @@ local function localSummonsTick()
     -- creature in every cell we enter and then learn better. Once any holder has been seen the
     -- peer is the one spawning; only a peer outage (every holder gone) hands it back to us.
     local simulated = net.state == 'Joined' and net.flags and net.flags.simulated == true
+    if lastSimReady ~= nil then simulated = lastSimReady end
     -- Not joined yet is not "degraded": the socket is still connecting while the starting
     -- cells load, and a creature rolled in that window is a ghost only this screen can see.
     local want = net.state == 'Joined'
@@ -1785,6 +1790,7 @@ local function start()
             -- unsimulated world to rubber-band exactly as they did on a first join. The new
             -- world's own SimReady answers this on arrival.
             mp.set('simReady', '0')
+            lastSimReady = nil
             roster = {}
             mirrorRoster()
             despawnAllPuppets()
@@ -2215,7 +2221,8 @@ local eventHandlers = {
         if data and type(data.kind) == 'string' then toPlayer('MP_ForgetDeclared', { kind = data.kind }) end
     end,
     MP_SimReady = function(data)
-        mp.set('simReady', (data and data.ready) and '1' or '0')
+        lastSimReady = (data and data.ready) == true
+        mp.set('simReady', lastSimReady and '1' or '0')
         -- A peer that just became ready (the first one, or its replacement after a restart)
         -- built our avatar from the doc alone: re-send the effects on this body.
         if data and data.ready and not (mp.isSystem and mp.isSystem()) then toPlayer('MP_ResyncActive', {}) end
@@ -2337,6 +2344,10 @@ local eventHandlers = {
         actors.forgetFollowers(data.id) -- gone for good: their companions stop being theirs
         remoteCell[data.id] = nil
         lastPose[data.id] = nil
+        -- A full character doc per join, kept for ever on a 24/7 peer (backlog 330). Both
+        -- are re-sent on the next join, so nothing is lost by dropping them here.
+        avatarDocs[data.id] = nil
+        remoteIdentity[data.id] = nil
         mirrorRoster()
     end,
 

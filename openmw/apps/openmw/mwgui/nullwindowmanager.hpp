@@ -25,6 +25,8 @@
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/translation/translation.hpp>
 
+#include "../mwbase/environment.hpp"
+#include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 
 #include "../mwworld/ptr.hpp"
@@ -187,7 +189,10 @@ namespace MWGui
         bool injectKeyRelease(MyGUI::KeyCode) override { return false; }
         void windowVisibilityChange(bool) override {}
         void windowResized(int, int) override {}
-        void windowClosed() override {}
+        // SDL turns SIGTERM into SDL_QUIT, which lands here (sdlinputwrapper.cpp). The
+        // empty body swallowed it, so every clean stop of a peer escalated to SIGKILL
+        // (backlog 326): stale snapshot, no orderly leave. Quit the way the real one does.
+        void windowClosed() override { MWBase::Environment::get().getStateManager()->requestQuit(); }
         // TRUE, or the frame loop pauses the peer forever (engine.cpp pauses playback and
         // skips the frame when the window is "hidden" — a peer has no window to show).
         bool isWindowVisible() const override { return true; }

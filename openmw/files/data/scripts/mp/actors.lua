@@ -391,13 +391,15 @@ local function attachActorPuppets(cellKey)
     end
 end
 
-local function detachActorPuppetsInCell(cellKey)
+-- `degraded`: the peer is gone (holder lost), not a departure -- the puppet keeps its script
+-- and hit intercept so outage swings cancel (backlog 328, puppet.lua MP_Detach).
+local function detachActorPuppetsInCell(cellKey, degraded)
     for key, p in pairs(puppetActors) do
         if p.cellKey == cellKey and p.obj:isValid() then
             -- Only signal: the puppet re-enables AI and removes ITSELF (see puppet.lua's
             -- MP_Detach). Removing the script from here raced the queued event and left
-            -- mDisableAI stuck on, freezing the cell's NPCs after every handoff.
-            pcall(function() p.obj:sendEvent('MP_Detach', {}) end)
+            -- mDisableAI stuck on, freezing the cell's NPCs on every peer restart.
+            pcall(function() p.obj:sendEvent('MP_Detach', { degraded = degraded == true }) end)
             puppetActors[key] = nil
         end
     end
@@ -420,6 +422,10 @@ actors.handlers = {}
 actors.handlers.MP_ActorAuthorityGrant = function(data)
     local cellKey = data.cellKey
     if not cellKey then return end
+    -- ONLY THE SIM PEER IS EVER GRANTED (server authority.ts: canSimulate = system only), so
+    -- this and Revoke below run on the peer alone; a browser client only ever sees Info.
+    -- There is no human holder and no handoff between clients -- the "previous holder" a
+    -- snapshot comes from is this same peer's earlier life, or the cell doc.
     -- Inherit the outgoing holder's threat state: without it every fight in the cell
     -- visibly forgets who it was angry at the moment authority moves.
     if data.snapshot and data.snapshot.threat then threat.import(data.snapshot.threat) end
@@ -459,7 +465,8 @@ actors.handlers.MP_ActorAuthorityRevoke = function(data)
     local cellKey = data.cellKey
     if not cellKey or not held[cellKey] then return end
     held[cellKey] = nil
-    -- We are no longer the holder: re-attach puppets so the new holder drives these actors.
+    -- The peer walked its avatar out of a cell it still occupies via another anchor; the
+    -- server re-grants at once (there is nobody else to hand it to). Attach in the gap.
     attachActorPuppets(cellKey)
     print('[mp] actor authority REVOKED for ' .. cellKey)
 end
@@ -473,7 +480,7 @@ actors.handlers.MP_ActorAuthorityInfo = function(data)
         if data.holderId == nil then
             holderOfCell[data.cellKey] = nil
             infoEpoch[data.cellKey] = nil
-            detachActorPuppetsInCell(data.cellKey)
+            detachActorPuppetsInCell(data.cellKey, true)
             return
         end
         holderOfCell[data.cellKey] = data.holderId

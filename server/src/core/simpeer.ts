@@ -88,6 +88,12 @@ export class SimPeerSupervisor {
   // to the cluster it was covering rather than to a default cell.
   private anchors = new Map<string, { cellKey: string; x: number; y: number; z: number }>();
   private blockedUntil = new Map<string, number>();
+  // Consecutive early crashes per key (backlog 327): a peer dying inside its start window
+  // over and over is a crash LOOP, and a flat 15 s backoff meant a full retail load per cycle
+  // for ever. Reset by a peer that outlives the window.
+  private crashStreak = new Map<string, number>();
+  static readonly CRASH_BACKOFF_MS = [15_000, 30_000, 60_000, 120_000, 300_000];
+  static readonly CRASH_LOOP_LIMIT = 5;
   private byAccount = new Map<string, string>(); // sanitised account name -> peer key
   // Set once a peer is refused for a reason that will not change on retry (bad content, bad
   // engine hash). Distinct from blockedUntil, which is a temporary crash backoff.
@@ -299,6 +305,19 @@ export class SimPeerSupervisor {
     // except lines naming a real fault, which ride at warn so they surface without anyone
     // having predicted they would be wanted. Tagged with the cell key: several peers run at
     // once and untagged lines from different cells cannot be told apart.
+    //
+    // DEDUPED PER SECOND (backlog 329). A per-actor-per-frame Lua error is the same line
+    // thousands of times a minute; forwarding each one starved the tick and rotated the log
+    // away. The first occurrence goes out at once; repeats within the second are counted and
+    // flushed as one line with the count. Bounded: a stream of DISTINCT lines is not a loop.
+    const repeats = new Map<string, { level: 'warn' | 'info' | 'debug'; n: number }>();
+    const flush = (): void => {
+      for (const [text, r] of repeats) if (r.n > 0) log(r.level, 'simpeer.output', { key, text, times: r.n });
+      repeats.clear();
+    };
+    const flushTimer = setInterval(flush, 1000);
+    flushTimer.unref();
+    child.once('exit', () => { clearInterval(flushTimer); flush(); });
     const forward = (stream: NodeJS.ReadableStream | null | undefined, isErr: boolean): void => {
       if (!stream) return;
       let pending = '';
@@ -318,7 +337,11 @@ export class SimPeerSupervisor {
           // avatar equipment, spawns): info, so an operator's world log and the harness can
           // see them without turning the engine's whole debug firehose on.
           const ours = t.includes('[mp]');
-          log(bad ? 'warn' : ours ? 'info' : 'debug', 'simpeer.output', { key, text: t.slice(0, 1000) });
+          const text = t.slice(0, 1000);
+          const seen = repeats.get(text);
+          if (seen) { seen.n++; continue; }
+          if (repeats.size < 256) repeats.set(text, { level: bad ? 'warn' : ours ? 'info' : 'debug', n: 0 });
+          log(bad ? 'warn' : ours ? 'info' : 'debug', 'simpeer.output', { key, text });
         }
       });
     };
@@ -329,27 +352,51 @@ export class SimPeerSupervisor {
       // Only act if this is still the CURRENT peer for the key: a stop() followed by a
       // restart must not have the old process's exit reap the new one.
       if (this.peers.get(key) !== peer) return;
-      if (peer.killTimer) clearTimeout(peer.killTimer);
-      this.peers.delete(key);
       if (peer.stopping) {
+        if (peer.killTimer) clearTimeout(peer.killTimer);
+        this.peers.delete(key);
         log('info', 'simpeer.stopped', { key });
         return;
       }
-      // Unexpected exit: back off before the next ensure() may respawn, so a peer that
-      // crashes on startup (bad data path, missing esm) cannot spin the CPU.
-      metrics.simPeerCrashed.inc({});
-      this.blockedUntil.set(key, this.now() + this.deps.settings.restartBackoffMs);
       // The reason, not just the fact. Without this the only evidence of a peer dying on
       // startup was a spawn/crash pair repeating forever with no cause attached.
       const lines = stderrTail.split('\n').filter((l) => l.trim() !== '');
       const fatal = lines.filter((l) => /fatal|error|exception|terminate/i.test(l)).slice(-3);
-      log('error', 'simpeer.crashed', {
-        key, code: code ?? -1, signal: signal ?? '',
+      this.crashed(peer, {
+        code: code ?? -1, signal: signal ?? '',
         ...(fatal.length > 0 ? { fatal: fatal.join(' | ') } : {}),
         ...(fatal.length === 0 && lines.length > 0 ? { lastOutput: lines.slice(-2).join(' | ') } : {}),
       });
     });
-    child.on('error', (err) => log('error', 'simpeer.child_error', { key, error: String(err) }));
+    // A spawn that fails asynchronously (ENOENT on a configured binary) emits `error` and no
+    // `exit`: the entry used to stay in `peers` with no helloAt, ensure() saw "existing", and
+    // the supervisor was wedged in silence. Treat it as the crash it is.
+    child.on('error', (err) => {
+      log('error', 'simpeer.child_error', { key, error: String(err) });
+      if (this.peers.get(key) === peer && !peer.stopping) this.crashed(peer, { error: String(err) });
+    });
+  }
+
+  // Unexpected death: drop the entry and back off before the next ensure() may respawn.
+  // Consecutive deaths inside the start window (startTimeoutMs + 60 s of spawn) escalate the
+  // backoff and, past CRASH_LOOP_LIMIT, disable the peer: a full retail load per cycle for
+  // ever helps nobody, and the log says why instead of a spawn/crash pair repeating.
+  private crashed(peer: Peer, why: Record<string, unknown>): void {
+    const key = peer.key;
+    if (peer.killTimer) clearTimeout(peer.killTimer);
+    this.peers.delete(key);
+    metrics.simPeerCrashed.inc({});
+    const early = this.now() - peer.startedAt < this.deps.settings.startTimeoutMs + 60_000;
+    const streak = early ? (this.crashStreak.get(key) ?? 0) + 1 : 1;
+    this.crashStreak.set(key, streak);
+    const table = SimPeerSupervisor.CRASH_BACKOFF_MS;
+    const backoff = Math.max(this.deps.settings.restartBackoffMs, table[Math.min(streak, table.length) - 1]!);
+    this.blockedUntil.set(key, this.now() + backoff);
+    log('error', 'simpeer.crashed', { key, streak, backoffMs: backoff, ...why });
+    if (streak >= SimPeerSupervisor.CRASH_LOOP_LIMIT) {
+      log('error', 'simpeer.crash_loop', { key, streak });
+      this.disablePermanently(`crash loop: ${streak} early exits in a row`);
+    }
   }
 
   // Reaps peers whose idle deadline has passed. Called on a timer by start(), and directly

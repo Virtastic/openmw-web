@@ -4307,12 +4307,28 @@ window.omw = (function(){
   }
 
 
-  function stillStartingBanner(){
-    if (document.getElementById('omw-still-starting')) return;
-    var b = el('div', null, 'The world is still starting (a big mod set takes a few minutes). '
+  function stillStartingBanner(){ simBanner('omw-still-starting', 'The world is still starting (a big mod set takes a few minutes). '); }
+  // The peer went away AFTER the world had been simulated (backlog 331): a restart, a crash.
+  // Insiders otherwise fight NPCs that freeze or vanish with nothing on screen saying why.
+  // Watches the mirror the settle poll reads; ready '1' -> '0' raises it, '1' clears it.
+  (function(){
+    var wasReady = false;
+    setInterval(function(){
+      var st = window.omw && window.omw.state; if (!st) return;
+      var ready = st.simReady === '1' && (st.state || '') === 'Joined';
+      if (wasReady && st.simReady === '0' && (st.state || '') === 'Joined') {
+        simBanner('omw-sim-restarting', 'The world’s simulation is restarting… ');
+      }
+      wasReady = ready;
+    }, 500);
+  })();
+  // A corner notice the player can close; it takes itself down the moment SimReady lands.
+  function simBanner(id, text){
+    if (document.getElementById(id)) return;
+    var b = el('div', null, text
       + '<button style="margin-left:10px;cursor:pointer;background:none;border:1px solid #8a6838;'
       + 'color:#ece0c6;border-radius:4px;padding:2px 8px">Dismiss</button>');
-    b.id = 'omw-still-starting';
+    b.id = id;
     b.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9000;'
       + 'padding:10px 14px;background:rgba(22,17,13,.94);border:1px solid rgba(138,104,56,.5);'
       + 'border-radius:6px;color:#a5987e;font:14px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif';

@@ -58,6 +58,16 @@ export const authorityTuning: AuthorityTuning = {
   actorSilenceMs: 15_000,
 };
 
+// Fired once per holder when EVERY actor-bearing cell it holds has been silent past
+// actorSilenceMs (backlog 324): a wedged peer auto-pongs, so its socket never drops and the
+// per-cell log line was the only consequence -- frozen NPCs for ever. server.ts wires this to
+// simPeers.stop(), whose crash path respawns the peer. Module-level like the tuning above,
+// because WorldState builds the Authority without ever seeing server.ts.
+export let onSilentPeer: ((holderId: number, cellKeys: string[]) => void) | undefined;
+export function setOnSilentPeer(fn: typeof onSilentPeer): void {
+  onSilentPeer = fn;
+}
+
 export function configureAuthority(t: Partial<AuthorityTuning>): void {
   for (const [k, v] of Object.entries(t)) {
     // Warn+drop rather than throw: a bad tuning value must not take the server down, and
@@ -101,6 +111,9 @@ export interface AuthorityOptions {
 
 export class Authority {
   private cells = new Map<string, Cell>();
+  // Holders onSilentPeer has already fired for; cleared by a frame or a fresh grant, so the
+  // callback runs once per silence, not once per sweep.
+  private silentHolders = new Set<number>();
   private readonly caps: CapabilitySource | undefined;
   private readonly now: () => number;
   private reviewTimer?: NodeJS.Timeout;
@@ -206,6 +219,7 @@ export class Authority {
     if (c) {
       c.lastActorFrame = this.now();
       c.silentReported = false;
+      if (c.holderId !== null) this.silentHolders.delete(c.holderId);
     }
   }
 
@@ -227,6 +241,7 @@ export class Authority {
     c.epoch = this.nextEpoch(c);
     c.grantedAt = this.now();
     c.lastActorFrame = 0;
+    this.silentHolders.delete(next);
     metrics.cellAuthority.inc({ kind });
     this.send.grant(next, cellKey, c.epoch, c.lastSnapshot ?? EMPTY_SNAPSHOT);
     for (const other of c.order) if (other !== next) this.send.info(other, cellKey, next, c.epoch);
@@ -264,6 +279,7 @@ export class Authority {
       c.epoch = this.nextEpoch(c);
       c.grantedAt = this.now();
       c.lastActorFrame = 0;
+      this.silentHolders.delete(playerId);
       const snapshot = c.lastSnapshot ?? (await this.loadOr(cellKey));
       // Remember what the doc says the cell contains. The server ships no game data, so a
       // client snapshot is the ONLY way it can learn whether a cell has actors — and the
@@ -315,17 +331,40 @@ export class Authority {
   // and only by a candidate that is clearly better. Exposed for tests and for an embedder
   // that wants to drive the sweep itself.
   reviewAll(): void {
-    for (const [cellKey, c] of this.cells) this.review(cellKey, c);
+    // holder -> its actor-bearing cells, and how many of those are silent
+    const byHolder = new Map<number, { cells: string[]; silent: number }>();
+    for (const [cellKey, c] of this.cells) {
+      const silent = this.review(cellKey, c);
+      if (silent === undefined || c.holderId === null) continue;
+      const h = byHolder.get(c.holderId) ?? { cells: [], silent: 0 };
+      h.cells.push(cellKey);
+      if (silent) h.silent++;
+      byHolder.set(c.holderId, h);
+    }
+    // A holder whose EVERY actor-bearing cell is silent is not simulating at all -- wedged,
+    // not merely slow in one place. One cell still producing means the process is alive.
+    for (const [holder, h] of byHolder) {
+      if (h.silent < h.cells.length || this.silentHolders.has(holder)) continue;
+      this.silentHolders.add(holder);
+      log('error', 'authority.silent_holder', { holder, cells: h.cells });
+      try { onSilentPeer?.(holder, h.cells); } catch (err) {
+        log('error', 'authority.on_silent_failed', { error: String(err) });
+      }
+    }
   }
 
   // LIVENESS ONLY. There is nothing to re-elect to: the sim peer is the sole eligible
   // holder, so a peer that has gone quiet cannot be replaced by a player — that fallback was
   // the client-authority model, and it is gone. A silent peer is an OPERATOR problem (crashed,
   // wedged, failing to authenticate), so it is reported loudly and left holding the cell.
-  // Taking the cell away would only make the NPCs disappear as well as stop moving.
-  private review(cellKey: string, c: Cell): void {
+  // Taking the cell away would only make the NPCs disappear as well as stop moving. What
+  // does happen: once ALL its actor-bearing cells are silent, reviewAll fires onSilentPeer
+  // and the supervisor restarts the process (backlog 324).
+  // undefined: nothing to judge (no holder, no actors, check off); else whether the holder
+  // has been silent on this cell past the grace.
+  private review(cellKey: string, c: Cell): boolean | undefined {
     const holder = c.holderId;
-    if (holder === null) return;
+    if (holder === null) return undefined;
     const now = this.now();
 
     // Only where there is something to simulate. A cell with no NPCs correctly produces no
@@ -335,18 +374,19 @@ export class Authority {
     // not vanish because a holder went quiet.
     const snap = c.lastSnapshot as { actors?: unknown[] } | null;
     const cellHasActors = Array.isArray(snap?.actors) && snap.actors.length > 0;
-    if (!cellHasActors || authorityTuning.actorSilenceMs <= 0) return;
+    if (!cellHasActors || authorityTuning.actorSilenceMs <= 0) return undefined;
 
     // Grace runs from the GRANT, so a peer that has just taken the cell is never judged
     // before it could have produced anything.
     const since = Math.max(c.lastActorFrame, c.grantedAt);
-    if (now - since <= authorityTuning.actorSilenceMs) return;
-    if (c.silentReported) return; // one line per silence, not one per sweep
+    if (now - since <= authorityTuning.actorSilenceMs) return false;
+    if (c.silentReported) return true; // one line per silence, not one per sweep
     c.silentReported = true;
     metrics.cellAuthority.inc({ kind: 'silent' });
     log('error', 'authority.silent_peer', {
       cell: cellKey, holder, silentMs: Math.round(now - since),
     });
+    return true;
   }
 
   private async loadOr(cellKey: string): Promise<ActorSnapshot> {

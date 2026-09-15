@@ -37,9 +37,10 @@ function combat.onPuppetHit(data)
     -- against the actors it holds -- armor, difficulty, hit chance and all, with no client
     -- assertion in the loop. So a REAL swing here is cancel-only: puppet.lua already
     -- returned false to stop the local ghost damage, and forwarding it as well would land
-    -- the blow twice. The relay survives for two callers: degraded mode (nobody simulating
-    -- the cell: forward as before, victim-applies for players, held/dropped for actors) and
-    -- the test hooks (mpTest), which keep s51/s58 policing the relay machinery itself.
+    -- the blow twice. The relay survives for ONE caller: the test hooks (mpTest), which
+    -- keep s51/s58 policing the relay machinery itself. Degraded mode (no peer) does not
+    -- forward either -- the puppet keeps its intercept armed and the swing simply cancels
+    -- (puppet.lua MP_Detach, backlog 328); only the sim peer ever holds a cell.
     -- Phase 4C, closed form: the peer's avatar swings and resolves EVERY melee (PvE and PvP)
     -- natively against the actors it holds, so a real client swing is always cancel-only --
     -- puppet.lua already returned false to stop local ghost damage; forwarding it too lands

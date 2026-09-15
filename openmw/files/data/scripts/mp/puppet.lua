@@ -80,6 +80,13 @@ end
 
 local playerId = nil -- set for remote-player puppets
 local actorKey = nil -- set for M4 NPC puppets (refKey the holder addresses)
+-- DEGRADED (backlog 328): the peer is gone, this actor's own AI is back on, and the script
+-- stays attached with the hit intercept armed, so a swing during the outage cancels exactly
+-- as it does with a holder. Degraded mode is cosmetic: without it an outage kill was a
+-- permanent per-screen divergence (alive for B, a lootable corpse for A, counted nowhere).
+-- degradedKey remembers the address so the first pose after the peer returns re-arms.
+local degraded = false
+local degradedKey = nil
 -- Backlog 310: the last local swing at this puppet; the stats drop it caused plays the feel.
 local lastSwingAt, lastSwingPos = 0, nil
 local SWING_FEEL_WINDOW_S = 1.0
@@ -221,6 +228,7 @@ local function onHitIntercept(attack)
         print(string.format('[mp] puppet intercept: %s key=%s pid=%s', tostring(self.object.recordId),
             tostring(actorKey), tostring(playerId)))
     end
+    if degraded then return false end -- nobody simulates: the swing cancels, lands nowhere
     if not playerId and not actorKey then return end -- not a live puppet: let the engine be
     local weapon = attack.weapon
     core.sendGlobalEvent('mpCombatHit', {
@@ -481,6 +489,16 @@ return {
     },
     eventHandlers = {
         MP_Pose = function(e)
+            -- The peer is back and driving this actor again: re-arm. addScript on a script
+            -- that is still attached is a silent no-op (no onInit), so this is the only
+            -- place a degraded puppet learns the outage is over.
+            if degraded then
+                degraded = false
+                actorKey = actorKey or degradedKey
+                placed = false
+                self:enableAI(false)
+                markPuppet(true)
+            end
             -- Absent tier (a server predating G2, or renderLod = "full") means near: the
             -- fallback must be full fidelity, never a silent degrade.
             tier = e.tier or TIER_NEAR
@@ -578,10 +596,15 @@ return {
                 end
             end)
         end,
-        -- M4 handoff: this client became the cell's authority holder. Re-enable AI (the
+        -- The holder stopped driving this actor: it left the cell, changed cell, or (with
+        -- data.degraded) the peer is gone and nobody simulates it. Re-enable AI (the
         -- mDisableAI control persists after removeScript, so it must be cleared here) and
-        -- stop driving; global.lua removes the script right after.
-        MP_Detach = function()
+        -- stop driving. Only the sim peer ever holds a cell, so there is no handoff to a
+        -- client here -- a detach is loss or departure. Degraded keeps the script (and the
+        -- hit intercept) attached; the other cases have global.lua remove it right after.
+        MP_Detach = function(data)
+            degraded = data and data.degraded == true
+            degradedKey = degraded and actorKey or nil
             actorKey = nil
             playerId = nil
             dead = false
@@ -589,6 +612,7 @@ return {
             self:enableAI(true)
             -- No longer somebody else's actor: the engine may apply magic damage to it again.
             markPuppet(false)
+            if degraded then return end
             -- Ask the GLOBAL script to remove us, now that AI is back on. `removeScript` is
             -- bound on GObject only (objectbindings.cpp) — it does not exist on a local
             -- script's `self`, so the previous `self:removeScript(...)` here threw and the

@@ -43,7 +43,7 @@ import { broadcastChat, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
 import { MoveBroadcaster, interestFromLimits } from './core/movement';
-import { configureAuthority } from './core/authority';
+import { configureAuthority, setOnSilentPeer } from './core/authority';
 import { Connection, type ServerCtx } from './net/connection';
 import { attachWss } from './net/ws';
 import { createHttpServer, setTrustCloudflareIp, type HttpRoute } from './net/http';
@@ -1659,6 +1659,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   };
   simPeerTick.unref();
   metrics.simPeerRunning.addCollector(() => simPeers.running);
+  // A WEDGED PEER IS RESTARTED, NOT JUST LOGGED (backlog 324). Its reader thread still pongs,
+  // so the socket never drops and every cell it holds stays frozen for ever; when authority
+  // sees all its actor-bearing cells silent, stop it -- the exit is a crash to the supervisor
+  // and the ordinary ensure() pass respawns it after the backoff. An unmanaged peer (the
+  // harness's own) is not ours to kill.
+  setOnSilentPeer((holderId, cells) => {
+    if (simPeers.keyOfAccount(roster.get(holderId)?.name ?? '') !== WORLD_KEY) return;
+    log('error', 'simpeer.restart_silent', { holderId, cells: cells.length });
+    simPeers.stop(WORLD_KEY);
+  });
 
   const ipTracker = new IpConnTracker(config.limits.maxConnsPerIp);
   const connections = new Set<Connection>();

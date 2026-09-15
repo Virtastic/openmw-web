@@ -1297,6 +1297,24 @@ do
     and pp:find("elseif ftDrop and recent then", 1, true) ~= nil
     and pp:find("'Hand To Hand Hit' or 'Hand To Hand Hit 2'", 1, true) ~= nil
     and pp:find('if recent and lastSwingPos and I.Combat and I.Combat.spawnBloodEffect then', 1, true) ~= nil)
+  -- #325: the peer rules follow the LAST SimReady, not the join-time flag.
+  check('global.lua peer rules read the last SimReady (325)',
+    g:find('if lastSimReady ~= nil then simulated = lastSimReady end', 1, true) ~= nil
+    and g:find('lastSimReady = (data and data.ready) == true', 1, true) ~= nil
+    and g:find('lastSimReady = nil', 1, true) ~= nil)
+  -- #328: a degraded puppet keeps its script and cancels every swing.
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('puppet.lua stays attached in degraded mode with the hit intercept armed (328)',
+    pp:find('if degraded then return false end', 1, true) ~= nil
+    and pp:find('MP_Detach = function(data)', 1, true) ~= nil
+    and pp:find('degraded = data and data.degraded == true', 1, true) ~= nil
+    and pp:find('if degraded then return end', 1, true) ~= nil
+    and pp:find('actorKey = actorKey or degradedKey', 1, true) ~= nil
+    and ac:find('detachActorPuppetsInCell(data.cellKey, true)', 1, true) ~= nil
+    and ac:find("sendEvent('MP_Detach', { degraded = degraded == true })", 1, true) ~= nil)
+  -- #330: the peer's per-player tables shrink on leave.
+  check('global.lua drops avatarDocs and remoteIdentity on MP_PlayerLeaveWorld (330)',
+    g:find('avatarDocs[data.id] = nil', 1, true) ~= nil and g:find('remoteIdentity[data.id] = nil', 1, true) ~= nil)
 end
 
 print('global.lua -- a stored cell that no longer exists falls back to the Welcome respawn (backlog 317)')

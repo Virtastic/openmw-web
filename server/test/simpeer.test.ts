@@ -10,10 +10,13 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { SimPeerSupervisor, peerAccountName, type SimPeerSettings } from '../src/core/simpeer';
+import { onLog } from '../src/log';
 
 class FakeChild extends EventEmitter {
   killed: string[] = [];
   pid = 4242;
+  stdout = new EventEmitter();
+  stderr = new EventEmitter();
   kill(sig: string): boolean {
     this.killed.push(sig);
     // A real SIGTERM'd process exits; the supervisor's bookkeeping depends on that.
@@ -438,4 +441,75 @@ test('sim peer: HOME points at a directory this process owns, never the inherite
   } finally {
     if (before === undefined) delete process.env.HOME; else process.env.HOME = before;
   }
+});
+
+// Backlog 327: a peer that dies inside its start window over and over is a crash LOOP, and a
+// flat 15 s backoff meant a full retail load per cycle for ever. Each early death doubles the
+// wait; the fifth disables the peer and says why.
+test('sim peer: consecutive early crashes escalate the backoff and then disable the peer', () => {
+  const { sup, spawned, advance } = harness();
+  const waits: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    sup.ensure('world');
+    assert.equal(spawned.length, i + 1, `spawn ${i + 1}`);
+    spawned[i]!.child.emit('exit', 1, null); // crashed a moment after spawn
+    const expected = SimPeerSupervisor.CRASH_BACKOFF_MS[i]!;
+    advance(expected - 1);
+    sup.ensure('world');
+    assert.equal(spawned.length, i + 1, `still blocked ${expected - 1} ms after crash ${i + 1}`);
+    advance(1);
+    waits.push(expected);
+  }
+  assert.deepEqual(waits, [15_000, 30_000, 60_000, 120_000, 300_000]);
+  sup.ensure('world');
+  assert.equal(spawned.length, 5, 'the fifth early crash disables the peer permanently');
+  assert.match(sup.disabledReason ?? '', /crash loop/);
+});
+
+test('sim peer: a peer that outlived its start window resets the streak', () => {
+  const { sup, spawned, advance } = harness();
+  sup.ensure('world');
+  spawned[0]!.child.emit('exit', 1, null);
+  advance(15_000);
+  sup.ensure('world');
+  advance(SETTINGS.startTimeoutMs + 61_000); // ran for a long time: a real peer, not a loop
+  spawned[1]!.child.emit('exit', 1, null);
+  advance(15_000);
+  sup.ensure('world');
+  assert.equal(spawned.length, 3, 'a late crash goes back to the first backoff tier');
+});
+
+// A spawn that fails asynchronously (ENOENT on a configured binary) emits `error` and never
+// `exit`; the entry used to stay in `peers` with no helloAt and the supervisor wedged.
+test('sim peer: a child error drops the entry and backs off instead of wedging', () => {
+  const { sup, spawned, advance } = harness();
+  sup.ensure('world');
+  spawned[0]!.child.emit('error', new Error('spawn ENOENT'));
+  assert.equal(sup.running, 0, 'the entry is gone');
+  sup.ensure('world');
+  assert.equal(spawned.length, 1, 'and the crash backoff applies');
+  advance(15_000);
+  sup.ensure('world');
+  assert.equal(spawned.length, 2, 'then it retries');
+});
+
+// Backlog 329: a per-actor-per-frame Lua error is the same line thousands of times; forwarding
+// each one starved the tick and rotated the log away. Identical lines within a second collapse
+// to one line plus one count.
+test('sim peer: 10k identical stderr lines within a second become a handful of log calls', async () => {
+  const { sup, spawned } = harness();
+  const seen: unknown[] = [];
+  const off = onLog((e) => { if (e.event === 'simpeer.output') seen.push(e); });
+  try {
+    sup.ensure('world');
+    const err = spawned[0]!.child.stderr;
+    const line = 'Lua error: attempt to index a nil value (actors.lua:1)' + String.fromCharCode(10);
+    err.emit('data', Buffer.from(line.repeat(5000)));
+    err.emit('data', Buffer.from(line.repeat(5000)));
+    assert.equal(seen.length, 1, 'the first occurrence goes out at once, the rest are counted');
+    spawned[0]!.child.emit('exit', 0, 'SIGTERM'); // flushes the counter
+    await tick();
+    assert.equal(seen.length, 2, 'one summary line for the repeats');
+    assert.equal((seen[1] as { times: number }).times, 9999);
+  } finally { off(); }
 });
