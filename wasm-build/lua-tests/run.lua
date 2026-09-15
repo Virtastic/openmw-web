@@ -758,6 +758,18 @@ do
     end
   end
   check('no script path appears on two lines (the first is silently dropped)', #dups == 0, table.concat(dups, ', '))
+  -- ...AND EVERY PATH IS BAKED INTO THE NATIVE PEER. The browser bake copies scripts/mp/ whole
+  -- (wasm-build/link-openmw.sh); the peer's resources/vfs come from files/data/CMakeLists.txt,
+  -- one line per file. companion.lua was never added there: the peer ran without it for four
+  -- days ("Resource 'scripts/mp/companion.lua' not found" in every Jenkins peer log), so the
+  -- holder never reported a follow, a fight or a scripted travel, and the harness's script
+  -- sync (which hid this locally) fails under Jenkins.
+  local cm = io.open('./openmw/files/data/CMakeLists.txt'):read('*a')
+  local missing = {}
+  for path in pairs(seen) do
+    if not cm:find(string.char(10) .. '%s*' .. path:gsub('%.', '%%.') .. '%s*' .. string.char(10)) then missing[#missing + 1] = path end
+  end
+  check('every mp.omwscripts path is listed in files/data/CMakeLists.txt (the peer image)', #missing == 0, table.concat(missing, ', '))
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

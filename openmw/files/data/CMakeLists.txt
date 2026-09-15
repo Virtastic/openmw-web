@@ -131,6 +131,7 @@ set(BUILTIN_DATA_FILES
     scripts/mp/admin.lua
     scripts/mp/avatar.lua
     scripts/mp/combat.lua
+    scripts/mp/companion.lua
     scripts/mp/global.lua
     scripts/mp/identity.lua
     scripts/mp/interp.lua
