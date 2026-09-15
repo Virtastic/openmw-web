@@ -1789,6 +1789,9 @@ export class Connection implements Peer {
       metrics.authSuperseded.inc();
       existing.peer.disconnect('SUPERSEDED', 'this character was opened in another session');
     }
+    // ...and the PARKED session too: a stale tab whose drop parked a resume ticket would
+    // otherwise resume inside the window and supersede this fresh boot (backlog 408).
+    if (char) this.ctx.resume.revokeChar(char.id);
     this.account = account;
     this.authedVia = op;
     // Onboarding: the unique public handle is the display name everywhere once set; the

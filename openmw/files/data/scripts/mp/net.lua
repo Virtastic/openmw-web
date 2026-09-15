@@ -225,8 +225,10 @@ function net.start()
     -- The FIRST dial gets the same still-booting grace a world switch gets: the launcher just
     -- asked the gateway to create-or-wake this world, and with cached game data the engine can
     -- reach the dial before the world process listens. A refused socket inside this window
-    -- keeps retrying instead of dead-ending at UNREACHABLE.
-    if switchDeadline == nil then switchDeadline = core.getRealTime() + 60 end
+    -- keeps retrying instead of dead-ending at UNREACHABLE. 45 s, not the switch's 60: the
+    -- last redial inside the window can carry up to the 30 s jittered cap, and s90's budget
+    -- (a server that is really down must SAY so) has to hold that plus the boot.
+    if switchDeadline == nil then switchDeadline = core.getRealTime() + 45 end
     -- M8: the ticket survives a PAGE RELOAD (mp.setResumeToken -> localStorage), which is
     -- the case §M8 is really about — a reloaded tab rejoins in place instead of re-authing.
     local token = mp.getResumeToken and mp.getResumeToken() or ''
@@ -445,7 +447,12 @@ function net.onClose()
         setState('Failed')
         return
     end
-    if not everJoined and reconnectAttempt >= UNREACHABLE_ATTEMPTS then
+    -- ...but not inside the still-booting grace (switchDeadline): this ran BEFORE the
+    -- switchDeadline branch below, so the first dial's 60 s grace was never honoured -- three
+    -- refused sockets (~7 s) dead-ended at UNREACHABLE while the world process was still
+    -- coming up (backlog 407).
+    if not everJoined and reconnectAttempt >= UNREACHABLE_ATTEMPTS
+        and not (switchDeadline and core.getRealTime() < switchDeadline) then
         net.lastError = net.lastError or 'UNREACHABLE'
         net.lastErrorDetail = net.lastErrorDetail or 'could not reach the server'
         mp.set('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))

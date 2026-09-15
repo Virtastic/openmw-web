@@ -909,6 +909,11 @@ local function dispatch(cmd)
         -- setlevel:<n>: the character's level (a leveled-list scaling and progression probe).
         local lvl = cmd:match('^setlevel:(%d+)$')
         if lvl then pcall(function() types.Actor.stats.level(self).current = tonumber(lvl) end) end
+        -- levelof: read it back (s153: the level must survive a second relog, backlog 404).
+        if cmd == 'levelof' then
+            local ok, v = pcall(function() return types.Actor.stats.level(self).current end)
+            mp.set('levelOf', tostring(ok and v or -1))
+        end
         local skId, skVal = cmd:match('^setskill:([%w_]+):(%d+)$')
         if skId then
             pcall(function() types.NPC.stats.skills[skId](self).base = tonumber(skVal) end)

@@ -1513,17 +1513,10 @@
      // The in-world name for this slot. Other players see it (it rides every
      // PlayerAppearance), so it is the CHARACTER's name and never the account holder's.
      + '&mpcharname=' + encodeURIComponent(chosenChar.name || 'Adventurer')
-     // Boot the engine straight into the cell this character logged out in. Without it the
-     // engine spawns at the game's DEFAULT start and the server teleports a moment later —
-     // real seconds standing somewhere you did not choose, next to whatever lives there.
-     // Only NAMED cells: --start takes a cell name, and an exterior grid ref ("-2,-9") is not
-     // one. Exteriors keep the teleport (and the loading screen that hides it).
-     + (function(){
-         if (chosenChar.joinWsPath) return ''; // the host's world places us beside the host
-         var p = (chosenChar.positions || {})[privId];
-         var cell = p && p.cellKey;
-         return (cell && !/^-?\d+,\s*-?\d+$/.test(cell)) ? '&mpstart=' + encodeURIComponent(cell) : '';
-       })()
+     // No --start cell (the old mpstart fragment key): index.html's __omwAwaitRestore holds the loading
+     // screen until the server's record has placed us, and a cell this load order no longer
+     // has (#317) died in the engine's "Failed to start new game" box instead of reaching the
+     // reboot-once retry, so the restore's respawn fallback covers it (backlog 406).
      + (chosenChar.needsChargen ? '&mpnew=1' : '');
    // No query string at all: the address bar shows plain index.html.
    location.href = 'index.html' + frag;

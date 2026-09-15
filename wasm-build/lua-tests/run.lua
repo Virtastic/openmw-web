@@ -1465,6 +1465,18 @@ do
     and g:find('if entry.blk or avatarStatsLast[id] ~= key', 1, true) ~= nil
     and p:find("if type(data.blk) == 'string' then pcall(core.sound.playSound3d, data.blk, self) end", 1, true) ~= nil
     and lb:find('return takeBlockFor(ptr.getCellRef().getRefNum());', 1, true) ~= nil)
+  -- #404: no MP_ChargenDone while a restore is still pending; the local is declared above it.
+  check('chargenTick waits on pendingRestore, which is declared before it (404)',
+    g:find('local pendingRestore = nil\n\nlocal function chargenTick()', 1, true) ~= nil
+    and g:find('if pendingRestore then return end', 1, true) ~= nil
+    and g:find('if pendingRestore then return end', 1, true) < g:find("mp.sendEvent('ChargenComplete', {})", 1, true)
+    and select(2, g:gsub('local pendingRestore = nil', '')) == 1
+    and p:find("if cmd == 'levelof' then", 1, true) ~= nil)
+  -- #407: the first-dial grace is checked before UNREACHABLE gives up.
+  local n = io.open('./openmw/files/data/scripts/mp/net.lua'):read('*a')
+  check('UNREACHABLE_ATTEMPTS defers to the switchDeadline grace, 45 s on the first dial (407)',
+    n:find('if not everJoined and reconnectAttempt >= UNREACHABLE_ATTEMPTS\n        and not (switchDeadline and core.getRealTime() < switchDeadline) then', 1, true) ~= nil
+    and n:find('if switchDeadline == nil then switchDeadline = core.getRealTime() + 45 end', 1, true) ~= nil)
 end
 
 print('UX rows -- social OK lines reach the feed, the late host hears who went home, a guest\'s Rest is refused before the bed lies (29, 32, 262)')

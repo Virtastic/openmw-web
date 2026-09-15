@@ -86,6 +86,36 @@ test('the multiplayer scrub is still in place', clientOpts, () => {
   assert.match(index, /window\.__omwBootFrag = String\(location\.hash \|\| ''\)\.replace\(\/\^#\/, ''\);/);
 });
 
+// --- the boot path (backlog 405/406/409/410) --------------------------------------------------
+
+test('the F5 fragment keeps mpnew until chargen is done, then drops it', clientOpts, () => {
+  // 405: stripping mpnew at stash time turned an F5 mid-creation into a --skip-menu boot whose
+  // frame-1 chargenstate -1 was accepted as ChargenComplete -- a template forever.
+  const stash = /sessionStorage\.setItem\('omwmp:bootfrag', window\.__omwBootFrag\.split\('&'\)\r?\n\s*\.filter\(function\(kv\)\{ return !\/\^\(([a-z|]+)\)=\/\.test\(kv\); \}\)/.exec(index);
+  assert.ok(stash, 'the bootfrag stash filter moved');
+  const dropped = String(stash[1]).split('|');
+  assert.ok(!dropped.includes('mpnew'), 'mpnew must survive into the stash');
+  assert.ok(dropped.includes('mpticket'), 'the ticket must not');
+  assert.match(index, /if \(ready\) try \{[\s\S]*?filter\(function\(kv\)\{ return !\/\^mpnew=\/\.test\(kv\); \}\)/,
+    'chargenDone must strip mpnew from the stash');
+});
+
+test('the launcher no longer emits mpstart and index.html no longer boots with --start', clientOpts, () => {
+  // 406: an unknown --start cell dies in the engine's own "Failed to start new game" box, so the
+  // reboot-once retry in fatalOverlay was unreachable; __omwAwaitRestore holds the screen instead.
+  const launcher = readFileSync(join(process.cwd(), '..', 'play', 'launcher.html'), 'utf8');
+  assert.doesNotMatch(launcher, /['&]mpstart=/);
+  assert.doesNotMatch(index, /\[#&\]mpstart=/, 'index.html must not read mpstart from the fragment');
+  assert.doesNotMatch(index, /omw-mpstart-retried/);
+});
+
+test('a failed openmw.data download and a failed syncfs both say so', clientOpts, () => {
+  // 409: emscripten's loadPackage rejects with the package path and nothing else fires.
+  assert.match(index, /if \(\/openmw\\\.data\/\.test\(String\(e\.reason && e\.reason\.message \|\| e\.reason\)\)\) \{\r?\n\s*fatalOverlay\('Could not download the game'/);
+  // 410: FS.syncfs reports failure through its callback's err, which was ignored.
+  assert.match(index, /FS\.syncfs\(false, function\(err\)\{\r?\n\s*if \(err\) append\(/);
+});
+
 // --- the browser loading the operator's mods ---------------------------------------------------
 //
 // OpenMW is unforgiving here in a way that is worth stating: registerArchives() THROWS on a

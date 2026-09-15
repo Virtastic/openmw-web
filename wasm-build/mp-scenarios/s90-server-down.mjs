@@ -16,7 +16,9 @@ export default async function run(ctx) {
     mpUrl: 'ws://127.0.0.1:9/ws',
     waitExpr: 'window.omw.state.state === "Failed"',
     waitWhat: 'omw.state.state === Failed (server down)',
-    joinTimeoutMs: 90_000, // the backoff ladder runs before it gives up
+    // The first dial's still-booting grace (net.lua switchDeadline, 45 s -- honoured since
+    // backlog 407) plus one jittered redial (cap 30 s) plus the boot itself.
+    joinTimeoutMs: 150_000,
   });
 
   const lastError = await a.eval('window.omw.state.lastError || ""');

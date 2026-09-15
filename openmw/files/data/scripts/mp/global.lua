@@ -47,6 +47,10 @@ local function worldUrlOf(w)
     return nil
 end
 
+-- SessionWelcome.playerRecord (captured by net.lua), held here until restoreTick applies it.
+-- Declared above chargenTick because chargenTick must see it (backlog 404).
+local pendingRestore = nil
+
 local function chargenTick()
     -- RE-REPORT ON EVERY CONNECTION, not once per process. identity.reset() shuts the baseline
     -- gate whenever we are not Joined, and for a brand new character MP_ChargenDone is the only
@@ -56,6 +60,14 @@ local function chargenTick()
     -- makes re-reporting the safe direction.
     if net.state ~= 'Joined' then chargenReported = false end
     if chargenDone and chargenReported then return end
+    -- NOT WHILE A RESTORE IS STILL PENDING (backlog 404). A skip-menu boot has chargenstate
+    -- == -1 from the first frame, so a RETURNING character reaches the send below on its
+    -- first Joined tick. restoreTick runs earlier in the same tick, but it DEFERS the grant
+    -- while a player-made `mp_*` item's record has not landed through RecordsSync yet -- and
+    -- MP_ChargenDone opens identity's baseline gate on the engine's raw template, which the
+    -- server then stored over the real character (level 1, an empty pack) before the record
+    -- ever applied. Wait for the restore to fire; applyPhase2 opens the gate itself.
+    if pendingRestore then return end
     if not chargenDone then
         local ok, v = pcall(function() return world.mwscript.getGlobalVariables()['chargenstate'] end)
         if ok and v == -1 then
@@ -1336,7 +1348,7 @@ end
 -- SessionWelcome.playerRecord (captured by net.lua) is applied once the player object
 -- exists: grant the stored inventory (createObject+moveInto — only global can), teleport to
 -- the stored position, then hand the record to player.lua (chargen/stats/spells/equipment).
-local pendingRestore = nil
+-- (pendingRestore itself is declared above chargenTick.)
 local testItemRecordId = nil -- dynamic record for the equiptest harness hook
 
 -- M3 test-hook state

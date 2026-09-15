@@ -652,22 +652,6 @@ window.omw = (function(){
  window.__omwLog = append;
  function fatalOverlay(title, detail, showReload, opts){
    opts = opts || {};
-   // A RETURNING CHARACTER PARKED IN A CELL THIS LOAD ORDER NO LONGER HAS (backlog 317). The
-   // launcher boots them with --start <cell> (#mpstart) and the engine aborts at boot with
-   // "Interior cell is not found: '...'" -- a removed mod's interior, a disabled expansion.
-   // Reboot ONCE without the fragment: the engine starts at its default, and global.lua's
-   // restore then moves them to the world's respawn point and says why. Once, keyed on the
-   // cell, so a fatal the reboot does not cure still lands on this overlay.
-   try {
-     var ms = /[#&]mpstart=([^&]+)/.exec(location.hash || '');
-     if (ms && /cell .* not found/i.test(String(detail || ''))
-         && sessionStorage.getItem('omw-mpstart-retried') !== ms[1]) {
-       sessionStorage.setItem('omw-mpstart-retried', ms[1]);
-       location.hash = (location.hash || '').replace(/[#&]mpstart=[^&]+/, '').replace(/^&/, '#');
-       location.reload();
-       return;
-     }
-   } catch(e){}
    killEngine();
    // A fatal BEFORE the engine is up means the engine must never come up. The loader keeps
    // downloading and compiling behind the overlay (openmw.js + wasm + data + the pthread
@@ -1225,7 +1209,8 @@ window.omw = (function(){
      if (typeof FS === 'undefined' || !FS.syncfs) return;
      if (window.__omwSyncing) { window.__omwSyncAgain = true; return; }
      window.__omwSyncing = true;
-     FS.syncfs(false, function(){
+     FS.syncfs(false, function(err){
+       if (err) append('[syncfs] ' + err, 'err'); // a save that did not reach IDBFS (410)
        window.__omwSyncing = false;
        if (window.__omwSyncAgain) { window.__omwSyncAgain = false; window.__omwSyncfs(); }
      });
@@ -1287,12 +1272,9 @@ window.omw = (function(){
        // Hash read here works: this IIFE runs at script parse, before preRun scrubs it.
        if (bootParam('mp')) {
          if (/[#&]mpnew=1/.test(location.hash || '')) return ['--skip-menu', '--new-game'];
-         // Returning character: start IN the cell they logged out of. Plain --skip-menu drops
-         // them at the game's default start until the server's record lands, which is a real
-         // window standing somewhere they did not choose. The server still teleports to the
-         // exact coordinates; this just makes the starting CELL the right one.
-         var ms = /[#&]mpstart=([^&]+)/.exec(location.hash || '');
-         return ms ? ['--skip-menu', '--start', decodeURIComponent(ms[1].replace(/\+/g, '%20'))] : ['--skip-menu'];
+         // Returning character: the default start, behind __omwAwaitRestore's held loading
+         // screen until the server's record has teleported us (no --start: backlog 406).
+         return ['--skip-menu'];
        }
      } catch (e) {}
      return [];
@@ -1502,9 +1484,13 @@ window.omw = (function(){
                  // the single-use credential itself.
                  window.__omwBootFrag = String(location.hash || '').replace(/^#/, '');
                  // For F5 (see the launcher check at the top): everything but the ticket.
+                 // mpnew STAYS until chargen finishes (the chargen watcher below strips it):
+                 // dropping it here meant an F5 mid-creation rebooted with --skip-menu, the
+                 // engine reported chargenstate -1 on frame 1, ChargenComplete was accepted
+                 // and the slot was a template forever (backlog 405).
                  try {
                    sessionStorage.setItem('omwmp:bootfrag', window.__omwBootFrag.split('&')
-                     .filter(function(kv){ return !/^(mpticket|mpnew|mpclosed|mpclosedby|mperror)=/.test(kv); }).join('&'));
+                     .filter(function(kv){ return !/^(mpticket|mpclosed|mpclosedby|mperror)=/.test(kv); }).join('&'));
                  } catch (e) {}
                  history.replaceState(null, '', location.pathname + location.search);
                }
@@ -3771,6 +3757,14 @@ window.omw = (function(){
    if (String(e.reason && e.reason.message || e.reason).indexOf('Pointer lock') !== -1) { e.preventDefault(); return; }
    append('unhandled rejection: '+(e.reason && e.reason.message || e.reason),'err');
    showLogOnce();
+   // The engine's file package failed to arrive: emscripten's loadPackage rejects with
+   // "Network Error: .../openmw.data" or "<status>: <url>" and nothing else ever fires --
+   // the boot screen simply sat there (backlog 409).
+   if (/openmw\.data/.test(String(e.reason && e.reason.message || e.reason))) {
+     fatalOverlay('Could not download the game',
+       'The game data (openmw.data) failed to download (' + (e.reason && e.reason.message || e.reason) + '). '
+       + 'Check your connection and reload.');
+   }
  });
 </script>
 <script src="streamfs.js"></script>
@@ -5221,6 +5215,11 @@ window.omw = (function(){
     var r = (m.chargenDone === '1');
     if (r !== ready){
       ready = r;
+      // Creation is over: an F5 from here is a returning character, not a new one (405).
+      if (ready) try {
+        var bf = sessionStorage.getItem('omwmp:bootfrag');
+        if (bf && /(^|&)mpnew=/.test(bf)) sessionStorage.setItem('omwmp:bootfrag', bf.split('&').filter(function(kv){ return !/^mpnew=/.test(kv); }).join('&'));
+      } catch (e) {}
       // Through the shared applier: the player's own hide-chat preference has to win over
       // "chargen finished", or unlocking multiplayer would silently turn chat back on.
       chatReady = ready;

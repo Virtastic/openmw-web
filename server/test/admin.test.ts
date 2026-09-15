@@ -290,6 +290,29 @@ test('session resume', async (t) => {
     back.close(); await back.closed;
   });
 
+  // Backlog 408: a stale tab's PARKED ticket must not outlive a fresh login of the same
+  // character -- it would resume inside the window and supersede the new boot.
+  await t.test('a fresh login of the character revokes the parked ticket of its old session', async () => {
+    const stale = await TestClient.connect(server.port);
+    const w = await stale.joinAsNew('Staler');
+    await stale.waitEvent('PlayerList');
+    const token = w.welcome['sessionToken'] as string;
+    stale.close(); await stale.closed; // parked
+
+    const fresh = await TestClient.connect(server.port);
+    await fresh.joinExisting('Staler');
+    await fresh.waitEvent('PlayerList');
+
+    const back = await TestClient.connect(server.port);
+    back.hello(); await back.waitJson('SessionHelloOk');
+    back.sendJson({ t: 'SessionResume', token });
+    const msg = await back.waitDisconnect('AUTH_FAILED');
+    assert.match(String(msg['detail']), /expired or unknown/, 'the old ticket is gone');
+    await back.closed;
+    assert.ok(!fresh.isClosed, 'the fresh session was not superseded');
+    fresh.close(); await fresh.closed;
+  });
+
   await t.test('a resume cannot bypass content policy', async () => {
     // Content policy is adopt-first-canonical and is released when the server empties, so
     // an anchor client stays connected while the resuming one reconnects.
@@ -315,32 +338,6 @@ test('session resume', async (t) => {
     await ok.waitJson('SessionWelcome');
     ok.close(); anchor.close();
     await ok.closed; await anchor.closed;
-  });
-
-  await t.test('resuming an account connected elsewhere still supersedes', async () => {
-    const live = await TestClient.connect(server.port);
-    const w = await live.joinAsNew('Doubled');
-    await live.waitEvent('PlayerList');
-    const token = w.welcome['sessionToken'] as string;
-    live.close(); // parks the ticket
-    await live.closed;
-
-    const a = await TestClient.connect(server.port);
-    a.hello();
-    await a.waitJson('SessionHelloOk');
-    a.login('Doubled', 'hunter22');
-    await a.waitJson('SessionWelcome');
-    a.sendJson({ t: 'SessionReady' });
-    await a.waitEvent('PlayerList');
-
-    const b = await TestClient.connect(server.port);
-    b.hello();
-    await b.waitJson('SessionHelloOk');
-    b.sendJson({ t: 'SessionResume', token });
-    await b.waitJson('SessionWelcome');
-    await a.waitDisconnect('SUPERSEDED');
-    a.close(); b.close();
-    await a.closed; await b.closed;
   });
 });
 

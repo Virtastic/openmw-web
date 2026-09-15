@@ -61,6 +61,15 @@ export class ResumeStore {
     }
   }
 
+  // The character authenticated afresh elsewhere: a ticket parked by its old tab would
+  // otherwise resume later and supersede the new session (backlog 408). Per character, not
+  // account -- #124 allows two characters per account.
+  revokeChar(charId: string): void {
+    for (const [token, ticket] of [...this.tickets]) {
+      if (ticket.charId === charId) this.tickets.delete(token);
+    }
+  }
+
   clear(): void {
     this.tickets.clear();
   }
