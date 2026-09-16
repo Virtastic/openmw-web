@@ -1226,6 +1226,34 @@ do
   check('every mp.omwscripts path is listed in files/data/CMakeLists.txt (the peer image)', #missing == 0, table.concat(missing, ', '))
 end
 
+-- ============================================ backlog 453: the Follow activation gate
+-- AiFollow::execute only ever turns mActive ON, and only while the leader is within
+-- followDistance + 384 and in line of sight. A claim that arrives after the player has walked
+-- off leaves the package permanently inactive and the companion rooted -- the peer log showed
+-- "dest 1025 away; pos=(-12239,-70993,93)" repeating forever. companion.lua re-issues the
+-- package once the leader is back in range; these pin the condition AND its bound, because an
+-- unbounded re-issue would restart the package every poll for every NPC in every cell.
+print('companion.lua -- a stalled Follow is re-issued when the leader comes back in range (453)')
+do
+  local cp = io.open('./openmw/files/data/scripts/mp/companion.lua'):read('*a')
+  check('companion.lua re-issues a Follow only while the actor has NOT moved and the leader is in range',
+    cp:find('local function reissueStalledFollow()', 1, true) ~= nil
+      and cp:find('if moved then return end', 1, true) ~= nil
+      and cp:find('if not okd or dist >= REISSUE_RANGE then return end', 1, true) ~= nil
+      and cp:find("I.AI.startPackage({ type = 'Follow', target = target })", 1, true) ~= nil)
+  check('the re-issue is bounded: MP only, at most one every few seconds, under the engine range',
+    cp:find('if not (mpapi.isEnabled and mpapi.isEnabled()) then return end', 1, true) ~= nil
+      and cp:find('if lastReissue and now - lastReissue < REISSUE_EVERY then return end', 1, true) ~= nil
+      and tonumber(cp:match('local REISSUE_EVERY = (%d+)')) >= 2
+      and tonumber(cp:match('local REISSUE_RANGE = (%d+)')) <= 450)
+  check('it is driven from the 1 Hz poll, not from a bare onUpdate', cp:find('nextPoll = now + POLL', 1, true) < cp:find('            reissueStalledFollow()', 1, true))
+  -- Escort is NOT re-issued: aiescort.cpp re-tests isInEscortRange every frame, so it resumes
+  -- by itself -- and re-issuing it from here would need the destination, which only the
+  -- holder's original claim carries.
+  check('Escort is left alone (it has no activation latch, and its destination lives upstream)',
+    cp:find("startPackage({ type = 'Escort'", 1, true) == nil)
+end
+
 print('actors.lua / global.lua -- scale: one actor scan per tick, chunked batches, a detach without the script is a no-op')
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')

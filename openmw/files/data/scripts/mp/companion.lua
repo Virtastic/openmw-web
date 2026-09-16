@@ -80,12 +80,57 @@ local function followedPlayer()
     return t, { x = d.x, y = d.y, z = d.z, duration = pkg.duration or 0 }
 end
 
+-- THE ACTIVATION GATE. A Follow package does not start where it is issued: AiFollow::execute
+-- (aifollow.cpp) refuses to run until the leader has been within followDistance + 384 AND in
+-- line of sight, and that check only ever flips mActive ON -- miss the window and the package
+-- sits inactive for its whole life while the companion stands exactly where it was recruited.
+-- Single player never sees it because you recruit face to face. Here the claim travels client
+-- -> server -> holder and companion.lua polls at 1 Hz, so the leader (on the peer an AVATAR,
+-- a Generated: NPC) can legitimately be a thousand units away by the time the package lands --
+-- recruit someone and walk off briskly and the follower never takes a step.
+--
+-- So: while the actor has NOT moved and its leader is back in range, hand the engine a fresh
+-- Follow package and let it run its own activation check again. AiEscort has no such latch
+-- (isInEscortRange is re-tested every frame and the package resumes on its own), so Follow is
+-- the only one re-issued -- which also means an escort's destination is never touched.
+local REISSUE_RANGE = 450 -- under the engine's own followDistance + 384, so we never guess high
+local REISSUE_EVERY = 3 -- seconds between attempts: this can never become a per-frame loop
+local lastPos, lastReissue = nil, nil
+
+local function reissueStalledFollow()
+    local mpapi = require('openmw.mp')
+    -- MP only. Vanilla single player recruits in range and must keep its exact behaviour.
+    if not (mpapi.isEnabled and mpapi.isEnabled()) then return end
+    local okA, pkg = pcall(function() return I.AI.getActivePackage() end)
+    local okT, target = pcall(function() return pkg and pkg.type == 'Follow' and pkg.target end)
+    if not (okA and okT and target and target:isValid()) then
+        lastPos = nil
+        return
+    end
+    local pos = self.position
+    local moved = lastPos == nil or (pos - lastPos):length() > 1
+    lastPos = pos
+    if moved then return end -- it is following fine; nothing to fix
+    local okd, dist = pcall(function() return (target.position - pos):length() end)
+    if not okd or dist >= REISSUE_RANGE then return end -- still too far for the engine to start
+    local now = core.getRealTime()
+    if lastReissue and now - lastReissue < REISSUE_EVERY then return end
+    lastReissue = now
+    if mpapi.isSystem and mpapi.isSystem() then
+        print(string.format('[mp] follow re-issue on peer: %s -> %s at %.0f u (package never activated)',
+            tostring(self.object.recordId), tostring(target.recordId), dist))
+    end
+    pcall(function() I.AI.startPackage({ type = 'Follow', target = target }) end)
+end
+
 return {
     engineHandlers = {
         onUpdate = function()
             local now = core.getRealTime()
             if now < nextPoll then return end
             nextPoll = now + POLL
+
+            reissueStalledFollow()
 
             -- Diagnostic on the PEER only: an escorting/following NPC says where it is with
             -- its charge every few seconds (s123). Silent for everything else.
