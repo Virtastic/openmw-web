@@ -1666,5 +1666,17 @@ do
     and ws:find('(!crime && this.dialogueHolder?.(ref.key) !== player.id)', 1, true) ~= nil)
 end
 
+print('#413 script notes are metered, not drained in one burst')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('scriptNotesTick queues notes and sends at most NOTE_SENDS_PER_SEC a second',
+    g:find('local NOTE_SENDS_PER_SEC = 20', 1, true) ~= nil
+    and g:find('for _, n in ipairs(notes) do pendingNotes[#pendingNotes + 1] = n end', 1, true) ~= nil
+    and g:find('while #pendingNotes > 0 and noteSendCount < NOTE_SENDS_PER_SEC do', 1, true) ~= nil)
+  local c = io.open('./openmw/apps/openmw/mwmp/puppets.cpp'):read('*a')
+  check('recordScriptNote keeps one pending aidone per ref',
+    c:find('if (pending.mKind == "aidone" && pending.mRef == note.mRef)', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

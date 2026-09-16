@@ -327,6 +327,15 @@ namespace MWMP
         static const bool mp = std::getenv("OPENMW_MP_URL") != nullptr;
         if (!mp || scriptNotes().size() >= sMaxNotes)
             return;
+        // A package completion is a level, not a count (backlog 221/413): a wanderer whose
+        // package ends every few seconds must not fill the queue with the same ref while nothing
+        // has drained it -- one pending aidone per actor is all the poller on the other side reads.
+        if (note.mKind == "aidone")
+        {
+            for (const ScriptNote& pending : scriptNotes())
+                if (pending.mKind == "aidone" && pending.mRef == note.mRef)
+                    return;
+        }
         scriptNotes().push_back(std::move(note));
     }
 

@@ -1125,11 +1125,28 @@ end
 -- Enable/Disable, a PlaceAtPC actor the client declined to build, a PositionCell on a puppet.
 -- Drained only once joined, so a Startup that ran before the socket opened still travels.
 -- Nil-guarded: an engine baked before the hook has no takeScriptNotes and keeps the polls.
+-- METERED (backlog 413): the drain is one burst -- 30 s of a town's AI package completions
+-- (aidone, #221) arrive on the first joined frame, and every note is one message to a
+-- server whose session budget is 60/s with burst 60. s109 in Jenkins #102 was kicked with RATE
+-- 70 ms after joining. Notes queue here and go out at NOTE_SENDS_PER_SEC; nothing is dropped,
+-- a Startup that ran before the socket opened still travels, just not all in one frame.
+local NOTE_SENDS_PER_SEC = 20
+local pendingNotes, noteSendSec, noteSendCount = {}, 0, 0
 local function scriptNotesTick()
     if not mp.takeScriptNotes then return end
     local ok, notes = pcall(mp.takeScriptNotes)
-    if not (ok and notes) then return end
-    for _, n in ipairs(notes) do
+    if ok and notes then
+        for _, n in ipairs(notes) do pendingNotes[#pendingNotes + 1] = n end
+    end
+    if #pendingNotes == 0 then return end
+    local sec = math.floor(core.getRealTime())
+    if sec ~= noteSendSec then noteSendSec, noteSendCount = sec, 0 end
+    local batch = {}
+    while #pendingNotes > 0 and noteSendCount < NOTE_SENDS_PER_SEC do
+        batch[#batch + 1] = table.remove(pendingNotes, 1)
+        noteSendCount = noteSendCount + 1
+    end
+    for _, n in ipairs(batch) do
         if n.kind == 'position' then
             actors.notePosition(n.ref, n.cellName, n)
         elseif n.kind == 'say' then
