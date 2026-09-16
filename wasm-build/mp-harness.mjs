@@ -1071,6 +1071,9 @@ for (const file of files) {
   // in the back half red). Counting is cheap and turns an invisible poisoning into a line in
   // the log naming the scenario that did it.
   try {
+    // A moment for the SIGKILLs above to be reaped, or every scenario reports the corpse
+    // of its own last client as a leak.
+    await sleep(1500);
     const count = (pat) => Number(execSync(`pgrep -c -f ${pat} || true`, { encoding: 'utf8' }).trim()) || 0;
     const live = { chrome: count('chrome'), peers: count('openmw') };
     if (live.chrome > (harnessLive.chrome ?? 0) || live.peers > (harnessLive.peers ?? 0)) {
