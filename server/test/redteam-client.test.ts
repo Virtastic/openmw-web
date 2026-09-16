@@ -374,6 +374,25 @@ test('#369 a stat rises by a level-up step per window, a level by one; reputatio
   assert.equal(doc.stats?.reputation, 15);
 });
 
+// The byte is the shape bound, not 100: the example suite's player template ships Acrobatics
+// 125, and a 100 cap refused every ?nomw client's whole PlayerSkills map on join (#105 s159,
+// state.invalid_body x4). 999 stays refused; climbing to 125 from 5 stays refused by the rate.
+test('a content-set skill above 100 is a legal first declaration; 999 and a +120 climb are not', async (t) => {
+  const { server, dataDir } = await boot(t);
+  const { c, charId } = await join(t, server, 'Tumbler');
+  c.sendEvent('PlayerSkills', { acrobatics: 125, handtohand: 100, longblade: 5 });
+  await settle();
+  let refused = c.waitEvent('StateRefused');
+  c.sendEvent('PlayerSkills', { acrobatics: 125, handtohand: 100, longblade: 125 }); // +120 in one window
+  assert.equal(((await refused).value as { kind: string }).kind, 'PlayerSkills');
+  refused = c.waitEvent('StateRefused');
+  c.sendEvent('PlayerSkills', { acrobatics: 999 });
+  assert.equal(((await refused).value as { kind: string }).kind, 'PlayerSkills');
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId) as { stats?: { skills?: Record<string, number> } };
+  assert.deepEqual(doc.stats?.skills, { acrobatics: 125, handtohand: 100, longblade: 5 }, 'the template declaration landed as declared');
+});
+
 test('#370 a resync reads only what the player can see', async (t) => {
   const { server } = await boot(t);
   const { c } = await join(t, server, 'Reader');

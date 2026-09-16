@@ -243,7 +243,7 @@ local function applyItemStates(inventory, localId, bucket)
         local piece = item
         if stateful and n < left then piece = item:split(n) end
         if stateful then
-            local d = piece.itemData
+            local d = types.Item.itemData(piece)
             if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
             if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
             if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
@@ -881,7 +881,7 @@ local function snapAvatarItemStates(obj)
     local states = {}
     local inv = types.Actor.inventory(obj)
     for _, item in ipairs(inv:getAll()) do
-        local d = item.itemData
+        local d = types.Item.itemData(item)
         local one = { n = item.count or 1 }
         local okC, cond = pcall(function() return d.condition end)
         if okC and cond ~= nil then one.condition = cond end
@@ -2783,7 +2783,7 @@ local eventHandlers = {
         if not player then return end
         for _, item in ipairs(types.Actor.inventory(player):getAll()) do
             if item.recordId == data.id then
-                pcall(function() item.itemData.condition = data.condition end)
+                pcall(function() types.Item.itemData(item).condition = data.condition end)
                 return
             end
         end

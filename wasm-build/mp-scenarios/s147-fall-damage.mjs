@@ -46,7 +46,17 @@ async function castSelf(c, ctx, effect, magnitude, seconds) {
   // a fizzle is the spell system working, not the thing under test. Within the server's
   // legal base step so the avatar's copy agrees.
   await c.cmd('setskill:alteration:65');
+  // THE POOL MUST FUND THE CAST (#391 priced this spell at mag x dur / 100 = 60): setmp: alone
+  // is a raise claim the server caps at the BASE (~40 on a fresh character) and the peer's
+  // avatar bar overwrites the local one at 4 Hz, so every press said 'not enough magicka'
+  // (#105: three presses, nothing in actives). One legal base step (+60, playerstate
+  // MAX_BASE_STEP) first, then the pool up to it.
+  const peerMp = String(await c.eval('window.omw.state.selfMagicka||""')); // 'c/b' once the peer rules the bars
+  const mpBase = Number(peerMp.split('/')[1]) || 40;
+  await c.cmd(`setmpbase:${mpBase + 60}`);
+  await ctx.sleep(1_500); // the base claim lands before the pool claim is capped against it
   await c.cmd('setmp:300');
+  if (peerMp.includes('/')) await c.waitFor(`Number(String(window.omw.state.selfMagicka||"0/0").split("/")[0]) >= ${mpBase + 55}`, 30_000, 'the peer reports a pool that funds the cast');
   await c.cmd('stance:spell');
   await ctx.sleep(700);
   await c.cmd('press:500'); // the use key on THIS engine: the cast

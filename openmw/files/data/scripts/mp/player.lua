@@ -953,6 +953,14 @@ local function dispatch(cmd)
         if hpb then
             types.Actor.stats.dynamic.health(self).base = tonumber(hpb)
         end
+        -- setmpbase:<n>: the magicka maximum (an Intelligence gain). setmp: alone cannot fund a
+        -- minted spell while the peer rules: the claim is capped at the base (~40 on a fresh
+        -- character) and the avatar's bar comes back at 4 Hz, under the #391 cost of a 100x60
+        -- self spell (s147/s156 in #105: "did not take", three presses).
+        local mpb = cmd:match('^setmpbase:(-?[%d.]+)$')
+        if mpb then
+            types.Actor.stats.dynamic.magicka(self).base = tonumber(mpb)
+        end
         local race, head, hair = cmd:match('^applyrace:([^:]+):([^:]+):([^:]*)$')
         if race then
             mp.applyChargen({ race = race, head = head, hair = hair, isMale = true })
@@ -972,7 +980,7 @@ local function dispatch(cmd)
             pcall(function()
                 for _, item in ipairs(types.Actor.inventory(self):getAll()) do
                     if item.recordId == stateId then
-                        local d = item.itemData
+                        local d = types.Item.itemData(item)
                         local one = string.format('%s/%s/%s', tostring(d and d.condition), tostring(d and d.enchantmentCharge), tostring(d and d.soul))
                         if allStates == 's' then one = tostring(item.count) .. 'x' .. one end
                         out[#out + 1] = one

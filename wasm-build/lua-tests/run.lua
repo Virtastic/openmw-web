@@ -1125,8 +1125,12 @@ do
     for i, it in ipairs(items) do items[i] = mk(it.recordId, it.count, it.itemData or {}) end
     return inv
   end
+  -- `types` is the chunk's only upvalue, in the engine's shape: Item.itemData(obj) is a FUNCTION
+  -- on types.Item. Every reader used `obj.itemData`, which is nil on a real GameObject, so no
+  -- condition, charge or soul ever left a client (s160 nil/nil/nil in #105).
+  local fakeTypes = { Item = { itemData = function(it) return it.itemData end }, Actor = { inventory = function(obj) return obj end } }
   local ok, applyItemStates = pcall(function()
-    return assert((loadstring or load)(applyChunk .. '\nreturn applyItemStates'))()
+    return assert((loadstring or load)('local types = ...\n' .. applyChunk .. '\nreturn applyItemStates'))(fakeTypes)
   end)
   check('applyItemStates loads', ok and type(applyItemStates) == 'function', tostring(applyItemStates))
   if type(applyItemStates) == 'function' then
@@ -1148,8 +1152,7 @@ do
     check('an entry without n applies to the whole stack, as before', inv3.items[1].itemData.condition == 5 and #inv3.items == 1)
     -- The peer's report of that inventory: exactly one filled entry, the empty stack kept as {n}.
     local ok2, snap = pcall(function()
-      return assert((loadstring or load)('local types, worldmp = ...\n' .. snapChunk .. '\nreturn snapAvatarItemStates'))(
-        { Actor = { inventory = function(obj) return obj end } }, {})
+      return assert((loadstring or load)('local types, worldmp = ...\n' .. snapChunk .. '\nreturn snapAvatarItemStates'))(fakeTypes, {})
     end)
     check('snapAvatarItemStates loads', ok2 and type(snap) == 'function', tostring(snap))
     if type(snap) == 'function' then
@@ -1173,6 +1176,21 @@ do
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
   check('player.lua no longer carries its own item-state applier', not p:find('d.enchantmentCharge = st.charge', 1, true))
   check("player.lua answers itemstates:<id> with every stack's state", p:find("'^itemstate(s?):(.+)$'", 1, true) ~= nil)
+  -- THE API SHAPE. mwlua/itemdata.cpp binds itemData as a function on types.Item; `obj.itemData`
+  -- on a GameObject is nil, and every reader used that form (#105: s160 probed nil/nil/nil, the
+  -- setcond: write threw inside its pcall, no wear/charge/soul ever reached the doc or a drop).
+  local propReads = {}
+  for _, f in ipairs({ 'global', 'identity', 'objects', 'player', 'avatar', 'puppet', 'actors', 'world' }) do
+    local fh = io.open('./openmw/files/data/scripts/mp/' .. f .. '.lua')
+    if fh then
+      local body = fh:read('*a'); fh:close()
+      for line in body:gmatch('[^\n]+') do
+        local stripped = line:gsub('%-%-.*$', ''):gsub('types%.Item%.itemData', '')
+        if stripped:find('%.itemData') then propReads[#propReads + 1] = f .. ': ' .. line end
+      end
+    end
+  end
+  check('every item-state reader calls types.Item.itemData(obj), never obj.itemData', #propReads == 0, table.concat(propReads, ' | '))
 end
 
 -- ============================================ mp.omwscripts: one line per script path

@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 }; // pick_apprentice is retail content
-const ITEM = 'pick_apprentice';
+const ITEM = 'pick_apprentice_01'; // Morrowind.esm's LOCK ids: pick_apprentice_01, pick_journeyman_01, pick_master, pick_grandmaster, pick_secretmaster (#105: 'pick_apprentice' does not exist, give: created nothing)
 const LEFT = 10;
 // The avatar carries the pick after the 2 s inventory diff; the peer reports its states every
 // 2 s and refreshes them wholesale every 10 s -- 12 s covers a full refill window either way

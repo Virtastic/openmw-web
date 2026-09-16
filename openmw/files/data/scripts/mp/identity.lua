@@ -320,8 +320,10 @@ local function snapActive()
 end
 
 -- Per-item state the record id cannot express: wear, remaining enchantment charge, and which
--- soul is in a gem. Read through itemData (mwlua/itemdata.cpp exposes condition,
--- enchantmentCharge and soul as read/write properties). ONE ENTRY PER STACK (#234), always
+-- soul is in a gem. Read through types.Item.itemData(item) (mwlua/itemdata.cpp exposes condition,
+-- enchantmentCharge and soul as read/write properties). A FUNCTION on types.Item, not a field of
+-- the object: `item.itemData` is nil on every GameObject, and every reader here used that form,
+-- so no condition, charge or soul ever left this client (s160 nil/nil/nil, s163). ONE ENTRY PER STACK (#234), always
 -- carrying the stack size `n`: a stateless stack is a bare {n=k}, so the appliers can walk the
 -- record's stacks in order and split a stack that is bigger than its entry -- an index alone
 -- is not an identity (one Soultrap filled all three gems of a stack; two daggers swapped
@@ -336,7 +338,7 @@ for _, name in ipairs({ 'Lockpick', 'Probe', 'Repair', 'Light' }) do
 end
 local function itemState(item)
     local st = { n = item.count or 1 }
-    local ok, d = pcall(function() return item.itemData end)
+    local ok, d = pcall(function() return types.Item.itemData(item) end)
     if not ok or d == nil then return st end
     local okc, c = pcall(function() return d.condition end)
     if okc and type(c) == 'number' then st.condition = c end

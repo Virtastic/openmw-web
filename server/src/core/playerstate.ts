@@ -38,9 +38,13 @@ const MAX_SPELLS = 1024;
 const OWN_WEAR_TYPES = new Set(['Lockpick', 'Probe', 'Repair', 'Light']);
 const MAX_STAT_ENTRIES = 64;
 const MAX_STAT_KEY = 32;
-// #369: 100 is the game's ceiling for a BASE attribute or skill (fortifies never travel here);
-// damage keys ("<id>_damage") share the map and cannot exceed the stat they damage.
-const MAX_STAT_VALUE = 100;
+// #369 bounded these at 100, "the game's ceiling" -- but CONTENT sets a base, not the level-up
+// rule: the record format stores each as a byte, and the example suite's player template
+// ships Acrobatics 125 (Speed 100), so every ?nomw client's PlayerSkills was refused whole
+// (#105: state.invalid_body x4 per join, nothing a skill did ever reached the doc). The byte
+// is the shape bound; the anti-cheat is the raise rate below (+5 per window), which a
+// declared 125 still cannot climb to from 5. Damage keys ("<id>_damage") share the map.
+const MAX_STAT_VALUE = 255;
 const LEVEL_STEP_MS = 10_000;
 // #369: how much one key may RISE per window. A level-up adds up to +5 to an attribute, a
 // trainer or a skill book +1 at a time; reputation moves by a few points per quest.

@@ -115,6 +115,10 @@ function M.install(opts)
         return function() return skills[k] or stat(15) end end }) },
       classes = { records = {} },
     },
+    -- The engine's shape (mwlua/itemdata.cpp): a FUNCTION on types.Item, nil for a non-item.
+    -- A fake item carries its state as a plain `itemData` field; `item.itemData` on a real
+    -- GameObject is nil, which is exactly the bug the s160/s163 checks pin.
+    Item = { itemData = function(it) return type(it) == 'table' and it.itemData or nil end },
     Player = {
       stashJournal = function() end,
       unstashJournal = function() end,

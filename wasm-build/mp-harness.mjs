@@ -630,7 +630,7 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // resolves when Lua has dispatched it and acked -- so this returns the ack {id, ok,
     // detail}, and a handler that threw is reported here rather than swallowed.
     //
-    // SIXTY SECONDS, NOT TWENTY. A streamed client (?stream) reads its assets over synchronous
+    // TWO MINUTES, NOT TWENTY SECONDS. A streamed client (?stream) reads its assets over synchronous
     // XHR on the main thread, so ONE frame can last as long as the fetches it triggers: the
     // frame that builds a friend's puppet and the peer's fresh creature spawns in a cell just
     // entered ran past 20 s twice in s149 (#89 and #91, identically 12.5 s after B arrived,
@@ -638,9 +638,14 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // frame ends, so the deadline fired while the client was merely busy. The deadline is a
     // hang guard, not a measurement, and the per-scenario ceiling now bounds a truly dead
     // client, so it can afford to be longer than the longest honest frame.
+    // ...AND 60 WAS NOT ENOUGH EITHER (#105 s149): A walked into the sea one cell over, the
+    // engine streamed three fresh exterior cells (-4,-8..-10) at 04:29:01, its console went
+    // silent at 04:29:07 and the next frame had still not come 73 s later when the deadline
+    // fired on sethpbase -- no Lua error, no crash, one frame of synchronous fetches on a box
+    // running two retail Chromes and the peer. 120 s.
     // A TIMEOUT SAYS WHAT THE CLIENT WAS DOING. It used to read as one word; waitFor's
     // failure carries the console tail and the Lua errors, and this one now does the same.
-    handle.cmd = async (text, timeoutMs = 60_000) => {
+    handle.cmd = async (text, timeoutMs = 120_000) => {
       const ack = await handle.evalAsync(
         `window.omw.send(${JSON.stringify(text)}, ${timeoutMs}).then(function(r){ return JSON.stringify(r); })`);
       const r = JSON.parse(ack);

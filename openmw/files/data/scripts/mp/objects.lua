@@ -646,7 +646,7 @@ end
 -- was dropped -- a half-charged ring dropped and picked up was a free recharge. Same shape
 -- as identity.lua itemState; applied on every other client in MP_ObjectPlace.
 local function itemStateOf(obj)
-    local ok, d = pcall(function() return obj.itemData end)
+    local ok, d = pcall(function() return types.Item.itemData(obj) end)
     if not ok or d == nil then return nil end
     local st, any = {}, false
     local okc, c = pcall(function() return d.condition end)
@@ -660,7 +660,7 @@ end
 local function applyItemState(obj, st)
     if type(st) ~= 'table' then return end
     pcall(function()
-        local d = obj.itemData
+        local d = types.Item.itemData(obj)
         if not d then return end
         if type(st.condition) == 'number' then d.condition = st.condition end
         if type(st.charge) == 'number' then d.enchantmentCharge = st.charge end

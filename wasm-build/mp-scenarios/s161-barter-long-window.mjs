@@ -4,7 +4,8 @@
 //   160: the merchant's live container watch shared the chest's 15 s expiry, so a sale made
 //        after that went unreported (the item stayed in the seller's pack for everyone else,
 //        the purse delta never travelled). A opens a barter window, waits 16 s, sells; B then
-//        opens the same merchant and sees the item in the stock and the purse lowered.
+//        opens the same merchant and sees the item in the stock and the purse moved (a buy:
+//        nobody outdoors at Seyda Neen has a purse a sale could lower).
 //   162: the dialogue lock was released on the Dialogue -> Barter edge, so a second player
 //        could open the merchant mid-trade. While A is in the trade, B's dlg: is refused.
 // Trades go through the barter:sell: hook (player.lua -> global.lua mpTestBarter): one item
@@ -71,14 +72,23 @@ export default async function run(ctx) {
   ctx.log(`B while A trades: ${JSON.stringify(denied)}`);
   assert.equal(denied.granted, false, 'opening the trade window released A\'s dialogue lock: B walked into the conversation');
 
-  // 160: longer than a chest watch lives, then the sale.
+  // 160: longer than a chest watch lives, then the sale. THE PURSE: the only NPCs outside at
+  // Seyda Neen are guards and villagers with a barter gold of 0 (Arrille is indoors), so a
+  // sale cannot LOWER the purse (#105: 'purse 0', 30 s waiting for it to drop). The stock
+  // watch proves the sale; the purse delta is proven the other way round -- A BUYS one item
+  // of the merchant's own stock, and the purse rises by its value.
   ctx.log(`waiting ${LONGER_THAN_A_CHEST_WATCH / 1000} s with the window open`);
   await ctx.sleep(LONGER_THAN_A_CHEST_WATCH);
   await a.cmd(`barter:sell:${ITEM}`);
-  await a.waitFor(`Number(window.omw.state.barterGold||"0") < ${goldBefore}`, STEP, 'the sale lowered the purse on A');
+  await a.waitFor(stockWith(ITEM), STEP, `A's stock mirror never listed the ${ITEM} A sold (the live watch died with the 15 s chest expiry)`);
+  const stock = Object.values(JSON.parse(await a.eval('window.omw.state.containerItems||"{}"'))).find((s) => (s[ITEM] || 0) > 0);
+  const wares = Object.keys(stock).filter((id) => id !== ITEM && !id.startsWith('gold_'));
+  assert.ok(wares.length > 0, `"${npc}" carries nothing but the ${ITEM} to buy back (${JSON.stringify(stock)})`);
+  await a.cmd(`barter:buy:${wares[0]}`);
+  await a.waitFor(`Number(window.omw.state.barterGold||"0") > ${goldBefore}`, STEP, 'the purchase raised the purse on A');
   const goldAfter = await goldOf(a);
-  ctx.log(`A sold the ${ITEM}: purse ${goldBefore} -> ${goldAfter}`);
-  assert.ok(goldAfter < goldBefore, 'the sell hook did not move the purse');
+  ctx.log(`A sold the ${ITEM} and bought ${wares[0]}: purse ${goldBefore} -> ${goldAfter}`);
+  assert.ok(goldAfter > goldBefore, 'the buy hook did not move the purse');
 
   // Close the trade (Barter -> Dialogue keeps the lock), then leave the conversation.
   await a.cmd('barter:close');
@@ -93,7 +103,7 @@ export default async function run(ctx) {
   await b.waitFor(stockWith(ITEM), STEP,
     `B's stock mirror never listed the ${ITEM} A sold (the sale after 15 s went unreported)`);
   await b.waitFor(`Number(window.omw.state.barterGold||"-1") === ${goldAfter}`, STEP,
-    `B's purse never matched A's post-sale ${goldAfter} (the gold delta of a long trade was never sent)`);
+    `B's purse never matched A's post-trade ${goldAfter} (the gold delta of a long trade was never sent)`);
   ctx.log(`B sees the ${ITEM} in stock and the purse at ${goldAfter}`);
 
   await b.cmd('barter:close');

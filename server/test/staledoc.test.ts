@@ -309,3 +309,35 @@ test('a character deleted in one process is not written back by another that sti
   assert.deepEqual((await new PlayerStore(dir, 'world-check').get(key))?.inventory, [{ id: 'iron_dagger', n: 1 }],
     'a fresh character under the old key must persist again');
 });
+
+// s159 (#105): damaged Strength read back 0 after a relog. This pins the SERVER half: a damage
+// key ("<id>_damage", identity.lua snapProgression) declared in one session comes back in the
+// next session's Welcome record, so a 0 on the client after this is the client's own doing.
+test("an attribute damage key declared in one session is in the next session's welcome record", async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    configOverride: { login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  let a = await TestClient.connect(server.port);
+  await a.joinAsNew('Cursed', 'hunter22');
+  await a.waitEvent('PlayerList');
+  a.sendEvent('PlayerAppearance', { race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'warrior', name: 'Cursed' });
+  a.sendEvent('ChargenComplete', {});
+  a.sendEvent('PlayerAttributes', { strength: 30, luck: 30 });
+  a.sendEvent('PlayerAttributes', { strength: 30, luck: 30, strength_damage: 15 });
+  a.sendEvent('ChatSend', { text: 'sync' });
+  await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'sync');
+  a.close();
+  await a.closed;
+  await new Promise((r) => setTimeout(r, 300));
+  a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  a.hello();
+  await a.waitJson('SessionHelloOk');
+  a.login('Cursed', 'hunter22');
+  const w = await a.waitJson('SessionWelcome');
+  const rec = w['playerRecord'] as { stats?: { attributes?: Record<string, number> } } | null;
+  assert.deepEqual(rec?.stats?.attributes, { strength: 30, luck: 30, strength_damage: 15 });
+});
