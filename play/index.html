@@ -4318,6 +4318,10 @@ window.omw = (function(){
     (function poll(){
       var st = window.omw.state;
       var ready = (st.state || '') === 'Joined' && st.simReady === '1';
+      // A dial that FAILED (unreachable server, refused sign-in) has nothing to settle: the
+      // net layer's modal is the answer and the boot screen must not sit under it for the
+      // whole ceiling (s90-server-down waited 300 s behind it, #105).
+      if ((st.state || '') === 'Failed') { settled(); return; }
       if (!ready) {
         readyAt = 0;   // lost it again (a redial, a peer restart): the grace starts over
       } else if (!readyAt) {
