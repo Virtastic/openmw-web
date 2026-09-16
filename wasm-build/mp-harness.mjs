@@ -1054,6 +1054,13 @@ for (const file of files) {
       const t = c.tail();
       if (t.trim()) console.error(`--- ${c.label.toUpperCase()} LOG ---\n${t}`);
     }
+    // The PEER's narration (#183): its `[mp]` lines (follow claims, avatar teleports, cell
+    // grants) were only reachable through ctx.peerLogTail, so a red like s114 never showed
+    // whether the holder acted. The last 80 mp lines of every hand-spawned peer, on every FAIL.
+    for (const buf of peerBufs) {
+      const mpl = buf.join('').split(NL).filter((l) => /\[mp\]|Lua error|AiFollow|StartAIPackage/.test(l)).slice(-80);
+      if (mpl.length) console.error(`--- SIM PEER mp LOG (last ${mpl.length}) ---\n${mpl.join(NL)}`);
+    }
   }
   else if (skipReason !== null) console.log(`SKIP ${file} (${secs}s): ${skipReason}`);
   else if (isDiagnostic) console.log(`DIAG ${file} (${secs}s): ran, asserts nothing`);

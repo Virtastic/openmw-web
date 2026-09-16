@@ -831,6 +831,11 @@ actors.handlers.MP_ActorSay = function(data)
 end
 
 local function aimAt(obj, target, escort)
+    if mp.isSystem and mp.isSystem() then
+        local okd, d = pcall(function() return (obj.position - target.position):length() end)
+        print(string.format('[mp] aimAt %s -> %s at %.0f u (escort=%s)', tostring(obj.recordId), tostring(target.recordId),
+            okd and d or -1, tostring(type(escort) == 'table')))
+    end
     if type(escort) == 'table' and type(escort.x) == 'number' then
         pcall(function()
             obj:sendEvent('StartAIPackage', { type = 'Escort', target = target,
