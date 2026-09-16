@@ -460,7 +460,14 @@ local function armHeldWatches(now)
         for _, obj in ipairs(okc and list or {}) do
             if not memberWatch[obj.id] and npcAddr(obj) then
                 local oks, script = pcall(world.mwscript.getLocalScript, obj)
-                if oks and script and next(script.variables) then
+                -- `variables` is userdata with __pairs, not a table: next() throws (116 peer
+                -- onUpdate failures in #102, s114); pairs() is the only way to ask.
+                local hasVars = false
+                if oks and script then
+                    local okp = pcall(function() for _ in pairs(script.variables) do hasVars = true; break end end)
+                    hasVars = okp and hasVars
+                end
+                if hasVars then
                     memberWatch[obj.id] = {
                         obj = obj, script = script, last = scriptVarSnapshot(script), cellKey = cellKey,
                         nextPoll = now + HELD_WATCH_POLL, poll = HELD_WATCH_POLL, until_ = math.huge,

@@ -1678,5 +1678,12 @@ do
     c:find('if (pending.mKind == "aidone" && pending.mRef == note.mRef)', 1, true) ~= nil)
 end
 
+print('#414 armHeldWatches probes script.variables with pairs, never next')
+do
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  check('quests.lua never calls next() on script.variables (userdata)', q:find('next(script.variables)', 1, true) == nil
+    and q:find('for _ in pairs(script.variables) do hasVars = true; break end', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
