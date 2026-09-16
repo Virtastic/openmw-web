@@ -3025,7 +3025,14 @@ local eventHandlers = {
             local ok, doors = pcall(function() return cell:getAll(types.Door) end)
             if not ok then return end
             for _, door in ipairs(doors) do
-                if types.Door.isTeleport(door) then
+                -- Not into the chargen sanctuary: the server never anchors it, so a scenario
+                -- waiting for "the interior has a holder" behind the Census door waits forever
+                -- (s117 in #106 walked into the Census and Excise Office).
+                local okC, chargen = pcall(function()
+                    local c = types.Door.destCell(door)
+                    return c ~= nil and isChargenCell(c.name)
+                end)
+                if types.Door.isTeleport(door) and not (okC and chargen) then
                     local d = (door.position - player.position):length()
                     if d < bestDist then best, bestDist = door, d end
                 end
