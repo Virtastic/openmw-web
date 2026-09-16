@@ -194,7 +194,18 @@ local tookControlsSaid = false -- once per session: the rejoin position hold let
 local function inputTick(now)
     -- The PEER's own dummy player has no avatar and the server drops its input
     -- (playerInputDropped{from_peer}); 30 Hz of frames for the bin.
-    if mp.isSystem and mp.isSystem() then return end
+    if mp.isSystem and mp.isSystem() then
+        -- AND IT CANNOT DIE (#430). It stands where a player stands (global.lua MP_SimAnchors
+        -- place), so a drowning player drowned it and a creature on that player bit it; its
+        -- PlayerDeath then respawned it at the harness's sea cell, where slaughterfish killed
+        -- it every 30 s for the rest of the run. God mode is player-only in the engine: the
+        -- avatars and the NPCs it simulates are untouched.
+        pcall(function()
+            local dbg = require('openmw.debug')
+            if not dbg.isGodMode() then dbg.toggleGodMode() end
+        end)
+        return
+    end
     if not tookControlsSaid then
         local c = self.controls
         if (c.movement or 0) ~= 0 or (c.sideMovement or 0) ~= 0 or c.jump or (c.use and c.use ~= 0) then

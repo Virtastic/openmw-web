@@ -243,8 +243,12 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
         batch[#batch + 1] = actorPose(obj)
 
         -- Stats diff (0.25 s min): hp/mp/ft change or death.
+        -- NOT BEFORE THE RECORD (#431): a restarted peer loads the cell alive, and its first
+        -- bars for a recorded corpse (hp 57) reached every puppet a round trip before the
+        -- ResyncRequest above brought the death back and killed the body (s157 in #105).
+        -- Poses are harmless (a dead puppet ignores them); the bars wait for the record.
         local dead = types.Actor.isDead(obj)
-        if not tracked.nextStats or now >= tracked.nextStats then
+        if cell.recorded and (not tracked.nextStats or now >= tracked.nextStats) then
             local dyn = dynSnapshot(obj)
             local fp = dyn.hp.c .. '/' .. dyn.mp.c .. '/' .. dyn.ft.c
             if fp ~= tracked.statsFp then
@@ -746,8 +750,10 @@ function actors.noteCombat(obj, target)
         -- Not ours to say -- except "it now fights ME", the result of a taunt or of resisting
         -- arrest, which happens on this client and nowhere else. The server admits it from the
         -- player who was just talking to the NPC (worldstate.ts), and the holder starts the fight.
+        -- NEVER FROM THE PEER (#430): its dummy body talks to nobody, and a slaughterfish that
+        -- drifts into the next cell to bite it produced this claim per frame, refused per frame.
         local own = deps.ownIdFn and deps.ownIdFn() or nil
-        if foeId == nil or foeId ~= own then return end
+        if foeId == nil or foeId ~= own or (mp.isSystem and mp.isSystem()) then return end
     end
     local body = withAddr({
         cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, combat = foeId or false,
@@ -1022,6 +1028,10 @@ local function objOfWireKey(key)
 end
 
 function actors.noteCellDeaths(cellKey, keys)
+    -- The record answered the request broadcastCell sent once the cell had actors (#431):
+    -- from here the holder's bars can go out. The grant's own request may be answered before
+    -- the cell is loaded, when no key below resolves; that answer does not count.
+    if held[cellKey] and held[cellKey].resynced then held[cellKey].recorded = true end
     for _, wireKey in ipairs(keys or {}) do
         local obj = objOfWireKey(wireKey)
         local okv, valid = pcall(function() return obj and obj:isValid() end)

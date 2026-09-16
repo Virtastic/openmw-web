@@ -1036,8 +1036,9 @@ handlers.MP_WorldCellState = function(data)
     for _, place in ipairs(data.placed or {}) do
         handlers.MP_ObjectPlace(place)
     end
-    -- The dead stay dead for a late arrival (see actors.noteCellDeaths).
-    if deps.cellDeathsFn and data.deaths and #data.deaths > 0 then deps.cellDeathsFn(data.cellKey, data.deaths) end
+    -- The dead stay dead for a late arrival (see actors.noteCellDeaths). Called with an empty
+    -- list too: the holder waits for the record itself before streaming bars (#431).
+    if deps.cellDeathsFn then deps.cellDeathsFn(data.cellKey, data.deaths or {}) end
     for _, refKey in ipairs(data.deleted or {}) do
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() and not recentPickups[obj.id] then

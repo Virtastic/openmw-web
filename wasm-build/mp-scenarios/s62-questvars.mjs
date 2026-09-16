@@ -16,6 +16,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+// Crime is PERSONAL by default (backlog 353, #433): the server keeps a guest's bounty on the
+// guest and relays nothing. The B-sees-A's-bounty step below is the SHARED record's relay.
+export const serverRules = `
+[sharing]
+crime = true
+`;
 const STEP_TIMEOUT = 20_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 

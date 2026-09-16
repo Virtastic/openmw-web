@@ -262,6 +262,15 @@ end
 
 combat.handlers.MP_CombatSpellHit = function(data)
     local victim = resolveVictim(data)
+    -- The peer's side of s59 (#432), like CombatHit's: whether the cast arrived, resolved,
+    -- and what the victim's bar did. Nothing else says so, and 14 casts in #105 said nothing.
+    if mp.isSystem and mp.isSystem() then
+        local t = data.target or {}
+        local okh, hp = pcall(function() return types.Actor.stats.dynamic.health(victim).current end)
+        print(string.format('[mp] CombatSpellHit on peer: spell=%s net=%s ref=%s cell=%s resolved=%s hp=%s',
+            tostring(data.spellId), tostring(t.net), tostring(t.ref and t.ref.recordId), tostring(t.cellKey),
+            victim and tostring(victim.recordId) or 'NO', okh and tostring(hp) or '?'))
+    end
     if not victim then return end
     -- activeSpells:add wants INDEXES into the spell record's own effect list, while the wire
     -- carries rolled {id, magnitude, duration} triples. We therefore apply the record by the

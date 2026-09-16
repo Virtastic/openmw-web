@@ -1685,5 +1685,36 @@ do
     and q:find('for _ in pairs(script.variables) do hasVars = true; break end', 1, true) ~= nil)
 end
 
+print('#430 the peer body cannot die and never claims a fight for a cell it does not hold')
+do
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  check('player.lua keeps the system peer in god mode from inputTick',
+    p:find("local dbg = require('openmw.debug')", 1, true) ~= nil
+    and p:find('if not dbg.isGodMode() then dbg.toggleGodMode() end', 1, true) ~= nil)
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('noteCombat: a non-holder "fights ME" claim never leaves the system peer',
+    ac:find('if foeId == nil or foeId ~= own or (mp.isSystem and mp.isSystem()) then return end', 1, true) ~= nil)
+end
+
+print('#431 a fresh holder streams no bars for a cell until the world record has answered')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('broadcastCell gates ActorStatsDynamic on cell.recorded',
+    ac:find('if cell.recorded and (not tracked.nextStats or now >= tracked.nextStats) then', 1, true) ~= nil)
+  check('noteCellDeaths marks the cell recorded only after the post-load ResyncRequest',
+    ac:find('if held[cellKey] and held[cellKey].resynced then held[cellKey].recorded = true end', 1, true) ~= nil)
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  check('MP_WorldCellState hands the record to the holder even with no deaths in it',
+    ob:find('if deps.cellDeathsFn then deps.cellDeathsFn(data.cellKey, data.deaths or {}) end', 1, true) ~= nil
+    and ob:find('#data.deaths > 0 then deps.cellDeathsFn', 1, true) == nil)
+end
+
+print('#432 the peer says what a forwarded spell hit did')
+do
+  local c = io.open('./openmw/files/data/scripts/mp/combat.lua'):read('*a')
+  check('MP_CombatSpellHit prints resolved victim and hp on the system peer',
+    c:find('[mp] CombatSpellHit on peer: spell=%s net=%s ref=%s cell=%s resolved=%s hp=%s', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
