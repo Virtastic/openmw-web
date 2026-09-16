@@ -969,7 +969,11 @@ export class Connection implements Peer {
         if (!arrived) {
           if (now - p.teleportPose.at > 30_000) {
             log('warn', 'simpeer.avatar_never_arrived', {
-              id: p.id, name: p.name, note: 'avatar did not reach the teleport target; client keeps pose authority' });
+              id: p.id, name: p.name, note: 'avatar did not reach the teleport target; client keeps pose authority',
+              // Which half of "arrived" is missing: the body is elsewhere, or the client has
+              // sent no input since the teleport (s138 / #100 / #183).
+              distance: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)), poseSeq: e.lastInputSeq, teleportSeq: p.teleportPose.seq,
+              inputSeq: p.inputSeq ?? null, inputAgoMs: p.lastInputAt === undefined ? null : now - p.lastInputAt });
             p.teleportPose = { ...p.teleportPose, at: now }; // re-arm the warn, keep gating
           }
           continue;
