@@ -113,3 +113,47 @@ test('the sim peer is not sent its own readiness', async (t) => {
 // account never goes through it, so a TestClient always looks like a finished character no
 // matter what it does. Reproducing it needs a fixture that mints an incomplete character slot.
 // Until then the eviction is covered only by the live server's own logs.
+
+// THE FRESH-INSTALL BLOCKER (s170, backlog 451). A wizard-provisioned server closes
+// registration -- the owner creates the accounts -- and the sim peer has no account until it
+// makes one. Its SessionRegister was refused as "registration is disabled", its fallback
+// login found no account, and the world simulated NOTHING for anybody: no NPCs, no combat,
+// every client held on the loading screen. The peer is infrastructure and has already proved
+// the shared server password by the time this gate runs.
+test('the sim peer can register on a server with registration closed', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: {
+      server: { password: PASS },
+      login: { allowRegistration: false, allowHarnessAuth: true },
+    },
+  });
+  t.after(() => server.close());
+
+  const peer = await TestClient.simPeer(server.port, PASS); // throws if the register is refused
+  t.after(() => peer.close());
+
+  // The world simulates: that is the whole point of the peer getting in. (SessionReady is
+  // processed a tick after simPeer() resolves.)
+  for (let i = 0; i < 50 && !server.roster.inWorld().some((p) => p.system === true); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.equal(server.roster.inWorld().some((p) => p.system === true), true, 'the peer is in the world');
+
+  // ...and registration is still CLOSED for everyone else: a player is refused,
+  const human = await TestClient.connect(server.port);
+  t.after(() => human.close());
+  human.hello();
+  await human.waitJson('SessionHelloOk');
+  human.sendJson({ t: 'SessionRegister', account: 'stranger', password: 'hunter22' });
+  assert.equal((await human.waitJson('SessionDisconnect'))['code'], 'AUTH_FAILED');
+
+  // ...and so is a stranger who merely DECLARES system=true without the shared password.
+  const faker = await TestClient.connect(server.port);
+  t.after(() => faker.close());
+  faker.system = true;
+  faker.hello();
+  await faker.waitJson('SessionHelloOk');
+  faker.sendJson({ t: 'SessionRegister', account: 'not-a-peer', password: 'x', serverPassword: 'wrong' });
+  assert.equal((await faker.waitJson('SessionDisconnect'))['code'], 'AUTH_FAILED');
+});

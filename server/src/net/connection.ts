@@ -1514,11 +1514,19 @@ export class Connection implements Peer {
       this.authFail('register', 'AUTH_FAILED', 'this server uses single sign-on — no account/password');
       return;
     }
-    if (!cfg.allowRegistration) {
+    // THE SIM PEER IS NOT A MEMBER OF THE PUBLIC. It has no account until it makes one, and
+    // on a wizard-provisioned server registration is CLOSED by default (the owner creates the
+    // accounts) -- so the peer's first register was refused, its login found no account, and
+    // the world simulated nothing for anyone: no NPCs, no combat, every client held on the
+    // loading screen waiting for a SimReady that could not come. The fresh-install rehearsal
+    // (s170) is what found it; the suite pre-seeds auth and never had to register a peer.
+    // Exempt exactly like the SSO gate above: only a peer that already matched the shared
+    // server password in checkAuthGate, which a stranger declaring system=true cannot.
+    if (!cfg.allowRegistration && !this.systemAuthAllowed()) {
       this.authFail('register', 'AUTH_FAILED', 'registration is disabled');
       return;
     }
-    if (cfg.inviteCode !== '' && msg.inviteCode !== cfg.inviteCode) {
+    if (cfg.inviteCode !== '' && msg.inviteCode !== cfg.inviteCode && !this.systemAuthAllowed()) {
       this.authFail('register', 'AUTH_FAILED', 'invalid invite code');
       return;
     }
