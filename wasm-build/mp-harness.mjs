@@ -1020,6 +1020,14 @@ for (const file of files) {
     // process the scenario already stopped.
     // The GROUP first: a detached child (the gateway) owns worlds and peers that must go with
     // it; for a non-detached child -pid names no group and throws, and the plain kill follows.
+    // TERM FIRST, and give it a moment. A gateway owns WORLD processes that are their own
+    // process groups (worlds.ts spawns them detached so it can kill each world's group), so
+    // SIGKILLing the gateway's group leaves every world -- and the sim peer each world spawned
+    // -- orphaned and burning a core. #110 leaked two peers per gateway scenario that way.
+    // A TERM lets the gateway stop its worlds, which stop their peers; the group KILL below is
+    // the backstop for anything that ignored it (the headless engine ignores TERM).
+    for (const p of ownedChildren) { try { p.kill('SIGTERM'); } catch { /* gone */ } }
+    if (ownedChildren.length) await sleep(3000);
     for (const p of ownedChildren) {
       try { process.kill(-p.pid, 'SIGKILL'); } catch { /* not a group leader, or gone */ }
       try { p.kill('SIGKILL'); } catch { /* already gone */ }
