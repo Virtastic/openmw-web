@@ -47,6 +47,7 @@ export interface Config {
     peerCostMb: number; // measured: each ADDITIONAL peer in a world (spill valve only now)
     gatewayReserveMb: number; // held back for the gateway process itself
     idleReapSec: number; // an empty game is stopped after this long (0 = the gateway's default, 120)
+    loadCap: number; // refuse new worlds while loadavg(1) is above this (0 = off)
   };
   simPeer: {
     /** Always true once boot succeeds; boot fails otherwise. Kept so call sites read clearly. */
@@ -518,6 +519,7 @@ function validate(t: Tree): Config {
       peerCostMb: optNum(t, 'worlds', 'peerCostMb', 487),
       gatewayReserveMb: optNum(t, 'worlds', 'gatewayReserveMb', 256),
       idleReapSec: optNum(t, 'worlds', 'idleReapSec', 0),
+      loadCap: optNum(t, 'worlds', 'loadCap', 0),
     },
     simPeer: {
       // Resolved in startServer once the game data has been inspected; the raw config cannot

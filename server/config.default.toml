@@ -613,6 +613,10 @@ maxWorlds = 0
 # comment above says exactly what that cost: a 1.5 GB container permitted to attempt 256 worlds.
 # Leaving it off is worse now than it was, because each world may run several peers rather than
 # one. Set it to YOUR container's limit if that is not 8g.
+# Refuse NEW worlds while the 1-minute load average is above this. 0 = off (the default): a
+# TR peer cold-starting pins the load for a minute and a friend's world must not be refused
+# for it. Set to about 2x the core count if the box is shared with other services.
+loadCap = 0
 memBudgetMb = 8192
 # MEASURED cost of one occupied world: its node process plus its sim peer.
 #

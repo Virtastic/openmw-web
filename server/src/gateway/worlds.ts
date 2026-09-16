@@ -19,7 +19,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cpus, loadavg } from 'node:os';
+import { loadavg } from 'node:os';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
@@ -74,6 +74,10 @@ export interface WorldSettings {
   peerCostMb?: number;
   gatewayReserveMb?: number; // held back for the gateway process itself
   idleReapMs: number; // a world with no players this long is stopped
+  // #270: refuse NEW worlds while the 1-minute load average is above this (0 = never). Off by
+  // default: a bake on the build box, or a TR peer cold-starting, pins the load for a minute
+  // and a friend's world must not be refused for it (s102 in Jenkins #103, reason 'cpu').
+  loadCap?: number;
   startTimeoutMs: number;
   restartBackoffMs: number;
   // One identity across every world: accounts, SSO identities, friends/party/presence and
@@ -252,7 +256,8 @@ export class WorldSupervisor {
       const pids = [...this.worlds.values()].map((w) => w.child.pid).filter((p): p is number => typeof p === 'number');
       const { rssMb, load1 } = this.deps.sample ? this.deps.sample(pids) : { rssMb: 0, load1: 0 };
       if (budget > 0 && rssMb > usable) return { cap: Math.max(1, running), reason: 'mem', fromMemory: Math.max(1, running) };
-      if (running > 0 && load1 > cpus().length) return { cap: Math.max(1, running), reason: 'cpu', fromMemory: Number.POSITIVE_INFINITY };
+      const loadCap = this.deps.settings.loadCap ?? 0;
+      if (running > 0 && loadCap > 0 && load1 > loadCap) return { cap: Math.max(1, running), reason: 'cpu', fromMemory: Number.POSITIVE_INFINITY };
     }
     let fromMemory = Number.POSITIVE_INFINITY;
     if (budget > 0 && cost > 0) {

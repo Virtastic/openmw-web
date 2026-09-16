@@ -375,7 +375,7 @@ test('capacity: with no budget configured only the count cap applies', () => {
 // ones and a saturated CPU admits nobody, whatever the arithmetic says.
 test('capacity: measured RSS past the budget, or a saturated CPU, caps at what is running', () => {
   const { sup, box } = harness({
-    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 640, gatewayReserveMb: 256,
+    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 640, gatewayReserveMb: 256, loadCap: 8,
   });
   assert.ok(sup.ensure('a', 'private', 'ann'));
   assert.equal(sup.capacity().cap, 3, 'the static price alone admits three');
