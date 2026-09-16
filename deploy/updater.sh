@@ -4,13 +4,13 @@
 #
 # The update agent. Runs in its own container (see Dockerfile.updater), holds the docker
 # socket, and does exactly one thing: when the dashboard's owner clicks Update, check out
-# the newest release tag and rebuild the server container.
+# the newest release tag, pull its prebuilt server image and restart the server container.
 #
 # SECURITY STANCE. The docker socket is root on the host, so this container is not
 # reachable from the web at all - no ports, not behind the proxy. Its only input is the
 # existence of a flag file the server writes into ./data. The file's CONTENT is never
 # executed or interpolated into any command: the tag to check out is computed here, from
-# `git tag` itself, so a compromised web container could at worst make us build a release
+# `git tag` itself, so a compromised web container could at worst make us run a release
 # that GitHub already published.
 #
 # The agent updates only the openmw-web service. It never recreates itself mid-run; a
@@ -55,9 +55,9 @@ status() { # $1 = phase, $2 = error (optional)
 # tail of that output so the dashboard can show WHY without anyone needing a shell.
 #
 # The step runs in the background so this loop can keep the heartbeat and the status file
-# FRESH while it works: a compose build can run well past ten minutes (the simpeer engine
-# compile is ~13), and a status whose updatedAt froze at the phase transition reads as a
-# dead updater and a stuck build to the dashboard, both wrongly.
+# FRESH while it works: pulling a ~1 GB image on a slow line can run well past ten minutes,
+# and a status whose updatedAt froze at the phase transition reads as a dead updater and a
+# stuck pull to the dashboard, both wrongly.
 OUT=/tmp/updater-step.out
 run_step() { # $1 = label for the failure message, then the command
   label="$1"; shift
@@ -101,10 +101,14 @@ do_update() {
   fi
   run_step "checking out $TAG" git -C "$REPO" -c advice.detachedHead=false checkout "refs/tags/$TAG" || return
 
-  # Build first, restart after: a failed build leaves the old image and the running
-  # container completely untouched.
-  status building
-  run_step "building" docker compose build openmw-web || return
+  # Pull the release's prebuilt image FIRST (the env var outranks .env for compose), and only
+  # then pin it in .env (docker-compose.yml reads OPENMW_WEB_TAG) the way setup.sh does -
+  # drop-and-append, never sed, since a value is data. A failed pull therefore leaves the
+  # old image, the running container AND the tag .env names completely untouched.
+  run_step "pulling $TAG" env "OPENMW_WEB_TAG=$TAG" docker compose pull openmw-web || return
+  { grep -v '^OPENMW_WEB_TAG=' "$REPO/.env"; printf 'OPENMW_WEB_TAG=%s\n' "$TAG"; } > "$REPO/.env.tmp" \
+    && mv -f "$REPO/.env.tmp" "$REPO/.env" \
+    || { status failed "could not write OPENMW_WEB_TAG to .env"; return; }
 
   # The only step that can leave the service down; the dashboard is already showing its
   # "waiting for the server to come back" screen by now.

@@ -4,7 +4,9 @@ name: release (grab-and-go bundles)
 # GitHub Release for the pushed tag:
 #   openmw-web-<tag>.zip     — prebuilt engine + web shell + demo: unzip and serve
 #   openmw-web-src-<tag>.tar.gz  — the exact source snapshot (GPLv3 Complete Corresponding Source)
-# plus SHA256SUMS.
+# plus SHA256SUMS, and pushes the multiplayer-capable server image (server/Dockerfile.simpeer
+# --target tier2, the ~25-minute C++ compile) to ghcr.io/virtastic/openmw-web-server so a
+# self-hoster's docker-compose.yml pulls it instead of compiling it.
 on:
   push:
     tags: ['v*']
@@ -21,6 +23,7 @@ concurrency:
 permissions:
   contents: write   # create the release + upload assets
   actions: write    # dispatch build-openmw-image afterwards (see the last step)
+  packages: write   # push ghcr.io/virtastic/openmw-web-server
 
 jobs:
   release:
@@ -190,6 +193,40 @@ jobs:
             dist/openmw-web-${{ steps.tag.outputs.tag }}.zip
             dist/openmw-web-src-${{ steps.tag.outputs.tag }}.tar.gz
             dist/SHA256SUMS
+
+      # THE SERVER IMAGE SELF-HOSTERS RUN. Same build as deploy-mp.yml (Dockerfile.simpeer
+      # --target tier2 from the REPO ROOT - server/Dockerfile has no peer binary) and the same
+      # "peer binary present" assertion: without it the server starts, finds no binary and
+      # crash-loops. Built on the tag so docker-compose.yml can say `image:` and nobody who
+      # self-hosts compiles anything. Tagged <tag>, latest and sha-<short>. Public visibility
+      # is a repo setting, not something this workflow can grant: GitHub -> Packages ->
+      # openmw-web-server -> Package settings -> Change visibility -> Public.
+      - name: Build server image
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          IMG=ghcr.io/virtastic/openmw-web-server
+          DOCKER_BUILDKIT=1 docker build --network=host \
+            -f server/Dockerfile.simpeer --target tier2 -t "$IMG:$TAG" .
+          docker run --rm --entrypoint sh "$IMG:$TAG" -c 'command -v openmw' \
+            || { echo "FATAL: $IMG:$TAG has no openmw peer binary" >&2; exit 1; }
+          docker tag "$IMG:$TAG" "$IMG:latest"
+          docker tag "$IMG:$TAG" "$IMG:sha-$(git rev-parse --short HEAD)"
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push server image
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          IMG=ghcr.io/virtastic/openmw-web-server
+          docker push "$IMG:$TAG"
+          docker push "$IMG:latest"
+          docker push "$IMG:sha-$(git rev-parse --short HEAD)"
 
       # A release created with GITHUB_TOKEN raises no `release: published` event for other
       # workflows (GitHub's recursion guard), so build-openmw-image never ran on its own -- v1.2.0

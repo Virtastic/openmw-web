@@ -44,6 +44,12 @@ cd openmw-web
 ./setup.sh        # Windows: .\setup.ps1
 ```
 
+Nothing compiles: the script checks out the newest release and pulls its prebuilt server
+image, `ghcr.io/virtastic/openmw-web-server:<tag>` (multiplayer-capable, published by every
+release). `./setup.sh --update` or the dashboard's Update button pulls the next one; to roll
+back, set `OPENMW_WEB_TAG` in `.env` to the previous tag and `docker compose pull && docker
+compose up -d`.
+
 1. Grab the latest `openmw-web-*.zip` from
    [Releases](https://github.com/Virtastic/openmw-web/releases) and unzip it into `play/`
    (the game engine is too big for git - the script reminds you).

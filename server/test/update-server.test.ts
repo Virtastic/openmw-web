@@ -87,11 +87,11 @@ test('updateStatus: garbage files read as nulls, never a throw', () => {
 test('updateStatus surfaces the updater phases the dashboard renders', () => {
   const dir = tmp();
   writeFileSync(join(dir, 'update-status.json'), JSON.stringify({
-    phase: 'building', tag: 'v1.3.0', startedAt: '2026-09-01T00:00:00Z',
+    phase: 'pulling', tag: 'v1.3.0', startedAt: '2026-09-01T00:00:00Z',
     updatedAt: '2026-09-01T00:01:00Z', error: '',
   }));
   const s = updateStatus(dir).status;
-  assert.equal(s?.phase, 'building');
+  assert.equal(s?.phase, 'pulling');
   assert.equal(s?.tag, 'v1.3.0');
   assert.equal(s?.error, null, 'an empty error string reads as no error');
 });

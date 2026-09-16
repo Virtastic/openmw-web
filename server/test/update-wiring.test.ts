@@ -59,9 +59,19 @@ test('updater.sh: flag content is data, never code', (t) => {
 
 test('updater.sh: heartbeat, status phases and expiry match what the server parses', (t) => {
   if (!rootPresent) { t.skip('repo root not in this build context'); return; }
-  for (const phase of ['pulling', 'building', 'restarting', 'done', 'failed']) {
+  for (const phase of ['pulling', 'restarting', 'done', 'failed']) {
     assert.ok(updater.includes(`status ${phase}`), `phase ${phase}`);
   }
+  // NOBODY WHO SELF-HOSTS COMPILES ANYTHING: the server image is pulled from GHCR (the
+  // release workflow built it), never built on the box. The pull happens BEFORE the tag is
+  // pinned in .env, so a failed pull leaves the running container and .env untouched.
+  assert.ok(!updater.includes('status building'), 'no build phase any more');
+  assert.ok(!/docker compose build/.test(updater), 'the updater never builds');
+  assert.match(updater, /docker compose pull openmw-web/, 'the updater pulls the image');
+  assert.ok(updater.indexOf('docker compose pull openmw-web') < updater.indexOf("printf 'OPENMW_WEB_TAG=%s\\n'"),
+    'the pull precedes the .env pin');
+  assert.ok(updater.indexOf("printf 'OPENMW_WEB_TAG=%s\\n'") < updater.indexOf('docker compose up -d openmw-web'),
+    'the .env pin precedes the restart');
   assert.ok(updater.includes('update-agent.json'));
   assert.ok(updater.includes('update-requested'));
   assert.ok(updater.includes('update-status.json'));
@@ -71,17 +81,29 @@ test('updater.sh: heartbeat, status phases and expiry match what the server pars
     'compose must reuse the host project name or container_name collides');
 });
 
-test('setup scripts: tag-pinned update, REPO_DIR written, no doomed compose pull', (t) => {
+test('setup scripts: tag-pinned, OPENMW_WEB_TAG + REPO_DIR written, pull not build', (t) => {
   if (!rootPresent) { t.skip('repo root not in this build context'); return; }
   for (const [name, script] of [['setup.sh', setupSh], ['setup.ps1', setupPs]] as const) {
-    assert.ok(script.includes('--sort=-v:refname'), `${name} checks out the newest tag`);
+    assert.ok(script.includes("-l 'v*' --sort=-v:refname"), `${name} checks out the newest v* tag`);
     assert.ok(script.includes('fetch --tags'), `${name} fetches tags`);
-    assert.ok(script.includes('REPO_DIR='), `${name} writes REPO_DIR`);
-    // The old --update ran `compose pull`, which cannot work: the images are built
-    // locally. Its removal is the fix; a bare pull coming back would be the regression.
-    assert.ok(!/^\s*(\$DC pull|docker compose pull|docker-compose pull|Invoke-Compose pull)/m.test(script),
-      `${name} has no compose pull`);
+    assert.ok(script.includes('REPO_DIR'), `${name} writes REPO_DIR`);
+    assert.ok(script.includes('OPENMW_WEB_TAG'), `${name} pins the image tag in .env`);
+    assert.match(script, /(\$DC|Invoke-Compose) pull openmw-web/, `${name} pulls the server image`);
+    // The one image still built on the box is the updater (seconds of alpine). A bare
+    // `compose build` coming back would mean a self-hoster compiling OpenMW again.
+    assert.ok(!/^\s*(\$DC|Invoke-Compose) build/m.test(script), `${name} never runs compose build`);
   }
+});
+
+test('compose: the server image is pulled from GHCR, pinned by OPENMW_WEB_TAG', (t) => {
+  if (!rootPresent) { t.skip('repo root not in this build context'); return; }
+  assert.ok(compose.includes('image: ghcr.io/virtastic/openmw-web-server:${OPENMW_WEB_TAG:-latest}'));
+  // Only the updater keeps a build block; a second one means the server is built locally again.
+  assert.equal([...compose.matchAll(/^\s+build:/gm)].length, 1, 'exactly one build: block (the updater)');
+  const release = read('.github/workflows/release.yml');
+  assert.ok(release.includes('ghcr.io/virtastic/openmw-web-server'), 'the release publishes that image');
+  assert.ok(release.includes('-f server/Dockerfile.simpeer --target tier2'), 'the multiplayer-capable one');
+  assert.ok(release.includes('packages: write'));
 });
 
 test('the dashboard drives both updates through the real routes', (t) => {

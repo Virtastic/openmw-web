@@ -4214,9 +4214,8 @@ async function pageUpdates() {
           it for you. On the machine hosting this, run:</p>
         <pre class="vt-mono small mb-1">./setup.sh --update</pre>
         <p class="small text-secondary mb-0">(Windows: <span class="vt-mono">.\\setup.ps1 -Update</span>.
-          If you installed before updates existed, one <span class="vt-mono">git pull</span>
-          followed by <span class="vt-mono">docker compose up -d --build</span> adds the
-          updater; the button works from then on.)</p>`;
+          If you installed before updates existed, that same command adds the updater;
+          the button works from then on.)</p>`;
     } else {
       srv.innerHTML = html`
         <p><strong>${latestTag} is out</strong> (you run v${r.current}). ${raw(changed)}</p>
@@ -4228,7 +4227,7 @@ async function pageUpdates() {
           title: `Update the server to ${latestTag}?`,
           // No links in this body: navigating under an open modal strands it. The Backup
           // page is linked right below the cards instead.
-          body: 'The server rebuilds itself and restarts, which signs everyone out for a '
+          body: 'The server downloads the new release and restarts, which signs everyone out for a '
             + 'minute or two. Your data is untouched: accounts, saves, settings, game files '
             + 'and mods all stay exactly as they are. If you want a safety copy anyway, do '
             + 'that from the Backup page first.',
@@ -4296,9 +4295,9 @@ async function pageUpdates() {
         }
       } else { lastUpdated = cur.updatedAt; stalePolls = 0; }
       const mins = Math.round((Date.now() - started) / 60000);
-      const label = cur.phase === 'building'
-        ? `Building ${cur.tag || ''} (a few minutes${mins ? `; ${mins} so far` : ''})`
-        : `Fetching ${cur.tag || 'the release'}`;
+      // 'pulling' covers the tag fetch and the ~1 GB image download, so it is the phase that
+      // takes time; a minute count keeps a slow line from looking stuck.
+      const label = `Downloading ${cur.tag || 'the release'}${mins ? ` (${mins} min so far)` : ''}`;
       installPhase(el, 'Updating the server', label);
     }, 2000);
   }
@@ -4317,8 +4316,7 @@ async function pageUpdates() {
         game client folder, so updating it stays a manual step: unzip the release into
         <span class="vt-mono">./play</span>.</p>
       <p class="small text-secondary mb-0">The bundled Docker setup gains the access with a
-        one-time <span class="vt-mono">git pull</span> and
-        <span class="vt-mono">docker compose up -d --build</span>; on bare Linux also run
+        one-time <span class="vt-mono">./setup.sh --update</span>; on bare Linux also run
         <span class="vt-mono">chown -R 1000:1000 ./play</span>.</p>`;
   } else if (e.tag === latestTag) {
     eng.innerHTML = html`<div class="text-success">

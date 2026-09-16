@@ -141,17 +141,20 @@ S3_SECRET_ACCESS_KEY=
 # sources resolve against the wrong filesystem - so the compose file uses REPO_DIR and this
 # pins it to the checkout's absolute path. Forward slashes: Docker Desktop accepts them and
 # backslashes get eaten as escapes on the way through compose.
-$repoDir = $PSScriptRoot.Replace('\', '/')
-$envPath = Join-Path $PSScriptRoot '.env'
-$envLines = @(Get-Content $envPath)
-if ($envLines -match '^REPO_DIR=') {
-  $envLines = $envLines | ForEach-Object { if ($_ -match '^REPO_DIR=') { "REPO_DIR=$repoDir" } else { $_ } }
-} else {
-  $envLines += ''
-  $envLines += '# The absolute path of this checkout, for the updater container. Managed by setup.ps1.'
-  $envLines += "REPO_DIR=$repoDir"
+function Set-EnvValue {
+  param($Key, $Value, $Comment)  # $Comment is written above the line the first time only
+  $envPath = Join-Path $PSScriptRoot '.env'
+  $envLines = @(Get-Content $envPath)
+  if ($envLines -match "^$Key=") {
+    $envLines = $envLines | ForEach-Object { if ($_ -match "^$Key=") { "$Key=$Value" } else { $_ } }
+  } else {
+    $envLines += ''
+    $envLines += "# $Comment"
+    $envLines += "$Key=$Value"
+  }
+  [System.IO.File]::WriteAllText($envPath, (($envLines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
 }
-[System.IO.File]::WriteAllText($envPath, (($envLines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+Set-EnvValue 'REPO_DIR' $PSScriptRoot.Replace('\', '/') 'The absolute path of this checkout, for the updater container. Managed by setup.ps1.'
 
 if (-not (Get-ChildItem 'gamedata' -ErrorAction SilentlyContinue)) {
   Write-Warn ".\gamedata is empty."
@@ -179,32 +182,33 @@ if (-not (Test-Path 'play\openmw.wasm') -and -not (Test-Path 'play\e\*\openmw.wa
 }
 
 # ---------------------------------------------------------------------------------------
-if ($Update) {
-  Write-Step "Updating"
-  # Same flow as the dashboard's Update button: deployments run published releases, so
-  # fetch the tags and check out the newest one. (compose pull would be a no-op lie here -
-  # the images are built locally, there is no registry to pull from.)
-  git fetch --tags --force origin
-  if ($LASTEXITCODE -ne 0) { Write-Fail "Could not fetch from GitHub. Are you offline?" }
-  $tag = (git tag --sort=-v:refname | Select-Object -First 1)
-  if (-not $tag) { Write-Fail "No release tags found." }
-  Write-Host "Newest release: $tag"
-  git -c advice.detachedHead=false checkout "refs/tags/$tag"
-  if ($LASTEXITCODE -ne 0) { Write-Fail "Could not check out $tag (local changes in the way?)" }
-  Invoke-Compose build
-} else {
-  Write-Step "Building"
-  Invoke-Compose build
-}
+if ($Update) { Write-Step "Updating" } else { Write-Step "Choosing the release" }
+# Same flow as the dashboard's Update button, on a first install too: deployments run
+# published releases. Fetch the tags, check out the newest one (so docker-compose.yml and
+# the Caddy config match the image), pin its prebuilt server image in .env, and pull it.
+# Nothing is compiled here - the release built the image once, for everyone.
+git fetch --tags --force origin
+if ($LASTEXITCODE -ne 0) { Write-Fail "Could not fetch from GitHub. Are you offline?" }
+$tag = (git tag -l 'v*' --sort=-v:refname | Select-Object -First 1)
+if (-not $tag) { Write-Fail "No release tags found." }
+Write-Host "Newest release: $tag"
+git -c advice.detachedHead=false checkout "refs/tags/$tag"
+if ($LASTEXITCODE -ne 0) { Write-Fail "Could not check out $tag (local changes in the way?)" }
+Set-EnvValue 'OPENMW_WEB_TAG' $tag 'The release whose server image runs (ghcr.io/virtastic/openmw-web-server). Managed by setup.ps1; set an older tag and re-run to roll back.'
+
+Write-Step "Pulling the server image"
+Invoke-Compose pull openmw-web caddy
+if ($LASTEXITCODE -ne 0) { Write-Fail "Could not pull the server image. Are you offline?" }
 
 Write-Step "Starting"
-Invoke-Compose up -d
+# --build is for the updater only (the one image still built here; a few seconds of alpine).
+Invoke-Compose up -d --build
 if ($LASTEXITCODE -ne 0) { Write-Fail "Could not start the containers. The output above says why." }
 
 # ---------------------------------------------------------------------------------------
 Write-Step "Waiting for the server"
 
-# Poll the container's own healthcheck rather than sleeping a fixed amount: a first build on
+# Poll the container's own healthcheck rather than sleeping a fixed amount: a first pull on
 # a slow machine takes a while, and a fixed wait is either wrong or wasteful.
 # WAIT FOR THE DASHBOARD, NOT FOR "healthy". A server with no Morrowind files answers
 # /healthz with 503 on purpose - running, but unable to host players - and that is the normal

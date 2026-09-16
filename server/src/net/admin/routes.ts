@@ -888,8 +888,8 @@ export function adminRoutes(deps: AdminDeps) {
       if (!deps.clientDir || !engineStatus(deps.clientDir).writable) {
         json(res, 200, { ok: false, unavailable: true,
           error: 'This deployment does not expose the game client folder to the server. '
-            + 'With the bundled Docker setup, update the checkout once by hand '
-            + '(git pull, then docker compose up -d --build); on bare Linux also make '
+            + 'With the bundled Docker setup, run ./setup.sh --update once by hand '
+            + '(Windows: .\\setup.ps1 -Update); on bare Linux also make '
             + './play writable for the container: chown -R 1000:1000 ./play' });
         return true;
       }

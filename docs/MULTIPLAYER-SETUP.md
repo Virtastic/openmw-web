@@ -11,6 +11,13 @@
 > cannot do is create the OAuth app at Google, Discord or Microsoft, or create the bucket:
 > those are §1 and §2 below, and the wizard shows you the exact redirect URL to paste while
 > you are there. Read §4 only if you are configuring a server by hand.
+>
+> The stack runs `ghcr.io/virtastic/openmw-web-server:<tag>`, the multiplayer-capable image
+> (server + headless OpenMW sim peer) every release publishes, so the ~25-minute engine
+> compile never happens on your box. Updates pull the next tag (`./setup.sh --update` or the
+> dashboard's Update button); rollback is `OPENMW_WEB_TAG=<previous tag>` in `.env`, then
+> `docker compose pull && docker compose up -d` - see
+> [`../SELF_HOSTING.md`](../SELF_HOSTING.md#updates).
 
 Players' game data lives in the **storage locker**: an S3-compatible bucket, or the server's
 own disk when no bucket is configured. This guide covers the things only an operator can

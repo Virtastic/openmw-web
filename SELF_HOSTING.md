@@ -131,14 +131,26 @@ saves, settings, game files and mods all stay; the cautious can take a backup fi
   checksums, and swaps it in live. No restart, nobody is interrupted; players get the new
   version on their next page load.
 - **Server:** a small updater container (part of the Docker stack, no setup) checks out the
-  newest release tag, rebuilds, and restarts the server. The page follows along and
-  reconnects; the restart signs everyone out for a minute or two.
+  newest release tag, pulls that release's prebuilt server image
+  (`ghcr.io/virtastic/openmw-web-server:<tag>`, the multiplayer-capable build every release
+  publishes - nothing is compiled on your machine), and restarts the server. The page
+  follows along and reconnects; the restart signs everyone out for a minute or two.
 
-Installed before updates existed? One `git pull` followed by
-`docker compose up -d --build` on the host adds the updater and the button works from then
-on. Running without Docker on Linux, also `chown -R 1000:1000 ./play` so the server may
-write the client folder. `./setup.sh --update` remains the manual fallback and does the
-same thing.
+Installed before updates existed? `./setup.sh --update` (Windows: `.\setup.ps1 -Update`)
+adds the updater and the button works from then on. Running without Docker on Linux, also
+`chown -R 1000:1000 ./play` so the server may write the client folder. The script remains
+the manual fallback and does the same thing as the button.
+
+**Rolling back.** The image a deployment runs is pinned by `OPENMW_WEB_TAG` in `.env`
+(the setup script and the updater write it). To go back a release, set it to the previous
+tag, then:
+
+```bash
+git checkout v1.3.0          # the same tag, so the compose file and Caddy config match
+docker compose pull openmw-web && docker compose up -d openmw-web
+```
+
+Your data folder is untouched by either direction.
 
 ### Savegames
 

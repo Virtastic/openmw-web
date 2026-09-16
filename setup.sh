@@ -139,19 +139,18 @@ fi
 # sources resolve against the wrong filesystem - so the compose file uses ${REPO_DIR} and
 # this pins it to the checkout's absolute path on the host. Refreshed every run: the value
 # goes stale when the folder is moved.
-REPO_DIR_NOW=$(pwd)
-if grep -q '^REPO_DIR=' .env 2>/dev/null; then
-  # Drop-and-append rather than sed: a path is data, and sed would reinterpret | and &
-  # inside it as replacement syntax.
-  grep -v '^REPO_DIR=' .env > .env.tmp || true
-  printf 'REPO_DIR=%s\n' "$REPO_DIR_NOW" >> .env.tmp
-  mv .env.tmp .env
-else
-  printf '
-# The absolute path of this checkout, for the updater container. Managed by setup.sh.
-REPO_DIR=%s
-' "$REPO_DIR_NOW" >> .env
-fi
+env_set() { # $1 = KEY, $2 = value, $3 = comment written above it the first time
+  if grep -q "^$1=" .env 2>/dev/null; then
+    # Drop-and-append rather than sed: a path is data, and sed would reinterpret | and &
+    # inside it as replacement syntax.
+    grep -v "^$1=" .env > .env.tmp || true
+    printf '%s=%s\n' "$1" "$2" >> .env.tmp
+    mv .env.tmp .env
+  else
+    printf '\n# %s\n%s=%s\n' "$3" "$1" "$2" >> .env
+  fi
+}
+env_set REPO_DIR "$(pwd)" "The absolute path of this checkout, for the updater container. Managed by setup.sh."
 
 if [ -z "$(ls -A gamedata 2>/dev/null)" ]; then
   warn "./gamedata is empty."
@@ -179,29 +178,29 @@ if [ ! -f play/openmw.wasm ] && ! ls play/e/*/openmw.wasm >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------------------
-if [ "$MODE" = update ]; then
-  step "Updating"
-  # Same flow as the dashboard's Update button: deployments run published releases, so
-  # fetch the tags and check out the newest one. (`docker compose pull` would be a no-op
-  # lie here - the images are built locally, there is no registry to pull from.)
-  git fetch --tags --force origin || die "Could not fetch from GitHub. Are you offline?"
-  TAG=$(git tag --sort=-v:refname | head -n 1)
-  [ -n "$TAG" ] || die "No release tags found."
-  say "Newest release: $TAG"
-  git -c advice.detachedHead=false checkout "refs/tags/$TAG" || die "Could not check out $TAG (local changes in the way?)"
-  $DC build
-else
-  step "Building"
-  $DC build
-fi
+if [ "$MODE" = update ]; then step "Updating"; else step "Choosing the release"; fi
+# Same flow as the dashboard's Update button, on a first install too: deployments run
+# published releases. Fetch the tags, check out the newest one (so docker-compose.yml and
+# the Caddy config match the image), pin its prebuilt server image in .env, and pull it.
+# Nothing is compiled here - the release built the image once, for everyone.
+git fetch --tags --force origin || die "Could not fetch from GitHub. Are you offline?"
+TAG=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
+[ -n "$TAG" ] || die "No release tags found."
+say "Newest release: $TAG"
+git -c advice.detachedHead=false checkout "refs/tags/$TAG" || die "Could not check out $TAG (local changes in the way?)"
+env_set OPENMW_WEB_TAG "$TAG" "The release whose server image runs (ghcr.io/virtastic/openmw-web-server). Managed by setup.sh; set an older tag and re-run to roll back."
+
+step "Pulling the server image"
+$DC pull openmw-web caddy || die "Could not pull the server image. Are you offline?"
 
 step "Starting"
-$DC up -d
+# --build is for the updater only (the one image still built here; a few seconds of alpine).
+$DC up -d --build
 
 # ---------------------------------------------------------------------------------------
 step "Waiting for the server"
 
-# Poll the container's own healthcheck rather than sleeping a fixed amount: a first build on
+# Poll the container's own healthcheck rather than sleeping a fixed amount: a first pull on
 # a slow box takes a while, and a fixed wait is either wrong or wasteful.
 i=0
 STATUS=starting

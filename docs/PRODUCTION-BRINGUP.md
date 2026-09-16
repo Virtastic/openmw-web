@@ -193,3 +193,17 @@ docker logs openmw-mp 2>&1 | grep -E "client_ip_mode|password_login_open|devbots
 ```
 
 Expected: `trustCloudflareIp: true`, and no `password_login_open` or `devbots.enabled` lines.
+
+## 8. The self-hoster image (what the release publishes from this runner)
+
+`release.yml` runs on this same runner and, after the release assets, builds the very image
+`deploy-mp.yml` builds (`server/Dockerfile.simpeer --target tier2`, from the repo root, with
+the "peer binary present" assertion) and pushes it as
+`ghcr.io/virtastic/openmw-web-server:<tag>`, `:latest` and `:sha-<short>`. Self-hosters'
+`docker-compose.yml` pulls that instead of compiling; prod itself still runs the locally
+built `openmw-mp:ovh` from `deploy-mp.yml` and is not affected.
+
+One-time: the GHCR package must be **public** or nobody can pull it - GitHub -> Packages ->
+`openmw-web-server` -> Package settings -> Change visibility. The workflow cannot do that.
+Expect a release run to take ~25 minutes longer than before, since the tier2 compile now
+runs on the tag as well.

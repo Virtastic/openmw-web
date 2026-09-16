@@ -22,27 +22,29 @@
 
 services:
   openmw-web:
-    # BUILT LOCALLY. Nothing is pulled from a registry and nothing is published.
+    # PULLED, NEVER BUILT. Every release (.github/workflows/release.yml) publishes this image:
+    # the server, the admin dashboard AND a headless OpenMW compiled from source, which is
+    # what lets multiplayer players in. That compile takes ~25 minutes and a lot of memory,
+    # so nobody who self-hosts does it - the release did it once.
     #
-    # Two images are possible here and they are not interchangeable:
+    # OPENMW_WEB_TAG pins the release: setup.sh / setup.ps1 and the dashboard's Update button
+    # write it into .env next to this file, matching the git tag they checked out (so the
+    # compose file and the Caddy config match the image). ROLLBACK = set it to the previous
+    # tag in .env, then `docker compose pull && docker compose up -d`.
     #
-    #   server/Dockerfile            (this one) builds in about a minute. The server, the
-    #                                admin dashboard, everything except a compiled OpenMW.
-    #                                Without that engine it cannot simulate a world, so it
-    #                                serves the dashboard and refuses players — which is
-    #                                exactly what you want while setting things up.
+    # DEVELOPERS: to run your own build instead, put a docker-compose.override.yml next to
+    # this file (compose merges it automatically; it is gitignored):
     #
-    #   server/Dockerfile.simpeer    --target tier2, from the repo root. Same server plus a
-    #                                headless OpenMW compiled from source, which is what
-    #                                actually lets players in. That compile is long and
-    #                                memory-hungry; see the notes in that file.
+    #   services:
+    #     openmw-web:
+    #       image: openmw-web:local
+    #       build:                       # ~1 minute: server + dashboard, no OpenMW, so it
+    #         context: ./server          # serves the dashboard and refuses players. For
+    #         dockerfile: Dockerfile     # the full thing: context ".", dockerfile
+    #                                    # server/Dockerfile.simpeer, target tier2.
     #
-    # Start with this one. Switch the build block below to the simpeer file when you want a
-    # world people can actually join.
-    build:
-      context: ./server
-      dockerfile: Dockerfile
-    image: openmw-web:local
+    # then `docker compose up -d --build`.
+    image: ghcr.io/virtastic/openmw-web-server:${OPENMW_WEB_TAG:-latest}
     container_name: openmw-web
     # The image's own default starts the multiplayer server. This entrypoint picks the mode
     # from <data>/.mode instead, which the setup wizard writes when you choose single player
@@ -158,7 +160,7 @@ services:
     # THE UPDATE BUTTON'S OTHER HALF. The dashboard can update the game client itself, but
     # not its own container - a process cannot rebuild the image it is running from. So
     # this small agent waits for the owner to click Update in the dashboard, then checks
-    # out the newest release tag and rebuilds/restarts openmw-web. Nothing is automatic:
+    # out the newest release tag, pulls its image and restarts openmw-web. Nothing is automatic:
     # it acts only on that click.
     #
     # IT HOLDS THE DOCKER SOCKET, which is root on the host - so it is built to be
