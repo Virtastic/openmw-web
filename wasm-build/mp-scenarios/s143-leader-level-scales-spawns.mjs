@@ -53,13 +53,25 @@ export default async function run(ctx) {
 
     // The helper walks off alone to the wilds; the host stays in town.
     await guest.client.cmd('snapto:' + SPOT);
-    await guest.client.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 300_000, 'the peer rolled a levelled creature beside the guest');
+    await guest.client.waitFor(`String(window.omw.state.cell||"") === "-2,-7"`, STEP, 'the guest stands two cells north (s166 waits for the same thing)');
     // Under managedPeer the peers belong to the gateway's worlds, and their "[mp]" lines
     // travel as simpeer.output records through the gateway's stdout.
-    const peer = ctx.childLogTail ? ctx.childLogTail('gateway') : '';
+    //
+    // WAIT FOR THE ROLL ITSELF. `netObjects > 0` was satisfied the moment ANY object was
+    // netted -- an item on the ground in the cell the guest started in -- so #106 read the
+    // log twelve seconds after the join, before the peer had loaded the guest's new cell, and
+    // called an empty roll list a regression. The roll is the measurement: poll for it.
     const unwrap = (l) => l.replace(/^.*\[mp\] /, '').replace(/"\}?\s*$/, '');
-    const rolls = peer.split(String.fromCharCode(10)).filter((l) => /levelled spawn .* rolled at level/.test(l)).map(unwrap);
-    const party = peer.split(String.fromCharCode(10)).filter((l) => /party level ->/.test(l)).map(unwrap);
+    const linesOf = (re) => (ctx.childLogTail ? ctx.childLogTail('gateway', 200_000) : '')
+      .split(String.fromCharCode(10)).filter((l) => re.test(l)).map(unwrap);
+    const rollBy = Date.now() + 180_000;
+    let rolls = [];
+    while (Date.now() < rollBy) {
+      rolls = linesOf(/levelled spawn .* rolled at level/);
+      if (rolls.some((l) => /party leader/.test(l))) break;
+      await ctx.sleep(2_000);
+    }
+    const party = linesOf(/party level ->/);
     ctx.log(`peer: ${party.slice(-2).join(' || ')}`);
     ctx.log(`peer rolls: ${rolls.slice(-4).join(' || ')}`);
     // THE FIX, at the point it is decidable: the leader's level reached the engine's spawn

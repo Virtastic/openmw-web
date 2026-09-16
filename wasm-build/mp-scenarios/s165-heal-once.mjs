@@ -55,7 +55,22 @@ export default async function run(ctx) {
   await a.cmd('setmp:300');
   await a.cmd('stance:spell');
   await ctx.sleep(700);
-  await a.cmd('press:500');
+  // ONE PRESS IS NOT A CAST. The use key is read by the engine's own frame, and a streamed
+  // harness client renders at ~1 fps: s147 and s156 both need a second or third press before
+  // the spell appears in `actives`, and #106 measured this scenario's single press casting
+  // nothing -- the client's OWN bar had not moved either (35 -> 35), which no server rule
+  // explains. Press until the engine says the spell is active (the s147 castSelf idiom).
+  let actives = '';
+  for (let attempt = 0; attempt < 4 && !String(actives).split(',').includes(id); attempt++) {
+    await a.cmd('press:500');
+    await ctx.sleep(1_800);
+    await a.eval("if (window.omw.state) window.omw.state.actives = null; 'cleared';");
+    await a.cmd('actives');
+    await a.waitFor("typeof window.omw.state.actives === 'string'", 10_000, 'actives answered');
+    actives = await a.eval('window.omw.state.actives');
+  }
+  ctx.log(`cast ${id}: active spells now [${actives}]`);
+  assert.ok(String(actives).split(',').includes(id), `the cast never took (actives: ${actives})`);
   // The heal runs 5 s on the client; give the raise claim and the peer's reports time to settle.
   await ctx.sleep(8_000);
   const after = await bars(a);

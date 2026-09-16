@@ -15,6 +15,9 @@ const LEFT = 10;
 // 2 s and refreshes them wholesale every 10 s -- 12 s covers a full refill window either way
 // (avatarApplied is a peer-side flag the browser cannot read).
 const SETTLE = 12_000;
+// tostring() of the engine's number: a pick at 10 reads "10.0/nil/nil", so the old
+// startsWith('10/') was false for exactly the value it asked for (#106; s160 the same).
+const condOf = (s) => Number(String(s).split('/')[0]);
 async function stateOf(c, id) {
   await c.eval("if (window.omw.state) window.omw.state.itemState = null; 'cleared';");
   await c.cmd(`itemstate:${id}`);
@@ -33,11 +36,11 @@ export default async function run(ctx) {
   await a.cmd(`setcond:${ITEM}:${LEFT}`);
   const spent = await stateOf(a, ITEM);
   ctx.log(`A's pick after use: ${spent}`);
-  assert.ok(spent.startsWith(`${LEFT}/`), `the use did not take on A (${spent})`);
+  assert.equal(condOf(spent), LEFT, `the use did not take on A (${spent})`);
 
   await ctx.sleep(SETTLE);
   const later = await stateOf(a, ITEM);
   ctx.log(`A's pick after a full peer refresh: ${later}`);
-  assert.ok(later.startsWith(`${LEFT}/`), `the avatar's untouched copy refilled the pick (${later} after ${spent})`);
+  assert.equal(condOf(later), LEFT, `the avatar's untouched copy refilled the pick (${later} after ${spent})`);
   ctx.log('PASS: a lockpick spent on the client stays spent under the peer');
 }

@@ -482,3 +482,38 @@ test('backlog 312: SelfStats.blk relays a whitelisted armor hit sound and drops 
     assert.equal((e.value as { blk?: unknown }).blk, undefined, 'a non-whitelisted blk must not reach the owner');
   }
 });
+
+// #106 -- pins playerstate.ts drivingWindowMs on the harness seam: a streamed retail harness
+// client renders at ~1 fps, so its input frames arrive up to 8 s apart (measured:
+// `simpeer.avatar_stats_gated` lastInputAgoMs 5895 in s149, 8065 in s143) and every bar the
+// peer simulated was dropped as "not driving" -- the drowning s149 measures never reached the
+// screen and the base it claimed never reached the avatar. A real client keeps the 5 s rule.
+test("#106: a stuttering harness client still gets the peer's bars; a real one does not", async (t) => {
+  for (const harness of [true, false]) {
+    const server = await startServer({
+      requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+      configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16, harness } },
+    });
+    t.after(() => server.close());
+    const peer = await TestClient.simPeer(server.port, PEER_PASS);
+    t.after(() => peer.close());
+    const a = await TestClient.connect(server.port);
+    t.after(() => a.close());
+    const welcome = await a.joinAsNew(harness ? 'Stutterer' : 'Smooth');
+    a.playerId = welcome['playerId'] as number;
+    await a.waitEvent('PlayerList');
+    a.sendCellChange('0,0', 0, 0, 0);
+    a.sendInput({ move: 1 }, 1); // ONE input frame, then a long silence: the 1 fps bot's gap
+    await new Promise((r) => setTimeout(r, 5_600)); // past INPUT_DRIVING_MS (5 s)
+    a.inbox.events.length = 0;
+    peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(42) }] });
+    if (harness) {
+      const seen = await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 42, 3000);
+      assert.ok(seen, "the harness seam must keep the peer's bars flowing to a stuttering bot");
+    } else {
+      await new Promise((r) => setTimeout(r, 600));
+      assert.equal(a.inbox.events.filter((e) => e.name === 'SelfStats').length, 0,
+        'an input-less client outside the harness must keep asserting its own bars');
+    }
+  }
+});

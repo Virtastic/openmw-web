@@ -648,6 +648,9 @@ function handleItemAcquired(ctx: StateCtx, player: Player, body: LTable): boolea
 // client PlayerStatsDynamic (doc + relay + death flush) and additionally hands the OWNER
 // their own bars as MP_SelfStats -- the client renders what the peer simulated.
 const PEER_STATS_FRESH_MS = INPUT_DRIVING_MS; // one predicate everywhere (players.ts)
+// ...and one place the harness widens it. A headless bot's frame IS its input cadence.
+const HARNESS_DRIVING_MS = 60_000;
+const drivingWindowMs = (ctx: StateCtx): number => (ctx.harness ? HARNESS_DRIVING_MS : INPUT_DRIVING_MS);
 const REST_REFUSED_MS = 4_000; // the raise claim behind a refused rest lands within the 2 s diff + a slow box
 const RESURRECT_GRACE_MS = 6_000;
 // Restoration budget: how much a client may heal ITSELF per window while the peer owns its
@@ -688,7 +691,15 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     // the avatar is still standing in the world where an NPC can kill it; gating the report
     // meant the death was never recorded and the stale client's bars re-ruled on return,
     // a free resurrect. The avatar is the body in the world; if it died, the player died.
-    if ((p.lastInputAt === undefined || now - p.lastInputAt > PEER_STATS_FRESH_MS) && hp.c > 0) {
+    // #393 seam: a harness client is not a player's machine. A streamed retail bot renders at
+    // ~1 fps and its input frames come with it, so the gap between two of them reached 5.9 s
+    // in s149 and 8.1 s in s143 (#106 `simpeer.avatar_stats_gated`) -- past the 5 s driving
+    // window. Every bar the peer simulated was then dropped: the client's selfStats froze, the
+    // drowning it was measuring never showed, and the base it claimed never reached the avatar
+    // (handleStatsDynamic took the client-authoritative branch, which sends no AvatarRestore).
+    // The window is a freshness RATE, like the ones the seam already relaxes; the authority
+    // rule itself is untouched.
+    if ((p.lastInputAt === undefined || now - p.lastInputAt > drivingWindowMs(ctx)) && hp.c > 0) {
       if (p.statsDropLogged !== true) {
         p.statsDropLogged = true;
         log('info', 'simpeer.avatar_stats_gated', {
@@ -804,7 +815,7 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
     if (id === undefined) continue;
     const p = ctx.roster.get(id);
     if (!p || p.system === true || !p.inWorld) continue;
-    if (p.lastInputAt === undefined || now - p.lastInputAt > INPUT_DRIVING_MS) continue; // not driving
+    if (p.lastInputAt === undefined || now - p.lastInputAt > drivingWindowMs(ctx)) continue; // not driving
     const states = parseItemStatesL(tbl(e.get('itemStates')));
     if (Object.keys(states).length > MAX_INVENTORY) continue;
     p.peerItemStatesAt = now;
