@@ -35,6 +35,10 @@ export default async function run(ctx) {
     .catch(async (e) => { ctx.log(`dialogueLock mirror: ${await a.eval('window.omw.state.dialogueLock')}`); throw e; });
   await ctx.sleep(500);
   await a.cmd(`escort:${rec}:${DEST.x},${DEST.y},${DEST.z}`);
+  // The claim rides companion.lua's 1 s poll, three frame hops after the command; at the
+  // harness's ~1 fps that can outlast the 5 s "just held" grace a release leaves behind.
+  // Say goodbye once the claim has gone out, as a player closing the window would.
+  await a.waitFor('/^sent:/.test(window.omw.state.followClaim||"")', 30_000, 'the escort claim went out while the lock was held');
   await a.cmd('dlg:release');
   await ctx.sleep(3_000);
   ctx.log(`A asked "${rec}" to escort them to the spawn (claim=${await a.eval('window.omw.state.followClaim')}, report=${await a.eval('window.omw.state.companionReport')}); ${Math.round(dist2(start, DEST))} units to go`);

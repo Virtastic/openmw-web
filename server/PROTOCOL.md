@@ -74,7 +74,8 @@ signal exists or is needed (the peer-pose freshness window, **2 s** — `PEER_PO
 — is the whole switch; 300 ms let a peer GC hitch alternate writers).
 
 - **`0x0102` PlayerInput (C→S, ~30 Hz).** 12-byte payload: `0` u32 seq (client-monotonic,
-  echoed back as `lastInputSeq`) · `4` i8 move axis (−127..127 ≡ −1..1) · `5` i8 side axis ·
+  echoed back as `lastInputSeq`; the server's stale-drop and teleport gate key on THIS seq,
+  not the envelope counter, which every binary frame shares) · `4` i8 move axis (−127..127 ≡ −1..1) · `5` i8 side axis ·
   `6` u16 yaw · `8` u8 pitch (same quantization as PlayerMove) · `9` u8 flags (bit0 run,
   bit1 sneak, bit2 jump-edge, bit3 use/attack, bit4 weapon stance, bit5 spell stance — the
   avatar only swings from a drawn stance) · `10` u16 reserved 0. Authenticated by

@@ -9,6 +9,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
+import { packEnvelope } from '../src/proto/envelope';
+import { MSG_PLAYER_INPUT, packInput } from '../src/proto/input';
 import { metrics } from '../src/metrics';
 
 const PEER_PASS = 'peer-secret-1';
@@ -256,4 +258,35 @@ test('when the peer stops, a client-authored move still reaches the OTHER player
     8000, 'the watcher to see the CLIENT-authored pose after the peer died');
   clearInterval(walkTimer);
   assert.ok(seen, 'with no peer, a moving player must still be visible to everyone else');
+});
+
+// #416: the client's envelope counter is shared by every binary frame it sends (poses,
+// inputs, actor batches), so it runs far ahead of the input counter inside the payload --
+// the one the peer echoes as lastInputSeq. The teleport gate armed from the ENVELOPE seq
+// waited for a payload seq that could not arrive for minutes (never, on a 1 fps harness
+// client): s138/s145/s162/s164/s166 red in #105 with the avatar standing on the spot.
+test('the teleport gate keys on the PAYLOAD input seq, not the envelope counter', async (t) => {
+  const { peer, a } = await world(t);
+  // Real-client shape: payload seq n, envelope seq far ahead of it.
+  let inputSeq = 0;
+  const send = () => a.sendRawBinary(packEnvelope(MSG_PLAYER_INPUT, 5000 + inputSeq,
+    packInput({ seq: ++inputSeq, move: 1, side: 0, yaw: 0, pitch: 128, flags: 0 })));
+  send();
+  const inputTimer = setInterval(send, 100);
+  t.after(() => clearInterval(inputTimer));
+  await new Promise((r) => setTimeout(r, 300));
+  // A same-cell snap re-arms the gate with the seq of the newest input (~3, envelope ~5003).
+  a.sendCellChange('0,0', 512, 640, 10);
+  await new Promise((r) => setTimeout(r, 200));
+  // The avatar is on the spot and has consumed everything the client sent so far.
+  const streamTimer = setInterval(() => peer.sendAvatarMoveBatch([
+    { id: a.playerId, lastInputSeq: inputSeq, pose: { x: 512, y: 640, z: 10, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
+  ]), 60);
+  t.after(() => clearInterval(streamTimer));
+  const state = await poll(() => {
+    const i = a.inbox.stateBatches.findIndex((sb) => sb.entries.some((e) => e.id === a.playerId));
+    return i === -1 ? undefined : a.inbox.stateBatches.splice(i, 1)[0];
+  }, 4000, 'the owner state batch after the snap (the arrival gate must clear)');
+  const mine = state.entries.find((e) => e.id === a.playerId)!;
+  assert.ok(mine.lastInputSeq > 0 && mine.lastInputSeq < 1000, `lastInputSeq is the payload counter, got ${mine.lastInputSeq}`);
 });

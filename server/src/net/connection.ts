@@ -708,7 +708,7 @@ export class Connection implements Peer {
       return;
     }
     if (envelope.type === MSG_PLAYER_INPUT) {
-      this.handlePlayerInput(envelope.seq, envelope.payload);
+      this.handlePlayerInput(envelope.payload);
       return;
     }
     if (envelope.type === MSG_AVATAR_MOVE_BATCH) {
@@ -896,7 +896,7 @@ export class Connection implements Peer {
   // 0x0100 path stays authoritative — that is the DEGRADED MODE, stated as policy: freezing
   // every player to preserve authority during a peer crash would trade a severe outage for
   // a security gain that is worthless while there is no simulator to cheat against.
-  private handlePlayerInput(seq: number, payload: Buffer): void {
+  private handlePlayerInput(payload: Buffer): void {
     const player = this.player!;
     if (this.isSystem) {
       metrics.playerInputDropped.inc({ reason: 'from_peer' });
@@ -906,6 +906,15 @@ export class Connection implements Peer {
       metrics.playerInputDropped.inc({ reason: 'bad_size' });
       return;
     }
+    // THE PAYLOAD'S SEQ, NOT THE ENVELOPE'S. The envelope counter (netmanager.cpp mSeq) is
+    // shared by every binary frame the client sends -- poses, inputs, actor batches -- so it
+    // runs two to three times ahead of the input counter player.lua stamps into the payload,
+    // and the gap grows for the whole session. The peer echoes the PAYLOAD seq as
+    // lastInputSeq; teleportPose.seq (the arrival gate below) was armed from the envelope
+    // seq, so "lastInputSeq > teleportPose.seq" took minutes to come true after a snap and
+    // never did on a 1 fps harness client (s138 / s145 / s162 / s164 / s166 in #105:
+    // simpeer.avatar_never_arrived with the avatar standing on the spot). #416.
+    const seq = payload.readUInt32LE(0);
     if (player.inputSeq !== undefined && seq <= player.inputSeq) return; // stale/replayed
     player.inputSeq = seq;
     player.lastInputAt = Date.now();
