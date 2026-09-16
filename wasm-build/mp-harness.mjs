@@ -939,6 +939,12 @@ for (const file of files) {
         server.port, SERVER_PASSWORD, cellKey,
         gameDataDir ?? join(ROOT, 'play', 'mwdata'),
         (label, proc) => {
+          // OWNED, so the finally reaps it. The watch callback only captured LOGS, so a peer
+          // outlived any scenario that did not call peer.stop() itself (or threw before it):
+          // one leaked peer per peered scenario, ~360 MB and a busy core each, and by the
+          // 20th the box was too loaded for any timing assertion to mean anything (#109 saw
+          // peers climb 6 -> 11 while the leak detector printed it).
+          ownedChildren.push(proc);
           const buf = [];
           proc.stdout?.on('data', (d) => buf.push(String(d)));
           proc.stderr?.on('data', (d) => buf.push(String(d)));
