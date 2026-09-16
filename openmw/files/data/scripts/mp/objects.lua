@@ -937,7 +937,9 @@ handlers.MP_ContainerUpdate = function(data)
     local key = data.net and netKey(data.net) or (obj and refKeyOfObj(obj))
     applyMerchantGold(obj, data.gold)
     local delta = data.delta or {}
-    if key then
+    -- A purse-only update (a merchant's gold refill, #165) carries no item: nothing to track
+    -- (objects.lua:942 'table index is nil' failed s160-s162 in #106).
+    if key and type(delta.itemId) == 'string' then
         local tracked = containerData[key] or { items = {}, seq = 0 }
         tracked.items[delta.itemId] = math.max(0, (tracked.items[delta.itemId] or 0) + (delta.dn or 0))
         tracked.seq = data.stateSeq or tracked.seq

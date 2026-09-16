@@ -5238,6 +5238,14 @@ window.omw = (function(){
     // reached it — __omwMPSettling stayed true, the engine's first-frame dismissal stayed
     // suppressed, and the loading screen never cleared. Every new character was stranded on it
     // forever. Whether the world has settled has nothing to do with whether chargen has.
+    // A dial that never joins and FAILS (unreachable, refused) has no settle to wait for: the
+    // hold above only starts on Joined, so without this the boot screen sat under the failure
+    // modal until the 310 s dead-man (s90-server-down, #105/#106).
+    if (window.__omwMPSettling && !settleStarted && (m.state || '') === 'Failed') {
+      settleStarted = true;
+      window.__omwMPSettling = false;
+      try { window.__omwLoading.hide(); } catch (e) {}
+    }
     if (window.__omwMPSettling && !settleStarted && (m.state || '') === 'Joined') {
       settleStarted = true;
       holdUntilSimulated(window.__omwSettleCeilingMs || 300000, { fresh: true, banner: true });

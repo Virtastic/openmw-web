@@ -11,6 +11,7 @@
 -- forwarding the raw attack here.
 -- Inbound: we re-emit the stock `Hit` local event on the real victim, so the builtin
 -- pipeline runs verbatim for our own player and for actors under our authority.
+local hitFwdCount = 0 -- test mirror: forwarded hits this session (combat.lua fwd)
 local core = require('openmw.core')
 local types = require('openmw.types')
 local util = require('openmw.util')
@@ -50,7 +51,10 @@ function combat.onPuppetHit(data)
     -- does not cast. Degraded mode (no peer) means no melee until the peer returns, by design.
     if not data.mpTest then return end
     -- Mirror for the scenarios: which address a test swing went out under, or why it did not.
-    local function fwd(why) pcall(function() mp.set('hitFwd', why) end) end
+    -- ...and a running count: a page-side clear of the mirror does not stick (the value is
+    -- re-read from the engine), so a scenario that stings once and then swings for real
+    -- compares the COUNT before and after (s164).
+    local function fwd(why) hitFwdCount = hitFwdCount + 1; pcall(function() mp.set('hitFwd', why); mp.set('hitFwdCount', tostring(hitFwdCount)) end) end
     local target
     if data.playerId then
         -- Player victim. PvP off: cancel silently — the server drops these anyway, but

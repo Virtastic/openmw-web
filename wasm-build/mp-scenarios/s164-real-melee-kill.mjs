@@ -56,7 +56,9 @@ export default async function run(ctx) {
   await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
   await a.cmd(`hitn:${victim}:1`);
   await ctx.sleep(2_000);
-  await a.eval("if (window.omw.state) window.omw.state.hitFwd = undefined; 'cleared';");
+  // The mirror cannot be cleared from the page (re-read from the engine each frame): count
+  // forwards instead, and require the count not to move while the avatar does the killing.
+  const fwdBefore = String(await a.eval('window.omw.state.hitFwdCount'));
 
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   const deadline = Date.now() + 90_000;
@@ -86,10 +88,10 @@ export default async function run(ctx) {
       ctx.log(`swing ${swings}: range ${range.toFixed(0)} mark=(${Math.round(q.x)},${Math.round(q.y)}) dead=${q.dead} div=${await a.eval('window.omw.state.selfDivergence')} flags=${await a.eval('window.omw.state.selfFlags')} hp=${await a.eval('window.omw.state.hp')}`);
     }
   }
-  const fwd = String(await a.eval('window.omw.state.hitFwd'));
-  ctx.log(`${swings} swing(s) by the avatar; dead=${died}; hitFwd=${fwd}`);
+  const fwd = String(await a.eval('window.omw.state.hitFwdCount'));
+  ctx.log(`${swings} swing(s) by the avatar; dead=${died}; forwards ${fwdBefore} -> ${fwd}`);
   assert.ok(died, `the ${victim} never died after ${swings} swings: the avatar did not swing, missed every time, or its hits are not applied by the peer`);
-  assert.equal(fwd, 'undefined', `a real melee hit went out under the OWNER's name (hitFwd=${fwd}); the peer's avatar must be the one killing`);
+  assert.equal(fwd, fwdBefore, `a real melee hit went out under the OWNER's name (forwards ${fwdBefore} -> ${fwd}); the peer's avatar must be the one killing`);
   await b.waitFor(deadExpr, STEP, "the creature is dead on B's screen too");
   ctx.log(`PASS: the peer's avatar swung and killed the ${victim} with ${swings} swing(s); B saw it die; the owner's copy sent no hit`);
 }
