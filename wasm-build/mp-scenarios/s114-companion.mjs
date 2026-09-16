@@ -41,7 +41,11 @@ export default async function run(ctx) {
   // where the claim goes out after Goodbye. The server admits the claim only under the
   // dialogue lock (#363), so hold it across the hook as s124 does.
   await a.cmd(`dlg:${rec}`);
-  await ctx.sleep(1_500);
+  // The lock is the whole point (#363): wait for the server's grant rather than a guessed
+  // 1.5 s, and say what the mirror holds if it never comes (quests.lua mirrorLock).
+  await a.waitFor('/"granted":true/.test(window.omw.state.dialogueLock||"")', 15_000, `the dialogue lock on "${rec}" was granted`)
+    .catch(async (e) => { ctx.log(`dialogueLock mirror: ${await a.eval('window.omw.state.dialogueLock')}`); throw e; });
+  await ctx.sleep(500);
   await a.cmd(`follow:${rec}`);
   await a.cmd('dlg:release');
   await ctx.sleep(2_500); // companion.lua polls at 1 Hz

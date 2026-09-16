@@ -34,7 +34,11 @@ export default async function run(ctx) {
   await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);
   await ctx.sleep(4_000);
   await a.cmd(`dlg:${rec}`);
-  await ctx.sleep(1_500);
+  // The lock is the whole point (#363): wait for the server's grant rather than a guessed
+  // 1.5 s, and say what the mirror holds if it never comes (quests.lua mirrorLock).
+  await a.waitFor('/"granted":true/.test(window.omw.state.dialogueLock||"")', 15_000, `the dialogue lock on "${rec}" was granted`)
+    .catch(async (e) => { ctx.log(`dialogueLock mirror: ${await a.eval('window.omw.state.dialogueLock')}`); throw e; });
+  await ctx.sleep(500);
   await a.cmd(`follow:${rec}`);
   await a.cmd('dlg:release');
   await ctx.sleep(3_000);

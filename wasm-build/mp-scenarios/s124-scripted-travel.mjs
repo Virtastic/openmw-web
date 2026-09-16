@@ -29,7 +29,11 @@ export default async function run(ctx) {
   // while it is held; Goodbye releases it (dlg:release) -- and companion.lua only polls once
   // the game is unpaused, so the claim goes out right after, inside the server's grace.
   await a.cmd(`dlg:${rec}`);
-  await ctx.sleep(1_500);
+  // The lock is the whole point (#363): wait for the server's grant rather than a guessed
+  // 1.5 s, and say what the mirror holds if it never comes (quests.lua mirrorLock).
+  await a.waitFor('/"granted":true/.test(window.omw.state.dialogueLock||"")', 15_000, `the dialogue lock on "${rec}" was granted`)
+    .catch(async (e) => { ctx.log(`dialogueLock mirror: ${await a.eval('window.omw.state.dialogueLock')}`); throw e; });
+  await ctx.sleep(500);
   await a.cmd(`travel:${rec}:${DEST.x},${DEST.y},${DEST.z}`);
   await a.cmd('dlg:release');
   await ctx.sleep(3_000);

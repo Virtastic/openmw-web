@@ -678,7 +678,10 @@ export class WorldState {
     // 5 s) this NPC's dialogue lock may say it follows them. A claim already theirs may be
     // updated or dismissed without one (a scripted escort ends by script, not by talking).
     if (follow !== undefined && this.dialogueHolder?.(ref.key) !== player.id && this.followedBy.get(ref.key)?.follow !== player.id) {
-      log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follow claim without the conversation' });
+      // Named so a red like s123 says WHICH conversation was missing: the claim's key against
+      // who the server thinks is (or just was) talking to it.
+      log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follow claim without the conversation',
+        key: ref.key, holder: this.dialogueHolder?.(ref.key) ?? null, follow });
       this.moderationNote?.(player.accountKey, 'follow_claim');
       return;
     }

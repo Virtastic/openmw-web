@@ -29,7 +29,11 @@ export default async function run(ctx) {
   await ctx.sleep(4_000);
   // The escort is a dialogue result: the lock is what admits the claim (#363, s124's idiom).
   await a.cmd(`dlg:${rec}`);
-  await ctx.sleep(1_500);
+  // The lock is the whole point (#363): wait for the server's grant rather than a guessed
+  // 1.5 s, and say what the mirror holds if it never comes (quests.lua mirrorLock).
+  await a.waitFor('/"granted":true/.test(window.omw.state.dialogueLock||"")', 15_000, `the dialogue lock on "${rec}" was granted`)
+    .catch(async (e) => { ctx.log(`dialogueLock mirror: ${await a.eval('window.omw.state.dialogueLock')}`); throw e; });
+  await ctx.sleep(500);
   await a.cmd(`escort:${rec}:${DEST.x},${DEST.y},${DEST.z}`);
   await a.cmd('dlg:release');
   await ctx.sleep(3_000);
