@@ -217,8 +217,10 @@ export default async function run(ctx) {
 
     // --- 3. JOIN actually moves the player to the other world -------------------------
     // The part a player would notice most if it were broken. Pressing join goes through
-    // joinWorld() -> MP_JoinWorld -> net.switchTo(): a disconnect and a redial of a
-    // DIFFERENT world, with no page reload, so the engine and loaded assets stay put.
+    // joinWorld() -> MP_JoinWorld -> net.switchTo() -> rebootIntoWorld: a redial of a
+    // DIFFERENT world, and since the reboot landed, a real page reload -- nothing of the old
+    // world's engine state may leak into the new one. So client mirrors stop existing for a
+    // few seconds here; read them defensively (below) and judge on the destination world.
     // NO PORT. The directory strips a world's internal host and port from everything it
     // serves -- there is a test asserting it must not leak them, because an address there was
     // once a configured guess defaulting to 127.0.0.1, i.e. a remote player's own machine.
@@ -248,9 +250,16 @@ export default async function run(ctx) {
     // in the client's list, publicStage means switchTo was reached and with what address,
     // switchTo empty AFTER that means the page took it and gave up, and dialTarget says where
     // a reconnect would now go.
+    // ...WHEN THE PAGE IS STILL THERE TO ASK. A join is a REBOOT (index.html
+    // rebootIntoWorld: fragment rebuilt, location.reload), so two seconds later `window.omw`
+    // is as likely to be a half-built page as a client with mirrors -- #106 died here with
+    // "Cannot read properties of undefined (reading 'state')" and never reached the check
+    // that matters. These four are diagnostics; the destination world's playerCount below is
+    // the verdict, so a page mid-reload is a blank line, not a failure.
     await ctx.sleep(2000);
     for (const k of ['joinError', 'publicStage', 'switchTo', 'dialTarget']) {
-      ctx.log(`  ${k}: "${String(await a.eval(`window.omw.state.${k}||''`))}"`);
+      const v = await a.eval(`(window.omw && window.omw.state && window.omw.state.${k}) || '(reloading)'`).catch((e) => `(unreadable: ${e.message})`);
+      ctx.log(`  ${k}: "${String(v)}"`);
     }
     // The definitive check is on the DESTINATION world: it must report a player that was
     // not there before. Asserting only on client state would pass if the client merely

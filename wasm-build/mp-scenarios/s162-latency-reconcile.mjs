@@ -11,7 +11,12 @@ import assert from 'node:assert/strict';
 export const serverEnv = { OMWMP_NET_DELAY_MS: '150' };
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-const WALK_MS = 4000;
+// FIFTEEN SECONDS OF WALL CLOCK, NOT FOUR. The engine integrates movement per FRAME with a
+// clamped delta, and a streamed retail harness client renders at ~1 fps: 4 s of wall clock
+// bought 0.8 s of walking and 85 units (#106), under the 100 this asks for. The same clamp is
+// why s149 holds its breath for 240 s to spend 20 s of game time. The walk is the setup, not
+// the measurement: the rubber-band and divergence checks read the same samples either way.
+const WALK_MS = 15000;
 const BACKWARD_TOLERANCE = 20; // units; RTT x walk speed is ~25+ without the ring
 const SETTLED_DIVERGENCE = 10;
 

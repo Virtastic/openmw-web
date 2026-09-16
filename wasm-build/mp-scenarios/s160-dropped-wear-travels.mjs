@@ -18,6 +18,10 @@ async function stateOf(c, id) {
   return String(await c.eval('window.omw.state.itemState'));
 }
 const netObjs = async (c) => JSON.parse(await c.eval('window.omw.state.netObjects||"{}"'));
+// The state string is Lua tostring() of the engine's numbers, so a condition of 100 reads
+// "100.0/nil/nil": `startsWith('100/')` was false for the very value it asked for (#106 both
+// here and in s163, with the itemData fix already in). Compare the NUMBER.
+const condOf = (s) => Number(String(s).split('/')[0]);
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([ctx.launchClient('bot-a', '', BOOT), ctx.launchClient('bot-b', '', BOOT)]);
@@ -26,7 +30,7 @@ export default async function run(ctx) {
   await a.cmd(`setcond:${ITEM}:${WORN}`);
   const worn = await stateOf(a, ITEM);
   ctx.log(`A's cuirass before the drop: ${worn}`);
-  assert.ok(worn.startsWith(`${WORN}/`), `the wear did not take on A (${worn})`);
+  assert.equal(condOf(worn), WORN, `the wear did not take on A (${worn})`);
 
   const before = Object.keys(await netObjs(a));
   await a.cmd(`drop:${ITEM}`);
@@ -39,6 +43,6 @@ export default async function run(ctx) {
   await ctx.sleep(500);
   const got = await stateOf(b, ITEM);
   ctx.log(`B's cuirass after the pickup: ${got}`);
-  assert.ok(got.startsWith(`${WORN}/`), `B holds a pristine copy (${got}): the drop carried the record, not the item`);
+  assert.equal(condOf(got), WORN, `B holds a pristine copy (${got}): the drop carried the record, not the item`);
   ctx.log('PASS: a worn item dropped for a friend is still worn in their hands');
 }
