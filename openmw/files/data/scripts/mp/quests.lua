@@ -1112,16 +1112,17 @@ end
 -- lock is exercised by the same handler a mouse click would hit.
 function quests.testActivateNpc(recordId)
     local player = playerObj()
-    if not (player and player.cell) then return false end
-    local ok, list = pcall(function() return player.cell:getAll(types.NPC) end)
-    if not ok then return false end
-    for _, obj in ipairs(list) do
-        if obj.recordId == recordId and obj:isValid() and obj.contentFile then
+    if not player then return false end
+    -- Every loaded actor, not player.cell:getAll: the harness probe lists the whole loaded
+    -- neighbourhood, and an NPC one exterior cell over (Vodunius Nuccius at Seyda Neen's
+    -- edge, s114/s123 in #105-#106) answered "no NPC in cell" while standing 80 u away.
+    for _, obj in ipairs(world.activeActors) do
+        if obj:isValid() and obj.recordId == recordId and obj.contentFile and types.NPC.objectIsInstance(obj) then
             obj:activateBy(player)
             return true
         end
     end
-    print('[mp] testActivateNpc: no NPC "' .. tostring(recordId) .. '" in cell')
+    print('[mp] testActivateNpc: no NPC "' .. tostring(recordId) .. '" among the active actors')
     return false
 end
 
