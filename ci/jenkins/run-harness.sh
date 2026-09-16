@@ -51,7 +51,11 @@ echo "==> scenarios: ${SCENARIOS:-<full suite>} (log: $LOG)"
 PEER_RES=/usr/local/share/openmw/resources/vfs
 set +e
 # shellcheck disable=SC2086
-docker run --rm --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo"   -v "$HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro"   -v "$HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
+# --init: a real PID 1 that REAPS. Without it every Chrome and sim peer the harness kills
+# becomes a zombie under the container's `sh`, and a full sweep ended with 2422 of them and a
+# load average of 39 on a 32-core box (#107) -- every timing assertion in the back half of the
+# run failed for reasons that had nothing to do with the code under test.
+docker run --rm --init --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo"   -v "$HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro"   -v "$HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
   -- ${SCENARIOS:-} 2>&1 | tee "$LOG"
 rc=${PIPESTATUS[0]}
 set -e

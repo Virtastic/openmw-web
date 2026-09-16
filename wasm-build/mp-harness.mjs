@@ -16,7 +16,7 @@ import { spawn, execSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import net from 'node:net';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeFileSync } from 'node:fs';
@@ -467,7 +467,12 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
     '--user-data-dir=' + profile, '--remote-debugging-port=0',
     '--window-size=1280,720', 'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  // OWN PROCESS GROUP, so close() can take the WHOLE browser. Chrome's gpu-process,
+  // zygote and renderers are children of this pid; SIGKILL on the pid alone left them
+  // running, reparented, and invisible to the next scenario -- 1847 chrome processes and
+  // 2422 zombies had accumulated by the 80th scenario of sweep #107, load average 39 on a
+  // 32-core box, and every timing assertion after that failed for no reason of its own.
+  ], { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
 
   const logs = [];
   const handle = {
@@ -511,7 +516,9 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
         chrome.once('exit', res);
         setTimeout(res, 10_000).unref?.(); // never hang the suite on a wedged process
       });
-      try { chrome.kill('SIGKILL'); } catch {}
+      // The GROUP, not the pid: see the spawn above. The plain kill stays as the fallback for
+      // a platform where the group is not ours (and for a process that is already gone).
+      try { process.kill(-chrome.pid, 'SIGKILL'); } catch { try { chrome.kill('SIGKILL'); } catch {} }
       return exited.then(() => {
         try { rmSync(profile, { recursive: true, force: true }); } catch {}
       });
@@ -848,6 +855,7 @@ const files = readdirSync(SCENARIO_DIR)
 if (files.length === 0) { console.error('no scenarios matched:', wanted.join(' ')); process.exit(2); }
 
 const play = await ensurePlayServer();
+let harnessLive = { chrome: 0, peers: 0 }; // processes alive after the previous scenario
 const results = [];
 for (const file of files) {
   const t0 = Date.now();
@@ -1051,6 +1059,20 @@ for (const file of files) {
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   // A scenario that FAILED is a failure even if it logged a skip on the way out.
   results.push({ file, ok: !err, secs, skip: err ? null : skipReason, critical: isCritical, diagnostic: isDiagnostic });
+  // WHAT THE LAST SCENARIO LEFT BEHIND. A leaked browser or peer does not fail the scenario
+  // that leaked it -- it fails the ones after, on timing, for no visible reason (sweep #107:
+  // 1847 chrome processes and load 39 by the 80th scenario, and every convergence assertion
+  // in the back half red). Counting is cheap and turns an invisible poisoning into a line in
+  // the log naming the scenario that did it.
+  try {
+    const count = (pat) => Number(execSync(`pgrep -c -f ${pat} || true`, { encoding: 'utf8' }).trim()) || 0;
+    const live = { chrome: count('chrome'), peers: count('openmw') };
+    if (live.chrome > (harnessLive.chrome ?? 0) || live.peers > (harnessLive.peers ?? 0)) {
+      console.error(`[harness] LEAK after ${file}: chrome ${harnessLive.chrome ?? 0} -> ${live.chrome},`
+        + ` peers ${harnessLive.peers ?? 0} -> ${live.peers} (load ${os.loadavg()[0].toFixed(1)})`);
+    }
+    harnessLive = live;
+  } catch { /* pgrep is not everywhere; the count is a diagnostic, never a verdict */ }
   if (err) {
     console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
     const srv = server?.logTail?.();
