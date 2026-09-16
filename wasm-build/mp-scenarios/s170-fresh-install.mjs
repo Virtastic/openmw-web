@@ -190,7 +190,10 @@ export default async function run(ctx) {
     const real = realName(dir);
     if (!real || !statSync(join(mwdata, real)).isDirectory()) continue;
     const walk = (d) => readdirSync(join(mwdata, d), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
-    const smallest = walk(real).filter((f) => !f.endsWith('.br')).sort((a, b) => statSync(join(mwdata, a)).size - statSync(join(mwdata, b)).size)[0];
+    // The smallest file the upload route ACCEPTS (api-mods.ts MEDIA_EXT): a Data Files tree
+    // also carries Sound/Vo/.../Warnings.txt and the like, which the dashboard skips as "not
+    // game data, expected in bulk" -- picking one of those asserted a 200 on a by-design 400.
+    const smallest = walk(real).filter((f) => /.(mp3|wav|bik|fnt|tex|dds|tga|bmp)$/i.test(f)).sort((a, b) => statSync(join(mwdata, a)).size - statSync(join(mwdata, b)).size)[0];
     if (smallest) uploads.push([smallest.replace(/\\/g, '/'), smallest]);
   }
   const notData = await api.upload('README.txt', Readable.toWeb(Readable.from(['not game data'])));
