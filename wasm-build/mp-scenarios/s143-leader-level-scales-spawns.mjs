@@ -13,7 +13,7 @@ export const managedPeer = true;
 const STEP = 30_000;
 const GW_PORT = 19110; // ten apart from its neighbours (see s102)
 export const bootTimeoutMs = 420_000;
-const HOST_LEVEL = 13; // reached in +4 steps, 10 s apart: the server refuses a level JUMP >= 5 and a second step inside 10 s (anti-cheat, #369)
+const HOST_LEVEL = 13; // reached one level at a time: the server refuses a jump of 2+ (#369)
 const SPOT = '-12500,-53100,512'; // inside -2,-7, where levelled lists roll scribs and foragers (s109)
 const rowOf = (handle) => `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(handle)}; }) || {})`;
 
@@ -30,13 +30,13 @@ export default async function run(ctx) {
       await cli.waitFor('window.omw.state.profileOk !== undefined', STEP, `${who} profile answered`);
       assert.equal(await cli.eval('window.omw.state.profileOk'), 'true', `${who} needs a handle`);
     }
-    // The host is a veteran; the helper is fresh off the boat. Climb in steps of 4 -- the
-    // server refuses a level jump of 5+ in one PlayerLevel diff (playerstate.ts), and a
-    // second step inside the 10 s window (#369) -- so 1->13 arrives as 5, 9, 13 with a
-    // window between each. Honest under the production rule, not just the harness seam.
-    for (const lvl of [5, 9, HOST_LEVEL]) {
+    // The host is a veteran; the helper is fresh off the boat. Morrowind levels ONE at a time
+    // and the server refuses any larger jump outright (#369, LEVEL_JUMP_LIMIT 2); the 10 s
+    // step window is the one thing the harness seam relaxes. So 1->13 is twelve +1 steps,
+    // each given a progression diff (1 s) to travel before the next.
+    for (let lvl = 2; lvl <= HOST_LEVEL; lvl++) {
       await host.client.cmd(`setlevel:${lvl}`);
-      await ctx.sleep(11_000); // the progression diff (1 s) carries the step; then the window
+      await ctx.sleep(1_500);
     }
     await host.client.waitFor('Number(JSON.parse(window.omw.state.gameTime||"{}").abs||1) >= 0', 2_000, 'settle').catch(() => {});
     await host.client.cmd(`social:FriendRequest:${G}`);
