@@ -161,8 +161,24 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.close_connection = True
         try:
             head = '%s %s HTTP/1.1\r\n' % (self.command, self.path)
+            # A WebSocket upgrade (/ws, /w/) must stay a bidirectional splice for its whole
+            # life. A plain HTTP request must NOT: the browser sends `Connection: keep-alive`,
+            # and if we forward it the gateway keeps this socket open, the splice never ends,
+            # and the browser's NEXT request on that reused connection is fed straight to the
+            # gateway -- which 404s every path it does not own. That is exactly what broke the
+            # launcher's password sign-in: it reloads after the POST, and the reload's
+            # GET /launcher.html landed on the gateway ("not found") instead of this static
+            # server, so the ticket-return path never ran. Force Connection: close on non-
+            # upgrade requests so the gateway closes after one response and the browser opens a
+            # fresh connection for the reload, which we serve normally. (backlog 450)
+            is_upgrade = 'upgrade' in self.headers.get('Connection', '').lower() \
+                or bool(self.headers.get('Upgrade'))
             for k, v in self.headers.items():
+                if k.lower() == 'connection' and not is_upgrade:
+                    continue
                 head += '%s: %s\r\n' % (k, v)
+            if not is_upgrade:
+                head += 'Connection: close\r\n'
             up.sendall((head + '\r\n').encode('latin-1'))
             n = int(self.headers.get('Content-Length') or 0)
             if n:
