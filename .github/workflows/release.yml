@@ -183,18 +183,9 @@ jobs:
           echo "--- composed $(wc -c </tmp/notes.md) bytes ---"
           head -5 /tmp/notes.md
 
-      - name: Publish release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: "OpenMW-Web ${{ steps.tag.outputs.tag }} — by Virtastic"
-          body_path: /tmp/notes.md
-          files: |
-            dist/openmw-web-${{ steps.tag.outputs.tag }}.zip
-            dist/openmw-web-src-${{ steps.tag.outputs.tag }}.tar.gz
-            dist/SHA256SUMS
-
-      # THE SERVER IMAGE SELF-HOSTERS RUN. Same build as deploy-mp.yml (Dockerfile.simpeer
+      # THE SERVER IMAGE SELF-HOSTERS RUN. Built and pushed BEFORE the release is published: Same build as deploy-mp.yml (Dockerfile.simpeer
+      # a release whose image failed to build would send every `setup.sh --update` to the
+      # previous `latest` while the badge already says a new version exists.
       # --target tier2 from the REPO ROOT - server/Dockerfile has no peer binary) and the same
       # "peer binary present" assertion: without it the server starts, finds no binary and
       # crash-loops. Built on the tag so docker-compose.yml can say `image:` and nobody who
@@ -227,6 +218,18 @@ jobs:
           docker push "$IMG:$TAG"
           docker push "$IMG:latest"
           docker push "$IMG:sha-$(git rev-parse --short HEAD)"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "OpenMW-Web ${{ steps.tag.outputs.tag }} — by Virtastic"
+          body_path: /tmp/notes.md
+          files: |
+            dist/openmw-web-${{ steps.tag.outputs.tag }}.zip
+            dist/openmw-web-src-${{ steps.tag.outputs.tag }}.tar.gz
+            dist/SHA256SUMS
+
 
       # A release created with GITHUB_TOKEN raises no `release: published` event for other
       # workflows (GitHub's recursion guard), so build-openmw-image never ran on its own -- v1.2.0
