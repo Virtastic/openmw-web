@@ -15,11 +15,14 @@ export const bootTimeoutMs = 420_000;
 const netCount = 'Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length';
 const rowOf = (handle) => `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(handle)}; }) || {})`;
 
-async function countOf(c, id) {
-  await c.eval("if (window.omw.state) window.omw.state.count = null; 'cleared';");
-  await c.cmd(`count:${id}`);
-  await c.waitFor("typeof window.omw.state.count === 'string'", 10_000, `${c.name} reported its count`);
-  return Number(await c.eval('window.omw.state.count'));
+// BY NAME, not by id (#127): the test helmet is a record MINTED at runtime, and M7 maps
+// server record ids per world -- the id A's engine knows it by is not the id B's engine
+// creates it under, so counting B's pack by A's id answered 0 for an item B was holding.
+async function countOf(c, name) {
+  await c.eval("if (window.omw.state) window.omw.state.countName = null; 'cleared';");
+  await c.cmd(`countname:${name}`);
+  await c.waitFor("typeof window.omw.state.countName === 'string'", 10_000, `${c.name} reported its count`);
+  return Number(await c.eval('window.omw.state.countName'));
 }
 
 export default async function run(ctx) {
@@ -71,7 +74,8 @@ export default async function run(ctx) {
     await ga.client.cmd('equiptest');
     await ga.client.waitFor('(window.omw.state.equippedIds||"") !== ""', 12_000, 'A holds the test item');
     const itemId = (await ga.client.eval('window.omw.state.equippedIds')).split(',')[0];
-    const bHad = await countOf(gb.client, itemId);
+    const ITEM_NAME = 'MP Test Helmet'; // global.lua mpTestItem's record name
+    const bHad = await countOf(gb.client, ITEM_NAME);
     await ga.client.cmd(`drop:${itemId}`);
     await gb.client.waitFor(`${netCount} === 1`, STEP, "B sees A's drop");
     await host.client.waitFor(`${netCount} === 1`, STEP, 'the host sees the drop too');
@@ -81,7 +85,7 @@ export default async function run(ctx) {
       await cli.waitFor(`${netCount} === 0`, STEP, `the item left the ground on ${who}`);
     }
     await ctx.sleep(1_500);
-    const aNow = await countOf(ga.client, itemId), bNow = await countOf(gb.client, itemId);
+    const aNow = await countOf(ga.client, ITEM_NAME), bNow = await countOf(gb.client, ITEM_NAME);
     ctx.log(`trade: A holds ${aNow}, B holds ${bNow} (had ${bHad})`);
     assert.equal(aNow, 0, 'A still holds what it gave B');
     assert.equal(bNow, bHad + 1, "B did not receive A's item");
