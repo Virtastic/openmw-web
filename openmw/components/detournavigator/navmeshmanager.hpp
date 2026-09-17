@@ -13,6 +13,7 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 
 class dtNavMesh;
 
@@ -27,6 +28,10 @@ namespace DetourNavigator
 
         void updateBounds(ESM::RefId worldspace, const std::optional<CellGridBounds>& cellGridBounds,
             const osg::Vec3f& playerPosition, const UpdateGuard* guard);
+
+        // MP (backlog 479): extra cell grids to keep navmesh for, one per sim anchor the scene
+        // holds loaded. Takes effect on the next updateBounds/update. Empty in single player.
+        void setSimAnchorGrids(std::vector<CellGridBounds> grids);
 
         bool addObject(const ObjectId id, const CollisionShape& shape, const btTransform& transform,
             const AreaType areaType, const UpdateGuard* guard);
@@ -70,6 +75,9 @@ namespace DetourNavigator
         const int mMaxRadius;
         ESM::RefId mWorldspace;
         std::optional<CellGridBounds> mCellGridBounds;
+        std::vector<CellGridBounds> mSimAnchorGrids;
+        std::vector<TilesPositionsRange> mSimAnchorRanges;
+        std::vector<TilePosition> mSimAnchorTiles;
         TileCachedRecastMeshManager mRecastMeshManager;
         OffMeshConnectionsManager mOffMeshConnectionsManager;
         AsyncNavMeshUpdater mAsyncNavMeshUpdater;
@@ -80,9 +88,11 @@ namespace DetourNavigator
 
         inline SharedNavMeshCacheItem getCached(const AgentBounds& agentBounds) const;
 
+        inline TilesPositionsRange setRange(const TilePosition& playerTile, const UpdateGuard* guard);
+
         inline void update(const AgentBounds& agentBounds, const TilePosition& playerTile,
-            const TilesPositionsRange& range, const SharedNavMeshCacheItem& cached,
-            const std::map<osg::Vec2i, ChangeType>& changedTiles);
+            const TilesPositionsRange& playerRange, const TilesPositionsRange& range,
+            const SharedNavMeshCacheItem& cached, const std::map<osg::Vec2i, ChangeType>& changedTiles);
     };
 }
 

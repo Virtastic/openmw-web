@@ -39,6 +39,11 @@ namespace DetourNavigator
         mNavMeshManager.updateBounds(worldspace, cellGridBounds, playerPosition, guard);
     }
 
+    void NavigatorImpl::setSimAnchorGrids(std::vector<CellGridBounds> grids)
+    {
+        mNavMeshManager.setSimAnchorGrids(std::move(grids));
+    }
+
     void NavigatorImpl::addObject(
         const ObjectId id, const ObjectShapes& shapes, const btTransform& transform, const UpdateGuard* guard)
     {

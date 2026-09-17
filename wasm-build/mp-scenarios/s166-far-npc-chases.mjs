@@ -86,12 +86,22 @@ export default async function run(ctx) {
   // 30 s, not 15: #114 watched the forager close 422 -> 207 u in 15 s -- chasing, just slowly
   // (a kwama forager walks ~15 u/s). A frozen AI closes nothing; that is what this catches.
   const deadline = Date.now() + 30_000;
+  const chaseStart = Date.now();
+  const q0 = (await probeOf(b, victim)) || p1;
   let gap = gap0;
   while (Date.now() < deadline && gap >= CLOSE) { // -1 (dead/gone) ends the wait too
     await ctx.sleep(500);
     gap = Number(await b.eval(gapExpr));
   }
-  ctx.log(`gap after the chase window: ${gap.toFixed(0)} u (probe=${JSON.stringify(await probeOf(b, victim))})`);
+  // The creature's own ground speed over the window, not just the gap: backlog 479 is a chase
+  // that CLOSES but at a crawl (#114 closed at 14 u/s, #115 at 6 u/s, against a kwama forager's
+  // run) because the far cell had no navmesh and the AI walked a straight line into terrain.
+  // Once the navigator covers every anchor's grid this line is what shows the difference.
+  const q1 = await probeOf(b, victim);
+  const chaseSecs = (Date.now() - chaseStart) / 1000;
+  const covered = q1 && !q1.dead ? Math.hypot(q1.x - q0.x, q1.y - q0.y) : NaN;
+  ctx.log(`the ${victim} covered ${covered.toFixed(0)} u in ${chaseSecs.toFixed(1)} s = ${(covered / chaseSecs).toFixed(1)} u/s (closing ${((gap0 - gap) / chaseSecs).toFixed(1)} u/s)`);
+  ctx.log(`gap after the chase window: ${gap.toFixed(0)} u (probe=${JSON.stringify(q1)})`);
   assert.ok(gap >= 0 && gap < CLOSE, `the ${victim} never closed from ${gap0.toFixed(0)} to ${CLOSE} u in 30 s (${gap.toFixed(0)}; -1 = it died or left the probe): the peer's AI is frozen two cells from its dummy (pathTo's inactive-cell gate)`);
   ctx.log(`PASS: the peer's ${victim} chased the avatar ${gap0.toFixed(0)} -> ${gap.toFixed(0)} u two cells from the dummy`);
 }

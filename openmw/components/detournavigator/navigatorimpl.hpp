@@ -30,6 +30,8 @@ namespace DetourNavigator
         void updateBounds(ESM::RefId worldspace, const std::optional<CellGridBounds>& cellGridBounds,
             const osg::Vec3f& playerPosition, const UpdateGuard* guard) override;
 
+        void setSimAnchorGrids(std::vector<CellGridBounds> grids) override;
+
         void addObject(const ObjectId id, const ObjectShapes& shapes, const btTransform& transform,
             const UpdateGuard* guard) override;
 

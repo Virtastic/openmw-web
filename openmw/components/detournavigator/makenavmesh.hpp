@@ -37,6 +37,24 @@ namespace DetourNavigator
         return expectedTilesCount <= maxTiles;
     }
 
+    // MP (backlog 479): the sim peer keeps a 3x3 cell grid alive around every SIM ANCHOR, not
+    // just around its own player (the dummy), but every "is this tile worth having" gate above
+    // measured from the dummy alone: a tile in an anchored cell 10+ cells away failed it, was
+    // never generated (or was evicted as "too far from player"), and the AI there had no navmesh
+    // -- s166's kwama forager crawled 422 -> 207 u in 15 s on a straight line into terrain
+    // instead of chasing. A tile is wanted if it is near the player OR near any anchor. With no
+    // anchors (single player, the browser client) this is exactly the old gate.
+    inline bool shouldAddTile(const TilePosition& changedTile, const TilePosition& playerTile, int maxTiles,
+        std::span<const TilePosition> simAnchorTiles)
+    {
+        if (shouldAddTile(changedTile, playerTile, maxTiles))
+            return true;
+        for (const TilePosition& anchorTile : simAnchorTiles)
+            if (shouldAddTile(changedTile, anchorTile, maxTiles))
+                return true;
+        return false;
+    }
+
     inline bool isEmpty(const RecastMesh& recastMesh)
     {
         return recastMesh.getMesh().getIndices().empty() && recastMesh.getWater().empty()

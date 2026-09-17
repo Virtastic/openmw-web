@@ -4,6 +4,7 @@
 #include <cassert>
 #include <filesystem>
 #include <optional>
+#include <vector>
 
 #include "cellgridbounds.hpp"
 #include "heightfieldshape.hpp"
@@ -94,6 +95,13 @@ namespace DetourNavigator
         virtual void updateBounds(ESM::RefId worldspace, const std::optional<CellGridBounds>& cellGridBounds,
             const osg::Vec3f& playerPosition, const UpdateGuard* guard)
             = 0;
+
+        // MP (backlog 479): the sim peer keeps a cell grid loaded around every sim anchor, not
+        // just around its own player, and the navmesh must cover those grids too or the AI in
+        // them has no paths (s166: a creature two cells from the dummy "chased" at a crawl on a
+        // straight line). Call before updateBounds with the grids the scene holds; an empty list
+        // is single-player behaviour. Default no-op so the stub and single player are untouched.
+        virtual void setSimAnchorGrids(std::vector<CellGridBounds> /*grids*/) {}
 
         /**
          * @brief addObject is used to add complex object with allowed to walk and avoided to walk shapes

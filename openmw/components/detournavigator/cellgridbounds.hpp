@@ -9,6 +9,11 @@ namespace DetourNavigator
     {
         osg::Vec2i mCenter;
         int mHalfSize;
+
+        friend bool operator==(const CellGridBounds& lhs, const CellGridBounds& rhs)
+        {
+            return lhs.mCenter == rhs.mCenter && lhs.mHalfSize == rhs.mHalfSize;
+        }
     };
 }
 

@@ -183,11 +183,12 @@ namespace DetourNavigator
         return result;
     }
 
-    void SpatialJobQueue::update(TilePosition playerTile, int maxTiles, std::vector<JobIt>& removing)
+    void SpatialJobQueue::update(TilePosition playerTile, int maxTiles, std::span<const TilePosition> simAnchorTiles,
+        std::vector<JobIt>& removing)
     {
         for (auto it = mValues.begin(); it != mValues.end();)
         {
-            if (shouldAddTile(it->first, playerTile, maxTiles))
+            if (shouldAddTile(it->first, playerTile, maxTiles, simAnchorTiles))
             {
                 ++it;
                 continue;
@@ -255,16 +256,17 @@ namespace DetourNavigator
         return result;
     }
 
-    void JobQueue::update(TilePosition playerTile, int maxTiles, std::chrono::steady_clock::time_point now)
+    void JobQueue::update(TilePosition playerTile, int maxTiles, std::span<const TilePosition> simAnchorTiles,
+        std::chrono::steady_clock::time_point now)
     {
-        mUpdating.update(playerTile, maxTiles, mRemoving);
+        mUpdating.update(playerTile, maxTiles, simAnchorTiles, mRemoving);
 
         while (!mDelayed.empty() && mDelayed.front()->mProcessTime <= now)
         {
             const JobIt job = mDelayed.front();
             mDelayed.pop_front();
 
-            if (shouldAddTile(job->mChangedTile, playerTile, maxTiles))
+            if (shouldAddTile(job->mChangedTile, playerTile, maxTiles, simAnchorTiles))
             {
                 mUpdating.push(job);
             }
@@ -312,7 +314,8 @@ namespace DetourNavigator
         if (playerTileChanged)
         {
             Log(Debug::Debug) << "Player tile has been changed to " << playerTile;
-            mWaiting.update(playerTile, mSettings.get().mMaxTilesNumber);
+            const std::vector<TilePosition> simAnchorTiles = *mSimAnchorTiles.lockConst();
+            mWaiting.update(playerTile, mSettings.get().mMaxTilesNumber, simAnchorTiles);
         }
 
         for (const auto& [changedTile, changeType] : changedTiles)
@@ -349,6 +352,14 @@ namespace DetourNavigator
 
         if (playerTileChanged && mDbWorker != nullptr)
             mDbWorker->update(playerTile);
+    }
+
+    void AsyncNavMeshUpdater::setSimAnchorTiles(std::vector<TilePosition> tiles)
+    {
+        // Only stored here; NavMeshManager::update posts the adds/removes the new list implies,
+        // and processJob below re-checks every job against it when it runs, so a tile of a dropped
+        // anchor that is already queued is ignored rather than built.
+        *mSimAnchorTiles.lock() = std::move(tiles);
     }
 
     void AsyncNavMeshUpdater::wait(WaitConditionType waitConditionType, Loading::Listener* listener)
@@ -565,10 +576,11 @@ namespace DetourNavigator
             return JobStatus::Done;
 
         const auto playerTile = *mPlayerTile.lockConst();
+        const std::vector<TilePosition> simAnchorTiles = *mSimAnchorTiles.lockConst();
 
-        if (!shouldAddTile(job.mChangedTile, playerTile, mSettings.get().mMaxTilesNumber))
+        if (!shouldAddTile(job.mChangedTile, playerTile, mSettings.get().mMaxTilesNumber, simAnchorTiles))
         {
-            Log(Debug::Debug) << "Ignore add tile by job " << job.mId << ": too far from player";
+            Log(Debug::Debug) << "Ignore add tile by job " << job.mId << ": too far from player and every sim anchor";
             job.mChangeType = ChangeType::remove;
             navMeshCacheItem->lock()->removeTile(job.mChangedTile);
             return JobStatus::Done;

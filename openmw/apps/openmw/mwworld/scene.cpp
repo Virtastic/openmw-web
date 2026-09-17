@@ -781,6 +781,19 @@ namespace MWWorld
             .mHalfSize = halfGridSize,
         };
 
+        // The navmesh must cover every anchor's grid, not just the player's (backlog 479): the
+        // cells around an anchor were loaded and their actors processed (nearestSimDistanceSqr),
+        // but the navigator's bounds and its "too far from player" tile gate still measured from
+        // the dummy alone, so an actor two cells out had no navmesh at all -- pathfinding failed
+        // and s166's forager walked a straight line into terrain at a crawl (#114 422 -> 207 u
+        // in 15 s, #115 426 -> 234 u in 30 s) instead of chasing. Empty with no anchors: the
+        // browser client never has any and keeps vanilla behaviour byte for byte.
+        std::vector<DetourNavigator::CellGridBounds> anchorGrids;
+        anchorGrids.reserve(mSimAnchors.size());
+        for (const osg::Vec2i& a : mSimAnchors)
+            anchorGrids.push_back({ .mCenter = a, .mHalfSize = halfGridSize });
+        mNavigator.setSimAnchorGrids(std::move(anchorGrids));
+
         mNavigator.updateBounds(playerCellIndex.mWorldspace, cellGridBounds, pos, navigatorUpdateGuard.get());
 
         mHalfGridSize = halfGridSize;
@@ -1114,6 +1127,9 @@ namespace MWWorld
 
         loadingListener->setProgressRange(cell.count());
 
+        // The anchor grids are exterior cells of the worldspace just left; carrying them into an
+        // interior's navmesh would build tiles at exterior coordinates nobody stands on (479).
+        mNavigator.setSimAnchorGrids({});
         mNavigator.updateBounds(
             cell.getCell()->getWorldSpace(), std::nullopt, position.asVec3(), navigatorUpdateGuard.get());
 
