@@ -121,9 +121,14 @@ export default async function run(ctx) {
   const deadline = Date.now() + STEP_TIMEOUT;
   let worst = Infinity;
   let worstRec = null;
+  // STANDING records only (s42, backlog 476): the two probes are a mirror tick apart on clients
+  // at a frame a second, and a wanderer mid-stride reads 100+ u apart from sampling phase alone
+  // (#116: 215 u on eldafire, the same walker). A walker is re-read until it stands.
   while (Date.now() < deadline) {
+    const first = await probeOf(holder);
+    await ctx.sleep(1_200);
     const [ph, pp] = await Promise.all([probeOf(holder), probeOf(peer)]);
-    shared = Object.keys(ph).filter((r) => pp[r]);
+    shared = Object.keys(ph).filter((r) => pp[r] && first[r] && dist(first[r], ph[r]) < 5);
     if (shared.length >= 3) {
       worst = 0;
       for (const rec of shared) {
