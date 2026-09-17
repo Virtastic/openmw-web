@@ -16,7 +16,19 @@ export const SUMMON_SCAMP = 'summon scamp'; // self, Conjuration
 export async function prepareCast(c, ctx, spellId, skill) {
   await c.cmd(`learnspell:${spellId}`);
   await c.cmd(`setskill:${skill}:100`); // a fresh character fizzles most casts; the fizzle is not the thing under test
-  await c.cmd('setmp:300');
+  // A POOL THAT CAN PAY. The peer rules the bars and a magicka claim is capped at the BASE
+  // (~40 on a fresh character), so setmp:300 alone bought nothing. Until 33abd991 that did not
+  // matter: the old claim ladder re-pinned the avatar at its base on every claim, so casting
+  // was free -- a bug, and s59 lived on it (20 casts in #114). With the spend claimed honestly
+  // (461) the pool depletes as it should, and #115 drained after one cast (2 hits in 41).
+  // s147's answer: one legal base step (+60, playerstate MAX_BASE_STEP), then the pool up to it;
+  // castAt tops it up before every press.
+  const peerMp = String(await c.eval('window.omw.state.selfMagicka||""')); // 'c/b' once the peer rules the bars
+  const mpBase = (Number(peerMp.split('/')[1]) || 40) + 60;
+  await c.cmd(`setmpbase:${mpBase}`);
+  await ctx.sleep(1_500); // the base claim lands before the pool claim is capped against it
+  await c.cmd(`setmp:${mpBase}`);
+  c.mpPool = mpBase;
   await ctx.sleep(2_000); // skills + spellbook diff out (the avatar's copy must agree)
   await c.cmd('stance:spell');
   await c.waitFor('window.omw.state.stance === "spell"', 10_000, 'the spell stance is up');
@@ -24,6 +36,9 @@ export async function prepareCast(c, ctx, spellId, skill) {
 
 // One cast at a point: face it (yaw + pitch, the hand's height is handled by face:), press.
 export async function castAt(c, ctx, target) {
+  // Refill first (a restore-magicka potion, in effect): the restore budget is 4 x base per
+  // 10 s, far above a cast every two seconds.
+  if (c.mpPool) await c.cmd(`setmp:${c.mpPool}`);
   await c.cmd(`face:${Math.round(target.x)},${Math.round(target.y)},${Math.round(target.z + 60)}`);
   await ctx.sleep(400);
   await c.cmd('press:500');
