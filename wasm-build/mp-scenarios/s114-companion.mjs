@@ -33,8 +33,19 @@ export default async function run(ctx) {
 
   // Stand beside them first: you recruit by talking, and AiFollow activates only with the
   // target in range and in sight (mwmechanics/aifollow.cpp), on the peer where the avatar is.
-  await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);
-  await ctx.sleep(4_000);
+  // The probe can be STALE: an NPC outside A's interest radius is never streamed, so A's copy
+  // sits where the cell loaded it while the peer's has wandered off (#112: 1135 u apart). A
+  // player walking over would be inside the radius long before the conversation; the snap is
+  // not, so re-read once beside them and follow the fresh position until it holds still.
+  let at = start;
+  for (let i = 0; i < 4; i++) {
+    await a.cmd(`snapto:${Math.round(at.x + 80)},${Math.round(at.y)},${Math.round(at.z + 8)}`);
+    await ctx.sleep(4_000);
+    const fresh = (await probeOf(a))[rec];
+    if (!fresh || dist2(fresh, at) < 150) break;
+    ctx.log(`  "${rec}" is really at (${Math.round(fresh.x)},${Math.round(fresh.y)}), ${Math.round(dist2(fresh, at))} u from the first read; moving`);
+    at = fresh;
+  }
 
   // Recruit: the dialogue result (Follow stacked on A's copy of the NPC). The conversation
   // itself pauses the game, and companion.lua only polls once it is closed -- as in play,
