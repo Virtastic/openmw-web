@@ -1070,6 +1070,19 @@ for (const file of files) {
         + ` (export allowLuaErrors = true to tolerate them knowingly):\n`
         + [...luaErrs, ...peerLuaErrs].slice(0, 5).map((l) => '  ' + l.trim()).join('\n'));
     }
+    // LIVENESS, BEFORE THE CLOSE. Four reds so far were a client whose engine stopped mid-run
+    // with a live JS thread (478: s149, s114 twice, s150). The main loop rides
+    // requestAnimationFrame, so: does rAF still fire, is the page visible, how many actor
+    // frames (the actorBatchesIn mirror moves once a frame)? Asked here while the tab is up;
+    // asked after close() every client reads as "blocked" (#117 s136).
+    if (err) {
+      await Promise.all(clients.map(async (c) => {
+        c.liveness = await Promise.race([
+          c.evalAsync('(async () => { const t0 = performance.now(); const raf = await new Promise((r) => { const id = requestAnimationFrame(() => r(true)); setTimeout(() => { cancelAnimationFrame(id); r(false); }, 1500); }); return JSON.stringify({ raf, ms: Math.round(performance.now() - t0), vis: document.visibilityState, hidden: document.hidden, batches: (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null, state: window.omw && window.omw.state && window.omw.state.state }); })()'),
+          new Promise((r) => setTimeout(() => r('(eval did not return in 4 s: the JS thread itself is blocked)'), 4000)),
+        ]).catch((e) => `(liveness probe failed: ${e.message})`);
+      }));
+    }
     await Promise.all(clients.map((c) => c.close()));
     server?.stop();
   }
@@ -1108,15 +1121,7 @@ for (const file of files) {
     for (const c of clients) {
       try {
         const errs = [...c.jsErrors(), ...c.luaErrors()].slice(-6);
-        // IS THE ENGINE STILL RUNNING? Four reds so far were a client whose engine stopped
-        // mid-run with a live JS thread (478: s149, s114 twice, s150). The main loop rides
-        // requestAnimationFrame, so: does rAF still fire, is the page visible, and how many
-        // frames has the engine taken (the actorBatchesIn mirror moves once a frame)?
-        const live = await Promise.race([
-          c.evalAsync('(async () => { const t0 = performance.now(); const raf = await new Promise((r) => { const id = requestAnimationFrame(() => r(true)); setTimeout(() => { cancelAnimationFrame(id); r(false); }, 1500); }); return JSON.stringify({ raf, ms: Math.round(performance.now() - t0), vis: document.visibilityState, hidden: document.hidden, batches: (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null, state: window.omw && window.omw.state && window.omw.state.state }); })()'),
-          new Promise((r) => setTimeout(() => r('(eval did not return in 4 s: the JS thread itself is blocked)'), 4000)),
-        ]).catch((e) => `(liveness probe failed: ${e.message})`);
-        console.error(`--- CLIENT ${c.name} (errors ${errs.length}) liveness ${live} ---\n${errs.join(NL)}${errs.length ? NL : ''}${c.logTail(12)}`);
+        console.error(`--- CLIENT ${c.name} (errors ${errs.length}) liveness ${c.liveness ?? "(not probed)"} ---\n${errs.join(NL)}${errs.length ? NL : ''}${c.logTail(12)}`);
       } catch { /* a closed handle has nothing to say */ }
     }
     // The PEER's narration (#183): its `[mp]` lines (follow claims, avatar teleports, cell
