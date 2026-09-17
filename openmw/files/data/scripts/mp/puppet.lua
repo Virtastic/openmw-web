@@ -215,8 +215,12 @@ local function requestSnap(target, why, force)
     -- past life of this script is exactly the case we cannot afford to miss.
     if not force and now - lastSnapReq < (SNAP_COOLDOWN_BY_TIER[tier] or SNAP_COOLDOWN) then return end
     lastSnapReq = now
+    -- obj: WHICH body is asking (480). The id alone named whichever body global.lua
+    -- currently tracks for this player, and that is not always this one: a despawn while a
+    -- teleport is in flight cannot remove the body (count 0), so this script lived on, its
+    -- stale target 16k units away, and every snap it asked for was applied to the successor.
     core.sendGlobalEvent('mpSnapRequest',
-        { id = playerId, actorKey = actorKey, x = target.x, y = target.y, z = target.z, why = why })
+        { id = playerId, actorKey = actorKey, obj = self.object, x = target.x, y = target.y, z = target.z, why = why })
 end
 
 -- M2: setEquipment only works once the items granted by global.lua exist in our inventory

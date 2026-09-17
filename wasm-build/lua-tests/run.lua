@@ -1883,5 +1883,26 @@ do
   check('the banked gain is not claimed a second time', not twice)
 end
 
+print('#480 a puppet stops following after a far teleport: only the tracked body answers, and it stands in a loaded cell')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  check('puppet.lua names the asking body on every mpSnapRequest',
+    pp:find('{ id = playerId, actorKey = actorKey, obj = self.object, x = target.x', 1, true) ~= nil)
+  check('global.lua mpSnapRequest ignores a snap from a body it does not track',
+    g:find('if p and data.obj ~= nil and p.obj ~= data.obj then return end', 1, true) ~= nil)
+  check('despawnPuppet retries a remove() refused mid-teleport instead of forgetting the body',
+    g:find('if p.obj:isValid() and not pcall(function() p.obj:remove() end) then', 1, true) ~= nil
+    and g:find('removeRetry[p.obj] = core.getRealTime() + 30', 1, true) ~= nil
+    and g:find('removeRetryTick(now) -- a despawn refused mid-teleport lands now (480)', 1, true) ~= nil)
+  check('spawnPuppet skips a pose outside the loaded neighbourhood (a lagging avatar two cells back)',
+    g:find('if not poseInView(pose) then return end', 1, true) ~= nil
+    and g:find("visibleFrom(ownCellKeyCache, math.floor(pose.x / 8192) .. ',' .. math.floor(pose.y / 8192))", 1, true) ~= nil)
+  -- The cell arithmetic itself, run: floor, not truncation, or every negative cell is off by one.
+  local key = function(x, y) return math.floor(x / 8192) .. ',' .. math.floor(y / 8192) end
+  check('the pose cell key floors like ESM::positionToExteriorCellLocation',
+    key(-12288, -69632) == '-2,-9' and key(-12500, -53100) == '-2,-7' and key(-1, -1) == '-1,-1' and key(0, 8191) == '0,0')
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

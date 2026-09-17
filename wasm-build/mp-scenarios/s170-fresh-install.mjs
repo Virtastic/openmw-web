@@ -364,6 +364,11 @@ export default async function run(ctx) {
   const walked = await host.walk(0, 1, 2500, 100);
   // fresh5: the friend never saw the walk while their puppet of the host was distance-snapped
   // every ~3.5 s (under a concurrent engine bake, load 30). Say what each side holds.
+  // fresh6 (quiet box) had the same shape: backlog 480 -- a despawn in the same frame as an
+  // in-flight teleport could not remove the body (count 0), and the orphan's puppet.lua drove
+  // the tracked successor to its stale target every 3 s; the successor itself had been spawned
+  // by a lagging pose into the UNLOADED old cell, where its script never runs. Client Lua fix;
+  // needs a bake before this phase is a verdict. `settled` above is the right wait either way.
   ctx.log(`host walked to ${JSON.stringify(walked)} on their own screen; avatar divergence ${await host.eval("window.omw.state.selfDivergence")}; friend's puppet of the host before ${JSON.stringify(before)} now ${await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)}`);
   await guest.waitFor(`Math.hypot(${puppetOf(hostId)}.x - ${before.x}, ${puppetOf(hostId)}.y - ${before.y}) > 80`, STEP, "the friend saw the host walk");
   const gb = JSON.parse(await host.eval(`JSON.stringify(${puppetOf(guestId)})`));

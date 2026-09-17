@@ -1217,8 +1217,31 @@ local function pushAvatarPolicy()
     end
 end
 
+local removeRetry = {} -- obj -> deadline: remove() refused (teleport in flight), retried each tick
+local function removeRetryTick(now)
+    for obj, until_ in pairs(removeRetry) do
+        if not obj:isValid() or now > until_ or pcall(function() obj:remove() end) then
+            removeRetry[obj] = nil
+        end
+    end
+end
+
+-- Whether a pose lies in a cell this CLIENT has loaded (own cell or an exterior neighbour).
+-- The server relays by the mover's announced cellKey while the pose itself comes from the
+-- peer's avatar, which follows a far teleport late (a cold cell load on the peer: 17 s in
+-- fresh6) -- so a batch can carry a pose two cells behind the announced cell. A body placed
+-- by such a pose lands in an UNLOADED cell, where its script never runs (no onUpdate off the
+-- active grid): a ghost nothing can steer, until the owner next crosses a border (480).
+local function poseInView(pose)
+    if mp.isSystem and mp.isSystem() then return true end -- the peer anchors every occupied cell
+    if not (ownCellKeyCache and parseExteriorKey(ownCellKeyCache)) then return true end -- interiors: same room by construction
+    if type(pose.x) ~= 'number' or type(pose.y) ~= 'number' then return true end
+    return visibleFrom(ownCellKeyCache, math.floor(pose.x / 8192) .. ',' .. math.floor(pose.y / 8192))
+end
+
 local function spawnPuppet(id, pose)
     if puppets[id] then return end
+    if not poseInView(pose) then return end -- the next pose in range spawns it (480)
     -- ON THE PEER, NO CELL MEANS NO SPAWN. Falling back to destCellArg() puts the avatar in
     -- the PEER's own cell at the player's coordinates -- interior coords in an exterior, say
     -- -- and its pose stream then hard-snaps the owner into the void. The PlayerCellChange
@@ -1298,7 +1321,15 @@ local function despawnPuppet(id)
     -- with it, leaving the roster mirror stale and remoteCell/lastPose still holding a
     -- player who had left. Same transient-engine-state reasoning as tryTeleport.
     if mp.isSystem and mp.isSystem() then actors.refollow(id, nil) end -- release, re-aimed on respawn
-    if p.obj:isValid() then pcall(function() p.obj:remove() end) end
+    -- A REFUSED REMOVE IS RETRIED, NOT FORGOTTEN (480). remove() throws "Can't remove 0 of 0"
+    -- while a teleport is in flight on the body (teleport zeroes the count until its action
+    -- lands; the spawn's own placement and a PlayerCellChange follow both do this), and at
+    -- a frame a second the despawn lands in that same frame often enough: fresh6's guest kept
+    -- a live, untracked body of the host at the new spot whose puppet.lua then drove the
+    -- tracked successor to its stale target every 3 s for the rest of the session.
+    if p.obj:isValid() and not pcall(function() p.obj:remove() end) then
+        removeRetry[p.obj] = core.getRealTime() + 30
+    end
     print('[mp] puppet despawned for ' .. p.name .. ' (#' .. tostring(id) .. ')')
 end
 
@@ -3086,6 +3117,9 @@ local eventHandlers = {
             return
         end
         local p = data.id and puppets[data.id]
+        -- Only the body we track may move it (480): a stray script on an untracked body
+        -- (remove refused mid-teleport) must not drag the successor to its stale target.
+        if p and data.obj ~= nil and p.obj ~= data.obj then return end
         if p and tryTeleport(p.obj, destCellArg(), util.vector3(data.x, data.y, data.z)) then
             print('[mp] puppet snap #' .. tostring(data.id) .. ' (' .. tostring(data.why) .. ')')
         end
@@ -3732,6 +3766,7 @@ return {
                 worldmp.tick(now)
                 mirrorDoor(now)
                 teleportRetryTick(now) -- a follow-teleport that threw last frame lands now
+                removeRetryTick(now) -- a despawn refused mid-teleport lands now (480)
                 avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses
                 -- Re-pushed on a cadence, not only on change: the veto FAILS OPEN (an empty
                 -- avatar set vetoes nothing), so a single dropped event would silently permit
