@@ -16,12 +16,16 @@
 //
 // The minimap is part of the HUD, so ordinary gameplay is enough; no UI has to be opened.
 import { join, dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-// Written into the REPO, not /tmp. The harness runs in a --rm container, so anything left in
-// its own /tmp dies with it -- the first version of this produced the screenshot and threw it
-// away. The repo is the bind mount, so this lands on the host where a person can open it.
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Written under wasm-build/harness-out, not /tmp. The harness runs in a --rm container, so
+// anything left in its own /tmp dies with it -- the first version of this produced the
+// screenshot and threw it away. The repo is the bind mount, so this lands on the host where a
+// person can open it; harness-out because the checkout ROOT is not writable by the harness
+// uid (#111: EACCES on /repo/minimap-before-walk.png).
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'harness-out');
+mkdirSync(ROOT, { recursive: true });
 
 export const diagnostic = true; // asserts nothing: reported as DIAG, not counted as a PASS
 export default async function run(ctx) {
