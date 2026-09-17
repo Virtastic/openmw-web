@@ -47,11 +47,22 @@ export default async function run(ctx) {
   // poll parks seenOpenChat while !ready, and ready is chargenDone === '1'). The tour above
   // shows on Joined, which is EARLIER: chargenDone waits on the restore (backlog 404), so a T
   // pressed in that gap is swallowed by design -- #111's 'T opened the chat panel' timeout.
-  await a.waitFor(`window.omw.state.chargenDone === '1'`, 20000, 'the character exists (hotkeys live)');
+  await a.waitFor(`window.omw.state.chargenDone === '1'`, 20000, 'the character exists');
+  // The overlay learns that on its own poll tick (index.html: ready = chargenDone, then
+  // chatReady -> the chat element is shown) and opens a SECOND tour ('unlocked') the moment it
+  // does. #114 pressed T between the mirror and the poll: hotkeys still absorbed, then the
+  // new tour on top. Wait for the chat element itself, then close whatever tour is up.
+  await a.waitFor(`document.getElementById('omw-chat').style.display !== 'none'`, 10000, 'the overlay unlocked multiplayer (hotkeys live)');
+  if (await a.eval(`document.getElementById('omw-tour').classList.contains('show')`)) {
+    await a.eval(`document.getElementById('omw-tour-x').click()`);
+    await a.waitFor(`!document.getElementById('omw-tour').classList.contains('show')`, 3000, 'the unlocked tour closes via X');
+    ctx.log('ok: the unlocked tour shown + dismissed');
+  }
+  await ctx.sleep(900); // past the 800 ms signal suppression a tour close arms
   await a.eval(`document.getElementById('canvas').focus()`);
   await a.key(T);
   await a.waitFor(`document.getElementById('omw-chat').classList.contains('active')`, 5000,
-    'T opened the chat panel');
+    'T opened the chat panel').catch(async (e) => { ctx.log(`uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')} openChat=${await a.eval('window.omw.state.openChat')} tour=${await a.eval("document.getElementById('omw-tour').className")}`); throw e; });
   await a.waitFor(`document.activeElement && document.activeElement.id === 'omw-tx'`, 3000,
     'chat input took keyboard focus');
   ctx.log('ok: chat panel open + input focused');
