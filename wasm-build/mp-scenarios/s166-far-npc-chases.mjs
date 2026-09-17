@@ -102,6 +102,10 @@ export default async function run(ctx) {
   const covered = q1 && !q1.dead ? Math.hypot(q1.x - q0.x, q1.y - q0.y) : NaN;
   ctx.log(`the ${victim} covered ${covered.toFixed(0)} u in ${chaseSecs.toFixed(1)} s = ${(covered / chaseSecs).toFixed(1)} u/s (closing ${((gap0 - gap) / chaseSecs).toFixed(1)} u/s)`);
   ctx.log(`gap after the chase window: ${gap.toFixed(0)} u (probe=${JSON.stringify(q1)})`);
-  assert.ok(gap >= 0 && gap < CLOSE, `the ${victim} never closed from ${gap0.toFixed(0)} to ${CLOSE} u in 30 s (${gap.toFixed(0)}; -1 = it died or left the probe): the peer's AI is frozen two cells from its dummy (pathTo's inactive-cell gate)`);
+  // CLOSED BY, not closed TO: the marks this spot offers are scribs and kwama foragers, the
+  // slowest crawlers in the game (#115 6 u/s, #116 8 u/s with the anchor navmesh in), and
+  // 30 s is not enough for them to reach melee range from 450 u. A frozen AI closes NOTHING;
+  // a crawler closes a few hundred units. That is the difference this scenario exists for.
+  assert.ok(gap >= 0 && gap0 - gap >= 150, `the ${victim} never chased: gap ${gap0.toFixed(0)} -> ${gap.toFixed(0)} u in 30 s (-1 = it died or left the probe): the peer's AI is frozen two cells from its dummy`);
   ctx.log(`PASS: the peer's ${victim} chased the avatar ${gap0.toFixed(0)} -> ${gap.toFixed(0)} u two cells from the dummy`);
 }
