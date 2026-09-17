@@ -352,6 +352,12 @@ export default async function run(ctx) {
   // The puppet must have FOLLOWED the snap before the walk is measured, or the teleport
   // itself would count as the walk.
   const settled = (watcher, id, at) => watcher.waitFor(`Math.hypot(${puppetOf(id)}.x - ${at.x}, ${puppetOf(id)}.y - ${at.y}) < 250`, STEP, `${watcher.name} sees ${id}'s puppet where the snap put it`);
+  // ...and the snap itself must have LANDED on the snapper first: fresh6 read the host's pose
+  // before its teleport ran (a frame a second), matched the puppet at the OLD spot, and
+  // measured a walk against a puppet nobody had told to move.
+  const arrived = (c, at) => c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); return !!p && Math.hypot(p.x - (${at[0]}), p.y - (${at[1]})) < 250; })()`, STEP, `${c.name} arrived at the snap`);
+  await arrived(host, SPOT.split(',').map(Number));
+  await arrived(guest, [-12300, -53100]);
   await settled(guest, hostId, await poseOf(host));
   await settled(host, guestId, await poseOf(guest));
   const before = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`));
