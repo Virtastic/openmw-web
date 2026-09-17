@@ -97,6 +97,6 @@ export default async function run(ctx) {
   // THE TORCH: equipped in the left hand; B's puppet holds it.
   await a.cmd(`equip:${TORCH}:${CARRIED_LEFT}`);
   await a.waitFor(`String(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(TORCH)}) >= 0`, STEP, 'A holds the torch');
-  await b.waitFor(`(${rowOf}.eq||[]).indexOf(${JSON.stringify(TORCH)}) >= 0`, STEP, "B's puppet of A holds the torch");
+  await b.waitFor(`(${rowOf}.eq||[]).indexOf(${JSON.stringify(TORCH)}) >= 0`, 60_000, "B's puppet of A holds the torch"); // 60 s: B takes a frame every few seconds by now (#117: 30 s was not enough)
   ctx.log('PASS: a levitating player stays up (the avatar levitates too), a friend sees them float, and sees the torch in their hand');
 }
