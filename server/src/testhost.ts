@@ -61,7 +61,11 @@ const { values } = parseArgs({
 const dataDir = values.data;
 if (!dataDir) throw new Error('--data <dir> is required');
 
-const maxPlayers = Number(values['max-players'] ?? 64);
+// Only an explicit --max-players overrides the config: a scenario that writes [server]
+// maxPlayers into its config.toml (s42, s43) used to lose to a silent 64 here -- s43's 59th
+// human was refused SERVER_FULL against a cap the scenario had set to 144 (backlog 469).
+const maxPlayersArg = values['max-players'] !== undefined ? Number(values['max-players']) : undefined;
+const maxPlayers = maxPlayersArg ?? 64; // connsPerIp sizing only
 // Every harness client dials from 127.0.0.1, so the production per-IP caps (3 connections,
 // 5 logins/min) would refuse the fleet before a single assertion ran. Those limits have their
 // own tests; here they would only measure themselves.
@@ -74,7 +78,7 @@ const server = await startServer({
   host: '127.0.0.1',
   ...(values.shared ? { sharedDir: values.shared } : {}),
   configOverride: {
-    server: { maxPlayers, ...(values['server-password'] ? { password: values['server-password'] } : {}) },
+    server: { ...(maxPlayersArg !== undefined ? { maxPlayers: maxPlayersArg } : {}), ...(values['server-password'] ? { password: values['server-password'] } : {}) },
     // Without this a spawned world has no world browser, so it can neither list nor switch.
     ...(values.gateway ? { gateway: { url: values.gateway } } : {}),
     // harness: the scenarios drive what the anti-cheat refuses on purpose (#390 #393 #394).
