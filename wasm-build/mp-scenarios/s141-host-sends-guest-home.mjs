@@ -51,8 +51,12 @@ export default async function run(ctx) {
     // The host sends one of them home.
     await host.client.cmd(`social:WorldKick:${PEST}`);
     await pest.client.waitFor(`(window.omw.state.worldClosed||'') !== '' || String(window.omw.state.state||'') !== 'Joined'`, STEP, 'the kicked guest is sent home');
-    const why = await pest.client.eval("window.omw.state.worldClosed||''");
-    ctx.log(`the kicked guest was told: reason="${why}" by="${await pest.client.eval("window.omw.state.worldClosedBy||''")}"`);
+    // Being sent home is a page navigation (the launcher redials), and between the wait above
+    // and this read the page can be mid-reload with no window.omw yet (#116: "Cannot read
+    // properties of undefined"). The reason is narration, not the verdict: read it if it is there.
+    const told = await pest.client.eval("JSON.stringify(window.omw && window.omw.state ? { why: window.omw.state.worldClosed||'', by: window.omw.state.worldClosedBy||'' } : null)").catch(() => 'null');
+    const { why = '', by = '' } = JSON.parse(told) || {}; // empty = the page was already navigating
+    ctx.log(`the kicked guest was told: reason="${why}" by="${by}"`);
     if (why) assert.equal(why, 'kicked', 'the notice must say the host sent them home');
     await host.client.waitFor(`${rowOf(PEST)}.id === undefined`, STEP, 'the kicked guest is gone from the host world');
     await pest.client.waitFor('window.omw.state.state === "Joined" && String(window.omw.state.worldClosed||"") === ""', 180_000, 'the kicked guest lands in their own world');
