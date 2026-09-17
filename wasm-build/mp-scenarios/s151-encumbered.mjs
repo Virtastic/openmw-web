@@ -60,8 +60,10 @@ export default async function run(ctx) {
 
   // The load.
   for (let i = 0; i < N; i++) { await a.cmd(`give:${HEAVY}`); await ctx.sleep(120); }
-  await a.waitFor('true', 500, 'granted');
-  const n = await countOf(a, HEAVY);
+  // Each give is a global event that lands a frame or more later; at a frame a second twelve
+  // of them take longer than a fixed pause (#116 counted 10). Count until they are all in.
+  let n = 0;
+  for (let i = 0; i < 20 && n < N; i++) { n = await countOf(a, HEAVY); if (n < N) await ctx.sleep(1_000); }
   assert.equal(n, N, `expected ${N} cuirasses in the pack, found ${n}`);
   // Let the inventory doc reach the peer (the avatar must be as heavy as we are) -- and let
   // A SETTLE on the avatar first. #114 sampled it: the unburdened walk left A 78 u from the
