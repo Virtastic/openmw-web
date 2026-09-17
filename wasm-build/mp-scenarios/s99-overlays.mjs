@@ -105,9 +105,16 @@ export default async function run(ctx) {
   // 6. REAL typing into the chat input. The engine binds keys on window/document (the same
   // nodes we do), so a shield that only calls stopPropagation lets SDL eat the keystrokes —
   // this asserts characters actually land in the field.
+  // The Escape that closed the social panel armed the 800 ms signal suppression (index.html
+  // suppressSignals) and may have reached the engine too; #115 pressed T inside that window
+  // and the input never took focus. Wait it out and confirm no engine window owns the keys.
+  await ctx.sleep(900);
+  await a.waitFor(`String(window.omw.state.uiMode||'none') === 'none'`, 5000, 'no engine window owns the keys')
+    .catch(async (e) => { ctx.log(`uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')}`); throw e; });
   await a.eval(`document.getElementById('canvas').focus()`);
   await a.key(T);
-  await a.waitFor(`document.activeElement && document.activeElement.id === 'omw-tx'`, 4000, 'chat input focused');
+  await a.waitFor(`document.activeElement && document.activeElement.id === 'omw-tx'`, 6000, 'chat input focused')
+    .catch(async (e) => { ctx.log(`uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')} chat=${await a.eval("document.getElementById('omw-chat').className")} active=${await a.eval('document.activeElement && document.activeElement.id')}`); throw e; });
   for (const ch of ['h','e','l','l','o']) await a.key({ key: ch, code: 'Key' + ch.toUpperCase(), keyCode: ch.charCodeAt(0) - 32 });
   await a.waitFor(`document.getElementById('omw-tx').value === 'hello'`, 4000,
     'typed characters reached the chat input (not swallowed by SDL)');
