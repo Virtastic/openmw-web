@@ -1115,7 +1115,11 @@ local function dispatch(cmd)
         -- not the clock-only rest above. -1 in the mirror when the binding is missing.
         local sleepHours = cmd:match('^sleep:(%d+)$')
         if sleepHours then
-            local ok = pcall(function() mp.restHours(tonumber(sleepHours), true) end)
+            -- The raise is BANKED, not measured: the rest ran inline on the real stat and a
+            -- peer report in the same frame overwrites it before any read could see it
+            -- (backlog 460). restHours says what it healed; identity claims exactly that.
+            local ok, healed = pcall(function() return mp.restHours(tonumber(sleepHours), true) end)
+            if ok and type(healed) == 'table' then identity.bankGain(healed) end
             mp.set('slept', ok and sleepHours or '-1')
         end
         -- The engine's rest verdict (bit 4 = enemies nearby): does a fight the peer runs

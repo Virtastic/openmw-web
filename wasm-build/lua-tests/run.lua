@@ -1762,24 +1762,24 @@ do
     c:find('[mp] CombatSpellHit on peer: spell=%s net=%s ref=%s cell=%s resolved=%s hp=%s', 1, true) ~= nil)
 end
 
-print('#460 the harness rest lands after the pending bar write (s150 in #111)')
+print('#460 the harness rest reports what it healed, so the claim needs no read (s150 in #111/#114/#115/#116)')
 do
-  -- synchronizedUpdate runs onFrame BEFORE applyDelayedActions (mwlua/luamanagerimp.cpp), so a
-  -- C++ rest applied inline from a harness command lost to the MP_SelfStats write queued in
-  -- the previous update. Queued through addAction it lands after that write, in order.
+  -- Three tries. Inline, the rest lost to the MP_SelfStats write queued earlier in the frame;
+  -- queued (addAction) it lost to the write queued LATER in the same frame one time in three
+  -- (#116: own bar 35, claim 35+0). Either way the read that measures the raise sees the
+  -- report. So restHours runs inline on the real stat and RETURNS the raise; player.lua banks
+  -- it into identity (bankGain) and nothing is read.
   local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
-  local lm = io.open('./openmw/apps/openmw/mwlua/luamanagerimp.cpp'):read('*a')
+  local pl = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
   local body = lb:match('api%["restHours"%](.-)api%["getLoginTicket"%]')
-  check('mp.restHours queues the rest as a delayed action instead of resting inline',
-    body ~= nil and body:find('luaManager->addAction(', 1, true) ~= nil
-    and body:find('"MPRestHours"', 1, true) ~= nil
-    and body:find('getMechanicsManager()->rest(1, sleep)', 1, true) ~= nil)
-  local onFrameAt = lm:find('playerScripts->onFrame(frameDuration);', 1, true)
-  local applyAt = lm:find('applyDelayedActions();', onFrameAt or 1, true)
-  check('synchronizedUpdate still runs onFrame before applyDelayedActions (the order the fix relies on)',
-    onFrameAt ~= nil and applyAt ~= nil and onFrameAt < applyAt)
+  check('mp.restHours rests inline and returns the hp/mp/ft it healed',
+    body ~= nil and body:find('luaManager->addAction(', 1, true) == nil
+    and body:find('getMechanicsManager()->rest(1, sleep)', 1, true) ~= nil
+    and body:find('res["hp"] = stats.getHealth().getCurrent() - hp0', 1, true) ~= nil)
+  check('player.lua banks what the rest healed into the claim',
+    pl:find('local ok, healed = pcall(function() return mp.restHours(tonumber(sleepHours), true) end)', 1, true) ~= nil
+    and pl:find("if ok and type(healed) == 'table' then identity.bankGain(healed) end", 1, true) ~= nil)
 end
-
 print('#461 a client heal reaches the avatar in full: the claim carries the GAIN, not the bar')
 do
   -- THE LADDER (s165: a 10x5 restore landed +6..+10 of 50; s150: a rest +0). identity.lua
@@ -1852,6 +1852,35 @@ do
   check('the stale-peer snapshot says the gain too (460: the rest\'s +24 was zeroed unsaid)',
     snap ~= nil and snap.hp and snap.hp.c == 59 and snap.hp.d == 24, snap and snap.hp and ('c=' .. tostring(snap.hp.c) .. ' d=' .. tostring(snap.hp.d)) or 'no snapshot')
   check('the mirror names the last hp claim for the scenarios', env.calls.testSet['hpClaim'] == '59+24', tostring(env.calls.testSet['hpClaim']))
+  -- #116's shape (460, third try): the rest and a peer report land in the SAME frame, and
+  -- the report's write wins the local bar before any read sees the raise -- the local bar
+  -- reads 35 after a rest that healed 24. restHours returns what it healed and player.lua
+  -- banks it; the claim must carry the 24 with nothing to measure.
+  fresh()
+  env = stubs.install({})
+  identity = require('scripts.mp.identity')
+  identity.markBaselineReady()
+  env.dyn.health.base = 95
+  env.dyn.health.current = 35
+  identity.notePeerBars(35, 50, 100)
+  identity.tick(0)
+  env.calls.events = {}
+  identity.bankGain({ hp = 24, mp = 0, ft = 12 }) -- the rest, as restHours reported it
+  identity.notePeerBars(35, 50, 100) -- the same-frame report: the local bar stays 35
+  env.dyn.health.current = 35
+  env.advance(0.3); identity.tick(0.3)
+  local banked
+  for _, c in ipairs(env.calls.events) do if c.name == 'PlayerStatsDynamic' then banked = c.body end end
+  check('a banked rest is claimed although the local bar never showed it (460, #116: 35+0)',
+    banked ~= nil and banked.hp and banked.hp.d == 24, banked and banked.hp and ('c=' .. tostring(banked.hp.c) .. ' d=' .. tostring(banked.hp.d)) or 'no claim')
+  -- ...and once: the per-frame tracker must not count the same raise again when it does see it.
+  env.calls.events = {}
+  identity.notePeerBars(59, 50, 100) -- the AvatarRestore came back (noted, THEN written, as MP_SelfStats does)
+  env.dyn.health.current = 59
+  env.advance(0.3); identity.tick(0.6)
+  local twice = false
+  for _, c in ipairs(env.calls.events) do if c.name == 'PlayerStatsDynamic' and c.body.hp and (c.body.hp.d or 0) > 0 then twice = true end end
+  check('the banked gain is not claimed a second time', not twice)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

@@ -555,26 +555,34 @@ namespace MWMP
         // mechanics rest + one hour of world time per hour, WaitDialog::onWaitingProgressChanged),
         // so a scenario can prove that sleeping heals a peer-ruled body (s150). The dialog
         // itself cannot be driven without SDL keys.
-        // QUEUED, NOT INLINE (#111 s150: "sleeping 8 h healed nothing that stuck", green in
-        // #106/#107). This runs from a harness command in onFrame, and synchronizedUpdate runs
-        // onFrame BEFORE applyDelayedActions -- the Lua stat writes queued in the previous
-        // update (player.lua MP_SelfStats: `health.current = <the peer's bar>`, every report).
-        // A rest applied inline therefore healed the C++ stat and the queued write put the
-        // peer's old bar straight back in the same frame, before any Lua read could see the
-        // raise (reads answer from the pending cache) -- so identity.lua measured no gain and
-        // claimed nothing, whenever a bar report had landed in the frame before the command.
-        // Queued, the rest lands after that write, in order, like every other mp.* mutation.
-        api["restHours"] = [luaManager = context.mLuaManager](int hours, bool sleep) {
+        // INLINE, AND IT SAYS WHAT IT HEALED (backlog 460, the third try). The peer rules the
+        // bars: every 3 s player.lua MP_SelfStats queues `health.current = <the peer's bar>`
+        // as a delayed Lua write, and identity.lua claims a heal by measuring the local bar
+        // against its last report. A rest run from this harness command sits in the same
+        // onFrame as such a report about one frame in three at 1 fps, and whichever order the
+        // two land in, the read that should measure the raise sees the report's value (a
+        // pending write answers reads; a queued rest runs after the write it was meant to
+        // beat, then the NEXT report erases it). A real player's rest is C++ outside the Lua
+        // frame and is measured fine; only this path raced. So the rest runs now, on the
+        // real stat, and returns the raise it produced -- player.lua banks that straight into
+        // identity's claim (identity.bankGain), and no read is involved at all.
+        api["restHours"] = [](sol::this_state state, int hours, bool sleep) {
             const int n = std::max(0, std::min(hours, 24 * 7));
-            luaManager->addAction(
-                [n, sleep] {
-                    for (int i = 0; i < n; ++i)
-                    {
-                        MWBase::Environment::get().getMechanicsManager()->rest(1, sleep);
-                        MWBase::Environment::get().getWorld()->advanceTime(1);
-                    }
-                },
-                "MPRestHours");
+            const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+            const MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+            const float hp0 = stats.getHealth().getCurrent();
+            const float mp0 = stats.getMagicka().getCurrent();
+            const float ft0 = stats.getFatigue().getCurrent();
+            for (int i = 0; i < n; ++i)
+            {
+                MWBase::Environment::get().getMechanicsManager()->rest(1, sleep);
+                MWBase::Environment::get().getWorld()->advanceTime(1);
+            }
+            sol::table res(state, sol::create);
+            res["hp"] = stats.getHealth().getCurrent() - hp0;
+            res["mp"] = stats.getMagicka().getCurrent() - mp0;
+            res["ft"] = stats.getFatigue().getCurrent() - ft0;
+            return res;
         };
         // Phase B SSO: a one-time login ticket the boot JS lifted out of the URL fragment
         // after the provider round trip. Empty when signing in with a password.

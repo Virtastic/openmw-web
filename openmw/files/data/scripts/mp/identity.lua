@@ -216,6 +216,19 @@ function identity.notePeerBars(hp, mpv, ft)
         end
     end
 end
+-- A gain this engine PRODUCED and reported itself (mp.restHours returns what the rest
+-- healed): banked into the next claim without a read, because the read is what the peer
+-- report races (notePeerBars above, backlog 460). prev moves with it so the per-frame
+-- tracker does not count the same raise twice when it does get to see it.
+function identity.bankGain(gains)
+    for k, t in pairs(tracked) do
+        local d = tonumber(gains[k])
+        if d and (d > 0 or not t.gainsOnly) then
+            t.delta = t.delta + d
+            if t.prev then t.prev = t.prev + d end
+        end
+    end
+end
 trackLocalChange = function()
     for _, t in pairs(tracked) do
         local ok, cur = pcall(function() return Actor.stats.dynamic[t.stat](self).current end)
