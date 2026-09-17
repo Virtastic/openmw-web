@@ -63,8 +63,14 @@ export default async function run(ctx) {
   await a.waitFor('true', 500, 'granted');
   const n = await countOf(a, HEAVY);
   assert.equal(n, N, `expected ${N} cuirasses in the pack, found ${n}`);
-  // Let the inventory doc reach the peer (the avatar must be as heavy as we are).
+  // Let the inventory doc reach the peer (the avatar must be as heavy as we are) -- and let
+  // A SETTLE on the avatar first. #114 sampled it: the unburdened walk left A 78 u from the
+  // avatar (the client integrates 0.2 s a frame, the avatar walks wall time: 445/465), and
+  // the encumbered "walk" that followed was reconciliation pulling A back, overshooting by up
+  // to 68 u. Measured from a settled start, ground covered is a real walk or a real snap.
   await ctx.sleep(4_000);
+  await a.waitFor("Number(window.omw.state.selfDivergence||999) < 10", 20_000, "A settled on the avatar before the encumbered walk")
+    .catch(async () => ctx.log(`  not settled: divergence ${await a.eval("window.omw.state.selfDivergence")} (measuring anyway)`));
   const p2 = await pose(a);
   const q2 = JSON.parse(await b.eval(`JSON.stringify(${rowOf})`));
   await a.cmd(`walk:${dir},3000`);
