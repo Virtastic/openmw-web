@@ -101,7 +101,9 @@ export default async function run(ctx) {
   // applied locally and the effect is forwarded to the peer that owns it. If that chain is
   // broken the NPC simply never dies, which is exactly what "casting does nothing" looked like.
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  const castDeadline = Date.now() + 150_000;
+  // 300 s: #114 got 20 casts out of 150 s, 6 of them landed (peer: 40 -> 14 hp), and the mark
+  // lived. A level-1 Destruction cast fails more often than not; a KILL needs the budget.
+  const castDeadline = Date.now() + 300_000;
   let died = false, casts = 0;
   while (Date.now() < castDeadline && !died) {
     const p = await target();
