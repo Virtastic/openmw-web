@@ -285,6 +285,42 @@ test('a claim carrying its gain as `d` lands on top of the doc, not on the stale
   assert.ok(refills < 8, `sustained fake magicka refills through \`d\` were accepted ${refills} times`);
 });
 
+// s150 ON THE WIRE (backlog 460, #115 `35 -> 35` with the client's own bar at 59 and the claim
+// `59+24.0`). The exact ladder the scenario walks, in both shapes identity.lua can send it:
+// the peer reports 35/35; sethpbase steps the maximum (a claim with `d: 0`, base moved); the
+// peer confirms 35/95; the queued 8 h rest heals +24 and the claim says so -- as the peer-rules
+// branch's bare `{hp}` or, when the report went stale on the client, the full triple with `d`
+// on hp only. Either must reach the avatar as 59/95, inside the base-step window and all.
+test('the s150 ladder: a base step then a rest gain, in both claim shapes, land 59/95 on the avatar', async (t) => {
+  const { peer, a } = await world(t);
+  let seq = 0;
+  a.sendInput({ move: 1 }, ++seq);
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  let report = { hp: { c: 35, b: 35 }, mp: { c: 50, b: 50 }, ft: { c: 80, b: 100 } };
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...report }] }), 150);
+  t.after(() => clearInterval(reporter));
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { b?: number } })?.hp?.b === 35);
+  const restore = (c: number, b: number) => peer.waitEvent('AvatarRestore',
+    (v) => (v as { id?: number; hp?: { c?: number; b?: number } })?.id === a.playerId
+      && (v as { hp?: { c?: number } }).hp?.c === c && (v as { hp?: { b?: number } }).hp?.b === b);
+  // sethpbase:95 -- the peer-rules branch claims the moved base with no gain.
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 35, b: 95, d: 0 } });
+  await restore(35, 95);
+  report = { ...report, hp: { c: 35, b: 95 } };
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { b?: number } })?.hp?.b === 95);
+  // The rest: +24 banked, claimed on top of the peer's 35 (the shape #115 printed).
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 59, b: 95, d: 24 } });
+  await restore(59, 95);
+  // The same rest said from the stale-peer branch: the full snapshot, gain on hp only, the
+  // client's own fatigue and magicka riding along (the peer never healed: report still 35).
+  peer.inbox.events.length = 0;
+  await new Promise((r) => setTimeout(r, 400)); // the pinned report puts the doc back at 35
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 59, b: 95, d: 24 }, mp: { c: 50, b: 50 }, ft: { c: 100, b: 100 } });
+  await restore(59, 95);
+});
+
 // ACTIVE EFFECTS reach the avatar. Levitate, Water Walking, a potion: cast or drunk on the
 // client, applied to that body only -- and the peer's avatar is what physics and NPC awareness
 // run against. The client diffs its temporary effects; the server checks the shape and forwards.

@@ -33,7 +33,10 @@ export default async function run(ctx) {
   const t0 = await timeOf(host), g0 = await timeOf(guest);
   ctx.log(`host ${wounded.c}/${wounded.b} at ${t0.abs?.toFixed?.(2)} h; guest clock ${g0.abs?.toFixed?.(2)} h`);
 
-  // Sleep.
+  // Sleep. actorBatchesIn is the host's liveness (s114/s42): the peer holds Seyda Neen, so its
+  // actor frames tick this on every frame the host's engine takes.
+  const batchesIn = () => host.eval('Number(window.omw.state.actorBatchesIn||0)');
+  const in0 = await batchesIn();
   await host.cmd(`sleep:${HOURS}`);
   await host.waitFor('String(window.omw.state.slept||"") !== ""', STEP, 'the engine answered the sleep');
   assert.notEqual(await host.eval('window.omw.state.slept'), '-1', 'mp.restHours is not bound on this engine');
@@ -45,8 +48,19 @@ export default async function run(ctx) {
   // WHICH HALF LOST IT (backlog 460): the client's own bar (identity's `hp` mirror) says whether
   // the engine healed at all, `hpClaim` whether identity.lua said so (`<bar>+<gain>`), and the
   // peer's word above whether the server and the avatar took it. Three reds gave only the last.
-  ctx.log(`after sleeping ${HOURS} h: peer says ${after.c}/${after.b}; the client's own bar says ${await host.eval('window.omw.state.hp')},`
-    + ` last hp claim ${await host.eval('window.omw.state.hpClaim || "none"')}`);
+  const ownBar = await host.eval('window.omw.state.hp');
+  ctx.log(`after sleeping ${HOURS} h: peer says ${after.c}/${after.b}; the client's own bar says ${ownBar},`
+    + ` last hp claim ${await host.eval('window.omw.state.hpClaim || "none"')}; host took ${await batchesIn() - in0} actor frames since the sleep`);
+  // #115: bar 59, claim `59+24.0`, peer 35 for the whole 40 s -- and the peer's 35 reports
+  // (MP_SelfStats writes the bar back every <= 3 s) never pulled the bar down, so the host had
+  // stopped taking frames right after the claim (backlog 478's shape). The server lands both
+  // claim shapes (avatarstats.test.ts, the s150 ladder) and s146 walks the same avatar channel
+  // green; a stopped host is a client fault, and the verdict must say so, not blame the heal.
+  if (!(after.c > wounded.c + 10) && await batchesIn() === in0) {
+    ctx.log(`host jsErrors: ${host.jsErrors().slice(-4).join(' || ')} || luaErrors: ${host.luaErrors().slice(-4).join(' || ')}`);
+    ctx.log('host tail: ' + host.logTail(12).split(String.fromCharCode(10)).join(' || '));
+    assert.fail(`the host's engine stopped after the sleep (actorBatchesIn stuck at ${in0} for 40 s; its own bar reads ${ownBar} against the peer's ${after.c}): a client fault, not the heal ladder`);
+  }
   assert.ok(after.c > wounded.c + 10, `sleeping ${HOURS} h healed nothing that stuck (${wounded.c} -> ${after.c})`);
   assert.ok(after.c <= after.b, 'never past the maximum');
 
