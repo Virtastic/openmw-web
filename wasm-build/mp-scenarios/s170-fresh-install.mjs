@@ -314,7 +314,13 @@ export default async function run(ctx) {
   await guest.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives across worlds');
   await guest.cmd(`social:FriendAccept:${HOST_HANDLE}`);
   await host.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-  // THE O PANEL: a real key, then a real click on Party.
+  // THE O PANEL: a real key, then a real click on Party. The host is a first-timer, so the
+  // feature tour is up and sits ABOVE the social panel: fresh4 clicked Party and the browser
+  // handed the click to omw-tour. A player closes the tour first; so does this.
+  if (await host.eval("document.getElementById('omw-tour').classList.contains('show')")) {
+    await host.eval("document.getElementById('omw-tour-x').click()");
+    await host.waitFor("!document.getElementById('omw-tour').classList.contains('show')", 3000, 'the tour closed');
+  }
   await host.key({ key: 'o', code: 'KeyO', keyCode: 79 });
   await host.waitFor("document.getElementById('omw-social').classList.contains('show')", STEP, 'O opened the social panel');
   const hit = await host.click('#omw-social .whererow .seg button:nth-child(2)');
