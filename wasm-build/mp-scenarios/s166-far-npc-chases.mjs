@@ -31,6 +31,12 @@ export default async function run(ctx) {
   await b.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'the peer named a creature in -2,-7');
   await b.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP, 'the cell is puppeted (the peer holds it)');
   ctx.log(`A in ${await a.eval('window.omw.state.cell')} (the anchor the dummy stands by), B in ${await b.eval('window.omw.state.cell')}`);
+  // THE PROBE IS A MIRROR, NOT A READ. actorProbe is rewritten on actors.lua's tick from the
+  // own cell's actors; `netObjects > 0` is true the moment the peer's spawn is netted, a tick
+  // or a cell change before the probe lists it (#111 s164: "no living named creature in the
+  // probe: []" with three scribs netted in -2,-7). Wait for a living netted record IN the probe.
+  await b.waitFor(`(function(){var pr=JSON.parse(window.omw.state.actorProbe||"{}");return Object.values(JSON.parse(window.omw.state.netObjects||"{}")).some(function(r){var p=pr[r];return p&&!p.dead;});})()`,
+    STEP, 'the peer\'s creature is in the probe, alive');
 
   // The nearest living named creature (keyed by record, s164).
   const me = await poseOf(b);
@@ -64,13 +70,19 @@ export default async function run(ctx) {
   // Retreat: 450 u east of the creature, and the chase must close the gap.
   const p1 = (await probeOf(b, victim)) || p0;
   await b.cmd(`snapto:${Math.round(p1.x + RETREAT)},${Math.round(p1.y)},${Math.round(p1.z + 8)}`);
-  await ctx.sleep(2_500);
+  // READ THE GAP THE MOMENT THE SNAP LANDS. The mark is already provoked and a rat covers
+  // 200+ u in the 2.5 s this used to sleep (#107 104 u, #111 227 u: "the retreat did not open
+  // the gap" -- it had, and the chase under test had already eaten it). The pose mirror is
+  // 2 Hz; poll it until the snap shows, then measure.
+  await b.waitFor(`Math.abs((JSON.parse(window.omw.state.pose||"{}").x||0) - ${Math.round(p1.x + RETREAT)}) < 64`, 10_000, 'the pose mirror shows the retreat');
   // -1, NOT Infinity: the eval crosses as JSON, where Infinity is not a value -- a dead or
   // absent mark came back as NaN and every message about it read "NaN u" (#106).
   const gapExpr = `(function(){const p=JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}];const m=JSON.parse(window.omw.state.pose||"{}");return p&&!p.dead&&m.x!==undefined?Math.hypot(p.x-m.x,p.y-m.y):-1;})()`;
   const gap0 = Number(await b.eval(gapExpr));
   ctx.log(`gap after the retreat: ${gap0.toFixed(0)} u`);
-  assert.ok(gap0 >= 400, `the retreat did not open the gap (${gap0.toFixed(0)} u; -1 = the mark is gone or dead); the chase would prove nothing`);
+  // The retreat is the setup: it must leave the mark OUTSIDE reach (else the close below is
+  // vacuous); how much of the 450 u the chase has already closed is the chase's business.
+  assert.ok(gap0 >= CLOSE, `the retreat did not open the gap (${gap0.toFixed(0)} u; -1 = the mark is gone or dead); the chase would prove nothing`);
   const deadline = Date.now() + 15_000;
   let gap = gap0;
   while (Date.now() < deadline && gap >= CLOSE) { // -1 (dead/gone) ends the wait too

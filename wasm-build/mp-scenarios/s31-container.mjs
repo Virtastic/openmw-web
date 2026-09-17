@@ -28,6 +28,17 @@ export default async function run(ctx) {
   await a.eval(`window.omw.send('equiptest')`);
   await a.waitFor('(window.omw.state.equippedIds||"") !== ""', 12_000, 'A holds the test item');
   const itemId = (await a.eval('window.omw.state.equippedIds')).split(',')[0];
+  // TWO NAMES FOR ONE ITEM. equiptest mints the item (?nomw has none), so on A it is a runtime
+  // `Generated:` record; on the wire -- the ContainerOp, the ContainerUpdate echo, the
+  // containerItems mirror, and B's take -- it is the SERVER's `mp_<kind>_<n>` id (objects.lua
+  // countsToItems / sendContainerOp toNet, since 265e4ac2). This scenario asked the mirror for
+  // the local id and waited 30 s for a key that could never appear (#107, #111: A held 0 -- the
+  // put worked -- and "chest holds 1 item on A" timed out; the s136 trap). netRecords maps
+  // net -> local; the registration is asynchronous, so wait for it.
+  await a.waitFor(`Object.values(JSON.parse(window.omw.state.netRecords||"{}")).includes(${JSON.stringify(itemId)})`,
+    STEP_TIMEOUT, 'the minted item is registered with the server (netRecords)');
+  const netItemId = await a.eval(`Object.entries(JSON.parse(window.omw.state.netRecords)).find((e) => e[1] === ${JSON.stringify(itemId)})[0]`);
+  ctx.log(`  the item: ${itemId} on A, ${netItemId} on the wire`);
 
   await a.eval(`window.omw.send('chest:spawn')`);
   await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length === 1',
@@ -55,8 +66,8 @@ export default async function run(ctx) {
     + 'landed, so nothing was ever watching and the put was always going to be invisible)');
   await a.eval(`window.omw.send('chest:put:${itemId}')`);
   const chestHas = (n) =>
-    `(JSON.parse(window.omw.state.containerItems||"{}")["n:${netId}"]||{})[${JSON.stringify(itemId)}] === ${n}`
-    + (n === 0 ? ` || !((JSON.parse(window.omw.state.containerItems||"{}")["n:${netId}"]||{})[${JSON.stringify(itemId)}])` : '');
+    `(JSON.parse(window.omw.state.containerItems||"{}")["n:${netId}"]||{})[${JSON.stringify(netItemId)}] === ${n}`
+    + (n === 0 ? ` || !((JSON.parse(window.omw.state.containerItems||"{}")["n:${netId}"]||{})[${JSON.stringify(netItemId)}])` : '');
   // DID THE ITEM ACTUALLY LEAVE A'S INVENTORY? This split matters and nothing was measuring
   // it. mpChestPut walks the inventory for a matching recordId and calls moveInto, then returns
   // SILENTLY if the chest is missing or the item is not found -- so a failure here has two very
@@ -82,9 +93,12 @@ export default async function run(ctx) {
   ctx.log('ok: canonical chest state on both clients');
 
   // The race: both take the single item as simultaneously as the harness can manage.
+  // chesttake goes out by net id untouched (global.lua mpChestTake -> sendContainerOpByNet):
+  // the server's canonical chest holds the wire name, so a local `Generated:` id would be
+  // refused as 'gone' on both sides and the race would have no winner.
   await Promise.all([
-    a.eval(`window.omw.send('chesttake::${itemId}')`),
-    b.eval(`window.omw.send('chesttake:${netId}:${itemId}')`),
+    a.eval(`window.omw.send('chesttake::${netItemId}')`),
+    b.eval(`window.omw.send('chesttake:${netId}:${netItemId}')`),
   ]);
   await a.waitFor('!!window.omw.state.chestOp', STEP_TIMEOUT, 'A got an op result');
   await b.waitFor('!!window.omw.state.chestOp', STEP_TIMEOUT, 'B got an op result');

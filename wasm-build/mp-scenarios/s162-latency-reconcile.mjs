@@ -48,9 +48,15 @@ export default async function run(ctx) {
   assert.ok(worst <= BACKWARD_TOLERANCE, `rubber-band: Y went back ${worst.toFixed(1)} units in one 500 ms sample`);
 
   // Stopped: the avatar catches up within a couple of RTTs and the divergence settles.
+  // ONE CORRECTION PER FRESH SAMPLE, and a fresh sample needs a new input seq (player.lua
+  // onSelfState) -- one per FRAME on a ~1 fps harness client, each moving 25 % of the gap
+  // (48 u at most). The avatar runs at wall-clock speed while this client integrates 0.2 s a
+  // frame, so it ends a 15 s walk well ahead and the gap to close is a few hundred units:
+  // 2 s + 6 x 0.5 s read 65.9 mid-convergence (#111; #107 read 0.0 on a slower box whose
+  // avatar had been snapped to instead). Give the geometric settle the frames it needs.
   await ctx.sleep(2000);
   let best = Infinity;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 40; i++) {
     best = Math.min(best, Number(await a.eval('window.omw.state.selfDivergence||0')));
     if (best < SETTLED_DIVERGENCE) break;
     await ctx.sleep(500);

@@ -555,13 +555,26 @@ namespace MWMP
         // mechanics rest + one hour of world time per hour, WaitDialog::onWaitingProgressChanged),
         // so a scenario can prove that sleeping heals a peer-ruled body (s150). The dialog
         // itself cannot be driven without SDL keys.
-        api["restHours"] = [](int hours, bool sleep) {
+        // QUEUED, NOT INLINE (#111 s150: "sleeping 8 h healed nothing that stuck", green in
+        // #106/#107). This runs from a harness command in onFrame, and synchronizedUpdate runs
+        // onFrame BEFORE applyDelayedActions -- the Lua stat writes queued in the previous
+        // update (player.lua MP_SelfStats: `health.current = <the peer's bar>`, every report).
+        // A rest applied inline therefore healed the C++ stat and the queued write put the
+        // peer's old bar straight back in the same frame, before any Lua read could see the
+        // raise (reads answer from the pending cache) -- so identity.lua measured no gain and
+        // claimed nothing, whenever a bar report had landed in the frame before the command.
+        // Queued, the rest lands after that write, in order, like every other mp.* mutation.
+        api["restHours"] = [luaManager = context.mLuaManager](int hours, bool sleep) {
             const int n = std::max(0, std::min(hours, 24 * 7));
-            for (int i = 0; i < n; ++i)
-            {
-                MWBase::Environment::get().getMechanicsManager()->rest(1, sleep);
-                MWBase::Environment::get().getWorld()->advanceTime(1);
-            }
+            luaManager->addAction(
+                [n, sleep] {
+                    for (int i = 0; i < n; ++i)
+                    {
+                        MWBase::Environment::get().getMechanicsManager()->rest(1, sleep);
+                        MWBase::Environment::get().getWorld()->advanceTime(1);
+                    }
+                },
+                "MPRestHours");
         };
         // Phase B SSO: a one-time login ticket the boot JS lifted out of the URL fragment
         // after the provider round trip. Empty when signing in with a password.

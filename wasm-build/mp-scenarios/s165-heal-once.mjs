@@ -71,8 +71,22 @@ export default async function run(ctx) {
   }
   ctx.log(`cast ${id}: active spells now [${actives}]`);
   assert.ok(String(actives).split(',').includes(id), `the cast never took (actives: ${actives})`);
-  // The heal runs 5 s on the client; give the raise claim and the peer's reports time to settle.
-  await ctx.sleep(8_000);
+  // THE HEAL RUNS ON THE ENGINE'S CLOCK. A 10 x 5 s restore is 5 s of ENGINE time, and a
+  // streamed harness client at ~1 fps integrates a clamped 0.2 s per frame (backlog 445: the
+  // same skew s149/s162 allow for), so the effect takes ~25 s of wall clock -- the flat 8 s
+  // here read the bar a third of the way through (#107 41/95, #111 43/95: "never landed").
+  // Wait until the engine says the effect is over, then let the last claim and report settle.
+  const ended = Date.now() + 90_000;
+  let running = true;
+  while (running && Date.now() < ended) {
+    await ctx.sleep(2_000);
+    await a.eval("if (window.omw.state) window.omw.state.actives = null; 'cleared';");
+    await a.cmd('actives');
+    await a.waitFor("typeof window.omw.state.actives === 'string'", 10_000, 'actives answered');
+    running = String(await a.eval('window.omw.state.actives')).split(',').includes(id);
+  }
+  ctx.log(`the effect ${running ? 'is STILL running after 90 s' : 'has ended'}; settling`);
+  await ctx.sleep(4_000);
   const after = await bars(a);
   const local = Number(await a.eval('window.omw.state.hp'));
   ctx.log(`after the heal: peer says ${after.c}/${after.b}, the client's own bar says ${local}`);

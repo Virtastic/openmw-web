@@ -27,6 +27,12 @@ export default async function run(ctx) {
   await b.cmd('snapto:-12300,-53100,512');
   await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'the peer named a creature');
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP, 'the cell is puppeted (the peer holds it)');
+  // THE PROBE IS A MIRROR, NOT A READ. actorProbe is rewritten on actors.lua's tick from the
+  // own cell's actors; `netObjects > 0` is true the moment the peer's spawn is netted, a tick
+  // or a cell change before the probe lists it (#111 s164: "no living named creature in the
+  // probe: []" with three scribs netted in -2,-7). Wait for a living netted record IN the probe.
+  await a.waitFor(`(function(){var pr=JSON.parse(window.omw.state.actorProbe||"{}");return Object.values(JSON.parse(window.omw.state.netObjects||"{}")).some(function(r){var p=pr[r];return p&&!p.dead;});})()`,
+    STEP, 'the peer\'s creature is in the probe, alive');
   // The nearest living mark, by record (the probe is keyed by record; s138).
   const me = await poseOf(a);
   const probe = JSON.parse(await a.eval('window.omw.state.actorProbe||"{}"'));

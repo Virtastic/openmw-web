@@ -1762,5 +1762,23 @@ do
     c:find('[mp] CombatSpellHit on peer: spell=%s net=%s ref=%s cell=%s resolved=%s hp=%s', 1, true) ~= nil)
 end
 
+print('#460 the harness rest lands after the pending bar write (s150 in #111)')
+do
+  -- synchronizedUpdate runs onFrame BEFORE applyDelayedActions (mwlua/luamanagerimp.cpp), so a
+  -- C++ rest applied inline from a harness command lost to the MP_SelfStats write queued in
+  -- the previous update. Queued through addAction it lands after that write, in order.
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  local lm = io.open('./openmw/apps/openmw/mwlua/luamanagerimp.cpp'):read('*a')
+  local body = lb:match('api%["restHours"%](.-)api%["getLoginTicket"%]')
+  check('mp.restHours queues the rest as a delayed action instead of resting inline',
+    body ~= nil and body:find('luaManager->addAction(', 1, true) ~= nil
+    and body:find('"MPRestHours"', 1, true) ~= nil
+    and body:find('getMechanicsManager()->rest(1, sleep)', 1, true) ~= nil)
+  local onFrameAt = lm:find('playerScripts->onFrame(frameDuration);', 1, true)
+  local applyAt = lm:find('applyDelayedActions();', onFrameAt or 1, true)
+  check('synchronizedUpdate still runs onFrame before applyDelayedActions (the order the fix relies on)',
+    onFrameAt ~= nil and applyAt ~= nil and onFrameAt < applyAt)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

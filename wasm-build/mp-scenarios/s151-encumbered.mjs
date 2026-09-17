@@ -68,7 +68,16 @@ export default async function run(ctx) {
   const p2 = await pose(a);
   const q2 = JSON.parse(await b.eval(`JSON.stringify(${rowOf})`));
   await a.cmd(`walk:${dir},3000`);
-  await ctx.sleep(4_000);
+  // WHO MOVED A. The local engine refuses to walk an over-encumbered body (Npc::getSpeed is 0
+  // past capacity), so ground covered on A's own screen is a correction or a snap toward an
+  // avatar that is not where A is -- #111 measured 80 u with the avatar standing still on B's
+  // screen and a 63 u divergence, which no walk explains. Sample both sides through the walk.
+  for (let i = 0; i < 4; i++) {
+    await ctx.sleep(1_000);
+    const pa = await pose(a), qa = JSON.parse(await b.eval(`JSON.stringify(${rowOf})`));
+    ctx.log(`  t+${i + 1}s A own (${pa.x.toFixed(0)},${pa.y.toFixed(0)}) avatar on B (${Number(qa.x).toFixed(0)},${Number(qa.y).toFixed(0)})`
+      + ` divergence ${await a.eval('window.omw.state.selfDivergence||"?"')} snap=${await a.eval('window.omw.state.selfSnap||""')} stale=${await a.eval('window.omw.state.selfStale||""')}`);
+  }
   const p3 = await pose(a);
   const q3 = JSON.parse(await b.eval(`JSON.stringify(${rowOf})`));
   const own = dist2(p2, p3), seen = dist2(q2, q3);

@@ -39,6 +39,16 @@ export default async function run(ctx) {
     ctx.log(`walk ${dx},${dy}: covered ${d.toFixed(0)} units, divergence ${div.toFixed(0)}, stale=${await a.eval('window.omw.state.selfStale||""')}`);
     moved = Math.max(moved, d); maxDiv = Math.max(maxDiv, div);
   }
+  if (!(moved > 30)) {
+    // NOT THE AVATAR (#111: 0 u in all four directions with divergence 0, no avatar spawned on
+    // the peer, and one same-cell PlayerCellChange -- a >256 u single-frame jump -- announced
+    // during the first walk; #107 walked 31/31/13/26 in the same office). Whatever moved A back
+    // is on A's own engine: print what the client can see of it before the verdict.
+    const diag = {};
+    for (const k of ['uiMode', 'lastKey', 'selfSnap', 'selfStale', 'restorePos', 'restoreFired', 'cell', 'state']) diag[k] = await a.eval(`window.omw.state.${k}||""`);
+    ctx.log(`  client mirrors: ${JSON.stringify(diag)}`);
+    ctx.log(`  client console tail:\n${a.logTail()}`);
+  }
   assert.ok(moved > 30, `A could not walk in the chargen cell (best ${moved.toFixed(0)} units): the peer streams a frozen avatar there and reconciliation pins the player`);
   assert.ok(maxDiv < 30, `an avatar is being streamed for a player in the chargen sanctuary (divergence ${maxDiv.toFixed(0)})`);
   ctx.log('PASS: a new character walks freely in the chargen sanctuary with a live peer');
