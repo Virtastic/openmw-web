@@ -1209,6 +1209,10 @@ function actors.tick(now)
         local probe = {}
         for _, obj in ipairs(cellActors(ownCell)) do
             local rec = obj.recordId
+            -- n: how many of this record stand in the cell. First-wins by record means two
+            -- clients can be looking at DIFFERENT fish (s42 #117: slaughterfish_small 4859 u
+            -- apart); a scenario compares records with n == 1 only.
+            if probe[rec] then probe[rec].n = probe[rec].n + 1 end
             if not probe[rec] then
                 local p = obj.position
                 -- `guard` so a scenario can find the actor that is supposed to REACT to a
@@ -1221,7 +1225,7 @@ function actors.tick(now)
                 local hp = -1
                 pcall(function() hp = types.Actor.stats.dynamic.health(obj).current end)
                 probe[rec] = { x = p.x, y = p.y, z = p.z, dead = types.Actor.isDead(obj),
-                    guard = isGuard, hp = hp }
+                    guard = isGuard, hp = hp, n = 1 }
             end
         end
         mp.set('actorProbe', json.encode(probe))

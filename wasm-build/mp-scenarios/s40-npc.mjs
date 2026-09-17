@@ -128,7 +128,7 @@ export default async function run(ctx) {
     const first = await probeOf(holder);
     await ctx.sleep(1_200);
     const [ph, pp] = await Promise.all([probeOf(holder), probeOf(peer)]);
-    shared = Object.keys(ph).filter((r) => pp[r] && first[r] && dist(first[r], ph[r]) < 5);
+    shared = Object.keys(ph).filter((r) => pp[r] && first[r] && dist(first[r], ph[r]) < 5 && (ph[r].n ?? 1) === 1); // n: unique in the cell
     if (shared.length >= 3) {
       worst = 0;
       for (const rec of shared) {
