@@ -93,6 +93,10 @@ export default async function run(ctx) {
     const blocked = JSON.parse(await host.client.eval("window.omw.state.blocked||'[]'"));
     assert.equal(blocked.length, 1, `the blocked list must name them: ${JSON.stringify(blocked)}`);
     ctx.log('ok: blocking ended the friendship on both sides');
+    // The block also SENDS THE GUEST HOME (s139), and the trip is a page navigation: #114 lost
+    // the guest's inspector mid-eval ("Inspected target navigated or closed"). Let them land
+    // in their own world before knocking again.
+    await guest.client.waitFor('window.omw.state.state === "Joined" && String(window.omw.state.worldClosed||"") === ""', 180_000, 'the blocked guest is back in their own world');
 
     // And the door is shut. Asked the same way, by the same client, with the same account key
     // it used a moment ago when it worked — only the friendship has changed.
