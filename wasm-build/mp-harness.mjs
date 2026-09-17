@@ -1098,6 +1098,16 @@ for (const file of files) {
       const t = c.tail();
       if (t.trim()) console.error(`--- ${c.label.toUpperCase()} LOG ---\n${t}`);
     }
+    // EVERY client, not just the one the error names: a scenario reads its verdict through one
+    // client while the OTHER has quietly stopped (#115 s114: B's engine died six seconds before
+    // the walk and the scenario read a frozen mirror 90 times; s149 is the same shape). Errors
+    // and a short distinct tail per client -- the wasm trap or OOM shows here, nowhere else.
+    for (const c of clients) {
+      try {
+        const errs = [...c.jsErrors(), ...c.luaErrors()].slice(-6);
+        console.error(`--- CLIENT ${c.name} (errors ${errs.length}) ---\n${errs.join(NL)}${errs.length ? NL : ''}${c.logTail(12)}`);
+      } catch { /* a closed handle has nothing to say */ }
+    }
     // The PEER's narration (#183): its `[mp]` lines (follow claims, avatar teleports, cell
     // grants) were only reachable through ctx.peerLogTail, so a red like s114 never showed
     // whether the holder acted. The last 80 mp lines of every hand-spawned peer, on every FAIL.
