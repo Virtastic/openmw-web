@@ -25,6 +25,16 @@ export default async function run(ctx) {
   ctx.log(`A is in "${cell}"`);
   assert.match(cell.toLowerCase(), /census/, 'A must start in the Census office');
   await ctx.sleep(4_000); // long enough for a spawned avatar to start streaming, if one were
+  // NO ENGINE WINDOW. A new character in the office can have a chargen dialog up (#116:
+  // uiMode 'Interface' through all four walks, 18/18/0/25 u), and a window owns the keys --
+  // that is not the pin this scenario is about. Wait for it to clear; close it if it lingers.
+  for (let i = 0; i < 3; i++) {
+    const ok = await a.waitFor("String(window.omw.state.uiMode||'none') === 'none'", 10_000, 'no engine window is up').then(() => true).catch(() => false);
+    if (ok) break;
+    ctx.log(`  uiMode=${await a.eval('window.omw.state.uiMode')}: sending Escape`);
+    await a.eval(`document.getElementById('canvas').focus()`);
+    await a.key({ key: 'Escape', code: 'Escape', keyCode: 27 });
+  }
 
   // Walk in each direction. The office is cramped (desks, walls): a free player covers a
   // few dozen units before something stops them; a PINNED one covers almost nothing and,
