@@ -43,6 +43,11 @@ export default async function run(ctx) {
   // 1. T opens chat: Lua leg (openChat signal) then JS leg (panel active + input focused).
   // SDL's keyboard listener hangs off the CANVAS (tabindex=0) — a real player focused it by
   // clicking into the game; CDP keys go to the focused element, so focus it explicitly.
+  // The overlay absorbs every hotkey signal until the character exists (index.html: the
+  // poll parks seenOpenChat while !ready, and ready is chargenDone === '1'). The tour above
+  // shows on Joined, which is EARLIER: chargenDone waits on the restore (backlog 404), so a T
+  // pressed in that gap is swallowed by design -- #111's 'T opened the chat panel' timeout.
+  await a.waitFor(`window.omw.state.chargenDone === '1'`, 20000, 'the character exists (hotkeys live)');
   await a.eval(`document.getElementById('canvas').focus()`);
   await a.key(T);
   await a.waitFor(`document.getElementById('omw-chat').classList.contains('active')`, 5000,
