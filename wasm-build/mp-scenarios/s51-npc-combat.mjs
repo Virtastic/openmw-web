@@ -93,7 +93,13 @@ export default async function run(ctx) {
   ctx.log('ok: the NPC died from hits routed through the cell owner');
 
   // The death is authored by the peer and must reach BOTH players, not just whoever swung last.
-  await a.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on client A');
+  // 60 s, and say whether A is even running if it misses (#116: B saw the death, A did not in
+  // 25 s; the 478 freezes look exactly like this from the outside).
+  const framesA = Number(await a.eval('window.omw.state.actorBatchesIn||0'));
+  await a.waitFor(deadExpr, 60_000, 'NPC dead on client A').catch(async (e) => {
+    ctx.log(`  A actorBatchesIn ${framesA} -> ${await a.eval('window.omw.state.actorBatchesIn')} over the wait; probe=${JSON.stringify((await probeOf(a))[victim])}`);
+    throw e;
+  });
   await b.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on client B');
 
   // Exactly ONE kill counted on both clients (server dedups by (ref, deathNo)) — two players
