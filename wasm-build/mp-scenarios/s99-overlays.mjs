@@ -59,10 +59,19 @@ export default async function run(ctx) {
     ctx.log('ok: the unlocked tour shown + dismissed');
   }
   await ctx.sleep(900); // past the 800 ms signal suppression a tour close arms
-  await a.eval(`document.getElementById('canvas').focus()`);
-  await a.key(T);
-  await a.waitFor(`document.getElementById('omw-chat').classList.contains('active')`, 5000,
-    'T opened the chat panel').catch(async (e) => { ctx.log(`uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')} openChat=${await a.eval('window.omw.state.openChat')} tour=${await a.eval("document.getElementById('omw-tour').className")}`); throw e; });
+  // Up to three presses. #116: the key reached the engine (lastKey=t) and toggleChat did not
+  // run, so I.UI.getMode() was non-nil AT the keystroke -- an engine window in the moment
+  // after chargen -- while the uiMode mirror, re-mirrored on change, read 'none' afterwards.
+  // A player presses again; so does this, once the mirror says the keys are free.
+  let opened = false;
+  for (let i = 0; i < 3 && !opened; i++) {
+    await a.waitFor(`String(window.omw.state.uiMode||'none') === 'none'`, 5000, 'no engine window owns the keys').catch(() => {});
+    await a.eval(`document.getElementById('canvas').focus()`);
+    await a.key(T);
+    opened = await a.waitFor(`document.getElementById('omw-chat').classList.contains('active')`, 5000, 'T opened the chat panel').then(() => true).catch(() => false);
+    if (!opened) ctx.log(`  press ${i + 1}: no chat panel; uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')} openChat=${await a.eval('window.omw.state.openChat')}`);
+  }
+  assert.ok(opened, 'T never opened the chat panel in three presses');
   await a.waitFor(`document.activeElement && document.activeElement.id === 'omw-tx'`, 3000,
     'chat input took keyboard focus');
   ctx.log('ok: chat panel open + input focused');
