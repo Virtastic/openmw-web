@@ -33,7 +33,7 @@ export default async function run(ctx) {
     if (ok) break;
     ctx.log(`  uiMode=${await a.eval('window.omw.state.uiMode')}: sending Escape`);
     await a.eval(`document.getElementById('canvas').focus()`);
-    await a.key({ key: 'Escape', code: 'Escape', keyCode: 27 });
+    await a.key({ key: 'Escape', code: 'Escape', keyCode: 27, text: '' }); // text: '' -- a name is not a character (s99's ESC)
   }
 
   // Walk in each direction. The office is cramped (desks, walls): a free player covers a
