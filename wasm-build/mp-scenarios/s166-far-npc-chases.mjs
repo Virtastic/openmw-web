@@ -83,13 +83,15 @@ export default async function run(ctx) {
   // The retreat is the setup: it must leave the mark OUTSIDE reach (else the close below is
   // vacuous); how much of the 450 u the chase has already closed is the chase's business.
   assert.ok(gap0 >= CLOSE, `the retreat did not open the gap (${gap0.toFixed(0)} u; -1 = the mark is gone or dead); the chase would prove nothing`);
-  const deadline = Date.now() + 15_000;
+  // 30 s, not 15: #114 watched the forager close 422 -> 207 u in 15 s -- chasing, just slowly
+  // (a kwama forager walks ~15 u/s). A frozen AI closes nothing; that is what this catches.
+  const deadline = Date.now() + 30_000;
   let gap = gap0;
   while (Date.now() < deadline && gap >= CLOSE) { // -1 (dead/gone) ends the wait too
     await ctx.sleep(500);
     gap = Number(await b.eval(gapExpr));
   }
   ctx.log(`gap after the chase window: ${gap.toFixed(0)} u (probe=${JSON.stringify(await probeOf(b, victim))})`);
-  assert.ok(gap >= 0 && gap < CLOSE, `the ${victim} never closed from ${gap0.toFixed(0)} to ${CLOSE} u in 15 s (${gap.toFixed(0)}; -1 = it died or left the probe): the peer's AI is frozen two cells from its dummy (pathTo's inactive-cell gate)`);
+  assert.ok(gap >= 0 && gap < CLOSE, `the ${victim} never closed from ${gap0.toFixed(0)} to ${CLOSE} u in 30 s (${gap.toFixed(0)}; -1 = it died or left the probe): the peer's AI is frozen two cells from its dummy (pathTo's inactive-cell gate)`);
   ctx.log(`PASS: the peer's ${victim} chased the avatar ${gap0.toFixed(0)} -> ${gap.toFixed(0)} u two cells from the dummy`);
 }
