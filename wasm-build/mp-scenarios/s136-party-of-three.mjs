@@ -84,8 +84,10 @@ export default async function run(ctx) {
     for (const [who, cli] of [['A', ga.client], ['B', gb.client], ['host', host.client]]) {
       await cli.waitFor(`${netCount} === 0`, STEP, `the item left the ground on ${who}`);
     }
-    await ctx.sleep(1_500);
-    const aNow = await countOf(ga.client, ITEM_NAME), bNow = await countOf(gb.client, ITEM_NAME);
+    // The take lands in B's pack a frame or more after it leaves the ground; at B's frame
+    // rate a fixed pause counted 0 (#117). Count until it is there.
+    let aNow = 0, bNow = bHad;
+    for (let i = 0; i < 20 && bNow !== bHad + 1; i++) { await ctx.sleep(1_000); [aNow, bNow] = [await countOf(ga.client, ITEM_NAME), await countOf(gb.client, ITEM_NAME)]; }
     ctx.log(`trade: A holds ${aNow}, B holds ${bNow} (had ${bHad})`);
     assert.equal(aNow, 0, 'A still holds what it gave B');
     assert.equal(bNow, bHad + 1, "B did not receive A's item");
