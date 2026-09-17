@@ -85,7 +85,11 @@ export default async function run(ctx) {
   ctx.log(`B's puppet of A after the dispel: [${seen}]`);
   assert.equal(seen.length, 0, 'B still sees A as invisible after A dispelled it');
   // And B's own body was never touched.
+  // As SETS: the engine lists an innate ability twice for a while after a record apply and
+  // collapses it later (#116: [resist fire_75, resist fire_75] -> [resist fire_75]); that is
+  // not A's effect arriving. What must not appear is anything that was not there before.
   const own = await actives(b);
-  assert.deepEqual(own, ownBefore, `B's own body changed with A's effect: [${ownBefore}] -> [${own}]`);
+  const uniq = (l) => [...new Set(l)].sort();
+  assert.deepEqual(uniq(own), uniq(ownBefore), `B's own body changed with A's effect: [${ownBefore}] -> [${own}]`);
   ctx.log('PASS: an invisible friend is invisible on the other screen, and solid again when dispelled');
 }
