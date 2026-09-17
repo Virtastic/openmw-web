@@ -69,6 +69,23 @@ export default async function run(ctx) {
   // the encumbered "walk" that followed was reconciliation pulling A back, overshooting by up
   // to 68 u. Measured from a settled start, ground covered is a real walk or a real snap.
   await ctx.sleep(4_000);
+  // ...and PROVE the load landed on the avatar before measuring. The pack travels as a 2 s
+  // inventory diff -> server -> AvatarState -> the peer, and #115 walked before it arrived:
+  // the avatar covered 238 u on B and A followed it 414 u. Nothing mirrors the avatar's
+  // pack, so ask it the only way that matters -- a short walk B must NOT see -- and retry
+  // until it refuses. An avatar that never refuses is the bug this scenario exists for.
+  let loaded = false;
+  for (let i = 0; i < 8 && !loaded; i++) {
+    await a.waitFor("Number(window.omw.state.selfDivergence||999) < 10", 20_000, "A settled on the avatar")
+      .catch(async () => ctx.log(`  not settled: divergence ${await a.eval("window.omw.state.selfDivergence")}`));
+    const q0 = JSON.parse(await b.eval(`JSON.stringify(${rowOf})`));
+    await a.cmd(`walk:${dir},1500`);
+    await ctx.sleep(2_500);
+    const q1 = JSON.parse(await b.eval(`JSON.stringify(${rowOf})`));
+    loaded = dist2(q0, q1) < 15;
+    ctx.log(`  probe ${i + 1}: the avatar moved ${dist2(q0, q1).toFixed(0)} u on B's screen (${loaded ? 'loaded' : 'not yet carrying the load'})`);
+  }
+  assert.ok(loaded, 'the avatar never became over-encumbered: the pack never reached the peer, or the peer lets an over-encumbered body walk');
   await a.waitFor("Number(window.omw.state.selfDivergence||999) < 10", 20_000, "A settled on the avatar before the encumbered walk")
     .catch(async () => ctx.log(`  not settled: divergence ${await a.eval("window.omw.state.selfDivergence")} (measuring anyway)`));
   const p2 = await pose(a);
