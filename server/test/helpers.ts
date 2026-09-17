@@ -52,6 +52,7 @@ export class TestClient {
   readonly inbox: Inbox = { json: [], events: [], batches: [], actorBatches: [], stateBatches: [], inputForwards: [] };
   readonly closed: Promise<{ code: number; reason: string }>;
   isClosed = false;
+  closeInfo = ''; // "1008 IP_CAP", plus the SessionDisconnect code if one arrived: a wait that dies on close says WHY
   private seq = 0;
   private waiters: (() => void)[] = [];
 
@@ -81,6 +82,8 @@ export class TestClient {
     this.closed = new Promise((resolve) => {
       ws.on('close', (code, reason) => {
         this.isClosed = true;
+        const dc = this.inbox.json.find((m) => m.t === 'SessionDisconnect');
+        this.closeInfo = code + ' ' + reason.toString() + (dc ? ' after SessionDisconnect ' + String(dc.code) + ': ' + String(dc.reason ?? '') : '');
         this.wake();
         resolve({ code, reason: reason.toString() });
       });
@@ -189,7 +192,7 @@ export class TestClient {
     for (;;) {
       const found = pick();
       if (found !== undefined) return found;
-      if (this.isClosed) throw new Error(`socket closed while waiting for ${what}`);
+      if (this.isClosed) throw new Error(`socket closed while waiting for ${what} (${this.closeInfo})`);
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error(`timeout waiting for ${what}`);
       await new Promise<void>((resolve) => {
