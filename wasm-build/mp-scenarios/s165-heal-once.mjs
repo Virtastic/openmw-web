@@ -89,7 +89,8 @@ export default async function run(ctx) {
   await ctx.sleep(4_000);
   const after = await bars(a);
   const local = Number(await a.eval('window.omw.state.hp'));
-  ctx.log(`after the heal: peer says ${after.c}/${after.b}, the client's own bar says ${local}`);
+  ctx.log(`after the heal: peer says ${after.c}/${after.b}, the client's own bar says ${local},`
+    + ` last hp claim ${await a.eval('window.omw.state.hpClaim || "none"')} (backlog 461: <bar>+<gain>)`);
   assert.ok(after.c > before.c + 30, `the heal never landed (${before.c} -> ${after.c}); did the cast fizzle?`);
   // ONCE: +50. Twice is +100, which the base pins at +60.
   assert.ok(after.c >= before.c + 45 && after.c <= before.c + 55,

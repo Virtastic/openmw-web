@@ -507,20 +507,41 @@ function identity.tick(now)
                 -- on no body that fights.
                 local baseMoved = t.baseSaid ~= nil and math.abs(dyn[k].b - t.baseSaid) > 0.5
                 if math.abs(t.delta) > 0.5 or baseMoved then
-                    claim[k] = { c = math.floor(math.max(0, math.min(dyn[k].b, t.peer + t.delta)) + 0.5), b = dyn[k].b }
+                    -- THE GAIN RIDES ALONG AS `d` (backlog 461). `c` is `last report + gain`,
+                    -- and the last report is stale for a round trip after every raise the
+                    -- server applies: each claim in that window was BELOW the doc, ignored
+                    -- as an echo, and its gain was zeroed here -- a 10x5 restore reached the
+                    -- avatar as +6..+10 of 50 (s165). The server adds `d` to what it holds.
+                    claim[k] = { c = math.floor(math.max(0, math.min(dyn[k].b, t.peer + t.delta)) + 0.5), b = dyn[k].b,
+                        d = math.floor(t.delta * 10 + 0.5) / 10 }
                     any = true
                 end
                 t.baseSaid = dyn[k].b
                 t.delta = 0
             end
-            if any then mp.sendEvent('PlayerStatsDynamic', claim) end
+            if any then
+                mp.sendEvent('PlayerStatsDynamic', claim)
+                if claim.hp then mp.set('hpClaim', string.format('%d+%s', claim.hp.c, tostring(claim.hp.d))) end
+            end
             last.dynamic = nil -- the next full snapshot (peer gone) must send unconditionally
         else
-            for _, t in pairs(tracked) do t.delta = 0 end
-            local fp = fingerprint(dyn)
-            if fp ~= last.dynamic then
+            -- OUR OWN BARS RULE (no fresh report) -- but the server may still be inside its
+            -- own freshness window, in which case it reads this snapshot as a claim, and a
+            -- gain zeroed here without being said was a heal that reached nobody (s150: the
+            -- rest's +24 in a frame the peer's word had gone stale). Say it, then zero it.
+            local fp = fingerprint(dyn) -- of the bars alone: a gain is not a change to re-send
+            local anyGain = false
+            for k, t in pairs(tracked) do
+                if math.abs(t.delta) > 0.5 then
+                    dyn[k].d = math.floor(t.delta * 10 + 0.5) / 10
+                    anyGain = true
+                end
+                t.delta = 0
+            end
+            if fp ~= last.dynamic or anyGain then
                 last.dynamic = fp
                 mp.sendEvent('PlayerStatsDynamic', dyn)
+                if dyn.hp.d then mp.set('hpClaim', string.format('%d+%s', dyn.hp.c, tostring(dyn.hp.d))) end
             end
         end
     end

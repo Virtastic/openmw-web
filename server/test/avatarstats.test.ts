@@ -224,6 +224,67 @@ test('a client heal reaches the peer, and sustained fake healing is refused', as
     `sustained fake magicka refills were accepted ${refills} times -- casting would be free`);
 });
 
+// THE GAIN, NOT THE BAR (backlog 461, s165 +6..+10 of 50; s150 +0). The client's `c` is
+// `last peer report + what it healed since`, and that report is a round trip stale after every
+// raise this handler applies: the next claim computed `old report + small gain`, sat BELOW the
+// doc, and was ignored as an echo -- while the client had already zeroed the gain. With `d`
+// the gain is applied on top of whatever the doc holds, so a heal that ticks across several
+// claims lands whole; a peer-authored drop between claims still stands.
+test('a claim carrying its gain as `d` lands on top of the doc, not on the stale bar it was built from', async (t) => {
+  const { peer, a } = await world(t);
+  let seq = 0;
+  a.sendInput({ move: 1 }, ++seq);
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  // The peer's report is pinned at 20 for the whole test: it never reflects the raises, which
+  // is exactly the window the ladder lost (the report that would is still in flight).
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', {
+    entries: [{ id: a.playerId, ...bars(20) }],
+  }), 150);
+  t.after(() => clearInterval(reporter));
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 20);
+  clearInterval(reporter); // the doc keeps the last report (20) while the raises stack
+  await new Promise((r) => setTimeout(r, 200));
+
+  const restore = (want: number) => peer.waitEvent('AvatarRestore',
+    (v) => (v as { id?: number; hp?: { c?: number } })?.id === a.playerId && (v as { hp?: { c?: number } }).hp?.c === want);
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 30, b: 100, d: 10 } });
+  await restore(30);
+  // The old shape: `c` computed on the stale report is BELOW the doc (30) -- with `d` it lands.
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 25, b: 100, d: 5 } });
+  await restore(35);
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 22, b: 100, d: 2.5 } });
+  await restore(37.5);
+  // Gains only for health: a negative `d` is the peer's business and changes nothing.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 5, b: 100, d: -20 } });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'AvatarRestore').length, 0, 'a negative health gain was applied');
+  // A client without `d` still lands its absolute bar.
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 60, b: 100 } });
+  await restore(60);
+  // Magicka takes the net change both ways on top of the doc (the report said 50/50).
+  a.sendEvent('PlayerStatsDynamic', { mp: { c: 45, b: 50, d: -20 } });
+  const spend = await peer.waitEvent('AvatarRestore',
+    (v) => (v as { id?: number; mp?: unknown })?.id === a.playerId && (v as { mp?: unknown }).mp !== undefined);
+  assert.equal((spend.value as { mp?: { c?: number } }).mp?.c, 30, 'a spend as `d` lands on the doc, not on the stale bar');
+  // Capped at the base, and still budgeted: `d` widens nothing.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 60, b: 100, d: 5000 } });
+  await restore(100);
+  peer.inbox.events.length = 0;
+  for (let i = 0; i < 40; i++) {
+    a.sendEvent('PlayerStatsDynamic', { hp: { c: 100, b: 100, d: -90 } });
+    a.sendEvent('PlayerStatsDynamic', { mp: { c: 50, b: 50, d: -45 } });
+    a.sendEvent('PlayerStatsDynamic', { mp: { c: 50, b: 50, d: 45 } });
+  }
+  await new Promise((r) => setTimeout(r, 600));
+  const refills = peer.inbox.events.filter((e) => e.name === 'AvatarRestore'
+    && (e.value as { mp?: { c?: number } })?.mp?.c === 50).length;
+  assert.ok(refills < 8, `sustained fake magicka refills through \`d\` were accepted ${refills} times`);
+});
+
 // ACTIVE EFFECTS reach the avatar. Levitate, Water Walking, a potion: cast or drunk on the
 // client, applied to that body only -- and the peer's avatar is what physics and NPC awareness
 // run against. The client diffs its temporary effects; the server checks the shape and forwards.

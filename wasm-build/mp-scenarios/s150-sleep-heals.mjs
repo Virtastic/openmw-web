@@ -42,7 +42,11 @@ export default async function run(ctx) {
   let after = wounded;
   const by = Date.now() + 40_000;
   while (Date.now() < by && !(after.c > wounded.c + 10)) { await ctx.sleep(1_000); after = (await bars(host)) || after; }
-  ctx.log(`after sleeping ${HOURS} h: ${after.c}/${after.b}`);
+  // WHICH HALF LOST IT (backlog 460): the client's own bar (identity's `hp` mirror) says whether
+  // the engine healed at all, `hpClaim` whether identity.lua said so (`<bar>+<gain>`), and the
+  // peer's word above whether the server and the avatar took it. Three reds gave only the last.
+  ctx.log(`after sleeping ${HOURS} h: peer says ${after.c}/${after.b}; the client's own bar says ${await host.eval('window.omw.state.hp')},`
+    + ` last hp claim ${await host.eval('window.omw.state.hpClaim || "none"')}`);
   assert.ok(after.c > wounded.c + 10, `sleeping ${HOURS} h healed nothing that stuck (${wounded.c} -> ${after.c})`);
   assert.ok(after.c <= after.b, 'never past the maximum');
 

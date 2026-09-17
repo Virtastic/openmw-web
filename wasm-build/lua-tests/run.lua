@@ -1780,5 +1780,79 @@ do
     onFrameAt ~= nil and applyAt ~= nil and onFrameAt < applyAt)
 end
 
+print('#461 a client heal reaches the avatar in full: the claim carries the GAIN, not the bar')
+do
+  -- THE LADDER (s165: a 10x5 restore landed +6..+10 of 50; s150: a rest +0). identity.lua
+  -- claimed `last report + gain`; the server applied a claim only if it was ABOVE the doc.
+  -- After the first raise landed, every claim until the avatar's next report came back was
+  -- built on the OLD report -- below the doc, ignored as an echo -- and the client had
+  -- already zeroed the gain it was built from. Here the real identity.lua runs against a
+  -- model of the peer round trip (report on change, LAT frames each way) and a server that
+  -- applies `d` on top of its doc; the heal must land whole, and a peer-authored drop
+  -- between two claims must not be undone by them.
+  fresh()
+  env = stubs.install({})
+  identity = require('scripts.mp.identity')
+  identity.markBaselineReady()
+  local LAT, dt = 2, 0.2
+  local doc, avatar, reports, restores, t = 35, 35, {}, {}, 0
+  local lastKey, lastAt = nil, -10
+  env.dyn.health.base = 95
+  env.dyn.health.current = 35
+  local function serverApply(body)
+    local hp = body.hp
+    if not hp then return end
+    -- playerstate.ts raise(): `d` on top of the doc when present, else the absolute bar
+    local want = math.min(hp.d ~= nil and (doc + math.max(0, hp.d)) or hp.c, 95)
+    if want > doc + 0.5 then doc = want; restores[#restores + 1] = { at = t + LAT * dt, hp = doc } end
+  end
+  local function frame(heal)
+    identity.tick(t)
+    for _, c in ipairs(env.calls.events) do if c.name == 'PlayerStatsDynamic' then serverApply(c.body) end end
+    env.calls.events = {}
+    if heal then env.dyn.health.current = math.min(95, env.dyn.health.current + heal) end
+    for i = #restores, 1, -1 do if restores[i].at <= t then avatar = restores[i].hp; table.remove(restores, i) end end
+    local key = string.format('%.1f', avatar)
+    if key ~= lastKey or t - lastAt >= 3 then lastKey, lastAt = key, t; reports[#reports + 1] = { at = t + 2 * LAT * dt, hp = avatar } end
+    for i = #reports, 1, -1 do
+      if reports[i].at <= t then
+        identity.notePeerBars(reports[i].hp, 50, 100); env.dyn.health.current = reports[i].hp; table.remove(reports, i)
+      end
+    end
+    t = t + dt; env.advance(dt)
+  end
+  for _ = 1, 10 do frame() end
+  for _ = 1, 25 do frame(2) end -- a 10/s restore for 5 s at 5 fps: +50
+  for _ = 1, 30 do frame() end
+  check('a 50-point restore over 5 s reaches the avatar whole (461: it landed +6..+10)',
+    avatar >= 84 and avatar <= 86, 'avatar=' .. tostring(avatar))
+  -- The peer hurts us between two claims: the report is lower, and the next local gain is
+  -- claimed on top of the BITE, not on top of the bar we had before it.
+  avatar = 60; doc = 60
+  for _ = 1, 20 do frame() end
+  for _ = 1, 5 do frame(2) end -- +10 local
+  for _ = 1, 20 do frame() end
+  check('a peer-authored drop stays, and the gain after it lands on the dropped bar', avatar >= 69 and avatar <= 71, 'avatar=' .. tostring(avatar))
+  -- s150's shape: one +24 in a frame the peer's word has gone stale (a long rest frame, no
+  -- report processed for PEER_RULES_S). The client-authoritative snapshot used to zero the
+  -- gain; it must carry it as `d` too, since the server may still be inside its own window.
+  fresh()
+  env = stubs.install({})
+  identity = require('scripts.mp.identity')
+  identity.markBaselineReady()
+  env.dyn.health.base = 95
+  env.dyn.health.current = 35
+  identity.notePeerBars(35, 50, 100)
+  identity.tick(0)
+  env.calls.events = {}
+  env.advance(6); env.dyn.health.current = 59 -- the rest landed; the last report is 6 s old
+  identity.tick(6)
+  local snap
+  for _, c in ipairs(env.calls.events) do if c.name == 'PlayerStatsDynamic' then snap = c.body end end
+  check('the stale-peer snapshot says the gain too (460: the rest\'s +24 was zeroed unsaid)',
+    snap ~= nil and snap.hp and snap.hp.c == 59 and snap.hp.d == 24, snap and snap.hp and ('c=' .. tostring(snap.hp.c) .. ' d=' .. tostring(snap.hp.d)) or 'no snapshot')
+  check('the mirror names the last hp claim for the scenarios', env.calls.testSet['hpClaim'] == '59+24', tostring(env.calls.testSet['hpClaim']))
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

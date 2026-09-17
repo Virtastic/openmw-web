@@ -232,6 +232,17 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     // raise that follows is those hours' healing, in zero world time: dropped for a few
     // seconds after the refusal. A potion in that window is lost too; a small price.
     const restRefused = player.restRefusedAt !== undefined && Date.now() - player.restRefusedAt <= REST_REFUSED_MS;
+    // THE GAIN, NOT THE BAR (backlog 461/460). `c` is the client's ARITHMETIC: the peer's last
+    // report plus what it healed since -- and that report is stale the moment a raise lands,
+    // because the avatar's next report takes a round trip to come back. Every claim in that
+    // window computed `old report + small delta`, which was BELOW the doc the raise had just
+    // written, so it was ignored here as an echo -- and the client had already zeroed the
+    // delta it was built from. A 10x5 restore landed +6..+10 of its 50 (s165 #107/#111/#114).
+    // identity.lua now sends the gain itself as `d`; applied on top of what the doc holds,
+    // it is right whatever the client thinks the bar is. `c` stays the fallback for a client
+    // that predates `d`. Same trust boundary: gains only for hp/ft, capped at the base, and
+    // the restore budget below still bounds the rate.
+    const gainOf = (k: 'hp' | 'mp' | 'ft'): number | undefined => finite(tbl(body.get(k))?.get('d'));
     const raise = (k: 'hp' | 'mp' | 'ft', v: DynamicStatDoc) => {
       // `have.b` (or a plausibly stepped new base), NEVER `v.b` outright: `v` is the client's
       // own untrusted body, so capping against its claimed base let a modified client assert
@@ -246,7 +257,8 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
         return undefined;
       }
       const b = newBase(k, v) ?? have.b;
-      const want = Math.min(v.c, b);
+      const d = gainOf(k);
+      const want = Math.min(d !== undefined ? have.c + Math.max(0, d) : v.c, b);
       if (want > have.c + 0.5 || b !== have.b) return { c: Math.max(want, Math.min(have.c, b)), b };
       return undefined;
     };
@@ -260,7 +272,8 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     const spend = (v: DynamicStatDoc) => {
       const have = cur?.mp; if (have === undefined) return undefined;
       const b = newBase('mp', v) ?? have.b;
-      const want = Math.max(0, Math.min(v.c, b));
+      const d = gainOf('mp'); // the net local change: a cast's cost and a restore alike
+      const want = Math.max(0, Math.min(d !== undefined ? have.c + d : v.c, b));
       return (Math.abs(want - have.c) > 0.5 || b !== have.b) ? { c: want, b } : undefined;
     };
     const r = { hp: hp && raise('hp', hp), mp: mp && spend(mp), ft: ft && raise('ft', ft) };
