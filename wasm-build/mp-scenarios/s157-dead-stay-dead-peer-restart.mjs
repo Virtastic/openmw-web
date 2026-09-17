@@ -31,7 +31,8 @@ export default async function run(ctx) {
   const victim = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard);
   assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  const deadline = Date.now() + 90_000;
+  // 180 s: at #116's frame rate the test hits landed 8 s apart and 90 s was eleven of them.
+  const deadline = Date.now() + 180_000;
   let died = false;
   while (Date.now() < deadline && !died) {
     await a.cmd(`hitn:${victim}:40`);
