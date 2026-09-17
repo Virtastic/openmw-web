@@ -8,6 +8,7 @@
 // The whole "let's go into the shop together" beat -- one of the commonest things two people
 // do -- in one scenario.
 import assert from 'node:assert/strict';
+import { goToCompanion } from './_companion.mjs';
 
 // THE SERVER'S OWN PEER: only the production lifecycle anchors an INTERIOR (s118). With a
 // hand-started peer the tradehouse had no holder and door:enter teleported by hook
@@ -43,6 +44,11 @@ export default async function run(ctx) {
   await a.cmd('dlg:release');
   await ctx.sleep(3_000);
   ctx.log(`A recruited "${rec}" (claim=${await a.eval('window.omw.state.followClaim')})`);
+  // The pre-dialogue probe was stale on a slow client (s114, #113: the peer had the NPC 1081 u
+  // from the avatar, outside AiFollow's activation and global.lua's FOLLOW_RANGE at the door).
+  // Now that the claim holds the NPC still, go and stand beside them for real. B follows
+  // A's door from the same spot, so it is the door nearest THIS position that both take.
+  const beside = await goToCompanion(ctx, a, rec, start);
 
   // Through the nearest load door.
   const outside = await cellOf(a);
@@ -61,7 +67,7 @@ export default async function run(ctx) {
     `A's companion "${rec}" is in the interior with A`);
 
   // The friend follows through the same door and finds them both.
-  await b.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);
+  await b.cmd(`snapto:${Math.round(beside.x + 80)},${Math.round(beside.y)},${Math.round(beside.z + 8)}`);
   await ctx.sleep(2_000);
   await b.cmd('door:enter');
   await b.waitFor(`String(window.omw.state.cell||"") === ${JSON.stringify(inside)}`, STEP, 'B entered the same interior');

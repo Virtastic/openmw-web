@@ -11,6 +11,7 @@
 // Live proof: A talks to an NPC, recruits it, walks off; B -- who did nothing -- sees the NPC
 // arrive next to A.
 import assert from 'node:assert/strict';
+import { goToCompanion } from './_companion.mjs';
 
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
@@ -31,21 +32,12 @@ export default async function run(ctx) {
   const start = pa[rec];
   ctx.log(`A recruits "${rec}" at (${Math.round(start.x)},${Math.round(start.y)})`);
 
-  // Stand beside them first: you recruit by talking, and AiFollow activates only with the
-  // target in range and in sight (mwmechanics/aifollow.cpp), on the peer where the avatar is.
-  // The probe can be STALE: an NPC outside A's interest radius is never streamed, so A's copy
-  // sits where the cell loaded it while the peer's has wandered off (#112: 1135 u apart). A
-  // player walking over would be inside the radius long before the conversation; the snap is
-  // not, so re-read once beside them and follow the fresh position until it holds still.
-  let at = start;
-  for (let i = 0; i < 4; i++) {
-    await a.cmd(`snapto:${Math.round(at.x + 80)},${Math.round(at.y)},${Math.round(at.z + 8)}`);
-    await ctx.sleep(4_000);
-    const fresh = (await probeOf(a))[rec];
-    if (!fresh || dist2(fresh, at) < 150) break;
-    ctx.log(`  "${rec}" is really at (${Math.round(fresh.x)},${Math.round(fresh.y)}), ${Math.round(dist2(fresh, at))} u from the first read; moving`);
-    at = fresh;
-  }
+  // Stand beside them first, as you do to talk. The probe is STALE on an in-suite client
+  // (a fraction of 1 fps): a wanderer may be ~1000 u from here by the time the avatar
+  // lands (#112/#113). That is fine for the conversation (the lock is cell-scoped) and is
+  // put right after the claim, when the NPC stops wandering (goToCompanion).
+  await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);
+  await ctx.sleep(4_000);
 
   // Recruit: the dialogue result (Follow stacked on A's copy of the NPC). The conversation
   // itself pauses the game, and companion.lua only polls once it is closed -- as in play,
@@ -60,6 +52,9 @@ export default async function run(ctx) {
   await a.cmd(`follow:${rec}`);
   await a.cmd('dlg:release');
   await ctx.sleep(2_500); // companion.lua polls at 1 Hz
+  // The claim is on the holder now; AiFollow activates only with A in range and in sight
+  // (backlog 453), so go and stand where the peer really has them before walking off.
+  await goToCompanion(ctx, a, rec, start);
   await a.cmd(`followprobe:${rec}`);
   await ctx.sleep(1_000);
   ctx.log(`A followProbe=${await a.eval('window.omw.state.followProbe')}`);
