@@ -465,6 +465,9 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // #100/#183: a client whose tab Chrome deems hidden gets its timers throttled to 1 Hz and
     // stops driving the input tier (avatar_stats_gated after ~5 s of silence). Never for a harness client.
     '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
+    // ...and never deemed OCCLUDED either: an occluded window stops requestAnimationFrame, which
+    // is the engine's main loop (478: four clients whose engine stopped with a live JS thread).
+    '--disable-backgrounding-occluded-windows',
     '--user-data-dir=' + profile, '--remote-debugging-port=0',
     '--window-size=1280,720', 'about:blank',
   // OWN PROCESS GROUP, so close() can take the WHOLE browser. Chrome's gpu-process,
