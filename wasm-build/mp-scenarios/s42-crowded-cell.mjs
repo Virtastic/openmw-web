@@ -121,9 +121,15 @@ async function cellKeyOf(c) {
 
 // Worst pairwise disagreement across every client, over records ALL of them can see.
 // Returns null when there is nothing shared to compare — reported, never silently passed.
+// Only over STANDING records: the probes are one mirror tick apart on clients that run at a
+// frame a second, so a wanderer mid-stride reads 100+ u apart from sampling phase alone (#114:
+// 138 u on vodunius nuccius, never under 80 in 30 s). Divergence means two clients holding
+// different positions for the same still actor -- a walker is re-read until it stands.
 async function worstDisagreement(clients) {
+  const first = await probeOf(clients[0]);
+  await new Promise((r) => setTimeout(r, 1200));
   const probes = await Promise.all(clients.map(probeOf));
-  const shared = Object.keys(probes[0]).filter((r) => probes.every((p) => p[r]));
+  const shared = Object.keys(probes[0]).filter((r) => probes.every((p) => p[r]) && first[r] && dist(first[r], probes[0][r]) < 5);
   if (shared.length === 0) return { shared: 0, worst: null, rec: null };
   let worst = 0;
   let rec = null;
