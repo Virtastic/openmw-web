@@ -67,7 +67,9 @@ export default async function run(ctx) {
   const fwdBefore = String(await a.eval('window.omw.state.hitFwdCount'));
 
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  const deadline = Date.now() + 90_000;
+  // 90 s bought 27 swings in #114 and the forager sat at 3 hp (31 -> 3: the hits land, a
+  // level-1 swing just misses often). Three minutes is the budget a kill needs, not a hit.
+  const deadline = Date.now() + 180_000;
   let swings = 0, died = false, resnaps = 0;
   while (Date.now() < deadline && !died) {
     const p = (await probeOf(a, victim)) || p0;
