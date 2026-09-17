@@ -52,11 +52,11 @@ export default async function run(ctx) {
       await ctx.sleep(2_500);
       const d = dist2(p0, await pose(a));
       ctx.log(`unburdened walk ${name} covered ${d.toFixed(0)} units (divergence mid-walk ${midDiv.toFixed(0)}) at ${JSON.stringify(p0)}`);
-      if (d > 100) { dir = `${dx},${dy}`; free = d; break; }
+      if (d > 60) { dir = `${dx},${dy}`; free = d; break; } // 60: a 3 s walk at the suite's frame rate covers ~90 u (#117: 91-99, none over 100); the encumbered bar is 40
     }
     if (dir) break;
   }
-  assert.ok(dir, 'no direction moved more than 100 units at either spot (the walk hook is broken, the peer drags the player back, or A is boxed in)');
+  assert.ok(dir, 'no direction moved more than 60 units at either spot (the walk hook is broken, the peer drags the player back, or A is boxed in)');
 
   // The load.
   for (let i = 0; i < N; i++) { await a.cmd(`give:${HEAVY}`); await ctx.sleep(120); }
