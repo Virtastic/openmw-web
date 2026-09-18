@@ -509,7 +509,10 @@ export default async function run(ctx) {
   await guest.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(victim)})`, STEP, `the friend sees the ${victim} too`);
   await host.cmd(`equip:${WEAPON}:16`);
   await host.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(WEAPON)}) >= 0`, 15_000, 'the sword is in hand');
-  await host.cmd('setskill:longblade:100');
+  // No setskill: a production-shaped server refuses a +95 skill raise (playerstate.ts stat_raise
+  // ladder, #369), so the avatar swings at the fresh character's skill 5 -- about one hit in
+  // twelve (fresh46: hp 23 -> 13 -> dead over 60 swings). Real play, just slow; the budget below
+  // is sized for it.
   await ctx.sleep(3_000);
   await host.cmd('stance:weapon');
   await host.waitFor('window.omw.state.stance === "weapon"', 10_000, 'the sword is drawn');
@@ -530,7 +533,7 @@ export default async function run(ctx) {
   const avatarPos = async () => { try { const q = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)); if (Number.isFinite(q.x)) return q; } catch (e) {} return poseOf(host); };
   let swings = 0, died = false, resnaps = 0, stalls = 0;
   // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
-  for (const by = Date.now() + 300_000; Date.now() < by && !died;) {
+  for (const by = Date.now() + 480_000; Date.now() < by && !died;) { // ~150 swings at skill 5 (fresh46: three hits in 60)
     // ONE FRAME PER READ, ONE PER SWING. Every eval and every cmd waits for the client's
     // current frame to end (~2.3 s here), and the old body spent ~12 of them per swing: seven
     // swings in five minutes (fresh43, fresh44). Read everything in one eval; queue face,
