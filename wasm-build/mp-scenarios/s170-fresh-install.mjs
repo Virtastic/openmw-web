@@ -488,7 +488,7 @@ export default async function run(ctx) {
     const moved = (r) => first[r] && second[r] ? Math.hypot(second[r].x - first[r].x, second[r].y - first[r].y) : Infinity;
     const ranked = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"')))
       .filter((e) => Number.isFinite(dist(e[1])))
-      .sort((x, y) => (moved(x[1]) - moved(y[1])) || (dist(x[1]) - dist(y[1])));
+      .sort((x, y) => ((dist(x[1]) > 800) - (dist(y[1]) > 800)) || (moved(x[1]) - moved(y[1])) || (dist(x[1]) - dist(y[1]))); // near first (fresh40: a standing forager 3000 u away won over the rat next door), then stillest
     if (ranked.length && moved(ranked[0][1]) < 30) { [netId, victim] = ranked[0]; break; }
     ctx.log(`  no standing mark yet (${ranked.map((e) => `${e[1]} moved ${moved(e[1]).toFixed(0)}`).join(', ')}); waiting`);
     if (ranked.length && tryN === 4) [netId, victim] = ranked[0];
