@@ -520,7 +520,7 @@ export default async function run(ctx) {
   for (const by = Date.now() + 180_000; Date.now() < by && !died;) {
     const p = (await probeOf(host, victim)) || p0;
     const now = await avatarPos();
-    if (Math.hypot(p.x - now.x, p.y - now.y) > REACH) {
+    if (Math.hypot(p.x - now.x, p.y - now.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34); walk in to 70 first
       if (resnaps++ < 12) {
         const now2 = await avatarPos();
         if (Math.hypot(p.x - now2.x, p.y - now2.y) < 900) await walkToward(ctx, host, p, 70, 6, avatarPos); // 70: six swings at 105 u landed nothing (fresh32) -- the sword reaches ~100 less the bodies
