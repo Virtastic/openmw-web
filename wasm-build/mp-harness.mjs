@@ -394,6 +394,7 @@ function startSimPeer(port, password, cellKey, gameDataDir, watch) {
     },
   };
 }
+let currentWindowSize = null; // a scenario's `export const windowSize = '1280,720'` (s162)
 async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   const profile = mkdtempSync(join(tmpdir(), 'omw-mpharness-'));
   // THREE BACKENDS, and the difference matters on a box with no GPU. `swiftshader` is RAW
@@ -473,7 +474,7 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // a retail scene at 720p is a frame every one to three seconds per client. A quarter of the
     // pixels is roughly three to four times the frame rate; nothing in the suite measures pixels
     // except s65/s74, which read a 256x256 map texture that does not depend on the window.
-    `--window-size=${process.env.OMW_HARNESS_WINDOW || '640,360'}`, 'about:blank', // OMW_HARNESS_WINDOW=1280,720 to compare a verdict against the old, slower client (s162's 24-29 u step back appeared with 640x360)
+    `--window-size=${process.env.OMW_HARNESS_WINDOW || currentWindowSize || '640,360'}`, 'about:blank', // OMW_HARNESS_WINDOW=1280,720 to compare a verdict against the old, slower client (s162's 24-29 u step back appeared with 640x360)
   // OWN PROCESS GROUP, so close() can take the WHOLE browser. Chrome's gpu-process,
   // zygote and renderers are children of this pid; SIGKILL on the pid alone left them
   // running, reparented, and invisible to the next scenario -- 1847 chrome processes and
@@ -930,7 +931,8 @@ for (const file of files) {
   console.log(`\n=== scenario ${file} ===`);
   try {
     // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
-    const { default: run, serverRules, serverEnv, critical, managedPeer, diagnostic, allowLuaErrors } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    const { default: run, serverRules, serverEnv, critical, managedPeer, diagnostic, allowLuaErrors, windowSize } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    currentWindowSize = typeof windowSize === 'string' ? windowSize : null;
     isCritical = !!critical;
     isDiagnostic = !!diagnostic;
     luaErrorsAllowed = !!allowLuaErrors;

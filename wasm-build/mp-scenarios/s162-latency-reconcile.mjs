@@ -9,6 +9,13 @@
 import assert from 'node:assert/strict';
 
 export const serverEnv = { OMWMP_NET_DELAY_MS: '150' };
+// THE SLOW CLIENT, ON PURPOSE. The harness renders at 640x360 since #121 and this client then
+// walks at near real speed (1000-1230 u in 15 s against ~800), while the headless peer on the
+// same loaded box does not keep up: the avatar falls 500+ u behind and every fresh sample
+// drags the body back by the correction cap (24, 29, 51 u; #121, #122, a builder run) -- a
+// box artefact (a native peer on a real server runs at 60+ fps), not the rubber-band this
+// measures. At 1280x720 the body is the slower party and the reading is 0.0, run after run.
+export const windowSize = '1280,720';
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 // FIFTEEN SECONDS OF WALL CLOCK, NOT FOUR. The engine integrates movement per FRAME with a
