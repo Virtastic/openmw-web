@@ -474,7 +474,26 @@ export default async function run(ctx) {
   // unreachable in 3D (fresh10/11: the hop to it read as a 1254 u jump and the server, which
   // measures in three dimensions, refused it).
   const dist = (r) => { const p = probe[r]; return p && !p.dead && Math.abs(p.z - me.z) < 600 ? Math.hypot(p.x - me.x, p.y - me.y, p.z - me.z) : Infinity; }; // 3D, like the server; 600 keeps a rat on a rise and drops the racer
-  const [netId, victim] = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"'))).sort((x, y) => dist(x[1]) - dist(y[1]))[0];
+  // A STANDING mark. The client aims at its puppet of the mark, which lags the peer's real
+  // position by a frame -- a scrib on the move at 43 u/s is ~130 u from where the avatar
+  // swings (fresh30/31: 45 and 12 swings, not one landed; the two kills so far, fresh21 and
+  // fresh25, were a forager and a rat that stood still). Read twice, prefer the mark that
+  // moved least; it is a real kill either way, just an honest one.
+  let netId, victim;
+  for (let tryN = 0; tryN < 5; tryN++) {
+    const first = JSON.parse(await host.eval('window.omw.state.actorProbe||"{}"'));
+    await ctx.sleep(3_000);
+    const second = JSON.parse(await host.eval('window.omw.state.actorProbe||"{}"'));
+    for (const k of Object.keys(second)) probe[k] = second[k];
+    const moved = (r) => first[r] && second[r] ? Math.hypot(second[r].x - first[r].x, second[r].y - first[r].y) : Infinity;
+    const ranked = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"')))
+      .filter((e) => Number.isFinite(dist(e[1])))
+      .sort((x, y) => (moved(x[1]) - moved(y[1])) || (dist(x[1]) - dist(y[1])));
+    if (ranked.length && moved(ranked[0][1]) < 30) { [netId, victim] = ranked[0]; break; }
+    ctx.log(`  no standing mark yet (${ranked.map((e) => `${e[1]} moved ${moved(e[1]).toFixed(0)}`).join(', ')}); waiting`);
+    if (ranked.length && tryN === 4) [netId, victim] = ranked[0];
+  }
+  if (!victim) [netId, victim] = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"'))).sort((x, y) => dist(x[1]) - dist(y[1]))[0] || [];
   assert.ok(Number.isFinite(dist(victim)), `no living named creature nearby (host at ${Math.round(me.x)},${Math.round(me.y)},${Math.round(me.z)}): ${JSON.stringify(Object.fromEntries(Object.entries(probe).map(([k, v]) => [k, { x: Math.round(v.x), y: Math.round(v.y), z: Math.round(v.z), dead: v.dead }])))}; netObjects ${await host.eval("window.omw.state.netObjects")}`);
   await guest.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(victim)})`, STEP, `the friend sees the ${victim} too`);
   await host.cmd(`equip:${WEAPON}:16`);
