@@ -56,13 +56,13 @@ const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"{}"
 // so a same-cell jump past SAME_CELL_JUMP (1024 u, connection.ts) is refused as a teleport
 // hack -- fresh7: `conn.cell_change_refused dist 1110` and the avatar never followed. The
 // suite's testhost waves those through, which is why s164 may snap beside its mark and this
-// may not. Hop in 900 u legs, each settled on the snapper before the next.
+// may not. Hop in 600 u legs, each settled on the snapper before the next.
 async function hopTo(ctx, c, x, y, z) {
   for (let leg = 0; leg < 12; leg++) {
     const at = await poseOf(c);
     const dx = x - at.x, dy = y - at.y, d = Math.hypot(dx, dy);
     if (d < 50) return;
-    const f = Math.min(1, 900 / d);
+    const f = Math.min(1, 600 / d); // 600, not 900: the server measures from ITS last pose for us, which can lag a walk by 100+ u (fresh8: 900 + 123 read as 1071)
     const tx = Math.round(at.x + dx * f), ty = Math.round(at.y + dy * f), tz = Math.round(f < 1 ? at.z + 8 : z);
     await c.cmd(`snapto:${tx},${ty},${tz}`);
     await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); return !!p && Math.hypot(p.x - (${tx}), p.y - (${ty})) < 120; })()`, 20_000, `${c.name} hop ${leg + 1} landed`);
