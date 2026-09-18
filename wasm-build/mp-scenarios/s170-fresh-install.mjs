@@ -544,8 +544,16 @@ export default async function run(ctx) {
     const p = st.p || p0;
     died = st.p?.dead === true; if (died) break;
     if (st.div >= 60) { if (++stalls % 10 === 1) ctx.log(`  body ${st.div.toFixed(0)} u from its avatar; waiting (stall ${stalls})`); await ctx.sleep(1_000); continue; } // a hop lands both; wait for the body to agree with the avatar (fresh37)
-    if (Math.hypot(p.x - st.me.x, p.y - st.me.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34)
-      if (resnaps++ < 12) await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
+    const gap = Math.hypot(p.x - st.me.x, p.y - st.me.y);
+    if (gap > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34)
+      // A mark that is CLOSING IN gets waited for, not hopped to: a rat in combat runs at us,
+      // a hop takes ~15 s (the avatar has to come along) and the rat covers 400 u meanwhile,
+      // so every landing read 'far' again -- nine hops, one swing (fresh48). Hop only at a
+      // mark that is not coming.
+      await ctx.sleep(3_000);
+      const q = (await probeOf(host, victim)) || p, me2 = await poseOf(host);
+      if (Math.hypot(q.x - me2.x, q.y - me2.y) < gap - 40) { if (++stalls % 5 === 1) ctx.log(`  the ${victim} is coming (${Math.round(gap)} -> ${Math.round(Math.hypot(q.x - me2.x, q.y - me2.y))} u); standing`); continue; }
+      if (resnaps++ < 12) await hopTo(ctx, host, q.x + 60, q.y, q.z + 8);
       else await ctx.sleep(1_000);
       continue;
     }
