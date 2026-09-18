@@ -503,7 +503,9 @@ export default async function run(ctx) {
   await host.cmd('stance:weapon');
   await host.waitFor('window.omw.state.stance === "weapon"', 10_000, 'the sword is drawn');
   const p0 = await probeOf(host, victim);
-  { const me1 = await poseOf(host); if (Math.hypot(p0.x - me1.x, p0.y - me1.y) < 900) await walkToward(ctx, host, p0, 70, 10, async () => { try { const q = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)); if (Number.isFinite(q.x)) return q; } catch (e) {} return poseOf(host); }); else await hopTo(ctx, host, p0.x + 60, p0.y, p0.z + 8); } // walk, as in the loop: a hop dances with a walking mark (fresh27)
+  // A standing mark, so the legal hop approach (an announced jump; the avatar follows in ~10 s)
+  // is the reliable one; walking loses at this frame rate (fresh36: zero swings in five minutes).
+  await hopTo(ctx, host, p0.x + 60, p0.y, p0.z + 8);
   await host.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
   await host.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
   await host.cmd(`hitn:${victim}:1`);
@@ -523,8 +525,7 @@ export default async function run(ctx) {
     if (Math.hypot(p.x - now.x, p.y - now.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34); walk in to 70 first
       if (resnaps++ < 12) {
         const now2 = await avatarPos();
-        if (Math.hypot(p.x - now2.x, p.y - now2.y) < 900) await walkToward(ctx, host, p, 70, 4, avatarPos); // 70: six swings at 105 u landed nothing (fresh32) -- the sword reaches ~100 less the bodies
-        else await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
+        await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
       }
       else await ctx.sleep(1_000);
       continue;
