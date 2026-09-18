@@ -786,6 +786,16 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       const hit = await handle.eval(
         `(function(){ var el = document.elementFromPoint(${x}, ${y});
            return el ? (el.id || el.tagName + (el.className ? '.' + el.className : '')) : 'null'; })()`);
+      // COVERED: the point lands on something that is not the target or inside it (a modal
+      // taller than a 640x360 window, whose button sits under its own footer; #121/#122 s55).
+      // A real mouse cannot reach it either, so this is the element's own click, and says so.
+      const covered = await handle.eval(
+        `(function(){ var t = document.querySelector(${JSON.stringify(selector)}); var el = document.elementFromPoint(${x}, ${y});
+           return !!t && !(el && (el === t || t.contains(el))); })()`);
+      if (covered) {
+        await handle.eval(`(function(){ var t = document.querySelector(${JSON.stringify(selector)}); t.focus(); t.click(); return true; })()`);
+        return hit + ' (covered; clicked the element itself)';
+      }
       const base = { x, y, button: 'left', clickCount: 1, buttons: 1 };
       await bsend('Input.dispatchMouseEvent', { type: 'mouseMoved', ...base, buttons: 0 }, sessionId);
       await bsend('Input.dispatchMouseEvent', { type: 'mousePressed', ...base }, sessionId);
