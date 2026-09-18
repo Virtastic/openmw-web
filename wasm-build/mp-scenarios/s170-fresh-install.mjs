@@ -531,25 +531,22 @@ export default async function run(ctx) {
   let swings = 0, died = false, resnaps = 0;
   // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
   for (const by = Date.now() + 300_000; Date.now() < by && !died;) {
-    const p = (await probeOf(host, victim)) || p0;
-    // The body's own pose, once it agrees with the avatar (a hop lands both). The friend's
-    // view of the avatar is a frame stale -- at a frame every few seconds that read 'far'
-    // right after every hop while hopTo (body-based) had nothing left to do (fresh37: twelve
-    // no-op hops, zero swings).
-    await host.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 5_000, 'body and avatar agree').catch(() => {}); // 5 s, not 20: at 20 the loop managed seven swings in five minutes (fresh43)
-    const now = await poseOf(host);
-    if (Math.hypot(p.x - now.x, p.y - now.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34); walk in to 70 first
-      if (resnaps++ < 12) {
-        await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
-      }
+    // ONE FRAME PER READ, ONE PER SWING. Every eval and every cmd waits for the client's
+    // current frame to end (~2.3 s here), and the old body spent ~12 of them per swing: seven
+    // swings in five minutes (fresh43, fresh44). Read everything in one eval; queue face,
+    // stance and attack together -- Lua drains the whole queue in one frame.
+    const st = JSON.parse(await host.eval(`JSON.stringify({ p: (JSON.parse(window.omw.state.actorProbe||"{}"))[${JSON.stringify(victim)}] || null, me: JSON.parse(window.omw.state.pose||"{}"), div: Number(window.omw.state.selfDivergence||999) })`));
+    const p = st.p || p0;
+    died = st.p?.dead === true; if (died) break;
+    if (st.div >= 60) { await ctx.sleep(1_000); continue; } // a hop lands both; wait for the body to agree with the avatar (fresh37)
+    if (Math.hypot(p.x - st.me.x, p.y - st.me.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34)
+      if (resnaps++ < 12) await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
       else await ctx.sleep(1_000);
       continue;
     }
-    await host.cmd(`face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}`);
-    await host.cmd('stance:weapon');
-    await ctx.sleep(200);
-    await host.cmd('attack:1500'); swings++;
-    if (swings % 5 === 1) { const av = await avatarPos(); const q = (await probeOf(host, victim)) || {}; ctx.log(`  swing ${swings}: avatar (${Math.round(av.x)},${Math.round(av.y)},${Math.round(av.z)}) mark (${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) range ${Math.hypot(q.x - av.x, q.y - av.y).toFixed(0)} hp=${q.hp} dead=${q.dead} div=${await host.eval('window.omw.state.selfDivergence')} flags=${await host.eval('window.omw.state.selfFlags')}`); }
+    await host.evalAsync(`Promise.all([window.omw.send('face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}', 120000), window.omw.send('stance:weapon', 120000), window.omw.send('attack:1500', 120000)]).then(function(r){ if (!r.every(function(x){ return x.ok; })) throw new Error('swing cmd failed: ' + JSON.stringify(r)); return 'ok'; })`);
+    swings++;
+    if (swings % 5 === 1) { const av = await avatarPos(); const q = (await probeOf(host, victim)) || {}; ctx.log(`  swing ${swings}: avatar (${Math.round(av.x)},${Math.round(av.y)},${Math.round(av.z)}) mark (${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) range ${Math.hypot(q.x - av.x, q.y - av.y).toFixed(0)} hp=${q.hp} dead=${q.dead} div=${st.div} flags=${await host.eval('window.omw.state.selfFlags')}`); }
     // The use bit is an EDGE on one avatar sample; a client taking a frame every few seconds
     // reads it by luck (fresh28 missed it in 10 s after a fight that fresh21/25 won). Latch it
     // in the page and treat it as narration: the kill below is the proof.
@@ -559,7 +556,6 @@ export default async function run(ctx) {
       ctx.log(`  first swing: the avatar ${swung ? 'reported the use bit' : 'did not show the use bit within 15 s (edge sample; carrying on)'}`);
     }
     await ctx.sleep(2_000);
-    died = (await host.eval(deadExpr)) === true;
   }
   assert.ok(died, `the ${victim} never died after ${swings} swings`);
   assert.equal(String(await host.eval('window.omw.state.hitFwd')), 'undefined', 'the owner sent no hit of its own');
