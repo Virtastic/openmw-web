@@ -126,7 +126,8 @@ async function hopTo(ctx, c, x, y, z) {
       await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); var d = window.omw.state.selfDivergence; return !!p && Math.hypot(p.x - (${bx}), p.y - (${by})) < 120 && typeof d === "string" && Number(d) < 100; })()`, 30_000, `${c.name} hop ${leg + 1}: the avatar came along (back step)`);
       continue;
     }
-    const f = Math.min(1, 400 / d); // 600, not 900: the server measures from ITS last pose for us, which can lag a walk by 100+ u (fresh8: 900 + 123 read as 1071)
+    // 400 a leg (not 900: the server measures from ITS last pose for us, which can lag a walk by 100+ u; fresh8: 900 + 123 read as 1071), but the LAST leg goes all the way: a 300 step back left ~450, a 400 leg landed 50 short, and that stepped back again (fresh47: eleven legs, never arrived).
+    const f = d <= 700 ? 1 : 400 / d;
     const tx = Math.round(at.x + dx * f), ty = Math.round(at.y + dy * f), tz = Math.round(at.z + dz * f);
     ctx.log(`  ${c.name} hop ${leg + 1}: from (${Math.round(at.x)},${Math.round(at.y)},${Math.round(at.z)}) to (${tx},${ty},${tz}), ${Math.round(d)} u to go; divergence ${await c.eval("window.omw.state.selfDivergence")}`);
     await c.cmd(`snapto:${tx},${ty},${tz}`);
