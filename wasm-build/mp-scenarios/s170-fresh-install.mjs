@@ -77,7 +77,7 @@ async function hopTo(ctx, c, x, y, z) {
   for (let leg = 0; leg < 12; leg++) {
     const at = await poseOf(c);
     const dx = x - at.x, dy = y - at.y, dz = z - at.z, d = Math.hypot(dx, dy, dz); // 3D: so is the server's rule
-    if (d < 50) return;
+    if (d < 100) return; // within REACH (110): swing, do not dance
     // A leg must be >= 256 u or the client never announces it (player.lua sends a
     // PlayerCellChange only for a same-cell jump past 256 u): fresh18 hopped 186 u, the server
     // never told the avatar, and reconciliation dragged the body back (SELF SNAP 392). A short
@@ -452,11 +452,12 @@ export default async function run(ctx) {
   await host.eval("if (window.omw.state) window.omw.state.hitFwd = undefined; 'cleared';");
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   let swings = 0, died = false, resnaps = 0;
-  for (const by = Date.now() + 90_000; Date.now() < by && !died;) {
+  // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
+  for (const by = Date.now() + 180_000; Date.now() < by && !died;) {
     const p = (await probeOf(host, victim)) || p0;
     const now = await poseOf(host);
     if (Math.hypot(p.x - now.x, p.y - now.y) > REACH) {
-      if (resnaps++ < 4) { await hopTo(ctx, host, p.x + 60, p.y, p.z + 8); await ctx.sleep(2_500); }
+      if (resnaps++ < 8) { await hopTo(ctx, host, p.x + 60, p.y, p.z + 8); }
       else await ctx.sleep(1_000);
       continue;
     }
