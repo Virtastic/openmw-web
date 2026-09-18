@@ -54,6 +54,21 @@ export default async function run(ctx) {
   // you, a wandering one walks out of reach mid-swing). The sting goes out under our name;
   // the mirror is cleared after it, and the KILL must not.
   const p0 = await probeOf(a, victim);
+  // A SNAP UNDER 256 u IS NEVER ANNOUNCED (player.lua sends PlayerCellChange for a same-cell
+  // jump past SNAP_DIST only), so the avatar stays put and reconciliation drags the body back
+  // before it ever "arrives" (#120: the mark 246 u away, 60 s without a settled divergence).
+  // From closer than 300 u, step 300 u away first so the approach is a jump the server sees.
+  {
+    const me0 = await poseOf(a);
+    const d0 = Math.hypot(p0.x - me0.x, p0.y - me0.y);
+    if (d0 < 300) {
+      const bx = Math.round(me0.x - ((p0.x - me0.x) / d0) * 300), by = Math.round(me0.y - ((p0.y - me0.y) / d0) * 300);
+      ctx.log(`  the mark is ${d0.toFixed(0)} u away: stepping back 300 first so the approach is announced`);
+      await a.cmd(`snapto:${bx},${by},${Math.round(me0.z + 8)}`);
+      await a.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
+      await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar followed the step back');
+    }
+  }
   await a.cmd(`snapto:${Math.round(p0.x + 60)},${Math.round(p0.y)},${Math.round(p0.z + 8)}`);
   // THE AVATAR MUST RULE before a swing means anything (s138): after a teleport the server
   // ignores the peer's poses until the avatar has followed; selfDivergence is written only
