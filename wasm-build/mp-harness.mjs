@@ -611,6 +611,21 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     if (opts.newDocScript) await bsend('Page.addScriptToEvaluateOnNewDocument', { source: opts.newDocScript }, sessionId);
     await bsend('Page.navigate', { url }, sessionId);
 
+    // F5. A page-script reload (`setTimeout(location.reload)`) races the next eval: a
+    // Runtime.evaluate sent while the document is being re-fetched is never answered, and
+    // waitFor then sits on that one call for the whole CDP deadline (s170 fresh46/51: 'never
+    // once evaluated' after an F5 that had in fact rejoined in 40 s). Page.reload is the real
+    // F5 (same tab, sessionStorage kept), and this returns only once the new document has
+    // fired its load event, so the next eval lands in a live context.
+    handle.reload = () => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { browser.removeEventListener('message', onMsg); reject(new Error(`[${name}] reload: no load event in 120 s`)); }, 120_000);
+      const onMsg = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.sessionId === sessionId && m.method === 'Page.loadEventFired') { clearTimeout(timer); browser.removeEventListener('message', onMsg); resolve(); }
+      };
+      browser.addEventListener('message', onMsg);
+      bsend('Page.reload', {}, sessionId).catch((e) => { clearTimeout(timer); browser.removeEventListener('message', onMsg); reject(e); });
+    });
     // PNG screenshot of the client's viewport (visual checks / M1 puppet captures).
     handle.screenshot = async (path) => {
       const shot = await bsend('Page.captureScreenshot', { format: 'png' }, sessionId);

@@ -640,8 +640,7 @@ export default async function run(ctx) {
   ctx.log(`ok: the friend drowned at z=${fell.z.toFixed(0)} and respawned`);
 
   // RELOG (F5): the page reloads, the parked resume token rejoins the same world.
-  await guest.eval('setTimeout(function(){ location.reload(); }, 50); "reloading"');
-  await ctx.sleep(3_000); // the OLD page still reads Joined for a moment (fresh46: 'in the world after 0 s', then an eval into the navigating page that never answered); s80 waits the same way
+  await guest.reload(); // the harness's F5: Page.reload, back once the new document has loaded (fresh46/51: an eval sent into the re-fetch was never answered and waitFor sat on it for 300 s)
   await awaitInWorld(ctx, guest, 'the friend after F5');
   assert.equal(await guest.eval('String(window.omw.state.worldHost||"")'), HOST_HANDLE, "F5 came back into the host's world");
   await host.waitFor(`${rowOf(GUEST_HANDLE)}.id !== undefined`, STEP, 'the host sees the friend back');
