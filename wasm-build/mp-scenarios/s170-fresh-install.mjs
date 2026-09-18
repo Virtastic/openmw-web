@@ -651,9 +651,14 @@ export default async function run(ctx) {
   // client's own redial brings the host back in seconds, well inside the 90 s grace, so the
   // friend is never sent home. A full page reload cannot fit inside the grace on a
   // SwiftShader box, which is why the blip is the transport and not the tab.
+  // The friend has just rebooted: its first minute is cell streaming in frames that run for
+  // tens of seconds, and a chat line broadcast into that reads late (fresh53: told nothing in
+  // 30 s while its console showed the cells still loading). Let its frames flow first.
+  await guest.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
+  await guest.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 100', 120_000, "the friend's frames flow again after the F5");
   const dropped = Date.now();
   await host.cmd('netdrop');
-  await guest.waitFor('String(window.omw.state.lastChatLine||"").toLowerCase().indexOf("host has disconnected") >= 0', STEP, 'the friend is told the host dropped');
+  await guest.waitFor('String(window.omw.state.lastChatLine||"").toLowerCase().indexOf("host has disconnected") >= 0', 90_000, 'the friend is told the host dropped');
   await host.waitFor('window.omw.state.state === "Joined" && Number(window.omw.state.reconnectTotal||0) > 0', 120_000, 'the host redialled and rejoined');
   assert.ok(Date.now() - dropped < 90_000, `the host came back inside the grace (${((Date.now() - dropped) / 1000).toFixed(0)} s)`);
   assert.match(gwLog(), /world\.owner_left/, 'the world armed the grace');
