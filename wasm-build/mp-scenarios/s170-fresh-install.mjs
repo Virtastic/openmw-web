@@ -62,8 +62,9 @@ async function hopTo(ctx, c, x, y, z) {
     const at = await poseOf(c);
     const dx = x - at.x, dy = y - at.y, d = Math.hypot(dx, dy);
     if (d < 50) return;
-    const f = Math.min(1, 600 / d); // 600, not 900: the server measures from ITS last pose for us, which can lag a walk by 100+ u (fresh8: 900 + 123 read as 1071)
+    const f = Math.min(1, 400 / d); // 600, not 900: the server measures from ITS last pose for us, which can lag a walk by 100+ u (fresh8: 900 + 123 read as 1071)
     const tx = Math.round(at.x + dx * f), ty = Math.round(at.y + dy * f), tz = Math.round(f < 1 ? at.z + 8 : z);
+    ctx.log(`  ${c.name} hop ${leg + 1}: from (${Math.round(at.x)},${Math.round(at.y)},${Math.round(at.z)}) to (${tx},${ty},${tz}), ${Math.round(d)} u to go; divergence ${await c.eval("window.omw.state.selfDivergence")}`);
     await c.cmd(`snapto:${tx},${ty},${tz}`);
     // Landed means the AVATAR came along, not the local body: the client teleports itself
     // whatever the server says, so a refused leg reads as landed on the local pose and the
