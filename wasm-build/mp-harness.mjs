@@ -1078,8 +1078,8 @@ for (const file of files) {
     if (err) {
       await Promise.all(clients.map(async (c) => {
         c.liveness = await Promise.race([
-          c.evalAsync('(async () => { const t0 = performance.now(); const raf = await new Promise((r) => { const id = requestAnimationFrame(() => r(true)); setTimeout(() => { cancelAnimationFrame(id); r(false); }, 1500); }); return JSON.stringify({ raf, ms: Math.round(performance.now() - t0), vis: document.visibilityState, hidden: document.hidden, batches: (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null, state: window.omw && window.omw.state && window.omw.state.state }); })()'),
-          new Promise((r) => setTimeout(() => r('(eval did not return in 4 s: the JS thread itself is blocked)'), 4000)),
+          c.evalAsync('(async () => { const t0 = performance.now(); const raf = await new Promise((r) => { const id = requestAnimationFrame(() => r(true)); setTimeout(() => { cancelAnimationFrame(id); r(false); }, 1500); }); const b0 = (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null; await new Promise((r) => setTimeout(r, 2000)); const b1 = (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null; const sf = window.__streamfsStats ? (typeof window.__streamfsStats === "function" ? window.__streamfsStats() : window.__streamfsStats) : null; return JSON.stringify({ raf, ms: Math.round(performance.now() - t0), vis: document.visibilityState, hidden: document.hidden, batches: [b0, b1], engineAdvancing: b0 !== null && b1 !== null && b1 !== b0, streamfs: sf && { misses: sf.misses, stallMs: Math.round(sf.stallMs || 0), bytes: sf.bytes, evictions: sf.evictions }, state: window.omw && window.omw.state && window.omw.state.state }); })()'),
+          new Promise((r) => setTimeout(() => r('(eval did not return in 7 s: the JS thread itself is blocked)'), 7000)),
         ]).catch((e) => `(liveness probe failed: ${e.message})`);
       }));
     }
