@@ -117,13 +117,17 @@ async function hopTo(ctx, c, x, y, z) {
     // A leg must be >= 256 u or the client never announces it (player.lua sends a
     // PlayerCellChange only for a same-cell jump past 256 u): fresh18 hopped 186 u, the server
     // never told the avatar, and reconciliation dragged the body back (SELF SNAP 392). A short
-    // approach steps 300 u AWAY first, then comes in.
+    // approach overshoots 300 u PAST the target first (at the target's height), then comes
+    // back in. Not a step back at our own height: on a hillside that spot was inside the
+    // terrain, the avatar never landed there and the body got dragged back -- SELF SNAP 290
+    // -- five times running (fresh55/56).
     if (d < 300) {
-      const bx = Math.round(at.x - (dx / d) * 300), by = Math.round(at.y - (dy / d) * 300);
-      ctx.log(`  ${c.name} hop ${leg + 1}: only ${Math.round(d)} u to go, stepping back 300 first`);
-      await c.cmd(`snapto:${bx},${by},${Math.round(at.z)}`);
+      const h = Math.hypot(dx, dy) || 1;
+      const bx = Math.round(x + (dx / h) * 300), by = Math.round(y + (dy / h) * 300);
+      ctx.log(`  ${c.name} hop ${leg + 1}: only ${Math.round(d)} u to go, overshooting 300 past it first`);
+      await c.cmd(`snapto:${bx},${by},${Math.round(z)}`);
       await c.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
-      await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); var d = window.omw.state.selfDivergence; return !!p && Math.hypot(p.x - (${bx}), p.y - (${by})) < 120 && typeof d === "string" && Number(d) < 100; })()`, 30_000, `${c.name} hop ${leg + 1}: the avatar came along (back step)`);
+      await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); var d = window.omw.state.selfDivergence; return !!p && Math.hypot(p.x - (${bx}), p.y - (${by})) < 120 && typeof d === "string" && Number(d) < 100; })()`, 30_000, `${c.name} hop ${leg + 1}: the avatar came along (overshoot)`);
       continue;
     }
     // 400 a leg (not 900: the server measures from ITS last pose for us, which can lag a walk by 100+ u; fresh8: 900 + 123 read as 1071), but the LAST leg goes all the way: a 300 step back left ~450, a 400 leg landed 50 short, and that stepped back again (fresh47: eleven legs, never arrived).
