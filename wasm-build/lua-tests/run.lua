@@ -1989,5 +1989,27 @@ do
     p:find("core.sendGlobalEvent('mpSelfSnap', { x = e.x, y = e.y, z = e.z })", 1, true) ~= nil)
 end
 
+print('#484 the sim peer ignores PlayerLeaveView: every player is in its view, the avatar stays')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  -- The handler, cut from the source and run twice: as the peer and as a client.
+  local s = g:find('MP_PlayerLeaveView = function(data)', 1, true)
+  local _, e = g:find('lastPose[data.id] = nil\n    end,', s, true)
+  local function run(system)
+    local despawned = {}
+    local env = { remoteCell = { [3] = '-3,-9' }, lastPose = { [3] = { x = 1, y = 2, z = 3 } },
+      despawnPuppet = function(id) despawned[#despawned + 1] = id end,
+      mp = { isSystem = function() return system end } }
+    setfenv(assert(loadstring('local handlers = {' .. g:sub(s, e) .. '}\nhandlers.MP_PlayerLeaveView({ id = 3 })')), env)()
+    return despawned, env.remoteCell[3], env.lastPose[3]
+  end
+  local despawned, cell, pose = run(true)
+  check('on the peer LeaveView removes nothing and keeps remoteCell/lastPose (the next MoveBatch could not respawn without them)',
+    #despawned == 0 and cell == '-3,-9' and pose ~= nil)
+  despawned, cell, pose = run(false)
+  check('on a client LeaveView still despawns the puppet and forgets the player',
+    #despawned == 1 and despawned[1] == 3 and cell == nil and pose == nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

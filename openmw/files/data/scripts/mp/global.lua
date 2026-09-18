@@ -2481,6 +2481,15 @@ local eventHandlers = {
     -- no signal: the server force-sends their pose and the first-sighting path respawns them.
     MP_PlayerLeaveView = function(data)
         if data.id == nil then return end
+        -- THE PEER HAS NO VIEW (484). The server sweeps the interest set of EVERY recipient by
+        -- that recipient's own cell, the sim peer included -- and the peer is parked in ONE of the
+        -- cells it anchors. A player two cells from the parking spot fell out of the peer's
+        -- "view" (fresh21: peer at -2,-7 with the host, the guest snapped to the -3,-9 seabed),
+        -- this handler removed the AVATAR 1 ms after MP_PlayerCellChange spawned it, and cleared
+        -- remoteCell so no later MoveBatch could respawn it: the guest never drowned, nothing
+        -- reported for #3 until the next cell change. visibleFrom already says every player is
+        -- visible on the peer; the sweep has to agree.
+        if mp.isSystem and mp.isSystem() then return end
         despawnPuppet(data.id) -- idempotent; safe for an id we never spawned
         remoteCell[data.id] = nil
         lastPose[data.id] = nil
