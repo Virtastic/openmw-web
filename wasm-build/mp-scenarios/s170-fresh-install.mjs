@@ -492,7 +492,7 @@ export default async function run(ctx) {
   // fresh25, were a forager and a rat that stood still). Read twice, prefer the mark that
   // moved least; it is a real kill either way, just an honest one.
   let netId, victim;
-  for (let tryN = 0; tryN < 5; tryN++) {
+  for (let tryN = 0; tryN < 8; tryN++) {
     const first = JSON.parse(await host.eval('window.omw.state.actorProbe||"{}"'));
     await ctx.sleep(3_000);
     const second = JSON.parse(await host.eval('window.omw.state.actorProbe||"{}"'));
@@ -501,9 +501,20 @@ export default async function run(ctx) {
     const ranked = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"')))
       .filter((e) => Number.isFinite(dist(e[1])) && e[1] !== 'scrib') // 487: 51 swings at 60 u never touched a scrib; every rat and forager died
       .sort((x, y) => ((dist(x[1]) > 800) - (dist(y[1]) > 800)) || (moved(x[1]) - moved(y[1])) || (dist(x[1]) - dist(y[1]))); // near first (fresh40: a standing forager 3000 u away won over the rat next door), then stillest
-    if (ranked.length && moved(ranked[0][1]) < 30) { [netId, victim] = ranked[0]; break; }
+    // A FAR mark is not observed: its probe stops updating out of the client's view, so it
+    // reads 'still' whatever it does (fresh47-49: a 3000 u 'standing' rat that wandered 400 u
+    // between every hop). Come within 1200 u first, then judge it.
+    if (ranked.length && dist(ranked[0][1]) > 1200 && tryN < 6) {
+      const q = probe[ranked[0][1]];
+      ctx.log(`  nearest mark ${ranked[0][1]} is ${Math.round(dist(ranked[0][1]))} u away, too far to watch; coming to 800 u of it`);
+      const k = 1 - 800 / dist(ranked[0][1]);
+      await hopTo(ctx, host, me.x + (q.x - me.x) * k, me.y + (q.y - me.y) * k, me.z + (q.z - me.z) * k);
+      Object.assign(me, await poseOf(host));
+      continue;
+    }
+    if (ranked.length && moved(ranked[0][1]) < 30) { [netId, victim] = ranked[0]; ctx.log(`  mark: ${victim} ${Math.round(dist(victim))} u away, moved ${moved(victim).toFixed(0)} u in 3 s`); break; }
     ctx.log(`  no standing mark yet (${ranked.map((e) => `${e[1]} moved ${moved(e[1]).toFixed(0)}`).join(', ')}); waiting`);
-    if (ranked.length && tryN === 4) [netId, victim] = ranked[0];
+    if (ranked.length && tryN === 7) [netId, victim] = ranked[0];
   }
   if (!victim) [netId, victim] = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"'))).sort((x, y) => dist(x[1]) - dist(y[1]))[0] || [];
   assert.ok(Number.isFinite(dist(victim)), `no living named creature nearby (host at ${Math.round(me.x)},${Math.round(me.y)},${Math.round(me.z)}): ${JSON.stringify(Object.fromEntries(Object.entries(probe).map(([k, v]) => [k, { x: Math.round(v.x), y: Math.round(v.y), z: Math.round(v.z), dead: v.dead }])))}; netObjects ${await host.eval("window.omw.state.netObjects")}`);
