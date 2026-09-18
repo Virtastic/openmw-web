@@ -3353,12 +3353,17 @@ local eventHandlers = {
     -- re-enabled AI by the time this hop runs.
     -- Phase 3: the reconciliation hard snap. Local-player teleport must run in the
     -- global context; player.lua rate-limits with its own cooldown.
+    -- onGround (backlog 482): the harness snapto asks for it, so a target z below the
+    -- destination's LAND surface is lifted onto the ground (World::adjustPosition force=true
+    -- reads the LAND height straight from the ESM, so this holds on the streaming build before
+    -- the render chunk exists). The reconciliation snap and tpz: do not ask, and keep a
+    -- levitating or deliberately falling body where it is.
     mpSelfSnap = function(data)
         local player = playerScript()
         if not player or not data or not data.x then return end
         releaseRestoreHold('snap')
         pcall(function()
-            player:teleport(player.cell, util.vector3(data.x, data.y, data.z))
+            player:teleport(player.cell, util.vector3(data.x, data.y, data.z), { onGround = data.onGround == true })
         end)
     end,
 

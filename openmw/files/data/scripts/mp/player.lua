@@ -1160,10 +1160,18 @@ local function dispatch(cmd)
         -- behaviour can only be tested at conversational distance: a guard's pursuit needs the
         -- engine's own line-of-sight and awareness checks to pass, and those fail at the range
         -- two NPCs happen to spawn apart, so the test has to close the gap itself.
+        -- onGround: the z a scenario hard-codes is a guess, and a guess UNDER the terrain
+        -- (s170's SPOT z=512 sits 360 u below the LAND surface at 872) drops the body
+        -- through the heightfield to the sea, where it swims at z=-121 for the rest of the
+        -- run (fresh14/fresh15, backlog 482). Native OpenMW falls exactly the same way; the
+        -- engine's own fix is the teleport's onGround option, which lifts a position to the
+        -- LAND height and traces it down onto whatever stands there. tpz: and the
+        -- reconciliation snap stay free: one measures a fall on purpose, the other places a
+        -- physics-ruled pose that may be levitating.
         local snX, snY, snZ = cmd:match('^snapto:(-?[%d.]+),(-?[%d.]+),(-?[%d.]+)$')
         if snX then
             core.sendGlobalEvent('mpSelfSnap',
-                { x = tonumber(snX), y = tonumber(snY), z = tonumber(snZ) })
+                { x = tonumber(snX), y = tonumber(snY), z = tonumber(snZ), onGround = true })
         end
         -- takeowned: pick up the nearest item in this cell that BELONGS to someone -- a theft,
         -- through the same activation the hand uses, with the owner in the room (s125).

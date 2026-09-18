@@ -1967,5 +1967,27 @@ do
   check('releasing the hold hands the engine window back', omwui.interface.getMode() == 'Dialogue' and #engine == 1)
 end
 
+print('#482 snapto lands on the ground: a hard-coded z under the terrain no longer drops the body into the sea')
+do
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  -- The snapto handler, cut from the source and run against a recording core.
+  local s = p:find("local snX, snY, snZ = cmd:match('^snapto:", 1, true)
+  local _, e = p:find("onGround = true })\n        end", s, true)
+  local sent = {}
+  local env = { tonumber = tonumber, cmd = 'snapto:-12500,-53100,512',
+    core = { sendGlobalEvent = function(name, body) sent[#sent + 1] = { name = name, body = body } end } }
+  setfenv(assert(loadstring(p:sub(s, e))), env)()
+  check('snapto asks the global snap for onGround (s170 SPOT z=512 is 360 u under the LAND surface)',
+    #sent == 1 and sent[1].name == 'mpSelfSnap' and sent[1].body.onGround == true
+    and sent[1].body.x == -12500 and sent[1].body.y == -53100 and sent[1].body.z == 512)
+  check('mpSelfSnap hands onGround to the engine teleport (World::adjustPosition force=true)',
+    g:find('player:teleport(player.cell, util.vector3(data.x, data.y, data.z), { onGround = data.onGround == true })', 1, true) ~= nil)
+  check('tpz: keeps a deliberate fall (no onGround)',
+    p:find("core.sendGlobalEvent('mpSelfSnap', { x = pos.x, y = pos.y, z = pos.z + tonumber(tdz) })", 1, true) ~= nil)
+  check('the reconciliation snap keeps a levitating pose (no onGround)',
+    p:find("core.sendGlobalEvent('mpSelfSnap', { x = e.x, y = e.y, z = e.z })", 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

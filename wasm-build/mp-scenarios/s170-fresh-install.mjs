@@ -34,7 +34,13 @@ const STEP = 30_000;
 export const timeoutMs = 50 * 60_000;
 
 const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' };
-const SPOT = '-12500,-53100,512'; // inside -2,-7, where the peer names scrib / kwama forager (s109/s164)
+// Inside -2,-7, where the peer names scrib / kwama forager (s109/s164). z is the LAND height at
+// that vertex (872, read from Morrowind.esm), not the 512 the sibling scenarios carry: snapto is
+// onGround now (backlog 482), so a low z is lifted onto the terrain either way, but hopTo
+// measures its last leg in 3D against this constant and would never close on a z 360 u under
+// the ground. fresh14/15 read the host at z=-121/-135 (swimming in the sea under the hill,
+// the creatures at 960-1370) because 512 was BELOW the heightfield and the body fell through.
+const SPOT = '-12500,-53100,880';
 const WEAPON = 'iron longsword';
 const REACH = 110;
 const NEW_DOC_SCRIPT = `(function(){
@@ -369,7 +375,7 @@ export default async function run(ctx) {
   phase(6, 'ten minutes together: walk, fight, loot, die, relog, the host blips, both exit');
   // WALK TOGETHER: each sees the other's puppet cover the ground.
   await host.cmd('snapto:' + SPOT);
-  await guest.cmd('snapto:-12300,-53100,512');
+  await guest.cmd('snapto:-12300,-53100,950'); // LAND 944 there; onGround settles it
   // The puppet must have FOLLOWED the snap before the walk is measured, or the teleport
   // itself would count as the walk.
   const settled = (watcher, id, at) => watcher.waitFor(`Math.hypot(${puppetOf(id)}.x - ${at.x}, ${puppetOf(id)}.y - ${at.y}) < 250`, STEP, `${watcher.name} sees ${id}'s puppet where the snap put it`);
@@ -397,23 +403,6 @@ export default async function run(ctx) {
   await host.waitFor(`Math.hypot(${puppetOf(guestId)}.x - ${gb.x}, ${puppetOf(guestId)}.y - ${gb.y}) > 80`, STEP, 'the host saw the friend walk');
   ctx.log(`ok: walked together (host to ${walked.x.toFixed(0)},${walked.y.toFixed(0)})`);
 
-  // BACK ONTO THE GROUND. The snap to SPOT lands at z=512 before the destination terrain has
-  // streamed in, and the body falls through to the water plane (fresh14: host at z=-121, every
-  // creature at z=960-1370; the friend's puppet fell too). An engine guard for that is backlog
-  // 482; until it lands, climb back to where the creatures stand, in legal legs.
-  {
-    const probe0 = JSON.parse(await host.eval('window.omw.state.actorProbe||"{}"'));
-    const zs = Object.values(probe0).filter((v) => !v.dead).map((v) => v.z).sort((a, b) => a - b);
-    const groundZ = zs.length ? zs[Math.floor(zs.length / 2)] : null;
-    const hz = (await poseOf(host)).z;
-    if (groundZ !== null && groundZ - hz > 400) {
-      ctx.log(`  the host is ${Math.round(groundZ - hz)} u under the creatures (z ${Math.round(hz)} vs ${Math.round(groundZ)}): fell through unloaded terrain (482); climbing back`);
-      const at = await poseOf(host);
-      await hopTo(ctx, host, at.x, at.y, groundZ + 40);
-      const gz = (await poseOf(guest)).z;
-      if (groundZ - gz > 400) { const g = await poseOf(guest); await hopTo(ctx, guest, g.x, g.y, groundZ + 40); }
-    }
-  }
   // FIGHT: the s164 idiom -- a real sword, the stance, the use bit; the peer's avatar swings.
   await host.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'the peer named a creature');
   await host.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP, 'the cell is peer-held');
