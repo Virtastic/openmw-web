@@ -496,7 +496,7 @@ export default async function run(ctx) {
   // fresh25, were a forager and a rat that stood still). Read twice, prefer the mark that
   // moved least; it is a real kill either way, just an honest one.
   let netId, victim;
-  for (let tryN = 0; tryN < 8; tryN++) {
+  for (let tryN = 0; tryN < 10; tryN++) {
     const first = JSON.parse(await host.eval('window.omw.state.actorProbe||"{}"'));
     await ctx.sleep(3_000);
     const second = JSON.parse(await host.eval('window.omw.state.actorProbe||"{}"'));
@@ -508,6 +508,15 @@ export default async function run(ctx) {
     // A FAR mark is not observed: its probe stops updating out of the client's view, so it
     // reads 'still' whatever it does (fresh47-49: a 3000 u 'standing' rat that wandered 400 u
     // between every hop). Come within 1200 u first, then judge it.
+    // NOTHING BUT SCRIBS IN VIEW: go and look. Every mark the other runs found stood south of
+    // the spawn (rats and foragers around y -53000..-55800); a scrib is never hittable (487)
+    // and the fallback below took one after 24 s of waiting (fresh59).
+    if (!ranked.length && tryN < 6) {
+      ctx.log(`  no mark in view but scribs; roaming 1500 u south`);
+      await hopTo(ctx, host, me.x, me.y - 1500, me.z);
+      Object.assign(me, await poseOf(host));
+      continue;
+    }
     if (ranked.length && dist(ranked[0][1]) > 1200 && tryN < 6) {
       const q = probe[ranked[0][1]];
       ctx.log(`  nearest mark ${ranked[0][1]} is ${Math.round(dist(ranked[0][1]))} u away, too far to watch; coming to 800 u of it`);
@@ -518,7 +527,7 @@ export default async function run(ctx) {
     }
     if (ranked.length && moved(ranked[0][1]) < 30) { [netId, victim] = ranked[0]; ctx.log(`  mark: ${victim} ${Math.round(dist(victim))} u away, moved ${moved(victim).toFixed(0)} u in 3 s`); break; }
     ctx.log(`  no standing mark yet (${ranked.map((e) => `${e[1]} moved ${moved(e[1]).toFixed(0)}`).join(', ')}); waiting`);
-    if (ranked.length && tryN === 7) [netId, victim] = ranked[0];
+    if (ranked.length && tryN === 9) [netId, victim] = ranked[0];
   }
   if (!victim) [netId, victim] = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"'))).sort((x, y) => dist(x[1]) - dist(y[1]))[0] || [];
   assert.ok(Number.isFinite(dist(victim)), `no living named creature nearby (host at ${Math.round(me.x)},${Math.round(me.y)},${Math.round(me.z)}): ${JSON.stringify(Object.fromEntries(Object.entries(probe).map(([k, v]) => [k, { x: Math.round(v.x), y: Math.round(v.y), z: Math.round(v.z), dead: v.dead }])))}; netObjects ${await host.eval("window.omw.state.netObjects")}`);
