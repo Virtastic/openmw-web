@@ -510,6 +510,7 @@ export default async function run(ctx) {
     await host.cmd('stance:weapon');
     await ctx.sleep(200);
     await host.cmd('attack:1500'); swings++;
+    if (swings % 5 === 1) { const av = await avatarPos(); const q = (await probeOf(host, victim)) || {}; ctx.log(`  swing ${swings}: avatar (${Math.round(av.x)},${Math.round(av.y)},${Math.round(av.z)}) mark (${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) range ${Math.hypot(q.x - av.x, q.y - av.y).toFixed(0)} hp=${q.hp} dead=${q.dead} div=${await host.eval('window.omw.state.selfDivergence')} flags=${await host.eval('window.omw.state.selfFlags')}`); }
     // The use bit is an EDGE on one avatar sample; a client taking a frame every few seconds
     // reads it by luck (fresh28 missed it in 10 s after a fight that fresh21/25 won). Latch it
     // in the page and treat it as narration: the kill below is the proof.
