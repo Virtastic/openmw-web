@@ -1609,8 +1609,14 @@ export class Connection implements Peer {
       this.authFail('resume', 'AUTH_FAILED', 'resume token expired or unknown');
       return;
     }
-    if (this.refuseIfBanned('resume', ticket.accountName)) return;
-    const account = await this.ctx.accounts.get(ticket.accountName);
+    // BY KEY, like the ticket path below. The parked ticket's accountName is the player's
+    // display name -- the profile HANDLE once one is set (this.player.name = account.username)
+    // -- and accounts are keyed by login name, so on any server where handles differ from
+    // logins (every real one; the suite's harness accounts happen to coincide) a resume was
+    // refused 'account no longer available' and the client fell back to a full page reboot
+    // (s170 fresh65: 33 s instead of a 3 s redial; backlog 491).
+    const account = await this.ctx.accounts.get(ticket.accountKey);
+    if (account && this.refuseIfBanned('resume', account.name)) return;
     if (!account || account.banned) {
       this.authFail('resume', 'AUTH_FAILED', 'account no longer available');
       return;
