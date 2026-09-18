@@ -63,6 +63,16 @@ const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"{}"
 // hack -- fresh7: `conn.cell_change_refused dist 1110` and the avatar never followed. The
 // suite's testhost waves those through, which is why s164 may snap beside its mark and this
 // may not. Hop in 600 u legs, each settled on the snapper before the next.
+// A walk in whichever direction is open: now that snapto lands ON the ground (482) the spot is
+// real terrain -- a slope, a rock -- and one fixed heading can be blocked (fresh17: 0,1 never
+// made 100 u in six tries, where the water plane it used to walk on was flat).
+async function walkSomewhere(c, minDist = 80) {
+  let last;
+  for (const [dx, dy] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
+    try { return await c.walk(dx, dy, 2500, minDist, 2); } catch (e) { last = e; }
+  }
+  throw last;
+}
 async function hopTo(ctx, c, x, y, z) {
   for (let leg = 0; leg < 12; leg++) {
     const at = await poseOf(c);
@@ -388,7 +398,7 @@ export default async function run(ctx) {
   await settled(guest, hostId, await poseOf(host));
   await settled(host, guestId, await poseOf(guest));
   const before = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`));
-  const walked = await host.walk(0, 1, 2500, 100);
+  const walked = await walkSomewhere(host, 100);
   // fresh5: the friend never saw the walk while their puppet of the host was distance-snapped
   // every ~3.5 s (under a concurrent engine bake, load 30). Say what each side holds.
   // fresh6 (quiet box) had the same shape: backlog 480 -- a despawn in the same frame as an
@@ -399,7 +409,7 @@ export default async function run(ctx) {
   ctx.log(`host walked to ${JSON.stringify(walked)} on their own screen; avatar divergence ${await host.eval("window.omw.state.selfDivergence")}; friend's puppet of the host before ${JSON.stringify(before)} now ${await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)}`);
   await guest.waitFor(`Math.hypot(${puppetOf(hostId)}.x - ${before.x}, ${puppetOf(hostId)}.y - ${before.y}) > 80`, STEP, "the friend saw the host walk");
   const gb = JSON.parse(await host.eval(`JSON.stringify(${puppetOf(guestId)})`));
-  await guest.walk(0, 1, 2500, 100);
+  await walkSomewhere(guest, 100);
   await host.waitFor(`Math.hypot(${puppetOf(guestId)}.x - ${gb.x}, ${puppetOf(guestId)}.y - ${gb.y}) > 80`, STEP, 'the host saw the friend walk');
   ctx.log(`ok: walked together (host to ${walked.x.toFixed(0)},${walked.y.toFixed(0)})`);
 
