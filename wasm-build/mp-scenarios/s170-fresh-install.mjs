@@ -407,7 +407,7 @@ export default async function run(ctx) {
   // measures in three dimensions, refused it).
   const dist = (r) => { const p = probe[r]; return p && !p.dead && Math.abs(p.z - me.z) < 600 ? Math.hypot(p.x - me.x, p.y - me.y, p.z - me.z) : Infinity; }; // 3D, like the server; 600 keeps a rat on a rise and drops the racer
   const [netId, victim] = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"'))).sort((x, y) => dist(x[1]) - dist(y[1]))[0];
-  assert.ok(Number.isFinite(dist(victim)), `no living named creature nearby: ${JSON.stringify(Object.keys(probe))}`);
+  assert.ok(Number.isFinite(dist(victim)), `no living named creature nearby (host at ${Math.round(me.x)},${Math.round(me.y)},${Math.round(me.z)}): ${JSON.stringify(Object.fromEntries(Object.entries(probe).map(([k, v]) => [k, { x: Math.round(v.x), y: Math.round(v.y), z: Math.round(v.z), dead: v.dead }])))}; netObjects ${await host.eval("window.omw.state.netObjects")}`);
   await guest.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(victim)})`, STEP, `the friend sees the ${victim} too`);
   await host.cmd(`equip:${WEAPON}:16`);
   await host.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(WEAPON)}) >= 0`, 15_000, 'the sword is in hand');
