@@ -77,7 +77,13 @@ export default async function run(ctx) {
     const range = Math.hypot(p.x - now.x, p.y - now.y);
     if (range > REACH) {
       // It walked off (or fled): step back beside it, at most a few times.
-      if (resnaps++ < 4) { await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`); await ctx.sleep(2_500); }
+      // ...and wait for the AVATAR to get there too: it is the body that swings, and #119 had
+      // it 197 u behind a client that had re-snapped after a walking scrib -- eight swings in
+      // three minutes, all into air.
+      if (resnaps++ < 6) {
+        await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`);
+        await a.waitFor("Number(window.omw.state.selfDivergence||999) < 60", 15_000, 'the avatar came along').catch(() => {});
+      }
       else { await ctx.sleep(1_000); }
       continue;
     }
