@@ -65,8 +65,11 @@ async function hopTo(ctx, c, x, y, z) {
     const f = Math.min(1, 600 / d); // 600, not 900: the server measures from ITS last pose for us, which can lag a walk by 100+ u (fresh8: 900 + 123 read as 1071)
     const tx = Math.round(at.x + dx * f), ty = Math.round(at.y + dy * f), tz = Math.round(f < 1 ? at.z + 8 : z);
     await c.cmd(`snapto:${tx},${ty},${tz}`);
-    await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); return !!p && Math.hypot(p.x - (${tx}), p.y - (${ty})) < 120; })()`, 20_000, `${c.name} hop ${leg + 1} landed`);
-    await ctx.sleep(1_500); // the avatar's follow-teleport, so the next leg is measured from here
+    // Landed means the AVATAR came along, not the local body: the client teleports itself
+    // whatever the server says, so a refused leg reads as landed on the local pose and the
+    // next leg compounds from a spot the server never accepted (fresh9: 1115 u refused).
+    await c.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
+    await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); var d = window.omw.state.selfDivergence; return !!p && Math.hypot(p.x - (${tx}), p.y - (${ty})) < 120 && typeof d === "string" && Number(d) < 100; })()`, 30_000, `${c.name} hop ${leg + 1}: the avatar came along`);
   }
 }
 const probeOf = async (c, rec) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'))[rec];
