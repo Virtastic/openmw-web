@@ -534,10 +534,14 @@ export default async function run(ctx) {
   await guest.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(victim)})`, STEP, `the friend sees the ${victim} too`);
   await host.cmd(`equip:${WEAPON}:16`);
   await host.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(WEAPON)}) >= 0`, 15_000, 'the sword is in hand');
-  // No setskill: a production-shaped server refuses a +95 skill raise (playerstate.ts stat_raise
-  // ladder, #369), so the avatar swings at the fresh character's skill 5 -- about one hit in
-  // twelve (fresh46: hp 23 -> 13 -> dead over 60 swings). Real play, just slow; the budget below
-  // is sized for it.
+  // TRAIN, WITHIN THE LADDER. A production-shaped server refuses a +95 skill raise (playerstate.ts
+  // stat_raise, #369) and the avatar then swings at the auto-chargen's skill 5: one hit in
+  // twelve on a rat, none in forty on one that wanders (fresh46-63). The ladder allows +5 per
+  // 10 s -- a trainer's session -- so raise Long Blade to 35, what a level-1 character with
+  // it as a major skill starts with, one accepted step at a time.
+  for (let v = 10; v <= 35; v += 5) { await host.cmd(`setskill:longblade:${v}`); await ctx.sleep(10_500); }
+  await host.cmd('skillof:longblade');
+  ctx.log(`  Long Blade trained to ${await host.eval('window.omw.state.skillOf')} within the raise ladder (server refusals so far: ${(gwLog().match(/stat_raise/g) || []).length})`);
   await ctx.sleep(3_000);
   await host.cmd('stance:weapon');
   await host.waitFor('window.omw.state.stance === "weapon"', 10_000, 'the sword is drawn');
