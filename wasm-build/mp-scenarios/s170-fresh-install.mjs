@@ -535,6 +535,7 @@ export default async function run(ctx) {
     // current frame to end (~2.3 s here), and the old body spent ~12 of them per swing: seven
     // swings in five minutes (fresh43, fresh44). Read everything in one eval; queue face,
     // stance and attack together -- Lua drains the whole queue in one frame.
+    const t0 = Date.now();
     const st = JSON.parse(await host.eval(`JSON.stringify({ p: (JSON.parse(window.omw.state.actorProbe||"{}"))[${JSON.stringify(victim)}] || null, me: JSON.parse(window.omw.state.pose||"{}"), div: Number(window.omw.state.selfDivergence||999) })`));
     const p = st.p || p0;
     died = st.p?.dead === true; if (died) break;
@@ -546,7 +547,9 @@ export default async function run(ctx) {
     }
     await host.evalAsync(`Promise.all([window.omw.send('face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}', 120000), window.omw.send('stance:weapon', 120000), window.omw.send('attack:1500', 120000)]).then(function(r){ if (!r.every(function(x){ return x.ok; })) throw new Error('swing cmd failed: ' + JSON.stringify(r)); return 'ok'; })`);
     swings++;
+    const tSwing = Date.now() - t0;
     if (swings % 5 === 1) { const av = await avatarPos(); const q = (await probeOf(host, victim)) || {}; ctx.log(`  swing ${swings}: avatar (${Math.round(av.x)},${Math.round(av.y)},${Math.round(av.z)}) mark (${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) range ${Math.hypot(q.x - av.x, q.y - av.y).toFixed(0)} hp=${q.hp} dead=${q.dead} div=${st.div} flags=${await host.eval('window.omw.state.selfFlags')}`); }
+    else ctx.log(`  swing ${swings}: read+cmds took ${tSwing} ms`);
     // The use bit is an EDGE on one avatar sample; a client taking a frame every few seconds
     // reads it by luck (fresh28 missed it in 10 s after a fight that fresh21/25 won). Latch it
     // in the page and treat it as narration: the kill below is the proof.
