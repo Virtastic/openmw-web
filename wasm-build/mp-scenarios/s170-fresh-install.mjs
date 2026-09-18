@@ -78,12 +78,12 @@ async function walkSomewhere(c, minDist = 80) {
 // come to us -- and a hop-and-settle approach (30 s a leg) loses to a scrib on the move
 // (fresh22: 2 swings in 3 minutes). Walking is announced continuously and the avatar follows
 // the inputs live; six short legs, re-aimed each time.
-async function walkToward(ctx, c, target, within = REACH, legs = 6, whereAmI = () => poseOf(c)) {
+async function walkToward(ctx, c, target, within = REACH, legs = 4, whereAmI = () => poseOf(c)) {
   for (let i = 0; i < legs; i++) {
     // CONVERGED FIRST: the heading is computed here but executed by the avatar from ITS
     // spot; with the body 300 u behind (fresh31: div 318 at swing 1) the two walk apart
     // until reconciliation snaps everything back. Let the body catch up to the avatar.
-    await c.waitFor('Number(window.omw.state.selfDivergence||999) < 40', 20_000, 'converged before the leg').catch(() => {});
+    await c.waitFor('Number(window.omw.state.selfDivergence||999) < 40', 8_000, 'converged before the leg').catch(() => {}); // 8 s: at 20 s a six-leg approach ate two minutes (fresh35: one swing in 180 s)
     const me = await whereAmI();
     const dx = target.x - me.x, dy = target.y - me.y, d = Math.hypot(dx, dy);
     if (d <= within) return true;
@@ -517,13 +517,13 @@ export default async function run(ctx) {
   const avatarPos = async () => { try { const q = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)); if (Number.isFinite(q.x)) return q; } catch (e) {} return poseOf(host); };
   let swings = 0, died = false, resnaps = 0;
   // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
-  for (const by = Date.now() + 180_000; Date.now() < by && !died;) {
+  for (const by = Date.now() + 300_000; Date.now() < by && !died;) {
     const p = (await probeOf(host, victim)) || p0;
     const now = await avatarPos();
     if (Math.hypot(p.x - now.x, p.y - now.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34); walk in to 70 first
       if (resnaps++ < 12) {
         const now2 = await avatarPos();
-        if (Math.hypot(p.x - now2.x, p.y - now2.y) < 900) await walkToward(ctx, host, p, 70, 6, avatarPos); // 70: six swings at 105 u landed nothing (fresh32) -- the sword reaches ~100 less the bodies
+        if (Math.hypot(p.x - now2.x, p.y - now2.y) < 900) await walkToward(ctx, host, p, 70, 4, avatarPos); // 70: six swings at 105 u landed nothing (fresh32) -- the sword reaches ~100 less the bodies
         else await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
       }
       else await ctx.sleep(1_000);
