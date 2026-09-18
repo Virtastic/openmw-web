@@ -473,7 +473,7 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // a retail scene at 720p is a frame every one to three seconds per client. A quarter of the
     // pixels is roughly three to four times the frame rate; nothing in the suite measures pixels
     // except s65/s74, which read a 256x256 map texture that does not depend on the window.
-    '--window-size=640,360', 'about:blank',
+    `--window-size=${process.env.OMW_HARNESS_WINDOW || '640,360'}`, 'about:blank', // OMW_HARNESS_WINDOW=1280,720 to compare a verdict against the old, slower client (s162's 24-29 u step back appeared with 640x360)
   // OWN PROCESS GROUP, so close() can take the WHOLE browser. Chrome's gpu-process,
   // zygote and renderers are children of this pid; SIGKILL on the pid alone left them
   // running, reparented, and invisible to the next scenario -- 1847 chrome processes and
