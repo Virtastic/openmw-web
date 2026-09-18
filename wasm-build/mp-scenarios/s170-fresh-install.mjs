@@ -52,6 +52,23 @@ const NEW_DOC_SCRIPT = `(function(){
 const shown = (id) => `(function(){ var e = document.getElementById('${id}'); return !!e && e.classList.contains('show'); })()`;
 const onGamePage = "/index\\.html$/.test(location.pathname)";
 const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"{}"'));
+// A LEGAL approach on a real server. This server is production-shaped (no [limits] harness),
+// so a same-cell jump past SAME_CELL_JUMP (1024 u, connection.ts) is refused as a teleport
+// hack -- fresh7: `conn.cell_change_refused dist 1110` and the avatar never followed. The
+// suite's testhost waves those through, which is why s164 may snap beside its mark and this
+// may not. Hop in 900 u legs, each settled on the snapper before the next.
+async function hopTo(ctx, c, x, y, z) {
+  for (let leg = 0; leg < 12; leg++) {
+    const at = await poseOf(c);
+    const dx = x - at.x, dy = y - at.y, d = Math.hypot(dx, dy);
+    if (d < 50) return;
+    const f = Math.min(1, 900 / d);
+    const tx = Math.round(at.x + dx * f), ty = Math.round(at.y + dy * f), tz = Math.round(f < 1 ? at.z + 8 : z);
+    await c.cmd(`snapto:${tx},${ty},${tz}`);
+    await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); return !!p && Math.hypot(p.x - (${tx}), p.y - (${ty})) < 120; })()`, 20_000, `${c.name} hop ${leg + 1} landed`);
+    await ctx.sleep(1_500); // the avatar's follow-teleport, so the next leg is measured from here
+  }
+}
 const probeOf = async (c, rec) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'))[rec];
 const rowOf = (handle) => `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(handle)}; }) || {})`;
 const puppetOf = (id) => `(JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(id)}]||{})`;
@@ -392,7 +409,7 @@ export default async function run(ctx) {
   await host.cmd('stance:weapon');
   await host.waitFor('window.omw.state.stance === "weapon"', 10_000, 'the sword is drawn');
   const p0 = await probeOf(host, victim);
-  await host.cmd(`snapto:${Math.round(p0.x + 60)},${Math.round(p0.y)},${Math.round(p0.z + 8)}`);
+  await hopTo(ctx, host, p0.x + 60, p0.y, p0.z + 8);
   await host.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
   await host.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
   await host.cmd(`hitn:${victim}:1`);
@@ -404,7 +421,7 @@ export default async function run(ctx) {
     const p = (await probeOf(host, victim)) || p0;
     const now = await poseOf(host);
     if (Math.hypot(p.x - now.x, p.y - now.y) > REACH) {
-      if (resnaps++ < 4) { await host.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`); await ctx.sleep(2_500); }
+      if (resnaps++ < 4) { await hopTo(ctx, host, p.x + 60, p.y, p.z + 8); await ctx.sleep(2_500); }
       else await ctx.sleep(1_000);
       continue;
     }
@@ -445,7 +462,7 @@ export default async function run(ctx) {
   await host.waitFor(`${puppetOf(guestId)}.dead === true`, 300_000, 'the host sees the friend drown');
   await guest.cmd('walk:0,0,1'); // stop holding the body under
   await guest.waitFor('Number(window.omw.state.hp||"0") > 0', 60_000, 'health restored by the respawn');
-  await guest.cmd('snapto:' + SPOT); // out of the water before it drowns again (stock rules respawn in place)
+  { const [sx, sy, sz] = SPOT.split(',').map(Number); await hopTo(ctx, guest, sx, sy, sz); } // out of the water before it drowns again (stock rules respawn in place)
   assert.equal(await guest.eval('window.omw.state.state'), 'Joined', 'dying keeps the friend connected');
   assert.equal(await guest.eval('String(window.omw.state.worldClosed||"")'), '', 'dying does not send the friend home');
   await host.waitFor(`${puppetOf(guestId)}.dead !== true`, STEP, 'the host sees the friend get up');
