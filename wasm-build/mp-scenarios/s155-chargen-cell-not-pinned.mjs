@@ -49,7 +49,13 @@ export default async function run(ctx) {
     ctx.log(`walk ${dx},${dy}: covered ${d.toFixed(0)} units, divergence ${div.toFixed(0)}, stale=${await a.eval('window.omw.state.selfStale||""')}`);
     moved = Math.max(moved, d); maxDiv = Math.max(maxDiv, div);
   }
-  if (!(moved > 30)) {
+  // PINNED means a live divergence or a snap, not a short walk: the office is cramped and a
+  // 3 s walk into a desk covers 0 (#119: 0/0/21/21 with divergence 0 and no snap, green in
+  // #115 at 15/37/31/41). A pin shows as divergence > 32 or a selfSnap; a free player who
+  // covered 15 u in some direction is free.
+  const snapped = String(await a.eval("window.omw.state.selfSnap||''")) !== '';
+  const pinned = maxDiv > 32 || snapped || !(moved >= 15);
+  if (pinned) {
     // NOT THE AVATAR (#111: 0 u in all four directions with divergence 0, no avatar spawned on
     // the peer, and one same-cell PlayerCellChange -- a >256 u single-frame jump -- announced
     // during the first walk; #107 walked 31/31/13/26 in the same office). Whatever moved A back
@@ -59,7 +65,7 @@ export default async function run(ctx) {
     ctx.log(`  client mirrors: ${JSON.stringify(diag)}`);
     ctx.log(`  client console tail:\n${a.logTail()}`);
   }
-  assert.ok(moved > 30, `A could not walk in the chargen cell (best ${moved.toFixed(0)} units): the peer streams a frozen avatar there and reconciliation pins the player`);
+  assert.ok(!pinned, `A is pinned in the chargen cell (best ${moved.toFixed(0)} units, divergence ${maxDiv.toFixed(0)}, snap=${snapped}): the peer streams a frozen avatar there and reconciliation pins the player`);
   assert.ok(maxDiv < 30, `an avatar is being streamed for a player in the chargen sanctuary (divergence ${maxDiv.toFixed(0)})`);
   ctx.log('PASS: a new character walks freely in the chargen sanctuary with a live peer');
 }
