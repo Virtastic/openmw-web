@@ -86,35 +86,44 @@ export default async function run(ctx) {
   // level-1 swing just misses often). Three minutes is the budget a kill needs, not a hit.
   const deadline = Date.now() + 180_000;
   let swings = 0, died = false, resnaps = 0;
+  // ONE FRAME PER READ, ONE PER SWING (s170 fresh44-46): every eval and cmd waits for the
+  // client's current frame, and a body of a dozen per swing managed eight swings in three
+  // minutes (#119, #120: 8 and 4). Read in one eval; queue face, stance and attack together
+  // (Lua drains the whole queue in a frame). A mark that is closing in is waited for, not
+  // snapped after: a rat in combat runs at us, and chasing it read 'far' at every landing.
   while (Date.now() < deadline && !died) {
-    const p = (await probeOf(a, victim)) || p0;
-    const now = await poseOf(a);
-    const range = Math.hypot(p.x - now.x, p.y - now.y);
+    const st = JSON.parse(await a.eval(`JSON.stringify({ p: (JSON.parse(window.omw.state.actorProbe||"{}"))[${JSON.stringify(victim)}] || null, me: JSON.parse(window.omw.state.pose||"{}"), div: Number(window.omw.state.selfDivergence||999) })`));
+    const p = st.p || p0;
+    died = st.p?.dead === true; if (died) break;
+    let range = Math.hypot(p.x - st.me.x, p.y - st.me.y);
     if (range > REACH) {
-      // It walked off (or fled): step back beside it, at most a few times.
-      // ...and wait for the AVATAR to get there too: it is the body that swings, and #119 had
-      // it 197 u behind a client that had re-snapped after a walking scrib -- eight swings in
-      // three minutes, all into air.
+      let q = p;
+      for (let t = 0; t < (range < 500 ? 10 : 1) && range > REACH; t++) {
+        await ctx.sleep(3_000);
+        q = (await probeOf(a, victim)) || p; const me2 = await poseOf(a);
+        range = Math.hypot(q.x - me2.x, q.y - me2.y);
+      }
+      if (range <= REACH) continue;
+      // It walked off (or fled): step back beside it, at most a few times, and wait for the
+      // AVATAR to get there too: it is the body that swings, and #119 had it 197 u behind a
+      // client that had re-snapped after a walking scrib -- eight swings, all into air.
       if (resnaps++ < 6) {
-        await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`);
+        await a.cmd(`snapto:${Math.round(q.x + 60)},${Math.round(q.y)},${Math.round(q.z + 8)}`);
         await a.waitFor("Number(window.omw.state.selfDivergence||999) < 60", 15_000, 'the avatar came along').catch(() => {});
       }
       else { await ctx.sleep(1_000); }
       continue;
     }
-    await a.cmd(`face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}`);
-    await a.cmd('stance:weapon'); // the avatar mirrors OUR stance bit
-    await ctx.sleep(200);
-    await a.cmd('attack:1500'); swings++;
+    await a.evalAsync(`Promise.all([window.omw.send('face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}', 120000), window.omw.send('stance:weapon', 120000), window.omw.send('attack:1500', 120000)]).then(function(r){ if (!r.every(function(x){ return x.ok; })) throw new Error('swing cmd failed: ' + JSON.stringify(r)); return 'ok'; })`);
+    swings++;
     if (swings === 1) {
       // The first swing must come back on the authoritative stream (s67's proof).
       await a.waitFor('(Number(window.omw.state.selfFlags||0) & 8) === 8', 10_000, 'the avatar reports swinging (use bit on the state stream)');
     }
     await ctx.sleep(2_000); // swing + the peer's report back
-    died = (await a.eval(deadExpr)) === true;
     if (swings % 4 === 1) {
       const q = (await probeOf(a, victim)) || {};
-      ctx.log(`swing ${swings}: range ${range.toFixed(0)} mark=(${Math.round(q.x)},${Math.round(q.y)}) dead=${q.dead} div=${await a.eval('window.omw.state.selfDivergence')} flags=${await a.eval('window.omw.state.selfFlags')} hp=${await a.eval('window.omw.state.hp')}`);
+      ctx.log(`swing ${swings}: range ${range.toFixed(0)} mark=(${Math.round(q.x)},${Math.round(q.y)}) dead=${q.dead} div=${st.div} flags=${await a.eval('window.omw.state.selfFlags')} hp=${await a.eval('window.omw.state.hp')}`);
     }
   }
   const fwd = String(await a.eval('window.omw.state.hitFwdCount'));
