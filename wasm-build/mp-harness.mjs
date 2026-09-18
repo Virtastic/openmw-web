@@ -505,7 +505,7 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // from other code — so scenarios pass and the feature is dead. That is exactly how three
     // undeclared identifiers silently killed chat, and how a cross-block call killed the
     // world switch, both shipping green because nothing in CI ever loaded the page.
-    jsErrors: () => logs.filter((l) => l.startsWith('EXC:')),
+    jsErrors: () => logs.filter((l) => l.startsWith('EXC:') || l.includes('[pump] frame threw')), // the pump's own report of a wasm trap (478)
     // SIGKILL AND THEN ACTUALLY WAIT. This used to return the instant the signal was sent, so
     // the next scenario started booting while several retail Chromes (~1.5 GB each) were still
     // tearing down. Host load was measured at 17-20 DURING the suite, and s10, s31 and s69 all

@@ -3720,7 +3720,23 @@ window.omw = (function(){
        function pumpFrame(){
          scheduled = false;
          var a = performance.now();
-         try { if (Module._omw_pump_frame) Module._omw_pump_frame(); } catch(e){}
+         try { if (Module._omw_pump_frame) Module._omw_pump_frame(); }
+         catch(e){
+           // NEVER SILENT. A C++ exception is caught inside omw_pump_frame and logged there; what
+           // reaches here is a wasm TRAP (RuntimeError: unreachable / memory access out of bounds)
+           // that unwound straight through the engine's re-entrancy guard, so every later pump
+           // returns instantly and the game is frozen with a live page -- the shape of every
+           // 'engine stopped' red (backlog 478: s149 after the sea cells load, s114, s150). It
+           // was swallowed here and the harness counted errors 0. Say it, once, loudly, with
+           // the stack, and give a player a way out instead of a frozen screen.
+           if (!window.__omwPumpTrap){
+             window.__omwPumpTrap = String(e && e.stack || e);
+             append('[pump] frame threw: ' + window.__omwPumpTrap, 'err');
+             try { console.error('EXC: [pump] frame threw: ' + window.__omwPumpTrap); } catch(_){}
+             showLogOnce();
+             if (typeof fatalOverlay === 'function') fatalOverlay('The game engine crashed', 'Reload to keep playing. Your progress is saved on the server.');
+           }
+         }
          // End of boot: the first frame the engine actually rendered. Stamped here rather than in
          // the 500ms status poller so it is exact to one frame. __omwRunning is set by the engine's
          // own loop, so this fires once the player can genuinely see something.
