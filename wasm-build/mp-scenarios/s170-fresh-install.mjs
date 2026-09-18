@@ -73,6 +73,22 @@ async function walkSomewhere(c, minDist = 80) {
   }
   throw last;
 }
+// WALK at a mark, as a player does. On a production-shaped server the relay sting is refused
+// (combat_hit_refused: a client may not author hits), so a wandering creature is not going to
+// come to us -- and a hop-and-settle approach (30 s a leg) loses to a scrib on the move
+// (fresh22: 2 swings in 3 minutes). Walking is announced continuously and the avatar follows
+// the inputs live; six short legs, re-aimed each time.
+async function walkToward(ctx, c, target, within = REACH, legs = 6) {
+  for (let i = 0; i < legs; i++) {
+    const me = await poseOf(c);
+    const dx = target.x - me.x, dy = target.y - me.y, d = Math.hypot(dx, dy);
+    if (d <= within) return true;
+    const ms = Math.min(2500, Math.max(600, Math.round(d * 12)));
+    await c.cmd(`walk:${(dx / d).toFixed(2)},${(dy / d).toFixed(2)},${ms}`);
+    await ctx.sleep(ms + 600);
+  }
+  return Math.hypot(target.x - (await poseOf(c)).x, target.y - (await poseOf(c)).y) <= within;
+}
 async function hopTo(ctx, c, x, y, z) {
   for (let leg = 0; leg < 12; leg++) {
     const at = await poseOf(c);
@@ -464,7 +480,11 @@ export default async function run(ctx) {
     const p = (await probeOf(host, victim)) || p0;
     const now = await poseOf(host);
     if (Math.hypot(p.x - now.x, p.y - now.y) > REACH) {
-      if (resnaps++ < 8) { await hopTo(ctx, host, p.x + 60, p.y, p.z + 8); }
+      if (resnaps++ < 12) {
+        const now2 = await poseOf(host);
+        if (Math.hypot(p.x - now2.x, p.y - now2.y) < 900) await walkToward(ctx, host, p);
+        else await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
+      }
       else await ctx.sleep(1_000);
       continue;
     }
