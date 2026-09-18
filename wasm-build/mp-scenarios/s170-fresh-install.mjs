@@ -543,7 +543,7 @@ export default async function run(ctx) {
   // because the body never read within reach while the avatar stood by the mark). The
   // avatar is what swings, and the friend's screen shows exactly where it stands.
   const avatarPos = async () => { try { const q = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)); if (Number.isFinite(q.x)) return q; } catch (e) {} return poseOf(host); };
-  let swings = 0, died = false, resnaps = 0, stalls = 0;
+  let swings = 0, died = false, resnaps = 0, stalls = 0, lastHp = null, dry = 0, rehops = 0, reach = 90;
   // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
   for (const by = Date.now() + 480_000; Date.now() < by && !died;) { // ~150 swings at skill 5 (fresh46: three hits in 60)
     // ONE FRAME PER READ, ONE PER SWING. Every eval and every cmd waits for the client's
@@ -555,8 +555,15 @@ export default async function run(ctx) {
     const p = st.p || p0;
     died = st.p?.dead === true; if (died) break;
     if (st.div >= 60) { if (++stalls % 10 === 1) ctx.log(`  body ${st.div.toFixed(0)} u from its avatar; waiting (stall ${stalls})`); await ctx.sleep(1_000); continue; } // a hop lands both; wait for the body to agree with the avatar (fresh37)
+    // Ten dry swings from one spot: come in again at a DIFFERENT range. At 60 u a standing
+    // forager took 50 swings without a scratch (fresh50); the hits so far came at 101-111 u
+    // (fresh32/34) and on a rat that was running in (fresh46). The melee test is a cone from
+    // the head along the aim, and a low creature may only fall inside it further out.
+    const gap0 = Math.hypot(p.x - st.me.x, p.y - st.me.y);
+    if (st.p && st.p.hp !== lastHp) { lastHp = st.p.hp; dry = 0; }
+    if (dry >= 10) { const off = [110, 40, 90, 130][rehops++ % 4]; ctx.log(`  ${dry} swings without a hit from ${Math.round(gap0)} u; coming in again at ${off} u`); dry = 0; reach = off + 30; await hopTo(ctx, host, p.x + off, p.y, p.z + 8); continue; }
     const gap = Math.hypot(p.x - st.me.x, p.y - st.me.y);
-    if (gap > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34)
+    if (gap > reach) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34)
       // A mark that is CLOSING IN gets waited for, not hopped to: a rat in combat runs at us,
       // a hop takes ~15 s (the avatar has to come along) and the rat covers 400 u meanwhile,
       // so every landing read 'far' again -- nine hops, one swing (fresh48). Hop only at a
@@ -569,7 +576,7 @@ export default async function run(ctx) {
       continue;
     }
     await host.evalAsync(`Promise.all([window.omw.send('face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}', 120000), window.omw.send('stance:weapon', 120000), window.omw.send('attack:1500', 120000)]).then(function(r){ if (!r.every(function(x){ return x.ok; })) throw new Error('swing cmd failed: ' + JSON.stringify(r)); return 'ok'; })`);
-    swings++;
+    swings++; dry++;
     const tSwing = Date.now() - t0;
     if (swings % 5 === 1) { const av = await avatarPos(); const q = (await probeOf(host, victim)) || {}; ctx.log(`  swing ${swings}: avatar (${Math.round(av.x)},${Math.round(av.y)},${Math.round(av.z)}) mark (${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) range ${Math.hypot(q.x - av.x, q.y - av.y).toFixed(0)} hp=${q.hp} dead=${q.dead} div=${st.div} flags=${await host.eval('window.omw.state.selfFlags')}`); }
     else ctx.log(`  swing ${swings}: read+cmds took ${tSwing} ms`);
