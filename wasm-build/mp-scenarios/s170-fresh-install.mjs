@@ -80,10 +80,14 @@ async function walkSomewhere(c, minDist = 80) {
 // the inputs live; six short legs, re-aimed each time.
 async function walkToward(ctx, c, target, within = REACH, legs = 6, whereAmI = () => poseOf(c)) {
   for (let i = 0; i < legs; i++) {
+    // CONVERGED FIRST: the heading is computed here but executed by the avatar from ITS
+    // spot; with the body 300 u behind (fresh31: div 318 at swing 1) the two walk apart
+    // until reconciliation snaps everything back. Let the body catch up to the avatar.
+    await c.waitFor('Number(window.omw.state.selfDivergence||999) < 40', 20_000, 'converged before the leg').catch(() => {});
     const me = await whereAmI();
     const dx = target.x - me.x, dy = target.y - me.y, d = Math.hypot(dx, dy);
     if (d <= within) return true;
-    const ms = Math.min(2500, Math.max(600, Math.round(d * 12)));
+    const ms = Math.min(1500, Math.max(500, Math.round(d * 10))); // short legs keep the body and its avatar close
     // walk: is body-relative (0,1 = forward): face the mark, then walk forward (fresh23 marched
     // 2000 u the wrong way on world-space axes).
     await c.cmd(`face:${Math.round(target.x)},${Math.round(target.y)},${Math.round((target.z ?? me.z) + 20)}`);
