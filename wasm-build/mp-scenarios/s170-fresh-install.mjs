@@ -574,7 +574,7 @@ export default async function run(ctx) {
     // the head along the aim, and a low creature may only fall inside it further out.
     const gap0 = Math.hypot(p.x - st.me.x, p.y - st.me.y);
     if (st.p && st.p.hp !== lastHp) { lastHp = st.p.hp; dry = 0; }
-    if (dry >= 10) { const off = [110, 40, 90, 130][rehops++ % 4]; ctx.log(`  ${dry} swings without a hit from ${Math.round(gap0)} u; coming in again at ${off} u`); dry = 0; reach = off + 30; await hopTo(ctx, host, p.x + off, p.y, p.z + 8); continue; }
+    if (dry >= 10) { const off = [110, 40, 90, 130][rehops++ % 4]; ctx.log(`  ${dry} swings without a hit from ${Math.round(gap0)} u; coming in again at ${off} u`); dry = 0; reach = Math.max(110, off + 30); await hopTo(ctx, host, p.x + off, p.y, p.z + 8); continue; }
     const gap = Math.hypot(p.x - st.me.x, p.y - st.me.y);
     if (gap > reach) {
       // A mark that is CLOSING IN gets waited for, not hopped to: a rat in combat runs at us,
