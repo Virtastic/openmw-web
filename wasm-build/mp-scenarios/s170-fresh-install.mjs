@@ -568,9 +568,19 @@ export default async function run(ctx) {
       // a hop takes ~15 s (the avatar has to come along) and the rat covers 400 u meanwhile,
       // so every landing read 'far' again -- nine hops, one swing (fresh48). Hop only at a
       // mark that is not coming.
-      await ctx.sleep(3_000);
-      const q = (await probeOf(host, victim)) || p, me2 = await poseOf(host);
-      if (Math.hypot(q.x - me2.x, q.y - me2.y) < gap - 40) { if (++stalls % 5 === 1) ctx.log(`  the ${victim} is coming (${Math.round(gap)} -> ${Math.round(Math.hypot(q.x - me2.x, q.y - me2.y))} u); standing`); continue; }
+      // ...and a mark within a few hundred units is left to come on its own: a rat that
+      // near notices the player and attacks, while hopping after it as it wanders was a
+      // dance of step-backs that never ended (fresh55: nine hops at a rat circling 150-300 u).
+      let q = p, near = gap;
+      for (let t = 0; t < (gap < 500 ? 14 : 1); t++) {
+        await ctx.sleep(3_000);
+        q = (await probeOf(host, victim)) || p; const me2 = await poseOf(host);
+        near = Math.hypot(q.x - me2.x, q.y - me2.y);
+        if (near <= reach) break;
+      }
+      if (near <= reach) continue;
+      if (near < gap - 40) { if (++stalls % 5 === 1) ctx.log(`  the ${victim} is coming (${Math.round(gap)} -> ${Math.round(near)} u); standing`); continue; }
+      ctx.log(`  the ${victim} keeps its distance (${Math.round(gap)} -> ${Math.round(near)} u); hopping to it`);
       if (resnaps++ < 12) await hopTo(ctx, host, q.x + 60, q.y, q.z + 8);
       else await ctx.sleep(1_000);
       continue;
