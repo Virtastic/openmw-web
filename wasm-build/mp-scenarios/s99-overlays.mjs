@@ -95,10 +95,18 @@ export default async function run(ctx) {
 
   // 4. O toggles the social panel (A_Social engine action -> Lua -> JS). Closing the chat
   // blurred its input; give the canvas the keyboard back first (as a real click would).
-  await a.eval(`document.getElementById('canvas').focus()`);
-  await a.key(O);
-  await a.waitFor(`document.getElementById('omw-social').classList.contains('show')`, 5000,
-    'O opened the social panel');
+  // The same press-after-Escape gap as step 6 (#119: O within the 800 ms suppression the
+  // Escape armed): wait it out, need the keys free, press up to three times.
+  await ctx.sleep(900);
+  let social = false;
+  for (let i = 0; i < 3 && !social; i++) {
+    await a.waitFor(`String(window.omw.state.uiMode||'none') === 'none'`, 5000, 'no engine window owns the keys').catch(() => {});
+    await a.eval(`document.getElementById('canvas').focus()`);
+    await a.key(O);
+    social = await a.waitFor(`document.getElementById('omw-social').classList.contains('show')`, 5000, 'O opened the social panel').then(() => true).catch(() => false);
+    if (!social) ctx.log(`  press ${i + 1}: no social panel; uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')}`);
+  }
+  assert.ok(social, 'O never opened the social panel in three presses');
   ctx.log('ok: O opens social panel');
   await a.key(ESC);
   await a.waitFor(`!document.getElementById('omw-social').classList.contains('show')`, 3000,
