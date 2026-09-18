@@ -86,6 +86,7 @@ async function hopTo(ctx, c, x, y, z) {
       const bx = Math.round(at.x - (dx / d) * 300), by = Math.round(at.y - (dy / d) * 300);
       ctx.log(`  ${c.name} hop ${leg + 1}: only ${Math.round(d)} u to go, stepping back 300 first`);
       await c.cmd(`snapto:${bx},${by},${Math.round(at.z)}`);
+      await c.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
       await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); var d = window.omw.state.selfDivergence; return !!p && Math.hypot(p.x - (${bx}), p.y - (${by})) < 120 && typeof d === "string" && Number(d) < 100; })()`, 30_000, `${c.name} hop ${leg + 1}: the avatar came along (back step)`);
       continue;
     }
