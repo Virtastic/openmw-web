@@ -405,7 +405,7 @@ export default async function run(ctx) {
   // On the GROUND: a cliff racer wheeling 1000 u overhead is the nearest mark in 2D and
   // unreachable in 3D (fresh10/11: the hop to it read as a 1254 u jump and the server, which
   // measures in three dimensions, refused it).
-  const dist = (r) => { const p = probe[r]; return p && !p.dead && Math.abs(p.z - me.z) < 300 ? Math.hypot(p.x - me.x, p.y - me.y) : Infinity; };
+  const dist = (r) => { const p = probe[r]; return p && !p.dead && Math.abs(p.z - me.z) < 600 ? Math.hypot(p.x - me.x, p.y - me.y, p.z - me.z) : Infinity; }; // 3D, like the server; 600 keeps a rat on a rise and drops the racer
   const [netId, victim] = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"'))).sort((x, y) => dist(x[1]) - dist(y[1]))[0];
   assert.ok(Number.isFinite(dist(victim)), `no living named creature nearby: ${JSON.stringify(Object.keys(probe))}`);
   await guest.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(victim)})`, STEP, `the friend sees the ${victim} too`);
