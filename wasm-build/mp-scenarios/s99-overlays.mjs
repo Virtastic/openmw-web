@@ -11,6 +11,21 @@ import assert from 'node:assert/strict';
 const T = { key: 't', code: 'KeyT', keyCode: 84 };
 const O = { key: 'o', code: 'KeyO', keyCode: 79 };
 const ESC = { key: 'Escape', code: 'Escape', keyCode: 27, text: '' };
+// A hotkey pressed right after an Escape lands inside the 800 ms signal suppression the
+// Escape arms (index.html suppressSignals), or while an engine window still owns the keys
+// (uiMode); the overlay swallows it by design. A player presses again. So does this: wait
+// out the window, need uiMode none, press, up to three times (#115-#120, one step per sweep).
+async function pressUntil(ctx, a, key, cond, what) {
+  await ctx.sleep(900);
+  for (let i = 0; i < 3; i++) {
+    await a.waitFor(`String(window.omw.state.uiMode||'none') === 'none'`, 5000, 'no engine window owns the keys').catch(() => {});
+    await a.eval(`document.getElementById('canvas').focus()`);
+    await a.key(key);
+    if (await a.waitFor(cond, 5000, what).then(() => true).catch(() => false)) return;
+    ctx.log(`  press ${i + 1}: not yet (${what}); uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')} active=${await a.eval('document.activeElement && document.activeElement.id')}`);
+  }
+  throw new Error(`${what}: three presses did nothing`);
+}
 
 export default async function run(ctx) {
   const a = await ctx.launchClient('bot-ov');
@@ -125,13 +140,7 @@ export default async function run(ctx) {
   // The Escape that closed the social panel armed the 800 ms signal suppression (index.html
   // suppressSignals) and may have reached the engine too; #115 pressed T inside that window
   // and the input never took focus. Wait it out and confirm no engine window owns the keys.
-  await ctx.sleep(900);
-  await a.waitFor(`String(window.omw.state.uiMode||'none') === 'none'`, 5000, 'no engine window owns the keys')
-    .catch(async (e) => { ctx.log(`uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')}`); throw e; });
-  await a.eval(`document.getElementById('canvas').focus()`);
-  await a.key(T);
-  await a.waitFor(`document.activeElement && document.activeElement.id === 'omw-tx'`, 6000, 'chat input focused')
-    .catch(async (e) => { ctx.log(`uiMode=${await a.eval('window.omw.state.uiMode')} lastKey=${await a.eval('window.omw.state.lastKey')} chat=${await a.eval("document.getElementById('omw-chat').className")} active=${await a.eval('document.activeElement && document.activeElement.id')}`); throw e; });
+  await pressUntil(ctx, a, T, `document.activeElement && document.activeElement.id === 'omw-tx'`, 'chat input focused');
   for (const ch of ['h','e','l','l','o']) await a.key({ key: ch, code: 'Key' + ch.toUpperCase(), keyCode: ch.charCodeAt(0) - 32 });
   await a.waitFor(`document.getElementById('omw-tx').value === 'hello'`, 4000,
     'typed characters reached the chat input (not swallowed by SDL)');
@@ -198,9 +207,7 @@ export default async function run(ctx) {
   // 8. Enter must SEND. The window-capture shield stops the event before it reaches the
   // input's own listener, so Enter has to be driven from the shield — otherwise you can type
   // but nothing sends.
-  await a.eval(`document.getElementById('canvas').focus()`);
-  await a.key(T);
-  await a.waitFor(`document.activeElement && document.activeElement.id === 'omw-tx'`, 4000, 'chat input focused');
+  await pressUntil(ctx, a, T, `document.activeElement && document.activeElement.id === 'omw-tx'`, 'chat input focused');
   // Letters only: the key helper derives code as 'Key'+CH, which is invalid for digits.
   await a.eval(`document.getElementById('omw-tx').value = ''`); // Esc preserves the draft
   const msg = 'e' + Math.random().toString(36).replace(/[^a-z]/g, '').slice(0, 6);
