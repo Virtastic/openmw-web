@@ -425,6 +425,13 @@ export default async function run(ctx) {
   await host.waitFor(`Math.hypot(${puppetOf(guestId)}.x - ${gb.x}, ${puppetOf(guestId)}.y - ${gb.y}) > 80`, STEP, 'the host saw the friend walk');
   ctx.log(`ok: walked together (host to ${walked.x.toFixed(0)},${walked.y.toFixed(0)})`);
 
+  // SETTLED FIRST. The walk leaves the avatar a few hundred units ahead (it walks wall time, the
+  // client integrates 0.2 s a frame: 445/465), and fresh20 picked its mark while reconciliation
+  // was still snapping the body after the avatar (SELF SNAP 261, 399).
+  for (const c of [host, guest]) {
+    await c.waitFor('Number(window.omw.state.selfDivergence||999) < 10', 30_000, `${c.name} settled on its avatar after the walk`)
+      .catch(async () => ctx.log(`  ${c.name} not settled: divergence ${await c.eval('window.omw.state.selfDivergence')}`));
+  }
   // FIGHT: the s164 idiom -- a real sword, the stance, the use bit; the peer's avatar swings.
   await host.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'the peer named a creature');
   await host.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP, 'the cell is peer-held');
