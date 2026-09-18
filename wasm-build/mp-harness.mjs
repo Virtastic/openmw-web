@@ -1019,6 +1019,20 @@ for (const file of files) {
     err = e;
   } finally {
     torndown = true;
+    // LIVENESS, BEFORE ANY TEARDOWN. Four reds so far were a client whose engine stopped mid-run
+    // with a live JS thread (478: s149, s114 twice, s150). The main loop rides
+    // requestAnimationFrame, so: does rAF still fire, is the page visible, how many actor
+    // frames (the actorBatchesIn mirror moves once a frame)? Asked here while the tab is up;
+    // asked after close() every client reads as "blocked" (#117 s136), and asked after the
+    // scenario's gateway was TERMed every client reads "Connecting" (fresh17).
+    if (err) {
+      await Promise.all(clients.map(async (c) => {
+        c.liveness = await Promise.race([
+          c.evalAsync('(async () => { const t0 = performance.now(); const raf = await new Promise((r) => { const id = requestAnimationFrame(() => r(true)); setTimeout(() => { cancelAnimationFrame(id); r(false); }, 1500); }); const b0 = (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null; await new Promise((r) => setTimeout(r, 2000)); const b1 = (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null; const sf = window.__streamfsStats ? (typeof window.__streamfsStats === "function" ? window.__streamfsStats() : window.__streamfsStats) : null; return JSON.stringify({ raf, ms: Math.round(performance.now() - t0), vis: document.visibilityState, hidden: document.hidden, batches: [b0, b1], engineAdvancing: b0 !== null && b1 !== null && b1 !== b0, streamfs: sf && { misses: sf.misses, stallMs: Math.round(sf.stallMs || 0), bytes: sf.bytes, evictions: sf.evictions }, state: window.omw && window.omw.state && window.omw.state.state }); })()'),
+          new Promise((r) => setTimeout(() => r('(eval did not return in 7 s: the JS thread itself is blocked)'), 7000)),
+        ]).catch((e) => `(liveness probe failed: ${e.message})`);
+      }));
+    }
     // SIGKILL, not TERM: the engine ignores TERM (see startSimPeer.stop). Idempotent on a
     // process the scenario already stopped.
     // The GROUP first: a detached child (the gateway) owns worlds and peers that must go with
@@ -1069,19 +1083,6 @@ for (const file of files) {
       err = new Error(`${luaErrs.length} client + ${peerLuaErrs.length} peer Lua error(s) during the scenario`
         + ` (export allowLuaErrors = true to tolerate them knowingly):\n`
         + [...luaErrs, ...peerLuaErrs].slice(0, 5).map((l) => '  ' + l.trim()).join('\n'));
-    }
-    // LIVENESS, BEFORE THE CLOSE. Four reds so far were a client whose engine stopped mid-run
-    // with a live JS thread (478: s149, s114 twice, s150). The main loop rides
-    // requestAnimationFrame, so: does rAF still fire, is the page visible, how many actor
-    // frames (the actorBatchesIn mirror moves once a frame)? Asked here while the tab is up;
-    // asked after close() every client reads as "blocked" (#117 s136).
-    if (err) {
-      await Promise.all(clients.map(async (c) => {
-        c.liveness = await Promise.race([
-          c.evalAsync('(async () => { const t0 = performance.now(); const raf = await new Promise((r) => { const id = requestAnimationFrame(() => r(true)); setTimeout(() => { cancelAnimationFrame(id); r(false); }, 1500); }); const b0 = (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null; await new Promise((r) => setTimeout(r, 2000)); const b1 = (window.omw && window.omw.state && window.omw.state.actorBatchesIn) || null; const sf = window.__streamfsStats ? (typeof window.__streamfsStats === "function" ? window.__streamfsStats() : window.__streamfsStats) : null; return JSON.stringify({ raf, ms: Math.round(performance.now() - t0), vis: document.visibilityState, hidden: document.hidden, batches: [b0, b1], engineAdvancing: b0 !== null && b1 !== null && b1 !== b0, streamfs: sf && { misses: sf.misses, stallMs: Math.round(sf.stallMs || 0), bytes: sf.bytes, evictions: sf.evictions }, state: window.omw && window.omw.state && window.omw.state.state }); })()'),
-          new Promise((r) => setTimeout(() => r('(eval did not return in 7 s: the JS thread itself is blocked)'), 7000)),
-        ]).catch((e) => `(liveness probe failed: ${e.message})`);
-      }));
     }
     await Promise.all(clients.map((c) => c.close()));
     server?.stop();
