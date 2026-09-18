@@ -177,10 +177,20 @@ namespace MWMP
 
     void NetManager::disconnect()
     {
+        // OUR OWN HANG-UP STILL REPORTS A CLOSE. The browser socket is deleted inside
+        // WebSocket::close and its onclose never fires, so Lua never heard about a disconnect
+        // it asked for itself: the receive watchdog (net.lua, 'nothing received for N s --
+        // hanging up to reconnect') hung up every frame for the rest of the session and never
+        // redialled (s170 fresh60: 116..120 s, one line per frame), and a world switch's
+        // closingForSwitch flag was never consumed, so it swallowed the next real drop. Report
+        // the close here, once; a native transport's later callback is ignored (onClose).
+        const bool reportClose = mSocket.isConnected() && !mSocketDead;
         if (mSocket.isConnected())
             mSocket.close(1000, "client disconnect");
         mState = State::Offline;
         mOutbound.clear();
+        if (reportClose)
+            onClose(1000, "client disconnect");
     }
 
     void NetManager::setSessionState(std::string_view name)
@@ -368,6 +378,10 @@ namespace MWMP
 
     void NetManager::onClose(uint16_t code, std::string reason)
     {
+        // ONE CLOSE PER SOCKET: an error callback is followed by the close callback, and a
+        // self-initiated disconnect reports itself before any transport callback (above).
+        if (mSocketDead)
+            return;
         mSocketDead = true;
         mClosePending = true;
         mCloseCode = code;

@@ -681,7 +681,7 @@ export default async function run(ctx) {
   await guest.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 100', 120_000, "the friend's frames flow again after the F5");
   const dropped = Date.now();
   await host.cmd('netdrop');
-  await guest.waitFor('String(window.omw.state.lastChatLine||"").toLowerCase().indexOf("host has disconnected") >= 0', 90_000, 'the friend is told the host dropped');
+  await guest.waitFor('String(window.omw.state.chatLog||"").toLowerCase().indexOf("host has disconnected") >= 0', 90_000, 'the friend is told the host dropped'); // the log, not the last line: any later line overwrites lastChatLine
   await host.waitFor('window.omw.state.state === "Joined" && Number(window.omw.state.reconnectTotal||0) > 0', 120_000, 'the host redialled and rejoined');
   assert.ok(Date.now() - dropped < 90_000, `the host came back inside the grace (${((Date.now() - dropped) / 1000).toFixed(0)} s)`);
   assert.match(gwLog(), /world\.owner_left/, 'the world armed the grace');
