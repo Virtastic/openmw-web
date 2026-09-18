@@ -78,6 +78,17 @@ async function hopTo(ctx, c, x, y, z) {
     const at = await poseOf(c);
     const dx = x - at.x, dy = y - at.y, dz = z - at.z, d = Math.hypot(dx, dy, dz); // 3D: so is the server's rule
     if (d < 50) return;
+    // A leg must be >= 256 u or the client never announces it (player.lua sends a
+    // PlayerCellChange only for a same-cell jump past 256 u): fresh18 hopped 186 u, the server
+    // never told the avatar, and reconciliation dragged the body back (SELF SNAP 392). A short
+    // approach steps 300 u AWAY first, then comes in.
+    if (d < 300) {
+      const bx = Math.round(at.x - (dx / d) * 300), by = Math.round(at.y - (dy / d) * 300);
+      ctx.log(`  ${c.name} hop ${leg + 1}: only ${Math.round(d)} u to go, stepping back 300 first`);
+      await c.cmd(`snapto:${bx},${by},${Math.round(at.z)}`);
+      await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); var d = window.omw.state.selfDivergence; return !!p && Math.hypot(p.x - (${bx}), p.y - (${by})) < 120 && typeof d === "string" && Number(d) < 100; })()`, 30_000, `${c.name} hop ${leg + 1}: the avatar came along (back step)`);
+      continue;
+    }
     const f = Math.min(1, 400 / d); // 600, not 900: the server measures from ITS last pose for us, which can lag a walk by 100+ u (fresh8: 900 + 123 read as 1071)
     const tx = Math.round(at.x + dx * f), ty = Math.round(at.y + dy * f), tz = Math.round(at.z + dz * f);
     ctx.log(`  ${c.name} hop ${leg + 1}: from (${Math.round(at.x)},${Math.round(at.y)},${Math.round(at.z)}) to (${tx},${ty},${tz}), ${Math.round(d)} u to go; divergence ${await c.eval("window.omw.state.selfDivergence")}`);
