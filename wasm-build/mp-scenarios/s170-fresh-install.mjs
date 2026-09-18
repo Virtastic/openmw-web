@@ -78,9 +78,9 @@ async function walkSomewhere(c, minDist = 80) {
 // come to us -- and a hop-and-settle approach (30 s a leg) loses to a scrib on the move
 // (fresh22: 2 swings in 3 minutes). Walking is announced continuously and the avatar follows
 // the inputs live; six short legs, re-aimed each time.
-async function walkToward(ctx, c, target, within = REACH, legs = 6) {
+async function walkToward(ctx, c, target, within = REACH, legs = 6, whereAmI = () => poseOf(c)) {
   for (let i = 0; i < legs; i++) {
-    const me = await poseOf(c);
+    const me = await whereAmI();
     const dx = target.x - me.x, dy = target.y - me.y, d = Math.hypot(dx, dy);
     if (d <= within) return true;
     const ms = Math.min(2500, Math.max(600, Math.round(d * 12)));
@@ -91,7 +91,8 @@ async function walkToward(ctx, c, target, within = REACH, legs = 6) {
     await c.cmd(`walk:0,1,${ms}`);
     await ctx.sleep(ms + 600);
   }
-  return Math.hypot(target.x - (await poseOf(c)).x, target.y - (await poseOf(c)).y) <= within;
+  const me = await whereAmI();
+  return Math.hypot(target.x - me.x, target.y - me.y) <= within;
 }
 async function hopTo(ctx, c, x, y, z) {
   for (let leg = 0; leg < 12; leg++) {
@@ -479,22 +480,27 @@ export default async function run(ctx) {
   await host.cmd('stance:weapon');
   await host.waitFor('window.omw.state.stance === "weapon"', 10_000, 'the sword is drawn');
   const p0 = await probeOf(host, victim);
-  { const me1 = await poseOf(host); if (Math.hypot(p0.x - me1.x, p0.y - me1.y) < 900) await walkToward(ctx, host, p0, REACH, 10); else await hopTo(ctx, host, p0.x + 60, p0.y, p0.z + 8); } // walk, as in the loop: a hop dances with a walking mark (fresh27)
+  { const me1 = await poseOf(host); if (Math.hypot(p0.x - me1.x, p0.y - me1.y) < 900) await walkToward(ctx, host, p0, REACH, 10, async () => { try { const q = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)); if (Number.isFinite(q.x)) return q; } catch (e) {} return poseOf(host); }); else await hopTo(ctx, host, p0.x + 60, p0.y, p0.z + 8); } // walk, as in the loop: a hop dances with a walking mark (fresh27)
   await host.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
   await host.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
   await host.cmd(`hitn:${victim}:1`);
   await ctx.sleep(2_000);
   await host.eval("if (window.omw.state) window.omw.state.hitFwd = undefined; 'cleared';");
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
+  // WHERE THE AVATAR IS, not where the local body is: at a frame every few seconds the body
+  // lags its avatar by hundreds of units (445; fresh29: divergence 314, zero swings in 180 s
+  // because the body never read within reach while the avatar stood by the mark). The
+  // avatar is what swings, and the friend's screen shows exactly where it stands.
+  const avatarPos = async () => { try { const q = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)); if (Number.isFinite(q.x)) return q; } catch (e) {} return poseOf(host); };
   let swings = 0, died = false, resnaps = 0;
   // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
   for (const by = Date.now() + 180_000; Date.now() < by && !died;) {
     const p = (await probeOf(host, victim)) || p0;
-    const now = await poseOf(host);
+    const now = await avatarPos();
     if (Math.hypot(p.x - now.x, p.y - now.y) > REACH) {
       if (resnaps++ < 12) {
-        const now2 = await poseOf(host);
-        if (Math.hypot(p.x - now2.x, p.y - now2.y) < 900) await walkToward(ctx, host, p);
+        const now2 = await avatarPos();
+        if (Math.hypot(p.x - now2.x, p.y - now2.y) < 900) await walkToward(ctx, host, p, REACH, 6, avatarPos);
         else await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
       }
       else await ctx.sleep(1_000);
