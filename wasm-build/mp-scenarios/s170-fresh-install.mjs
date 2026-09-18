@@ -532,10 +532,18 @@ export default async function run(ctx) {
 
   // DIE AND RESPAWN. Stock rules: where you fell, health restored (no respawn point set).
   await guest.waitFor('Number(window.omw.state.hp||"0") > 0', STEP, 'the friend has health');
+  // LATCH the death on the host: stock rules respawn where you fell with health restored, so
+  // a body held under drowns again every ~25 s (fresh25: six player.death in three minutes)
+  // and the puppet's dead flag is true only for a moment between them -- a poll misses it.
+  // A JS watcher on the host's page catches the moment; the guest lets go of the hold as
+  // soon as it has died once.
+  await host.eval(`window.__guestDied = false; clearInterval(window.__guestDiedTimer); window.__guestDiedTimer = setInterval(function(){ try { if (${puppetOf(guestId)}.dead === true) window.__guestDied = true; } catch (e) {} }, 200); 'armed'`);
+  await guest.eval(`window.__iDied = false; clearInterval(window.__iDiedTimer); window.__iDiedTimer = setInterval(function(){ try { if (Number(window.omw.state.hp||'1') <= 0) window.__iDied = true; } catch (e) {} }, 200); 'armed'`);
   await drown(guest, ctx, 180_000);
   const fell = await poseOf(guest);
-  await host.waitFor(`${puppetOf(guestId)}.dead === true`, 300_000, 'the host sees the friend drown');
+  await guest.waitFor('window.__iDied === true', 240_000, 'the friend drowned (own bar hit 0)');
   await guest.cmd('walk:0,0,1'); // stop holding the body under
+  await host.waitFor('window.__guestDied === true', 120_000, 'the host sees the friend drown');
   await guest.waitFor('Number(window.omw.state.hp||"0") > 0', 60_000, 'health restored by the respawn');
   { const [sx, sy, sz] = SPOT.split(',').map(Number); await hopTo(ctx, guest, sx, sy, sz); } // out of the water before it drowns again (stock rules respawn in place)
   assert.equal(await guest.eval('window.omw.state.state'), 'Joined', 'dying keeps the friend connected');
