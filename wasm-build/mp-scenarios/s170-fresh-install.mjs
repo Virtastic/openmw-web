@@ -521,10 +521,14 @@ export default async function run(ctx) {
   // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
   for (const by = Date.now() + 300_000; Date.now() < by && !died;) {
     const p = (await probeOf(host, victim)) || p0;
-    const now = await avatarPos();
+    // The body's own pose, once it agrees with the avatar (a hop lands both). The friend's
+    // view of the avatar is a frame stale -- at a frame every few seconds that read 'far'
+    // right after every hop while hopTo (body-based) had nothing left to do (fresh37: twelve
+    // no-op hops, zero swings).
+    await host.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 20_000, 'body and avatar agree').catch(() => {});
+    const now = await poseOf(host);
     if (Math.hypot(p.x - now.x, p.y - now.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34); walk in to 70 first
       if (resnaps++ < 12) {
-        const now2 = await avatarPos();
         await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
       }
       else await ctx.sleep(1_000);

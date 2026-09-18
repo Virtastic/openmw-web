@@ -469,7 +469,11 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // is the engine's main loop (478: four clients whose engine stopped with a live JS thread).
     '--disable-backgrounding-occluded-windows',
     '--user-data-dir=' + profile, '--remote-debugging-port=0',
-    '--window-size=1280,720', 'about:blank',
+    // 640x360, not 1280x720: the box has no GPU, so every pixel is SwiftShader on the CPU and
+    // a retail scene at 720p is a frame every one to three seconds per client. A quarter of the
+    // pixels is roughly three to four times the frame rate; nothing in the suite measures pixels
+    // except s65/s74, which read a 256x256 map texture that does not depend on the window.
+    '--window-size=640,360', 'about:blank',
   // OWN PROCESS GROUP, so close() can take the WHOLE browser. Chrome's gpu-process,
   // zygote and renderers are children of this pid; SIGKILL on the pid alone left them
   // running, reparented, and invisible to the next scenario -- 1847 chrome processes and
