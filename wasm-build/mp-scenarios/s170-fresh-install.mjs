@@ -102,7 +102,7 @@ async function hopTo(ctx, c, x, y, z) {
   for (let leg = 0; leg < 12; leg++) {
     const at = await poseOf(c);
     const dx = x - at.x, dy = y - at.y, dz = z - at.z, d = Math.hypot(dx, dy, dz); // 3D: so is the server's rule
-    if (d < 100) return; // within REACH (110): swing, do not dance
+    if (d < 40) return; // 40, not 100: the fight wants <= 90 from the mark and hops aim 60 beside it, so 100 left a dead zone where nothing moved (fresh39: one swing, five idle minutes)
     // A leg must be >= 256 u or the client never announces it (player.lua sends a
     // PlayerCellChange only for a same-cell jump past 256 u): fresh18 hopped 186 u, the server
     // never told the avatar, and reconciliation dragged the body back (SELF SNAP 392). A short
