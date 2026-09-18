@@ -113,7 +113,7 @@ async function hopTo(ctx, c, x, y, z) {
       await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); var d = window.omw.state.selfDivergence; return !!p && Math.hypot(p.x - (${Math.round(x)}), p.y - (${Math.round(y)})) < 200 && typeof d === "string" && Number(d) < 100; })()`, 60_000, `${c.name} hop ${leg + 1}: the avatar came along (cell change)`);
       continue;
     }
-    if (d < 40) return; // 40, not 100: the fight wants <= 90 from the mark and hops aim 60 beside it, so 100 left a dead zone where nothing moved (fresh39: one swing, five idle minutes)
+    if (Math.hypot(dx, dy) < 40) return; // HORIZONTAL: the snap lands on the ground (482), whose z is not the interpolated target's, and a 3D 43 never got under 40 (fresh58: six overshoots at the same spot). 40, not 100: the fight wants <= 90 from the mark and hops aim 60 beside it, so 100 left a dead zone where nothing moved (fresh39: one swing, five idle minutes)
     // A leg must be >= 256 u or the client never announces it (player.lua sends a
     // PlayerCellChange only for a same-cell jump past 256 u): fresh18 hopped 186 u, the server
     // never told the avatar, and reconciliation dragged the body back (SELF SNAP 392). A short
