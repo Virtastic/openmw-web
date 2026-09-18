@@ -777,7 +777,7 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     handle.click = async (selector) => {
       const box = await handle.eval(
         `(function(){ var el = document.querySelector(${JSON.stringify(selector)});
-           if (!el) return null; try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {} var r = el.getBoundingClientRect();
+           if (!el) return null; try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch (e) {} var r = el.getBoundingClientRect(); // instant: a smooth scroll is asynchronous and the rect read here was the pre-scroll one, so the click landed beside the button (#121 s55 at 640x360)
            if (!r.width || !r.height) return null;
            return JSON.stringify({ x: r.left + r.width/2, y: r.top + r.height/2 }); })()`);
       if (!box) throw new Error(`click(${selector}): element missing or not laid out`);
