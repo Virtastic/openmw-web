@@ -617,11 +617,18 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // once evaluated' after an F5 that had in fact rejoined in 40 s). Page.reload is the real
     // F5 (same tab, sessionStorage kept), and this returns only once the new document has
     // fired its load event, so the next eval lands in a live context.
+    // AND IT CLICKS 'LEAVE'. index.html guards unload (window.__omwAllowLeave) and a tab that
+    // has had a click carries user activation, so an F5 pops the browser's 'Leave site?'
+    // dialog -- which freezes the page's JS thread (no eval answers, no load event) while
+    // the old page runs on underneath (s170 fresh46/51/52: 'rejoined' logs that were the
+    // old page). A player clicks Leave; so does this.
     handle.reload = () => new Promise((resolve, reject) => {
       const timer = setTimeout(() => { browser.removeEventListener('message', onMsg); reject(new Error(`[${name}] reload: no load event in 120 s`)); }, 120_000);
       const onMsg = (ev) => {
         const m = JSON.parse(ev.data);
-        if (m.sessionId === sessionId && m.method === 'Page.loadEventFired') { clearTimeout(timer); browser.removeEventListener('message', onMsg); resolve(); }
+        if (m.sessionId !== sessionId) return;
+        if (m.method === 'Page.javascriptDialogOpening') bsend('Page.handleJavaScriptDialog', { accept: true }, sessionId).catch(() => {});
+        if (m.method === 'Page.loadEventFired') { clearTimeout(timer); browser.removeEventListener('message', onMsg); resolve(); }
       };
       browser.addEventListener('message', onMsg);
       bsend('Page.reload', {}, sessionId).catch((e) => { clearTimeout(timer); browser.removeEventListener('message', onMsg); reject(e); });
