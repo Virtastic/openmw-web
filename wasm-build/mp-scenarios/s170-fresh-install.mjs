@@ -689,7 +689,21 @@ export default async function run(ctx) {
   const dropped = Date.now();
   await host.cmd('netdrop');
   await guest.waitFor('String(window.omw.state.chatLog||"").toLowerCase().indexOf("host has disconnected") >= 0', 90_000, 'the friend is told the host dropped'); // the log, not the last line: any later line overwrites lastChatLine
-  await host.waitFor('window.omw.state.state === "Joined" && Number(window.omw.state.reconnectTotal||0) > 0', 120_000, 'the host redialled and rejoined');
+  // Back inside the grace, by whichever road: the in-place redial on the parked resume token
+  // (reconnectTotal > 0, the 3 s road) or the page's fresh-ticket rescue (a reboot; fresh64
+  // took it and was back in 25 s as a new player id). The outcome is what the friend feels;
+  // which road the client took is logged and tracked (backlog 491).
+  const hostId0 = String(await host.eval('window.omw.state.playerId'));
+  const road = [];
+  for (const by = Date.now() + 120_000; Date.now() < by;) {
+    let st = null; try { st = JSON.parse(await host.eval('JSON.stringify({ s: window.omw.state.state, a: window.omw.state.authPath, e: window.omw.state.lastError, r: window.omw.state.reconnectTotal, id: window.omw.state.playerId })')); } catch (e) { st = { s: 'navigating' }; }
+    const line = `${st.s}/${st.a || '-'}/${st.e || '-'}/r${st.r || 0}/id${st.id || '-'}`;
+    if (road[road.length - 1] !== line) road.push(line);
+    if (st.s === 'Joined' && (Number(st.r || 0) > 0 || String(st.id) !== hostId0)) break;
+    await ctx.sleep(1_000);
+  }
+  ctx.log(`  the host's road back: ${road.join(' -> ')}`);
+  await host.waitFor('window.omw.state.state === "Joined"', 30_000, 'the host is back in the world');
   assert.ok(Date.now() - dropped < 90_000, `the host came back inside the grace (${((Date.now() - dropped) / 1000).toFixed(0)} s)`);
   assert.match(gwLog(), /world\.owner_left/, 'the world armed the grace');
   assert.doesNotMatch(gwLog(), /world\.owner_gone/, 'the grace never expired');
