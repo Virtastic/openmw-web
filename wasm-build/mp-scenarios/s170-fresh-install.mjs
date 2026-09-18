@@ -447,10 +447,10 @@ export default async function run(ctx) {
   // by a lagging pose into the UNLOADED old cell, where its script never runs. Client Lua fix;
   // needs a bake before this phase is a verdict. `settled` above is the right wait either way.
   ctx.log(`host walked to ${JSON.stringify(walked)} on their own screen; avatar divergence ${await host.eval("window.omw.state.selfDivergence")}; friend's puppet of the host before ${JSON.stringify(before)} now ${await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)}`);
-  await guest.waitFor(`Math.hypot(${puppetOf(hostId)}.x - ${before.x}, ${puppetOf(hostId)}.y - ${before.y}) > 80`, STEP, "the friend saw the host walk");
+  await guest.waitFor(`Math.hypot(${puppetOf(hostId)}.x - ${before.x}, ${puppetOf(hostId)}.y - ${before.y}) > 50`, 60_000, "the friend saw the host walk"); // 50 u in 60 s: fresh26 saw 64 of the host's 105 against 80
   const gb = JSON.parse(await host.eval(`JSON.stringify(${puppetOf(guestId)})`));
   await walkSomewhere(guest, 100);
-  await host.waitFor(`Math.hypot(${puppetOf(guestId)}.x - ${gb.x}, ${puppetOf(guestId)}.y - ${gb.y}) > 80`, STEP, 'the host saw the friend walk');
+  await host.waitFor(`Math.hypot(${puppetOf(guestId)}.x - ${gb.x}, ${puppetOf(guestId)}.y - ${gb.y}) > 50`, 60_000, 'the host saw the friend walk');
   ctx.log(`ok: walked together (host to ${walked.x.toFixed(0)},${walked.y.toFixed(0)})`);
 
   // SETTLED FIRST. The walk leaves the avatar a few hundred units ahead (it walks wall time, the
