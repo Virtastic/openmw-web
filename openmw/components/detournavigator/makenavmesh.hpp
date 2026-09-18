@@ -44,13 +44,32 @@ namespace DetourNavigator
     // -- s166's kwama forager crawled 422 -> 207 u in 15 s on a straight line into terrain
     // instead of chasing. A tile is wanted if it is near the player OR near any anchor. With no
     // anchors (single player, the browser client) this is exactly the old gate.
+    //
+    // THE BUDGET IS SHARED (backlog 483). maxTiles is also the dtNavMesh's tile POOL
+    // (initEmptyNavMesh: params.maxTiles = mMaxTilesNumber, 1024 = all the 22-bit id space
+    // leaves beside 4096 polys), and the gate above is calibrated to fill it from ONE centre:
+    // pi * 18.05^2 admits 1033 tiles, a tile being 435 u (64 * 0.2 / 0.0294), so one circle is
+    // ~1.9 cells across and every exterior tile in it is non-empty (terrain + water). Gating
+    // each anchor with the full 1024 too asked for 2066 tiles from a 1024 pool: the dummy's
+    // circle, queued nearest-the-player-first, took every slot, the anchor's adds failed with
+    // DT_OUT_OF_MEMORY, and the AI two cells out had a navmesh with no tile under it -- which
+    // is WORSE than no navmesh: PathFinder::buildPath only walks a straight line on
+    // NavMeshNotFound, StartPolygonNotFound gives an empty path, and AiCombat answers an empty
+    // path with ActionFlee, idle until the target comes within its trigger distance. #119 s166:
+    // the scrib (Speed 13 = 43 u/s) covered 9 u in 30 s; #114/#115's forager sat at the same
+    // x,y in both runs. Split the pool evenly between the centres instead: two centres get
+    // 512 each (509 tiles, radius 12.8 tiles = 5556 u around the anchor CELL's centre, so the
+    // whole anchored cell plus ~1400 u of its neighbours), three 341, four 256 (3929 u, a cell
+    // minus its corners). Raise the pool on the peer with `max polygons per tile = 2048` +
+    // `max tiles number = 2048` when four clusters are the norm.
     inline bool shouldAddTile(const TilePosition& changedTile, const TilePosition& playerTile, int maxTiles,
         std::span<const TilePosition> simAnchorTiles)
     {
-        if (shouldAddTile(changedTile, playerTile, maxTiles))
+        const int perCentre = maxTiles / static_cast<int>(1 + simAnchorTiles.size());
+        if (shouldAddTile(changedTile, playerTile, perCentre))
             return true;
         for (const TilePosition& anchorTile : simAnchorTiles)
-            if (shouldAddTile(changedTile, anchorTile, maxTiles))
+            if (shouldAddTile(changedTile, anchorTile, perCentre))
                 return true;
         return false;
     }

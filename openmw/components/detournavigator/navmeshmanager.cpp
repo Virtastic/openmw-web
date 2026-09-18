@@ -138,9 +138,11 @@ namespace DetourNavigator
         {
             const TilesPositionsRange gridRange = makeCellGridRange(mSettings.mRecast, mWorldspace, grid);
             mSimAnchorRanges.push_back(gridRange);
-            // Any tile inside the grid does as the anchor's centre for the distance gate: a 3x3
-            // grid is ~6 tiles across against a gate radius of ~18 (1024 tiles), so every tile of
-            // the grid passes whichever one is chosen.
+            // The grid's centre tile is the anchor's centre for the distance gate. A tile is
+            // 435 u and a cell 18.8 tiles, so a 3x3 grid is 56 tiles across and no gate covers
+            // it whole: the per-centre circle (shouldAddTile, backlog 483: 1024 / centres tiles,
+            // radius 12.8 tiles = 5556 u with two centres) is drawn from the middle of the
+            // anchored CELL, which it covers with a margin into the neighbours.
             mSimAnchorTiles.push_back((gridRange.mBegin + gridRange.mEnd) / 2);
             range = getUnion(range, gridRange);
         }

@@ -791,7 +791,14 @@ namespace MWWorld
         std::vector<DetourNavigator::CellGridBounds> anchorGrids;
         anchorGrids.reserve(mSimAnchors.size());
         for (const osg::Vec2i& a : mSimAnchors)
+        {
+            // The navmesh tile pool is split evenly between the player and the anchors
+            // (shouldAddTile, backlog 483): an anchor on the player's own cell would draw the
+            // same circle twice and halve everyone's share for nothing.
+            if (a == cellGridBounds.mCenter)
+                continue;
             anchorGrids.push_back({ .mCenter = a, .mHalfSize = halfGridSize });
+        }
         mNavigator.setSimAnchorGrids(std::move(anchorGrids));
 
         mNavigator.updateBounds(playerCellIndex.mWorldspace, cellGridBounds, pos, navigatorUpdateGuard.get());
