@@ -84,7 +84,11 @@ async function walkToward(ctx, c, target, within = REACH, legs = 6) {
     const dx = target.x - me.x, dy = target.y - me.y, d = Math.hypot(dx, dy);
     if (d <= within) return true;
     const ms = Math.min(2500, Math.max(600, Math.round(d * 12)));
-    await c.cmd(`walk:${(dx / d).toFixed(2)},${(dy / d).toFixed(2)},${ms}`);
+    // walk: is body-relative (0,1 = forward): face the mark, then walk forward (fresh23 marched
+    // 2000 u the wrong way on world-space axes).
+    await c.cmd(`face:${Math.round(target.x)},${Math.round(target.y)},${Math.round((target.z ?? me.z) + 20)}`);
+    await ctx.sleep(300);
+    await c.cmd(`walk:0,1,${ms}`);
     await ctx.sleep(ms + 600);
   }
   return Math.hypot(target.x - (await poseOf(c)).x, target.y - (await poseOf(c)).y) <= within;
