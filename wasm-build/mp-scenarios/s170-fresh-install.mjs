@@ -504,7 +504,14 @@ export default async function run(ctx) {
     await host.cmd('stance:weapon');
     await ctx.sleep(200);
     await host.cmd('attack:1500'); swings++;
-    if (swings === 1) await host.waitFor('(Number(window.omw.state.selfFlags||0) & 8) === 8', 10_000, 'the avatar reports swinging');
+    // The use bit is an EDGE on one avatar sample; a client taking a frame every few seconds
+    // reads it by luck (fresh28 missed it in 10 s after a fight that fresh21/25 won). Latch it
+    // in the page and treat it as narration: the kill below is the proof.
+    if (swings === 1) {
+      await host.eval(`window.__sawSwing = false; clearInterval(window.__sawSwingTimer); window.__sawSwingTimer = setInterval(function(){ try { if ((Number(window.omw.state.selfFlags||0) & 8) === 8) window.__sawSwing = true; } catch (e) {} }, 100); 'armed'`);
+      const swung = await host.waitFor('window.__sawSwing === true', 15_000, 'the avatar reports swinging').then(() => true).catch(() => false);
+      ctx.log(`  first swing: the avatar ${swung ? 'reported the use bit' : 'did not show the use bit within 15 s (edge sample; carrying on)'}`);
+    }
     await ctx.sleep(2_000);
     died = (await host.eval(deadExpr)) === true;
   }
