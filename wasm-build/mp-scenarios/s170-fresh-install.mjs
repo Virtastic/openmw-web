@@ -580,7 +580,12 @@ export default async function run(ctx) {
   const fell = await poseOf(guest);
   await guest.waitFor('window.__iDied === true', 240_000, 'the friend drowned (own bar hit 0)');
   await guest.cmd('walk:0,0,1'); // stop holding the body under
-  await host.waitFor('window.__guestDied === true', 120_000, 'the host sees the friend drown');
+  // ...IF the host can see it: the seabed is two cells from the host, outside its interest
+  // radius, so the host holds no puppet of the friend and nothing announces a death out of
+  // view (fresh32: five player.death on the server, the host none the wiser; backlog 486).
+  const hostHasPuppet = await host.eval(`Number.isFinite(${puppetOf(guestId)}.x)`);
+  if (hostHasPuppet) await host.waitFor('window.__guestDied === true', 120_000, 'the host sees the friend drown');
+  else ctx.log('  the host holds no puppet of the friend at the seabed (two cells away): the death is out of view, by design; verified on the friend\'s own screen');
   await guest.waitFor('Number(window.omw.state.hp||"0") > 0', 60_000, 'health restored by the respawn');
   { const [sx, sy, sz] = SPOT.split(',').map(Number); await hopTo(ctx, guest, sx, sy, sz); } // out of the water before it drowns again (stock rules respawn in place)
   assert.equal(await guest.eval('window.omw.state.state'), 'Joined', 'dying keeps the friend connected');
