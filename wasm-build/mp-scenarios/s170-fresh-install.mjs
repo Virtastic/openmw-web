@@ -102,6 +102,17 @@ async function hopTo(ctx, c, x, y, z) {
   for (let leg = 0; leg < 12; leg++) {
     const at = await poseOf(c);
     const dx = x - at.x, dy = y - at.y, dz = z - at.z, d = Math.hypot(dx, dy, dz); // 3D: so is the server's rule
+    // ACROSS a cell border the server checks no distance (connection.ts: the same-cell rule
+    // only), so a far target in another cell is ONE legal snap; legging it 400 u at a time
+    // was 47 hops back from the seabed (fresh41).
+    const cellOf = (x, y) => `${Math.floor(x / 8192)},${Math.floor(y / 8192)}`;
+    if (cellOf(at.x, at.y) !== cellOf(x, y)) {
+      ctx.log(`  ${c.name} hop ${leg + 1}: into cell ${cellOf(x, y)} from ${cellOf(at.x, at.y)}, one snap (${Math.round(d)} u)`);
+      await c.cmd(`snapto:${Math.round(x)},${Math.round(y)},${Math.round(z)}`);
+      await c.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
+      await c.waitFor(`(function(){ var p = JSON.parse(window.omw.state.pose||"null"); var d = window.omw.state.selfDivergence; return !!p && Math.hypot(p.x - (${Math.round(x)}), p.y - (${Math.round(y)})) < 200 && typeof d === "string" && Number(d) < 100; })()`, 60_000, `${c.name} hop ${leg + 1}: the avatar came along (cell change)`);
+      continue;
+    }
     if (d < 40) return; // 40, not 100: the fight wants <= 90 from the mark and hops aim 60 beside it, so 100 left a dead zone where nothing moved (fresh39: one swing, five idle minutes)
     // A leg must be >= 256 u or the client never announces it (player.lua sends a
     // PlayerCellChange only for a same-cell jump past 256 u): fresh18 hopped 186 u, the server
