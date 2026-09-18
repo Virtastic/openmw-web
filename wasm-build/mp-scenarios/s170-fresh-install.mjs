@@ -547,9 +547,12 @@ export default async function run(ctx) {
   await hopTo(ctx, host, p0.x + 60, p0.y, p0.z + 8);
   await host.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
   await host.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
+  // The sting (a relay hit, refused by a production-shaped server: combat_hit_refused) is the
+  // only hit this client ever forwards; it goes out when the engine reaches it, which can be
+  // after a page-side clear of the mirror (fresh62). Count forwards instead, like s164.
   await host.cmd(`hitn:${victim}:1`);
-  await ctx.sleep(2_000);
-  await host.eval("if (window.omw.state) window.omw.state.hitFwd = undefined; 'cleared';");
+  await host.waitFor('Number(window.omw.state.hitFwdCount||0) > 0', 20_000, 'the sting went out').catch(() => {});
+  const fwdBefore = String(await host.eval('window.omw.state.hitFwdCount'));
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   // WHERE THE AVATAR IS, not where the local body is: at a frame every few seconds the body
   // lags its avatar by hundreds of units (445; fresh29: divergence 314, zero swings in 180 s
@@ -614,7 +617,7 @@ export default async function run(ctx) {
     await ctx.sleep(2_000);
   }
   assert.ok(died, `the ${victim} never died after ${swings} swings`);
-  assert.equal(String(await host.eval('window.omw.state.hitFwd')), 'undefined', 'the owner sent no hit of its own');
+  assert.equal(String(await host.eval('window.omw.state.hitFwdCount')), fwdBefore, 'the owner sent no hit of its own during the fight');
   await guest.waitFor(deadExpr, STEP, "the creature is dead on the friend's screen too");
   ctx.log(`ok: the peer's ${victim} killed with ${swings} real swing(s)`);
 
