@@ -559,7 +559,7 @@ export default async function run(ctx) {
   // because the body never read within reach while the avatar stood by the mark). The
   // avatar is what swings, and the friend's screen shows exactly where it stands.
   const avatarPos = async () => { try { const q = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)); if (Number.isFinite(q.x)) return q; } catch (e) {} return poseOf(host); };
-  let swings = 0, died = false, resnaps = 0, stalls = 0, lastHp = null, dry = 0, rehops = 0, reach = 110; // 110, not 90: a hop aims 60 beside the mark and counts <40 as arrived, so 90-100 was a gap where the hop did nothing and the swing gate held (fresh57: a rat at 91-102 u, forty-second waits)
+  let swings = 0, died = false, resnaps = 0, stalls = 0, lastHp = null, dry = 0, rehops = 0, reach = 130; // 130 (fCombatDistance 128; fresh51's kill came at 126-130 u; a wandering rat sat at 114-152 u for a 40 s wait per cycle in fresh63). Not 90: a hop aims 60 beside the mark and counts <40 as arrived, so 90-100 was a gap where the hop did nothing and the swing gate held (fresh57: a rat at 91-102 u, forty-second waits)
   // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
   for (const by = Date.now() + 480_000; Date.now() < by && !died;) { // ~150 swings at skill 5 (fresh46: three hits in 60)
     // ONE FRAME PER READ, ONE PER SWING. Every eval and every cmd waits for the client's
@@ -577,7 +577,7 @@ export default async function run(ctx) {
     // the head along the aim, and a low creature may only fall inside it further out.
     const gap0 = Math.hypot(p.x - st.me.x, p.y - st.me.y);
     if (st.p && st.p.hp !== lastHp) { lastHp = st.p.hp; dry = 0; }
-    if (dry >= 10) { const off = [110, 40, 90, 130][rehops++ % 4]; ctx.log(`  ${dry} swings without a hit from ${Math.round(gap0)} u; coming in again at ${off} u`); dry = 0; reach = Math.max(110, off + 30); await hopTo(ctx, host, p.x + off, p.y, p.z + 8); continue; }
+    if (dry >= 10) { const off = [110, 40, 90, 130][rehops++ % 4]; ctx.log(`  ${dry} swings without a hit from ${Math.round(gap0)} u; coming in again at ${off} u`); dry = 0; reach = Math.max(130, off + 30); await hopTo(ctx, host, p.x + off, p.y, p.z + 8); continue; }
     const gap = Math.hypot(p.x - st.me.x, p.y - st.me.y);
     if (gap > reach) {
       // A mark that is CLOSING IN gets waited for, not hopped to: a rat in combat runs at us,
@@ -588,7 +588,7 @@ export default async function run(ctx) {
       // near notices the player and attacks, while hopping after it as it wanders was a
       // dance of step-backs that never ended (fresh55: nine hops at a rat circling 150-300 u).
       let q = p, near = gap;
-      for (let t = 0; t < (gap < 500 ? 14 : 1); t++) {
+      for (let t = 0; t < (gap < 500 ? 7 : 1); t++) {
         await ctx.sleep(3_000);
         q = (await probeOf(host, victim)) || p; const me2 = await poseOf(host);
         near = Math.hypot(q.x - me2.x, q.y - me2.y);
