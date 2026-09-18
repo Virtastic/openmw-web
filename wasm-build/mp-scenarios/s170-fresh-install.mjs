@@ -536,7 +536,7 @@ export default async function run(ctx) {
     // view of the avatar is a frame stale -- at a frame every few seconds that read 'far'
     // right after every hop while hopTo (body-based) had nothing left to do (fresh37: twelve
     // no-op hops, zero swings).
-    await host.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 20_000, 'body and avatar agree').catch(() => {});
+    await host.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 5_000, 'body and avatar agree').catch(() => {}); // 5 s, not 20: at 20 the loop managed seven swings in five minutes (fresh43)
     const now = await poseOf(host);
     if (Math.hypot(p.x - now.x, p.y - now.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34); walk in to 70 first
       if (resnaps++ < 12) {
