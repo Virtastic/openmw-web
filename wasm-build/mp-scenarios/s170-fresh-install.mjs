@@ -528,7 +528,7 @@ export default async function run(ctx) {
   // because the body never read within reach while the avatar stood by the mark). The
   // avatar is what swings, and the friend's screen shows exactly where it stands.
   const avatarPos = async () => { try { const q = JSON.parse(await guest.eval(`JSON.stringify(${puppetOf(hostId)})`)); if (Number.isFinite(q.x)) return q; } catch (e) {} return poseOf(host); };
-  let swings = 0, died = false, resnaps = 0;
+  let swings = 0, died = false, resnaps = 0, stalls = 0;
   // 180 s (s164): a wandering mark costs a legal-hop approach per re-snap (fresh19: 8 swings in 90 s).
   for (const by = Date.now() + 300_000; Date.now() < by && !died;) {
     // ONE FRAME PER READ, ONE PER SWING. Every eval and every cmd waits for the client's
@@ -539,7 +539,7 @@ export default async function run(ctx) {
     const st = JSON.parse(await host.eval(`JSON.stringify({ p: (JSON.parse(window.omw.state.actorProbe||"{}"))[${JSON.stringify(victim)}] || null, me: JSON.parse(window.omw.state.pose||"{}"), div: Number(window.omw.state.selfDivergence||999) })`));
     const p = st.p || p0;
     died = st.p?.dead === true; if (died) break;
-    if (st.div >= 60) { await ctx.sleep(1_000); continue; } // a hop lands both; wait for the body to agree with the avatar (fresh37)
+    if (st.div >= 60) { if (++stalls % 10 === 1) ctx.log(`  body ${st.div.toFixed(0)} u from its avatar; waiting (stall ${stalls})`); await ctx.sleep(1_000); continue; } // a hop lands both; wait for the body to agree with the avatar (fresh37)
     if (Math.hypot(p.x - st.me.x, p.y - st.me.y) > 90) { // 90, not REACH: swings at 101-111 u landed some and then none (fresh32/34)
       if (resnaps++ < 12) await hopTo(ctx, host, p.x + 60, p.y, p.z + 8);
       else await ctx.sleep(1_000);
@@ -611,6 +611,7 @@ export default async function run(ctx) {
 
   // RELOG (F5): the page reloads, the parked resume token rejoins the same world.
   await guest.eval('setTimeout(function(){ location.reload(); }, 50); "reloading"');
+  await ctx.sleep(3_000); // the OLD page still reads Joined for a moment (fresh46: 'in the world after 0 s', then an eval into the navigating page that never answered); s80 waits the same way
   await awaitInWorld(ctx, guest, 'the friend after F5');
   assert.equal(await guest.eval('String(window.omw.state.worldHost||"")'), HOST_HANDLE, "F5 came back into the host's world");
   await host.waitFor(`${rowOf(GUEST_HANDLE)}.id !== undefined`, STEP, 'the host sees the friend back');
