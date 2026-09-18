@@ -1904,5 +1904,68 @@ do
     key(-12288, -69632) == '-2,-9' and key(-12500, -53100) == '-2,-7' and key(-1, -1) == '-1,-1' and key(0, 8191) == '0,0')
 end
 
+print('#481 the overlay hold leaves the engine in Interface when on and off drain in one frame')
+do
+  -- The REAL omw/ui.lua against a model of the engine's deferral: _setUiModeStack is a delayed
+  -- action (uibindings.cpp addAction) and the _onUiModeChanged callback lands after it, so
+  -- I.UI's own stack mirror learns of a setMode only on the next frame.
+  local engine, queued = {}, {}
+  local uiStub = {
+    _getAllUiModes = function() return { Interface = 'Interface', Dialogue = 'Dialogue' } end,
+    _getAllWindowIds = function() return {} end,
+    _getAllowedWindows = function() return {} end,
+    _setWindowDisabled = function() end,
+    _setUiModeStack = function(modes) local c = {}; for i, m in ipairs(modes) do c[i] = m end; queued[#queued + 1] = c end,
+    _getUiModeStack = function() return engine end,
+  }
+  local saved = {}
+  for _, m in ipairs({ 'openmw.ui', 'openmw.util', 'openmw.self', 'openmw.core', 'openmw.ambient' }) do saved[m] = package.loaded[m] end
+  package.loaded['openmw.ui'] = uiStub
+  package.loaded['openmw.util'] = { makeReadOnly = function(t) return t end, makeStrictReadOnly = function(t) return t end }
+  package.loaded['openmw.self'] = { sendEvent = function() end }
+  package.loaded['openmw.core'] = { sendGlobalEvent = function() end }
+  package.loaded['openmw.ambient'] = { playSound = function() end, isSoundPlaying = function() return false end }
+  local omwui = assert(loadfile('./openmw/files/data/scripts/omw/ui.lua'))()
+  for m, v in pairs(saved) do package.loaded[m] = v end
+  local function frame()
+    if #queued == 0 then return end
+    engine = queued[#queued]; queued = {}
+    omwui.engineHandlers._onUiModeChanged(true)
+  end
+  -- player.lua's own uimode handler, cut from the source so the test runs what ships.
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local s = p:find("local ui_mode = cmd:match('^uimode:(%a+)$')", 1, true)
+  local _, e = p:find("I.UI.removeMode('Interface') end", s, true)
+  local src = p:sub(s, e)
+  local function runner(chunkSrc)
+    return function(cmd)
+      local env = { I = { UI = omwui.interface }, cmd = cmd, pcall = pcall }
+      setfenv(assert(loadstring(chunkSrc)), env)()
+    end
+  end
+  local run = runner(src)
+  run('uimode:on'); frame()
+  check('uimode:on puts the engine in Interface', engine[1] == 'Interface' and omwui.interface.getMode() == 'Interface')
+  -- Escape, then O, then Escape, all before the next frame drains the queue (s99 step 4 in
+  -- #117 at the harness frame rate; a quick T-Escape in play).
+  run('uimode:off'); run('uimode:on'); run('uimode:off'); frame()
+  check('off/on/off in one frame leaves no mode on the engine', #engine == 0 and omwui.interface.getMode() == nil)
+  run('uimode:on'); run('uimode:off'); frame()
+  check('on/off in one frame leaves no mode on the engine', #engine == 0 and omwui.interface.getMode() == nil)
+  -- The regression, run: the setMode this replaced never told the mirror, so the same drain
+  -- stuck the engine in Interface.
+  local stuck = runner((src:gsub("I%.UI%.addMode%('Interface'", "I.UI.setMode('Interface'")))
+  stuck('uimode:on'); stuck('uimode:off'); frame()
+  check("(proof) setMode + removeMode in one frame left the engine in Interface -- the #117 trace",
+    engine[1] == 'Interface')
+  omwui.interface.setMode(); frame()
+  -- A window the engine had open underneath (a reconnect hold over a dialogue) is kept.
+  engine = { 'Dialogue' }; omwui.engineHandlers._onUiModeChanged(false)
+  run('uimode:on'); frame()
+  check('the hold stacks on an engine window instead of replacing it', omwui.interface.getMode() == 'Interface' and engine[1] == 'Dialogue')
+  run('uimode:off'); frame()
+  check('releasing the hold hands the engine window back', omwui.interface.getMode() == 'Dialogue' and #engine == 1)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

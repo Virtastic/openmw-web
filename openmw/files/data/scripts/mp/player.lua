@@ -815,7 +815,14 @@ local function dispatch(cmd)
         end
 
         local ui_mode = cmd:match('^uimode:(%a+)$')
-        if ui_mode == 'on' then I.UI.setMode('Interface', { windows = {} })
+        -- ADD, never SET (481). I.UI.setMode only QUEUES the engine push (uibindings.cpp
+        -- _setUiModeStack is a delayed action) and leaves I.UI's own stack mirror to the
+        -- engine's callback a frame later, so an 'off' drained in the SAME frame (T then Escape
+        -- between two frames -- routine at browser frame rates, every time in the harness)
+        -- found no 'Interface' in the mirror, removed nothing, queued nothing, and the engine
+        -- sat in Interface with no overlay up: no movement, and the live "Escape twice" report.
+        -- addMode records the mode in the mirror at once, so the off always finds it.
+        if ui_mode == 'on' then I.UI.addMode('Interface', { windows = {} })
         elseif ui_mode == 'off' then I.UI.removeMode('Interface') end
         -- NO-OP ON PURPOSE. This used to try to stop the world behind the pre-chargen intro
         -- modal, first through UI modes (which never took effect: omw/ui.lua only recomputes
