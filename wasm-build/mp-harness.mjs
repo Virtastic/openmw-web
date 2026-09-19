@@ -794,7 +794,7 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
         `(function(){ var t = document.querySelector(${JSON.stringify(selector)}); var el = document.elementFromPoint(${x}, ${y});
            return !!t && !(el && (el === t || t.contains(el))); })()`);
       if (covered) {
-        await handle.eval(`(function(){ var t = document.querySelector(${JSON.stringify(selector)}); t.focus(); t.click(); return true; })()`);
+        await handle.eval(`(function(){ var t = document.querySelector(${JSON.stringify(selector)}); t.focus(); t.click(); t.blur(); return true; })()`); // blur: a focused button eats the next hotkey (#124/#125 s99: O after Close never reopened the panel)
         return hit + ' (covered; clicked the element itself)';
       }
       const base = { x, y, button: 'left', clickCount: 1, buttons: 1 };
