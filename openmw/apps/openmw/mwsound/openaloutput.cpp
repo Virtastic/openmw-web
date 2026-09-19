@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 
+#include <cmath>
 #include <cstdint>
 
 #include <components/debug/debuglog.hpp>
@@ -564,6 +565,26 @@ namespace
 
 namespace MWSound
 {
+
+    // FINITE OR NOTHING. Emscripten's OpenAL (library_openal.js updateSourceRate) hands the
+    // doppler rate straight to WebAudio, which THROWS on a non-finite value -- and that throw
+    // unwinds the whole engine frame through the pump's re-entrancy guard: the game freezes
+    // with a live page (backlog 478; #124 s149: 'TypeError: The provided float value is
+    // non-finite' from _alSourcefv while the player drowned). OpenAL Soft on the desktop
+    // merely ignores such values, which is why nothing ever noticed. A NaN position keeps the
+    // listener's, a NaN velocity is a still one, a NaN gain is silence, a NaN pitch is 1.
+    static bool finite3(const osg::Vec3f& v)
+    {
+        return std::isfinite(v.x()) && std::isfinite(v.y()) && std::isfinite(v.z());
+    }
+    static osg::Vec3f finiteOr(const osg::Vec3f& v, const osg::Vec3f& fallback)
+    {
+        return finite3(v) ? v : fallback;
+    }
+    static float finiteOr(float v, float fallback)
+    {
+        return std::isfinite(v) ? v : fallback;
+    }
 
     static ALenum getALFormat(ChannelConfig chans, SampleType type)
     {
@@ -1594,9 +1615,10 @@ namespace MWSound
                 omwSetSourceSendFilter(source, AL_EFFECTSLOT_NULL, AL_FILTER_NULL);
         }
 
-        alSourcef(source, AL_GAIN, gain);
-        alSourcef(source, AL_PITCH, pitch);
-        alSourcefv(source, AL_POSITION, pos.ptr());
+        const osg::Vec3f spos = finiteOr(pos, mListenerPos);
+        alSourcef(source, AL_GAIN, finiteOr(gain, 0.f));
+        alSourcef(source, AL_PITCH, finiteOr(pitch, 1.f));
+        alSourcefv(source, AL_POSITION, spos.ptr());
         alSource3f(source, AL_DIRECTION, 0.0f, 0.0f, 0.0f);
         alSource3f(source, AL_VELOCITY, 0.0f, 0.0f, 0.0f);
     }
@@ -1634,11 +1656,12 @@ namespace MWSound
                 omwSetSourceSendFilter(source, AL_EFFECTSLOT_NULL, AL_FILTER_NULL);
         }
 
-        alSourcef(source, AL_GAIN, gain);
-        alSourcef(source, AL_PITCH, pitch);
-        alSourcefv(source, AL_POSITION, pos.ptr());
+        const osg::Vec3f spos = finiteOr(pos, mListenerPos), svel = finiteOr(vel, osg::Vec3f(0.f, 0.f, 0.f));
+        alSourcef(source, AL_GAIN, finiteOr(gain, 0.f));
+        alSourcef(source, AL_PITCH, finiteOr(pitch, 1.f));
+        alSourcefv(source, AL_POSITION, spos.ptr());
         alSource3f(source, AL_DIRECTION, 0.0f, 0.0f, 0.0f);
-        alSourcefv(source, AL_VELOCITY, vel.ptr());
+        alSourcefv(source, AL_VELOCITY, svel.ptr());
     }
 
     void OpenALOutput::updateCommon(ALuint source, const osg::Vec3f& pos, const osg::Vec3f& vel, ALfloat maxdist,
@@ -1650,11 +1673,12 @@ namespace MWSound
             pitch *= 0.7f;
         }
 
-        alSourcef(source, AL_GAIN, gain);
-        alSourcef(source, AL_PITCH, pitch);
-        alSourcefv(source, AL_POSITION, pos.ptr());
+        const osg::Vec3f spos = finiteOr(pos, mListenerPos), svel = finiteOr(vel, osg::Vec3f(0.f, 0.f, 0.f));
+        alSourcef(source, AL_GAIN, finiteOr(gain, 0.f));
+        alSourcef(source, AL_PITCH, finiteOr(pitch, 1.f));
+        alSourcefv(source, AL_POSITION, spos.ptr());
         alSource3f(source, AL_DIRECTION, 0.0f, 0.0f, 0.0f);
-        alSourcefv(source, AL_VELOCITY, vel.ptr());
+        alSourcefv(source, AL_VELOCITY, svel.ptr());
     }
 
     bool OpenALOutput::playSound(Sound* sound, Sound_Handle data, float offset)
@@ -1929,9 +1953,11 @@ namespace MWSound
     {
         if (mContext)
         {
-            ALfloat orient[6] = { atdir.x(), atdir.y(), atdir.z(), updir.x(), updir.y(), updir.z() };
-            alListenerfv(AL_POSITION, pos.ptr());
-            alListenerfv(AL_VELOCITY, vel.ptr());
+            const osg::Vec3f lpos = finiteOr(pos, mListenerPos), lvel = finiteOr(vel, osg::Vec3f(0.f, 0.f, 0.f));
+            const osg::Vec3f lat = finiteOr(atdir, osg::Vec3f(0.f, 1.f, 0.f)), lup = finiteOr(updir, osg::Vec3f(0.f, 0.f, 1.f));
+            ALfloat orient[6] = { lat.x(), lat.y(), lat.z(), lup.x(), lup.y(), lup.z() };
+            alListenerfv(AL_POSITION, lpos.ptr());
+            alListenerfv(AL_VELOCITY, lvel.ptr());
             alListenerfv(AL_ORIENTATION, orient);
 
             if (env != mListenerEnv)
@@ -1970,8 +1996,8 @@ namespace MWSound
             getALError();
         }
 
-        mListenerPos = pos;
-        mListenerVel = vel;
+        mListenerPos = finiteOr(pos, mListenerPos);
+        mListenerVel = finiteOr(vel, osg::Vec3f(0.f, 0.f, 0.f));
         mListenerEnv = env;
     }
 
