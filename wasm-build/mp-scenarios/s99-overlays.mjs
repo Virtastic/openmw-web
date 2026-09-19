@@ -172,7 +172,9 @@ export default async function run(ctx) {
     'clicking Close actually closed the panel (click landed on: ' + hit + ')');
   assert.equal(await a.eval(`getComputedStyle(document.getElementById('canvas')).pointerEvents`), 'auto',
     'canvas is interactive again once the overlay closes');
-  ctx.log(`ok: real mouse clicks land in the social panel (Close landed on: ${hit}; lock now: ${await a.eval('!!document.pointerLockElement')}; active: ${await a.eval('document.activeElement && (document.activeElement.id || document.activeElement.tagName)')})`);
+  ctx.log(`ok: real mouse clicks land in the social panel (Close landed on: ${hit}; lock now: ${await a.eval('!!document.pointerLockElement')}; active: ${await a.eval('document.activeElement && (document.activeElement.id || document.activeElement.tagName)')}; uiMode: ${await a.eval('String((window.omw.state||{}).uiMode)')}; uiHold: ${await a.eval('String(window.__omwUiHold)')}; chargenDone: ${await a.eval('String((window.omw.state||{}).chargenDone)')})`);
+  await ctx.sleep(3_000);
+  ctx.log(`  3 s later: uiMode ${await a.eval('String((window.omw.state||{}).uiMode)')}, uiHold ${await a.eval('String(window.__omwUiHold)')}`);
 
   // 7b. The panel must NOT rebuild itself while open. The mirror poll used to call
   // renderSocial() every 150ms unconditionally, and the render replaces the panel's DOM — so
