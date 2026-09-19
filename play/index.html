@@ -4426,6 +4426,7 @@ window.omw = (function(){
       try{ document.exitPointerLock && document.exitPointerLock(); }catch(e){}
     } else if (was > 0 && uiRefs === 0){
       cmd('uimode:off');
+      window.__omwUiReleasedAt = Date.now(); // the engine's uiMode mirror lags this by a frame or more (see the T/O gate)
       if (canvasEl) canvasEl.style.pointerEvents = '';
     } }
   // If the lock somehow lands while an overlay is up (a request already in flight when we
@@ -5521,7 +5522,12 @@ window.omw = (function(){
     // too (uimode:on), so an open chat/social panel still gets its close key.
     if (!chatOpen && !socialOpen){
       var um = String((mpState() || {}).uiMode || '');
-      if (um && um !== 'none') return;
+      // ...unless WE just closed an overlay: the mirror still reads Interface for a frame or
+      // more after uimode:off (seconds on a slow client), and a T or O pressed inside that
+      // window did nothing -- click Close, press O, no panel (#124-#126 s99, green with a 3 s
+      // pause). The mode the mirror is reporting is the one we just left.
+      var justReleased = Date.now() - (window.__omwUiReleasedAt || 0) < 5000;
+      if (um && um !== 'none' && !(um === 'Interface' && justReleased)) return; // only OUR mode is forgiven; a dialogue that opened meanwhile still owns the keys
     }
     var k = (e.key || '').toLowerCase();
     if (k === 'enter' && !chatOpen) k = 't'; // Enter-to-chat, the habit every other game taught
