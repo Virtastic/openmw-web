@@ -585,6 +585,16 @@ namespace MWSound
     {
         return std::isfinite(v) ? v : fallback;
     }
+    // ...AND SLOWER THAN SOUND. The same JS clamps the doppler closing speed at
+    // speedOfSound / dopplerFactor from above only, and AT that value the shift's denominator
+    // is zero: a finite but absurd velocity toward the listener (a physics blow-up under
+    // water) became an Infinity playback rate and the same throw (#125 s149, NaN guarded). No
+    // game object moves at 70 m/s for a reason a doppler shift should honour; treat it as still.
+    static osg::Vec3f saneVelocity(const osg::Vec3f& v)
+    {
+        constexpr float maxUnitsPerSecond = 5000.f; // ~70 m/s; the speed of sound is ~24000 u/s
+        return (finite3(v) && v.length2() <= maxUnitsPerSecond * maxUnitsPerSecond) ? v : osg::Vec3f(0.f, 0.f, 0.f);
+    }
 
     static ALenum getALFormat(ChannelConfig chans, SampleType type)
     {
@@ -1656,7 +1666,7 @@ namespace MWSound
                 omwSetSourceSendFilter(source, AL_EFFECTSLOT_NULL, AL_FILTER_NULL);
         }
 
-        const osg::Vec3f spos = finiteOr(pos, mListenerPos), svel = finiteOr(vel, osg::Vec3f(0.f, 0.f, 0.f));
+        const osg::Vec3f spos = finiteOr(pos, mListenerPos), svel = saneVelocity(vel);
         alSourcef(source, AL_GAIN, finiteOr(gain, 0.f));
         alSourcef(source, AL_PITCH, finiteOr(pitch, 1.f));
         alSourcefv(source, AL_POSITION, spos.ptr());
@@ -1673,7 +1683,7 @@ namespace MWSound
             pitch *= 0.7f;
         }
 
-        const osg::Vec3f spos = finiteOr(pos, mListenerPos), svel = finiteOr(vel, osg::Vec3f(0.f, 0.f, 0.f));
+        const osg::Vec3f spos = finiteOr(pos, mListenerPos), svel = saneVelocity(vel);
         alSourcef(source, AL_GAIN, finiteOr(gain, 0.f));
         alSourcef(source, AL_PITCH, finiteOr(pitch, 1.f));
         alSourcefv(source, AL_POSITION, spos.ptr());
@@ -1953,7 +1963,7 @@ namespace MWSound
     {
         if (mContext)
         {
-            const osg::Vec3f lpos = finiteOr(pos, mListenerPos), lvel = finiteOr(vel, osg::Vec3f(0.f, 0.f, 0.f));
+            const osg::Vec3f lpos = finiteOr(pos, mListenerPos), lvel = saneVelocity(vel);
             const osg::Vec3f lat = finiteOr(atdir, osg::Vec3f(0.f, 1.f, 0.f)), lup = finiteOr(updir, osg::Vec3f(0.f, 0.f, 1.f));
             ALfloat orient[6] = { lat.x(), lat.y(), lat.z(), lup.x(), lup.y(), lup.z() };
             alListenerfv(AL_POSITION, lpos.ptr());
@@ -1997,7 +2007,7 @@ namespace MWSound
         }
 
         mListenerPos = finiteOr(pos, mListenerPos);
-        mListenerVel = finiteOr(vel, osg::Vec3f(0.f, 0.f, 0.f));
+        mListenerVel = saneVelocity(vel);
         mListenerEnv = env;
     }
 
