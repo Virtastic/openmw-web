@@ -18,7 +18,7 @@ const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 // No snap: the retail start (Seyda Neen, -2,-9) is dry land. The first draft dropped onto the
 // s109 spot, whose ground turned out to be z=-133 -- the sea -- and a fall into water costs
 // nothing, correctly.
-const DROP = 600; // units above the ground: past fFallDamageDistanceMin (400), well short of lethal
+const DROP = 450; // units above the ground: past fFallDamageDistanceMin (400 + 1.5 x Acrobatics). NOT 600: the avatar climbs on at ~400 u/s for the second it takes the dispel to reach it, topped at 1081 from a 600 release and the 1014 u fall KILLED a 35 hp character -- the respawn then read as 'cost nothing' (builder run after the peer's dummy moved aside). From ~650-850 a level-1 body loses 20-33 and lives.
 
 const parseBars = (s) => { const m = /^(\d+)\/(\d+)$/.exec(String(s ?? '')); return m ? { c: Number(m[1]), b: Number(m[2]) } : null; };
 const bars = async (c) => parseBars(await c.eval('window.omw.state.selfStats'));
