@@ -674,7 +674,7 @@ export default async function run(ctx) {
   assert.equal(await guest.eval('window.omw.state.state'), 'Joined', 'dying keeps the friend connected');
   assert.equal(await guest.eval('String(window.omw.state.worldClosed||"")'), '', 'dying does not send the friend home');
   await host.waitFor(`${puppetOf(guestId)}.dead !== true`, STEP, 'the host sees the friend get up');
-  assert.match(gwLog(), /respawn\.sent.*where_they_fell|where_they_fell.*respawn\.sent/, 'the world logged the respawn under the stock rule');
+  assert.match(gwLog(), /respawn.sent.*"via":"surfaced"/, 'the world logged the respawn under the stock rule for a drowning: surfaced (485), not the seabed'); // where-you-fell below an exterior's water comes back at the surface
   ctx.log(`ok: the friend drowned at z=${fell.z.toFixed(0)} and respawned`);
 
   // RELOG (F5): the page reloads, the parked resume token rejoins the same world.
