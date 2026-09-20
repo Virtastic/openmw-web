@@ -44,7 +44,7 @@ async function castSelf(c, ctx, effect, magnitude, seconds) {
   await c.cmd('press:500'); // the use key on THIS engine: the cast
   await ctx.sleep(1_800);
   let actives = '';
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) { // 5, not 3: at load 27 three presses took nothing (s147 on the builder beside a sweep)
     await c.eval("if (window.omw.state) window.omw.state.actives = null; 'cleared';");
     await c.cmd('actives');
     await c.waitFor("typeof window.omw.state.actives === 'string'", 10_000, 'actives answered');
