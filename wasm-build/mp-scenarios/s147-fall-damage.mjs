@@ -86,6 +86,16 @@ export default async function run(ctx) {
   await a.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', STEP, 'the peer reports the bars');
   // Let the landing from the snap settle and the bars stabilise.
   await ctx.sleep(5_000);
+  // ENOUGH HEALTH TO SURVIVE THE OVERSHOOT. The avatar climbs on for as long as the dispel
+  // takes to reach it -- 200 u on a quiet box, 750 on a loaded one (#129: topped at 1387
+  // from a 632 release, fell 1292, and 35 hp died; the respawn then read as 'never landed').
+  // The drop under test is the same either way; a 95 hp body just lives to report it. One
+  // legal base step (+60, playerstate MAX_BASE_STEP), as s149 does.
+  { const s0 = await bars(a);
+    await a.cmd(`sethpbase:${s0.b + 60}`);
+    await a.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${s0.b + 58}`, STEP, 'the max rose');
+    await a.cmd(`sethp:${s0.b + 60}`);
+    await a.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${s0.b + 50}`, STEP, 'the pool filled'); }
   const before = await bars(a);
   const at = await pose(a);
   const ground = at.z;
@@ -126,7 +136,7 @@ export default async function run(ctx) {
   ctx.log(`after the fall: peer says ${after.c}/${after.b}, the client's own bar says ${local}`);
 
   assert.ok(after.c < before.c, `the fall cost nothing (${before.c} -> ${after.c}): fall damage never reached the ruling body`);
-  assert.ok(after.c > 0, 'a 900-unit drop must not kill a fresh character');
+  assert.ok(after.c > 0, 'the drop must not kill a 95 hp character');
   const lost = before.c - after.c;
   // ONCE, not twice. The client's own bar must not sit a whole second hit below the peer's.
   assert.ok(Math.abs(local - after.c) <= Math.max(3, lost * 0.5),
