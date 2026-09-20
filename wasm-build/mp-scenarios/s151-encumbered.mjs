@@ -125,10 +125,13 @@ export default async function run(ctx) {
   // 351 u divergence), and #130 failed when the drag caught up. The avatar is the body that
   // has to get light; B's puppet is where that shows.
   let again = 0, seenAgain = 0;
-  for (let i = 0; i < 8 && seenAgain < 100; i++) {
+  // TEN-SECOND WALKS, not three: a client at 2.5 s a frame (#130, liveness ms=4481) turns a
+  // 3 s walk into one or two 0.2 s physics steps -- 8-20 u on either screen -- and the bar is
+  // 100 u. The avatar walks at wall-clock speed for as long as inputs keep coming.
+  for (let i = 0; i < 5 && seenAgain < 100; i++) {
     const p4 = await pose(a), q4 = JSON.parse(await b.eval(`JSON.stringify(${rowOf})`));
-    await a.cmd(`walk:${dir},3000`);
-    await ctx.sleep(3_500);
+    await a.cmd(`walk:${dir},10000`);
+    await ctx.sleep(10_500);
     again = dist2(p4, await pose(a));
     seenAgain = dist2(q4, JSON.parse(await b.eval(`JSON.stringify(${rowOf})`)));
     ctx.log(`after dropping the load, walk ${i + 1} covered ${again.toFixed(0)} units on A's screen, ${seenAgain.toFixed(0)} on B's (divergence ${await a.eval('window.omw.state.selfDivergence')})`);
