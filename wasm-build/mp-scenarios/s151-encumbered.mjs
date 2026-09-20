@@ -119,15 +119,21 @@ export default async function run(ctx) {
   ctx.log(`dropped the cuirasses (${left} left in the pack)`);
   // The avatar sheds the load when the inventory diff (2 s cadence) reaches the peer and
   // the doc is pushed; try a few walks over ~20 s rather than one guess at the latency.
-  let again = 0;
-  for (let i = 0; i < 5 && again < 100; i++) {
-    const p4 = await pose(a);
+  // ON B'S SCREEN, not A's own: A's engine drops the weight at once and its body walks off
+  // regardless, while reconciliation drags it back toward an avatar that may still be
+  // carrying everything -- five sweeps 'passed' on the body's own head start (213 u with a
+  // 351 u divergence), and #130 failed when the drag caught up. The avatar is the body that
+  // has to get light; B's puppet is where that shows.
+  let again = 0, seenAgain = 0;
+  for (let i = 0; i < 8 && seenAgain < 100; i++) {
+    const p4 = await pose(a), q4 = JSON.parse(await b.eval(`JSON.stringify(${rowOf})`));
     await a.cmd(`walk:${dir},3000`);
     await ctx.sleep(3_500);
     again = dist2(p4, await pose(a));
-    ctx.log(`after dropping the load, walk ${i + 1} covered ${again.toFixed(0)} units (divergence ${await a.eval('window.omw.state.selfDivergence')})`);
+    seenAgain = dist2(q4, JSON.parse(await b.eval(`JSON.stringify(${rowOf})`)));
+    ctx.log(`after dropping the load, walk ${i + 1} covered ${again.toFixed(0)} units on A's screen, ${seenAgain.toFixed(0)} on B's (divergence ${await a.eval('window.omw.state.selfDivergence')})`);
   }
   assert.ok(left === 0, `the drops did not empty the pack (${left} left)`);
-  assert.ok(again > 100, `still cannot move after dropping the load (${again.toFixed(0)} units): the avatar kept the weight`);
+  assert.ok(seenAgain > 100, `still cannot move after dropping the load (B saw ${seenAgain.toFixed(0)} units, A's own screen ${again.toFixed(0)}): the avatar kept the weight`);
   ctx.log('PASS: over-encumbered on every screen, mobile again once the load is dropped');
 }
