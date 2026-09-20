@@ -31,7 +31,16 @@ export const respawn: Plugin = {
     // Where they fell. Last resort, but never nowhere.
     const whereTheyFell = api.posOfPlayer?.(player.id);
 
-    const dest = configured ?? whereTheyFell;
+    // ...BUT NOT ON THE SEABED. A player who drowns fell under water; put back exactly there
+    // with full health they drown again on the next breath, and again (backlog 485: six
+    // deaths in three minutes). An exterior's water surface is z = 0 everywhere in Morrowind,
+    // so a where-you-fell below it comes back at the surface of the same spot: breath
+    // restored, able to swim for the shore. Interiors keep their own water levels, which the
+    // server does not know; the operator's configured point is untouched.
+    const surfaced = whereTheyFell && !configured && /^-?\d+,-?\d+$/.test(whereTheyFell.cellKey) && whereTheyFell.z < 0
+      ? { ...whereTheyFell, z: 32 }
+      : undefined;
+    const dest = configured ?? surfaced ?? whereTheyFell;
     if (!dest) {
       // No configured point, and no pose yet (died before ever moving). Nothing to send
       // — the client keeps its own position rather than being teleported into the void.
@@ -42,7 +51,7 @@ export const respawn: Plugin = {
     api.sendEvent(player.id, 'PlayerResurrect', { ...dest, restoreHp: true });
     api.log('info', 'respawn.sent', {
       id: player.id, cellKey: dest.cellKey,
-      via: configured ? 'configured' : 'where_they_fell',
+      via: configured ? 'configured' : surfaced ? 'surfaced' : 'where_they_fell',
     });
 
     // TELL THE WORLD. A friend vanishing mid-fight with no message reads as a bug or a

@@ -74,3 +74,21 @@ test('a configured point is honoured on real content too', () => {
   assert.deepEqual(res!.body, { cellKey: '26,25', x: 216831, y: 204909, z: 513, restoreHp: true });
   assert.equal(logs.filter((l) => l.event.includes('demo')).length, 0);
 });
+
+// A drowning fell UNDER the water: put back on the seabed with full health it drowns again on
+// the next breath (backlog 485: six deaths in three minutes). An exterior's water is at z = 0,
+// so where-you-fell below it comes back at the surface of the same spot. An interior's water
+// level is unknown to the server: there, where you fell stays where you fell.
+test('no configured point, drowned outside: back at the surface of the same spot', () => {
+  const seabed = { cellKey: '-3,-9', x: -19264, y: -72128, z: -1135 };
+  const { api, events, logs } = fakeApi({ respawnCellKey: '', positions: { 1: seabed } });
+  respawn.onPlayerDeath!(api, DEAD);
+  assert.deepEqual(events[0]!.body, { ...seabed, z: 32, restoreHp: true });
+  assert.equal(logs.find((l) => l.event === 'respawn.sent')!.fields!.via, 'surfaced');
+});
+test('no configured point, below zero indoors: where you fell, untouched', () => {
+  const deep = { cellKey: 'vivec, underworks', x: 5, y: 6, z: -700 };
+  const { api, events } = fakeApi({ respawnCellKey: '', positions: { 1: deep } });
+  respawn.onPlayerDeath!(api, DEAD);
+  assert.deepEqual(events[0]!.body, { ...deep, restoreHp: true });
+});

@@ -661,6 +661,10 @@ export default async function run(ctx) {
   const hostHasPuppet = await host.eval(`Number.isFinite(${puppetOf(guestId)}.x)`);
   if (hostHasPuppet) await host.waitFor('window.__guestDied === true', 120_000, 'the host sees the friend drown');
   else ctx.log('  the host holds no puppet of the friend at the seabed (two cells away): the death is out of view, by design; verified on the friend\'s own screen');
+  // OUT OF VIEW OR NOT, THE HOST IS TOLD (486): the respawn plugin says '<name> has fallen.'
+  // to the whole world. The chat log, not the last line: anything said since overwrites it.
+  await host.waitFor(`String(window.omw.state.chatLog||"").indexOf(${JSON.stringify(GUEST_HANDLE + ' has fallen')}) >= 0`, 60_000, 'the host is told the friend died');
+  ctx.log('ok: the host was told the friend fell, in chat');
   await guest.waitFor('Number(window.omw.state.hp||"0") > 0', 60_000, 'health restored by the respawn');
   { const [sx, sy, sz] = SPOT.split(',').map(Number); await hopTo(ctx, guest, sx, sy, sz); } // out of the water before it drowns again (stock rules respawn in place)
   assert.equal(await guest.eval('window.omw.state.state'), 'Joined', 'dying keeps the friend connected');
