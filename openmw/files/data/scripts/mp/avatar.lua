@@ -138,10 +138,20 @@ local SKILL_USE_FORWARDED = { block = true, lightarmor = true, mediumarmor = tru
 -- Fall probe (backlog 341, s147 diagnostic): isOnGround takes an LObject, so the read has to
 -- happen here. The airborne top is tracked; the landing goes to global.lua, which prints.
 local fallTop = nil
+local fallSaidAt = 0
 local function fallProbe()
     local okg, onGround = pcall(types.Actor.isOnGround, self)
     if not okg then return end
     local z = self.position.z
+    -- Diagnostic (s147): once a second while airborne, what the engine thinks of this body.
+    if not onGround and core.getRealTime() - fallSaidAt > 1 then
+        fallSaidAt = core.getRealTime()
+        local lev = false
+        pcall(function() for _, e in pairs(types.Actor.activeEffects(self)) do if e.id == 'levitate' then lev = true end end end)
+        local hp = '?'
+        pcall(function() hp = types.Actor.stats.dynamic.health(self).current end)
+        print(string.format('[mp] avatar airborne z=%d top=%s levitate=%s swim=%s hp=%s', math.floor(z), tostring(fallTop and math.floor(fallTop)), tostring(lev), tostring(types.Actor.isSwimming(self)), tostring(hp)))
+    end
     if not onGround then
         if fallTop == nil or z > fallTop then fallTop = z end
     elseif fallTop ~= nil then
