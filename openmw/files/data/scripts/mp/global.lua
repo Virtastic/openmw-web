@@ -648,6 +648,7 @@ local function applyAvatarDoc(id)
             -- it), or the avatar accumulates everything it was ever handed. Removing from
             -- the tail of that record's stack is the positional mirror of the state buckets.
             if short < 0 then
+                print(string.format('[mp] avatar #%s sheds %d x %s (doc says %d, had %d)', tostring(id), -short, tostring(wantId), want, have))
                 local extra = -short
                 for _, item in ipairs(inventory:getAll()) do
                     if extra <= 0 then break end
@@ -699,7 +700,7 @@ local function applyAvatarDoc(id)
             end
             local inventory = types.Actor.inventory(obj)
             for _, item in ipairs(inventory:getAll()) do
-                if not want[item.recordId] then pcall(function() item:remove(item.count or 1) end) end
+                if not want[item.recordId] then print(string.format('[mp] avatar #%s sheds %d x %s (not in the doc)', tostring(id), item.count or 1, tostring(item.recordId))); pcall(function() item:remove(item.count or 1) end) end
             end
         end)
     end
