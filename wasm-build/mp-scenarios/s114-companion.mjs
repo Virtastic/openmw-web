@@ -43,11 +43,22 @@ export default async function run(ctx) {
   // itself pauses the game, and companion.lua only polls once it is closed -- as in play,
   // where the claim goes out after Goodbye. The server admits the claim only under the
   // dialogue lock (#363), so hold it across the hook as s124 does.
-  await a.cmd(`dlg:${rec}`);
+  // THE NPC HAS TO BE THERE FIRST. A fixed 4 s after the approach, `dlg:` found 'no NPC
+  // "mudcrab" among the active actors' on a client still streaming the cell (#130, load 19),
+  // requested no lock, and the wait below blamed the server. Wait for the probe to list it,
+  // and ask again if the engine still says it is not there.
+  await a.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(rec)})`, 60_000, `"${rec}" is an active actor on A's client`);
   // The lock is the whole point (#363): wait for the server's grant rather than a guessed
   // 1.5 s, and say what the mirror holds if it never comes (quests.lua mirrorLock).
-  await a.waitFor('/"granted":true/.test(window.omw.state.dialogueLock||"")', 15_000, `the dialogue lock on "${rec}" was granted`)
-    .catch(async (e) => { ctx.log(`dialogueLock mirror: ${await a.eval('window.omw.state.dialogueLock')}`); throw e; });
+  for (let attempt = 1; ; attempt++) {
+    await a.cmd(`dlg:${rec}`);
+    const granted = await a.waitFor('/"granted":true/.test(window.omw.state.dialogueLock||"")', 15_000, `the dialogue lock on "${rec}" was granted`).then(() => true).catch(() => false);
+    if (granted) break;
+    const mirror = await a.eval('window.omw.state.dialogueLock');
+    if (attempt >= 3) throw new Error(`the dialogue lock on "${rec}" was never granted (mirror: ${mirror})`);
+    ctx.log(`  no lock yet (mirror: ${mirror}); asking again`);
+    await ctx.sleep(3_000);
+  }
   await ctx.sleep(500);
   await a.cmd(`follow:${rec}`);
   await a.cmd('dlg:release');

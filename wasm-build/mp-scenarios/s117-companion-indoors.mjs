@@ -34,11 +34,19 @@ export default async function run(ctx) {
   // Recruit beside them, in a conversation (s114: #363 admits the claim only under the lock).
   await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);
   await ctx.sleep(4_000);
-  await a.cmd(`dlg:${rec}`);
-  // The lock is the whole point (#363): wait for the server's grant rather than a guessed
-  // 1.5 s, and say what the mirror holds if it never comes (quests.lua mirrorLock).
-  await a.waitFor('/"granted":true/.test(window.omw.state.dialogueLock||"")', 15_000, `the dialogue lock on "${rec}" was granted`)
-    .catch(async (e) => { ctx.log(`dialogueLock mirror: ${await a.eval('window.omw.state.dialogueLock')}`); throw e; });
+  // The NPC has to be an active actor here first (s114, #130), and the lock is the whole
+  // point (#363): wait for the server's grant rather than a guessed 1.5 s; ask again if the
+  // engine says the NPC is not there yet.
+  await a.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(rec)})`, 60_000, `"${rec}" is an active actor on A's client`);
+  for (let attempt = 1; ; attempt++) {
+    await a.cmd(`dlg:${rec}`);
+    const granted = await a.waitFor('/"granted":true/.test(window.omw.state.dialogueLock||"")', 15_000, `the dialogue lock on "${rec}" was granted`).then(() => true).catch(() => false);
+    if (granted) break;
+    const mirror = await a.eval('window.omw.state.dialogueLock');
+    if (attempt >= 3) throw new Error(`the dialogue lock on "${rec}" was never granted (mirror: ${mirror})`);
+    ctx.log(`  no lock yet (mirror: ${mirror}); asking again`);
+    await ctx.sleep(3_000);
+  }
   await ctx.sleep(500);
   await a.cmd(`follow:${rec}`);
   await a.cmd('dlg:release');
