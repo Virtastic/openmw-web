@@ -32,8 +32,11 @@ export default async function run(ctx) {
   if (!simPeer) { ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset).'); return; }
   const [a, b] = await Promise.all([ctx.launchClient('bot-a', '', BOOT), ctx.launchClient('bot-b', '', BOOT)]);
   await a.waitFor('String(window.omw.state.baselineReady||"") === "1"', 120_000, 'the character is settled (the join-time restore is done)');
-  await a.cmd(`snapto:${SEABED.x},${SEABED.y},${SEABED.z}`);
-  await b.cmd(`snapto:${SEABED.x + 300},${SEABED.y},${SEABED.z}`);
+  // ON DRY LAND FIRST. The dive used to come before the health setup, and the setup's waits
+  // (the max rose, the pool filled, B's puppet) ran 30-60 s while A already sat on the seabed:
+  // the avatar's 20 s of breath was gone before the timed hold began, so it drowned from t+0
+  // and 'hurt before the breath ran out' failed every sweep (the peer's own probe: 'submerged:
+  // breath=0' at the first sample). The clock starts when A goes under, so A goes under last.
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 120_000, 'the cell is peer-held');
   await a.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', STEP, 'the peer reports the bars');
   const idA = await a.eval('window.omw.state.playerId');
@@ -48,6 +51,10 @@ export default async function run(ctx) {
   await a.cmd(`sethp:${s0.b + 60}`);
   await a.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${s0.b + 50}`, STEP, 'the pool filled');
   const start = await bars(a);
+  await a.cmd(`snapto:${SEABED.x},${SEABED.y},${SEABED.z}`);
+  await b.cmd(`snapto:${SEABED.x + 300},${SEABED.y},${SEABED.z}`);
+  const t0 = Date.now(); // the breath clock: A went under now
+  await a.waitFor('JSON.parse(window.omw.state.pose||"{}").z < -250', STEP, 'A is deep under');
   const at = await pose(a);
   ctx.log(`A under water at z=${at.z.toFixed(0)} with ${start.c}/${start.b}`);
   assert.ok(at.z < -250, `A is not deep under (z=${at.z.toFixed(0)})`);
@@ -56,7 +63,6 @@ export default async function run(ctx) {
   await a.cmd(`walk:0,0,${HOLD_S * 1000}:sneak`);
 
   // Hold there. Sample the peer's bars and the client's own bar every 5 s.
-  const t0 = Date.now();
   let cur = start, local = start.c, firstHurtAt = 0;
   while (Date.now() - t0 < HOLD_S * 1000) {
     await ctx.sleep(2_000);
