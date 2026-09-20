@@ -713,15 +713,22 @@ namespace MWMechanics
         const ESM::Position& posdata = actor.getRefData().getPosition();
         const osg::Vec3f actorPos(posdata.asVec3());
         const osg::Vec3f actorDirXY = osg::Quat(posdata.rot[2], osg::Vec3(0, 0, -1)) * osg::Vec3f(0, 1, 0);
-        // Only the player can look up, apparently.
-        const float actorVerticalAngle = actor == getPlayer() ? -std::sin(posdata.rot[0]) : 0.f;
+        // Only the player can look up, apparently -- and on the sim peer a player's AVATAR,
+        // which carries the owner's pitch (avatar.lua applies it; rotateObject keeps rot[0] on
+        // actors). With 0 here the avatar could never hit anything whose head sits more than
+        // ~42 degrees below its eye level: a scrib at 60 u, 51 swings, hp 8 -> 8 (backlog 487),
+        // while rats and foragers -- tall enough -- died.
+        const bool playerLike = isPlayerOrAvatar(actor);
+        const float actorVerticalAngle = playerLike ? -std::sin(posdata.rot[0]) : 0.f;
         const float actorEyeLevel = world->getHalfExtents(actor, true).z() * 2.f * 0.85f;
         const osg::Vec3f actorEyePos{ actorPos.x(), actorPos.y(), actorPos.z() + actorEyeLevel };
         const bool canMoveByZ = canActorMoveByZAxis(actor);
 
-        // The player can target any active actor, non-playable actors only target their targets
+        // The player can target any active actor, non-playable actors only target their targets.
+        // The avatar has no AI of its own (avatar.lua enableAI(false)): its combat-target list
+        // holds only whoever attacked it, so a standing mark that never bit was untargetable.
         std::vector<MWWorld::Ptr> targets;
-        if (actor != getPlayer())
+        if (!playerLike)
             actor.getClass().getCreatureStats(actor).getAiSequence().getCombatTargets(targets);
         else
             MWBase::Environment::get().getMechanicsManager()->getActorsInRange(

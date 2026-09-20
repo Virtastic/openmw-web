@@ -37,7 +37,12 @@ export default async function run(ctx) {
   const me = await poseOf(a);
   const probe = JSON.parse(await a.eval('window.omw.state.actorProbe||"{}"'));
   const dist = (r) => { const p = probe[r]; return p && !p.dead ? Math.hypot(p.x - me.x, p.y - me.y) : Infinity; };
-  const [netId, victim] = Object.entries(await netObjs(a)).sort((x, y) => dist(x[1]) - dist(y[1]))[0];
+  // A SCRIB FIRST when one is in view: ankle-high, it is the mark the avatar could never hit
+  // (backlog 487: the NPC melee test aimed level, and only the player was allowed to look
+  // down); killing one here is that fix's regression guard. Otherwise the nearest.
+  const [netId, victim] = Object.entries(await netObjs(a))
+    .filter((e) => Number.isFinite(dist(e[1])))
+    .sort((x, y) => ((y[1] === 'scrib') - (x[1] === 'scrib')) || (dist(x[1]) - dist(y[1])))[0];
   assert.ok(Number.isFinite(dist(victim)), `no living named creature in the probe: ${JSON.stringify(Object.keys(probe))}`);
   ctx.log(`the mark: the peer's "${victim}" (net ${netId}) at ${dist(victim).toFixed(0)} units`);
   await b.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(victim)})`, STEP, `B sees the ${victim} too`);
