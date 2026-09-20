@@ -1056,6 +1056,13 @@ namespace MWMechanics
 
     static void updateEquippedLight(const MWWorld::Ptr& ptr, float duration, bool mayEquip)
     {
+        // A player's body on another screen (a puppet) or on the sim peer (an avatar) wears
+        // what its owner equipped, mirrored by script; it is not an NPC deciding whether it
+        // is dark enough for a torch. The daytime branch below unequipped the mirrored torch
+        // the frame after every equip, so a friend saw it only on a client slow enough for that
+        // frame to last (s148, #120/#127/#129 red, green in isolation).
+        const ESM::RefNum ref = ptr.getCellRef().getRefNum();
+        const bool mirrored = MWMP::isPuppet(ref) || MWMP::isAvatar(ref);
         const bool isPlayer = (ptr == getPlayer());
 
         const auto& actorClass = ptr.getClass();
@@ -1066,7 +1073,7 @@ namespace MWMechanics
         /**
          * Automatically equip NPCs torches at night and unequip them at day
          */
-        if (!isPlayer)
+        if (!isPlayer && !mirrored)
         {
             auto torchIter = std::find_if(std::begin(inventoryStore), std::end(inventoryStore), [&](auto entry) {
                 return entry.getType() == ESM::Light::sRecordId && entry.getClass().canBeEquipped(entry, ptr).first;
