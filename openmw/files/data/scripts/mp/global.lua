@@ -2314,7 +2314,13 @@ local eventHandlers = {
         if place and place.cellKey and place.cellKey ~= peerStandingIn then
             local cellArg = inviteCellArg(place.cellKey)
             local p = world.players[1]
-            if cellArg and p and tryTeleport(p, cellArg, util.vector3(place.x or 0, place.y or 0, place.z or 0)) then
+            -- BESIDE the player, not ON them. The avatar spawns at the same spot, and a body
+            -- that comes down there lands on this one's head (z + ~130), where the engine calls
+            -- it neither on the ground nor landed: the fall never resolves and costs nothing
+            -- (s147: 'avatar airborne z=220' for twenty seconds over ground at 87). 200 u aside
+            -- is still inside every processing range and out from under everybody; the same
+            -- offset keeps a drowning player from drowning it and a creature from biting it (430).
+            if cellArg and p and tryTeleport(p, cellArg, util.vector3((place.x or 0) + 200, place.y or 0, place.z or 0)) then
                 peerStandingIn = place.cellKey
                 print('[mp] sim peer moved to ' .. tostring(place.cellKey) .. ' to simulate it')
             end
