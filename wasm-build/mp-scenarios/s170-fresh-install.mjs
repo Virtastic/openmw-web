@@ -32,6 +32,10 @@ const STEP = 30_000;
 // each) on a SwiftShader box, plus a real upload of the game files. The 20-minute default
 // ceiling is for a scenario that boots twice.
 export const timeoutMs = 50 * 60_000;
+// Not part of the suite run: this brings its own gateway and needs the play server proxied at
+// it (ci/jenkins/run-fresh-install.sh sets OPENMW_MP_UPSTREAM). The Jenkins job runs that
+// script as its own stage; named explicitly, mp-harness.mjs still runs (or explains) it.
+export const standalone = true;
 
 const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' };
 // Inside -2,-7, where the peer names scrib / kwama forager (s109/s164). z is the LAND height at

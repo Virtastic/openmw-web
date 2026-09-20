@@ -889,10 +889,24 @@ const wanted = process.argv.slice(2);
 // A leading underscore marks a LIBRARY, not a scenario. Without this the shared gateway
 // helper would be imported and run as one, fail for having no default export, and read as
 // a broken scenario.
-const files = readdirSync(SCENARIO_DIR)
+let files = readdirSync(SCENARIO_DIR)
   .filter((f) => f.endsWith('.mjs') && !f.startsWith('_')).sort()
   .filter((f) => wanted.length === 0 || wanted.some((w) => f.startsWith(w)));
 if (files.length === 0) { console.error('no scenarios matched:', wanted.join(' ')); process.exit(2); }
+// A STANDALONE scenario (`export const standalone = true`) needs a stack this runner does not
+// stand up -- s170 brings its own gateway and wants the play server proxied at it, which
+// ci/jenkins/run-fresh-install.sh provides -- so the full suite leaves it out rather than
+// listing it as a skip that fails the run (#128: 126 passed, 0 failed, exit 1). Named
+// explicitly it still runs, and still says why when it cannot.
+if (wanted.length === 0) {
+  const keep = [];
+  for (const f of files) {
+    const mod = await import(pathToFileURL(join(SCENARIO_DIR, f)));
+    if (mod.standalone === true) console.log(`[harness] ${f}: standalone, not part of the suite (run it through its own script)`);
+    else keep.push(f);
+  }
+  files = keep;
+}
 
 const play = await ensurePlayServer();
 let harnessLive = { chrome: 0, peers: 0 }; // processes alive after the previous scenario

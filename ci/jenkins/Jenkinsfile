@@ -76,5 +76,19 @@ pipeline {
         }
       }
     }
+    // The fresh-install rehearsal (s170) brings its own gateway and needs the play server
+    // proxied at it, which run-harness.sh's shared stack does not do -- the suite leaves it
+    // out (mp-harness.mjs: standalone) and this stage runs it on the same images. With the
+    // full suite, or when it is named.
+    stage('Fresh-install rehearsal') {
+      when { expression { params.RUN_HARNESS && (params.SCENARIOS.trim() == '' || params.SCENARIOS.contains('s170')) } }
+      steps { sh 'bash /src/ci/jenkins/run-fresh-install.sh' }
+      post {
+        always {
+          sh 'cp /src/wasm-build/harness-out/fresh-${BUILD_NUMBER}.log "$WORKSPACE"/ 2>/dev/null || true'
+          archiveArtifacts artifacts: 'fresh-*.log', allowEmptyArchive: true
+        }
+      }
+    }
   }
 }
