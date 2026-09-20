@@ -150,7 +150,7 @@ local function fallProbe()
         pcall(function() for _, e in pairs(types.Actor.activeEffects(self)) do if e.id == 'levitate' then lev = true end end end)
         local hp = '?'
         pcall(function() hp = types.Actor.stats.dynamic.health(self).current end)
-        print(string.format('[mp] avatar airborne z=%d top=%s levitate=%s swim=%s hp=%s', math.floor(z), tostring(fallTop and math.floor(fallTop)), tostring(lev), tostring(types.Actor.isSwimming(self)), tostring(hp)))
+        print(string.format('[mp] avatar airborne at (%d,%d) z=%d top=%s levitate=%s swim=%s hp=%s', math.floor(self.position.x), math.floor(self.position.y), math.floor(z), tostring(fallTop and math.floor(fallTop)), tostring(lev), tostring(types.Actor.isSwimming(self)), tostring(hp)))
     end
     if not onGround then
         if fallTop == nil or z > fallTop then fallTop = z end

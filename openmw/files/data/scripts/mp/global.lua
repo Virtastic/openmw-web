@@ -2322,7 +2322,7 @@ local eventHandlers = {
             -- offset keeps a drowning player from drowning it and a creature from biting it (430).
             if cellArg and p and tryTeleport(p, cellArg, util.vector3((place.x or 0) + 200, place.y or 0, place.z or 0)) then
                 peerStandingIn = place.cellKey
-                print('[mp] sim peer moved to ' .. tostring(place.cellKey) .. ' to simulate it')
+                print(string.format('[mp] sim peer moved to %s to simulate it, standing at (%d,%d,%d)', tostring(place.cellKey), math.floor((place.x or 0) + 200), math.floor(place.y or 0), math.floor(place.z or 0)))
             end
         end
     end,
