@@ -238,6 +238,7 @@ local function equipTick(now)
     if ready or now > equipRetryUntil then
         local ok, err = pcall(types.Actor.setEquipment, self, pendingEquip)
         if not ok then print('[mp] puppet equip failed: ' .. tostring(err)) end
+        do local want, got = {}, {} for _, id in pairs(pendingEquip) do want[#want + 1] = id end pcall(function() for _, it in pairs(types.Actor.getEquipment(self)) do got[#got + 1] = it.recordId end end) table.sort(want) table.sort(got) print(string.format('[mp] puppet equip %s ready=%s want=%s got=%s', tostring(playerId), tostring(ready), table.concat(want, ','), table.concat(got, ','))) end -- s148 diagnostic
         pendingEquip = nil
     end
 end
