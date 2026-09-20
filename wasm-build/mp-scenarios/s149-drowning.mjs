@@ -59,6 +59,10 @@ export default async function run(ctx) {
   ctx.log(`A under water at z=${at.z.toFixed(0)} with ${start.c}/${start.b}`);
   assert.ok(at.z < -250, `A is not deep under (z=${at.z.toFixed(0)})`);
   await b.waitFor(`${rowOf}.z < -250`, STEP, "B's puppet of A is under water too");
+  // B WATCHES FROM THE SURFACE. Left on the seabed B drowns too (#131: B dead at t+40 s,
+  // respawned two cells away, its puppet of A gone); a vertical teleport puts B swimming at
+  // the surface, 300 u aside and well inside interest range of A below.
+  await b.cmd('tpz:1400');
   // Hold the depth: sneak is swim-down.
   await a.cmd(`walk:0,0,${HOLD_S * 1000}:sneak`);
 
@@ -89,7 +93,11 @@ export default async function run(ctx) {
 
   // Surface: lift A out of the water; the bleeding must stop.
   await a.cmd('walk:0,0,1:sneak'); // stop diving
-  await a.cmd(`snapto:${SEABED.x},${SEABED.y},${200}`);
+  // tpz, not snapto: snapto lands ON the ground (482) and the ground here is the seabed, so
+  // the 'surfacing' left A exactly where it was; it passed only when a frame above the water
+  // reset the breath (#131: 56 -> 0, dead). A vertical teleport into the air drops A onto the
+  // surface, swimming, head out.
+  await a.cmd('tpz:1400');
   await ctx.sleep(3_000);
   const surfaced = (await bars(a)) || cur;
   await ctx.sleep(15_000);
