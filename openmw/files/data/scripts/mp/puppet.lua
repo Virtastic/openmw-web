@@ -238,7 +238,6 @@ local function equipTick(now)
     if ready or now > equipRetryUntil then
         local ok, err = pcall(types.Actor.setEquipment, self, pendingEquip)
         if not ok then print('[mp] puppet equip failed: ' .. tostring(err)) end
-        do local want, got = {}, {} for _, id in pairs(pendingEquip) do want[#want + 1] = id end pcall(function() for _, it in pairs(types.Actor.getEquipment(self)) do got[#got + 1] = it.recordId end end) table.sort(want) table.sort(got) print(string.format('[mp] puppet equip %s ready=%s want=%s got=%s', tostring(playerId), tostring(ready), table.concat(want, ','), table.concat(got, ','))) end -- s148 diagnostic
         pendingEquip = nil
     end
 end
@@ -541,7 +540,11 @@ return {
                 slots[tonumber(slot) or slot] = id
             end
             pendingEquip = slots
-            equipRetryUntil = core.getRealTime() + 3
+            -- 30 s, not 3: the granted item lands in the inventory a frame after MP_Equip, and a
+            -- client whose frames run 3-10 s apart under load (a full sweep) passed the deadline
+            -- before it existed -- setEquipment then ran without it and the slot was dropped
+            -- for good (s148: the friend's torch, #120/#127; never in isolation).
+            equipRetryUntil = core.getRealTime() + 30
         end,
         -- M2/M4: mirror the remote actor's dynamic stats (health bar, death pose).
         MP_Stats = function(data)

@@ -2734,7 +2734,6 @@ local eventHandlers = {
         remoteIdentity[data.id] = remoteIdentity[data.id] or {}
         remoteIdentity[data.id].equipment = { slots = data.slots or {} }
         pushEquipmentToPuppet(data.id)
-        do local ids = {} for _, v in pairs(data.slots or {}) do ids[#ids + 1] = tostring(v) end table.sort(ids) print(string.format('[mp] equipment for #%s: %s (puppet %s)', tostring(data.id), table.concat(ids, ','), tostring(puppets[data.id] ~= nil))) end -- s148 diagnostic
     end,
 
     MP_PlayerStatsDynamic = function(data)
