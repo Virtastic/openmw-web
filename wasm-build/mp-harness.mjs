@@ -492,7 +492,9 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // the interesting one -- and still reports how often the noisy one fired.
     logTail: (n = 30) => {
       const seen = new Map();
-      for (const l of logs) seen.set(l, (seen.get(l) ?? 0) + 1);
+      // The local-map RTT warnings are one per draw per texture and buried the twelve lines
+      // that mattered on a cell change (#132 s69); they are never the story.
+      for (const l of logs) if (!/Local map: /.test(l)) seen.set(l, (seen.get(l) ?? 0) + 1);
       const out = [];
       for (const [line, count] of seen) out.push(count > 1 ? line + '  (x' + count + ')' : line);
       return out.slice(-n).join(String.fromCharCode(10));
@@ -1174,7 +1176,7 @@ for (const file of files) {
     for (const c of clients) {
       try {
         const errs = [...c.jsErrors(), ...c.luaErrors()].slice(-6);
-        console.error(`--- CLIENT ${c.name} (errors ${errs.length}) liveness ${c.liveness ?? "(not probed)"} ---\n${errs.join(NL)}${errs.length ? NL : ''}${c.logTail(12)}`);
+        console.error(`--- CLIENT ${c.name} (errors ${errs.length}) liveness ${c.liveness ?? "(not probed)"} ---\n${errs.join(NL)}${errs.length ? NL : ''}${c.logTail(25)}`);
       } catch { /* a closed handle has nothing to say */ }
     }
     // The PEER's narration (#183): its `[mp]` lines (follow claims, avatar teleports, cell
