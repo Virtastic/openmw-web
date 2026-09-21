@@ -1143,6 +1143,9 @@ export function pushAvatarsToPeer(ctx: StateCtx, peer: Player): void {
     if (other.system === true) continue;
     const doc = ctx.store.getCached(other.charId);
     if (doc) peer.peer.sendEvent('AvatarState', avatarStateBody(other.id, doc, other.bounty));
+    // The first pose the NEW peer streams for each player goes on record too (s69 #132: a
+    // watcher ended up at the world origin after a restart, and the log had no first pose).
+    other.avatarPoseLogged = false;
   }
 }
 
