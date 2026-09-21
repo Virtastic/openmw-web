@@ -89,7 +89,7 @@ export default async function run(ctx) {
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   // 90 s bought 27 swings in #114 and the forager sat at 3 hp (31 -> 3: the hits land, a
   // level-1 swing just misses often). Three minutes is the budget a kill needs, not a hit.
-  const deadline = Date.now() + 180_000;
+  const deadline = Date.now() + 300_000; // five minutes: a scrib on the move costs a snap a cycle
   let swings = 0, died = false, resnaps = 0;
   // ONE FRAME PER READ, ONE PER SWING (s170 fresh44-46): every eval and cmd waits for the
   // client's current frame, and a body of a dozen per swing managed eight swings in three
@@ -102,13 +102,14 @@ export default async function run(ctx) {
     died = st.p?.dead === true; if (died) break;
     let range = Math.hypot(p.x - st.me.x, p.y - st.me.y);
     if (range > REACH) {
-      let q = p;
-      for (let t = 0; t < (range < 500 ? 10 : 1) && range > REACH; t++) {
-        await ctx.sleep(3_000);
-        q = (await probeOf(a, victim)) || p; const me2 = await poseOf(a);
-        range = Math.hypot(q.x - me2.x, q.y - me2.y);
-      }
-      if (range <= REACH) continue;
+      // One look, then act: a mark still closing in gets another look; a wanderer gets a snap
+      // at once (this server waves snaps through). Ten looks a cycle left four swings in three
+      // minutes at a scrib on the move (#132).
+      await ctx.sleep(3_000);
+      const q = (await probeOf(a, victim)) || p; const me2 = await poseOf(a);
+      const range2 = Math.hypot(q.x - me2.x, q.y - me2.y);
+      if (range2 <= REACH) continue;
+      if (range2 < range - 40) continue;
       // It walked off (or fled): step back beside it, at most a few times, and wait for the
       // AVATAR to get there too: it is the body that swings, and #119 had it 197 u behind a
       // client that had re-snapped after a walking scrib -- eight swings, all into air.
