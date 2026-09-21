@@ -6,7 +6,7 @@
 // A toggles the nearest door -> B sees it open; A locks it -> B sees locked; unlock relays.
 import assert from 'node:assert/strict';
 
-const STEP_TIMEOUT = 15_000;
+const STEP_TIMEOUT = 30_000; // 30, not 15: both clients were at 2.2 s a frame with the engine stalled when B's own unlock missed 15 s (#136); the suite's usual step
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([
