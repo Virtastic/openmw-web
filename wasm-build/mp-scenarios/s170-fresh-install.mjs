@@ -73,7 +73,10 @@ const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"{}"
 async function walkSomewhere(c, minDist = 80) {
   let last;
   for (const [dx, dy] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
-    try { return await c.walk(dx, dy, 2500, minDist, 2); } catch (e) { last = e; }
+    // 6 s, not 2.5: a client at three seconds a frame sends one input frame in 2.5 s, the
+    // avatar walks that one step (~40 u) and reconciliation drags the body back to it -- the
+    // friend saw 41 u of a 197 u walk (f2). s151 learned the same (ten-second walks).
+    try { return await c.walk(dx, dy, 6000, minDist, 2); } catch (e) { last = e; }
   }
   throw last;
 }
