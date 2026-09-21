@@ -775,7 +775,12 @@ local function avatarStreamTick(now)
     avatarStreamAt = now
     local entries = {}
     for id, p in pairs(puppets) do
-        if p.obj and p.obj:isValid() then
+        -- NOT BEFORE THE BODY IS PLACED. createObject + teleport lands at the end of the frame;
+        -- in between the object has no cell and its position reads (0,0,0), and a peer that
+        -- spawns its avatars the frame it joins (a restart into a full world) streamed that as
+        -- each player's first authoritative pose -- a 70,000-unit self snap to the world
+        -- origin for everyone with fresh input (s69, #132 / backlog 503).
+        if p.obj and p.obj:isValid() and p.obj.cell then
             local ok = pcall(function()
                 local pos = p.obj.position
                 local walkSpeed = types.Actor.getWalkSpeed(p.obj)
