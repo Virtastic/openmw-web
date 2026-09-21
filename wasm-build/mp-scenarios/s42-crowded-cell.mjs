@@ -129,7 +129,9 @@ async function worstDisagreement(clients) {
   const first = await probeOf(clients[0]);
   await new Promise((r) => setTimeout(r, 1200));
   const probes = await Promise.all(clients.map(probeOf));
-  const shared = Object.keys(probes[0]).filter((r) => probes.every((p) => p[r]) && first[r] && dist(first[r], probes[0][r]) < 5 && (probes[0][r].n ?? 1) === 1); // n: unique in the cell (several identical fish = different fish on each client)
+  // n: unique in the cell ON EVERY CLIENT (several identical fish = different fish on each
+  // client; #132: one slaughterfish_small on A, another 5198 u away on B, read as runaway).
+  const shared = Object.keys(probes[0]).filter((r) => probes.every((p) => p[r] && (p[r].n ?? 1) === 1) && first[r] && dist(first[r], probes[0][r]) < 5 && !/slaughterfish/.test(r));
   if (shared.length === 0) return { shared: 0, worst: null, rec: null };
   let worst = 0;
   let rec = null;
