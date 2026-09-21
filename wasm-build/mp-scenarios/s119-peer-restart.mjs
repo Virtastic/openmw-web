@@ -62,9 +62,15 @@ export default async function run(ctx) {
   for (const c of [a, b]) await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 60_000, `${c.name} puppets the cell actors under the new peer`);
 
   // The world is simulated again: a fight resolves.
-  const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
-  const victim = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
-  assert.ok(victim, 'need a living NPC both see after the restart');
+  // Polled, not read once: the probe fills over the frames after 'puppetedActors > 0' first
+  // turns true, and a client at a few seconds a frame had B's still empty (#132).
+  let victim, pa, pb;
+  for (const by = Date.now() + 60_000; !victim && Date.now() < by;) {
+    [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
+    victim = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
+    if (!victim) await ctx.sleep(2_000);
+  }
+  assert.ok(victim, `need a living NPC both see after the restart (A sees ${Object.keys(pa || {}).join(',')}; B sees ${Object.keys(pb || {}).join(',')})`);
   const died = await killAndProve(ctx, a, b, victim);
   assert.ok(died, `"${victim}" never died after the peer restart: the new peer is not simulating the cell the players stand in`);
   ctx.log(`ok: the peer died, the server brought it back, and "${victim}" died to the players' blows`);
