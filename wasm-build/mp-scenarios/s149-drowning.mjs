@@ -93,11 +93,13 @@ export default async function run(ctx) {
 
   // Surface: lift A out of the water; the bleeding must stop.
   await a.cmd('walk:0,0,1:sneak'); // stop diving
-  // tpz, not snapto: snapto lands ON the ground (482) and the ground here is the seabed, so
-  // the 'surfacing' left A exactly where it was; it passed only when a frame above the water
-  // reset the breath (#131: 56 -> 0, dead). A vertical teleport into the air drops A onto the
-  // surface, swimming, head out.
-  await a.cmd('tpz:1400');
+  // ONTO LAND, not just up: snapto lands ON the ground (482) and the ground here is the seabed
+  // (#131: 'surfaced' left A where it was, 56 -> 0, dead); a vertical teleport dropped A into
+  // the water with fall momentum and it sank to -132 with no swim-up input (two builder runs).
+  // The retail start is dry land two cells over: one snap, the avatar follows across the
+  // border in one hop, and both stand with their heads in the air.
+  await a.cmd('snapto:-12288,-69632,87');
+  await a.waitFor('JSON.parse(window.omw.state.pose||"{}").z > 0', STEP, 'A is on land');
   await ctx.sleep(3_000);
   const surfaced = (await bars(a)) || cur;
   await ctx.sleep(15_000);
