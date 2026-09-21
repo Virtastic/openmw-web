@@ -604,6 +604,15 @@ export default async function run(ctx) {
       }
       if (near <= reach) continue;
       if (near < gap - 40) { if (++stalls % 5 === 1) ctx.log(`  the ${victim} is coming (${Math.round(gap)} -> ${Math.round(near)} u); standing`); continue; }
+      // WALK at a mark a few hundred units off, as a player does: a hop there is two snaps
+      // (overshoot, back) four seconds apart, and on a client at three seconds a frame the
+      // second one raced the first's follow -- the avatar went A, B, A and the hop never
+      // 'came along' (#133 rehearsal: six hop cycles at a rat 130-190 u off, then the timeout).
+      if (near < 400) {
+        ctx.log(`  the ${victim} keeps its distance (${Math.round(gap)} -> ${Math.round(near)} u); walking to it`);
+        await walkToward(ctx, host, q, reach, 3);
+        continue;
+      }
       ctx.log(`  the ${victim} keeps its distance (${Math.round(gap)} -> ${Math.round(near)} u); hopping to it`);
       if (resnaps++ < 12) await hopTo(ctx, host, q.x + 60, q.y, q.z + 8);
       else await ctx.sleep(1_000);
