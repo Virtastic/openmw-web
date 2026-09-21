@@ -9,6 +9,7 @@
 // do -- in one scenario.
 import assert from 'node:assert/strict';
 import { goToCompanion } from './_companion.mjs';
+import { pickUntil } from './_probe.mjs';
 
 // THE SERVER'S OWN PEER: only the production lifecycle anchors an INTERIOR (s118). With a
 // hand-started peer the tradehouse had no holder and door:enter teleported by hook
@@ -24,10 +25,11 @@ export default async function run(ctx) {
   if (!simPeer) { ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset).'); return; }
   const [a, b] = await Promise.all([ctx.launchClient('bot-a', '', BOOT), ctx.launchClient('bot-b', '', BOOT)]);
   for (const c of [a, b]) await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 300_000, `${c.name} puppeted the cell actors`);
-  const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
+
   // An NPC, not a creature: the probe does not say which is which, so exclude the Seyda Neen
   // wildlife by name; a mudcrab at the water's edge is not a companion anybody recruits.
-  const rec = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|cliff/.test(r));
+  let pa, pb, rec;
+  ({ found: rec, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|cliff/.test(r))));
   assert.ok(rec, 'need a living NPC visible to both clients');
   const start = pa[rec];
 

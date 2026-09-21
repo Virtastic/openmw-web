@@ -10,6 +10,7 @@
 // the wire key first. Kill an NPC (s109), restart the peer, and expect the corpse to
 // stay a corpse on both screens.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
@@ -27,8 +28,9 @@ export default async function run(ctx) {
   for (const c of [a, b]) {
     await c.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 120_000, `${c.name}: the cell has a holder`);
   }
-  const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
-  const victim = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard);
+
+  let pa, pb, victim;
+  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard)));
   assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   // 180 s: at #116's frame rate the test hits landed 8 s apart and 90 s was eleven of them.

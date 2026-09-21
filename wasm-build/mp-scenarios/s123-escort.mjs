@@ -7,6 +7,7 @@
 // carries the destination, the holder starts Escort on ITS NPC, and the poses reach the
 // other player. s114 proved Follow; this is the other package the same chain carries.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
@@ -19,10 +20,11 @@ export default async function run(ctx) {
   if (!simPeer) { ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset).'); return; }
   const [a, b] = await Promise.all([ctx.launchClient('bot-a', '', BOOT), ctx.launchClient('bot-b', '', BOOT)]);
   for (const c of [a, b]) await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 300_000, `${c.name} puppeted the cell actors`);
-  const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
+
   // Somebody standing well away from the destination, so the walk is measurable.
-  const rec = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard
-    && !/mudcrab|scrib|rat|slaughterfish|kwama|cliff/.test(r) && dist2(pa[r], DEST) > 800);
+  let pa, pb, rec;
+  ({ found: rec, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard
+    && !/mudcrab|scrib|rat|slaughterfish|kwama|cliff/.test(r) && dist2(pa[r], DEST) > 800)));
   assert.ok(rec, 'need a living NPC visible to both, standing away from the spawn');
   const start = pa[rec];
   await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);

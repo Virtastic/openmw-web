@@ -6,6 +6,7 @@
 // companion.lua reports the Travel package, the claim is admitted from the player who holds
 // the NPC's dialogue lock, and the holder walks its NPC. Everyone else must see the NPC go.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const probeOf = async (c) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
@@ -17,9 +18,10 @@ export default async function run(ctx) {
   if (!simPeer) { ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset).'); return; }
   const [a, b] = await Promise.all([ctx.launchClient('bot-a', '', BOOT), ctx.launchClient('bot-b', '', BOOT)]);
   for (const c of [a, b]) await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 300_000, `${c.name} puppeted the cell actors`);
-  const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
-  const rec = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard
-    && !/mudcrab|scrib|rat|slaughterfish|kwama|cliff/.test(r) && dist2(pa[r], DEST) > 800);
+
+  let pa, pb, rec;
+  ({ found: rec, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard
+    && !/mudcrab|scrib|rat|slaughterfish|kwama|cliff/.test(r) && dist2(pa[r], DEST) > 800)));
   assert.ok(rec, 'need a living NPC visible to both, standing away from the spawn');
   const start = pa[rec];
   await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);

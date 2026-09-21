@@ -8,6 +8,7 @@
 // gateway world spawns its own peer from the shared config (managedPeer).
 import assert from 'node:assert/strict';
 import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
+import { pickUntil } from './_probe.mjs';
 
 export const managedPeer = true;
 const STEP = 30_000;
@@ -51,8 +52,8 @@ export default async function run(ctx) {
     ctx.log(`ok: the host's peer holds the cell (holder=${await host.client.eval('window.omw.state.authorityHolder')})`);
 
     // Both hit the same NPC in the host's world; it dies once, for both.
-    const [pa, pb] = await Promise.all([probeOf(host.client), probeOf(guest.client)]);
-    const victim = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
+    let pa, pb, victim;
+    ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(host.client), probeOf(guest.client)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r))));
     assert.ok(victim, `need a living NPC both see: host=${JSON.stringify(Object.keys(pa))} guest=${JSON.stringify(Object.keys(pb))}`);
     const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
     const deadline = Date.now() + 90_000;

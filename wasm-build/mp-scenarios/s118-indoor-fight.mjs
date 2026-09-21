@@ -6,6 +6,7 @@
 // without the peer's own body inside -- and every relay addresses it by name. Two players walk
 // through the same door, both hit the same NPC, and it dies once, for both.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 
 // THE SERVER'S OWN PEER. A hand-spawned peer stands in one exterior cell and never anchors a
 // room; only the production lifecycle (server.ts simPeerPass -> SimAnchors interiors) holds an
@@ -36,8 +37,9 @@ export default async function run(ctx) {
     await c.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 120_000, `${c.name}: the interior has a holder`);
     await c.waitFor('window.omw.state.isHolder === "false"', STEP, `${c.name} does not hold it (the peer does)`);
   }
-  const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
-  const victim = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard);
+
+  let pa, pb, victim;
+  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard)));
   assert.ok(victim, `need a living NPC inside visible to both: A=${JSON.stringify(Object.keys(pa))} B=${JSON.stringify(Object.keys(pb))}`);
   ctx.log(`both attacking "${victim}" indoors (holder=${await a.eval('window.omw.state.authorityHolder')})`);
 

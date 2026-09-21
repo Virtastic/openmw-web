@@ -12,6 +12,7 @@
 // arrive next to A.
 import assert from 'node:assert/strict';
 import { goToCompanion } from './_companion.mjs';
+import { pickUntil } from './_probe.mjs';
 
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
@@ -26,8 +27,9 @@ export default async function run(ctx) {
     await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 300_000, `${c.name} puppeted the cell actors (the peer holds it)`);
   }
   // A living NPC both see, that is not a guard (guards have their own ideas).
-  const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
-  const rec = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard);
+
+  let pa, pb, rec;
+  ({ found: rec, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard)));
   assert.ok(rec, 'need a living NPC visible to both clients');
   const start = pa[rec];
   ctx.log(`A recruits "${rec}" at (${Math.round(start.x)},${Math.round(start.y)})`);

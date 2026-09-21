@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pickUntil } from './_probe.mjs';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const STEP_TIMEOUT = 25_000;
@@ -62,9 +63,10 @@ export default async function run(ctx) {
       `${c.name} puppeted the cell actors`);
   }
 
-  const [ph, pp] = await Promise.all([probeOf(a), probeOf(b)]);
-  const victim = Object.keys(ph).find((r) => r !== 'player' && pp[r]
-    && ph[r].dead !== true && pp[r].dead !== true);
+
+  let ph, pp, victim;
+  ({ found: victim, probes: [ph, pp] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (ph, pp) => Object.keys(ph).find((r) => r !== 'player' && pp[r]
+    && ph[r].dead !== true && pp[r].dead !== true)));
   assert.ok(victim, 'need a living NPC visible to both clients');
   ctx.log(`both clients attacking "${victim}"`);
 

@@ -12,6 +12,7 @@
 // hit injection on the victim at all, just a provoked creature and an avatar standing in
 // reach of it.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const SPOT = '-12500,-53100,512'; // inside -2,-7 (see s109)
@@ -40,9 +41,8 @@ export default async function run(ctx) {
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 30_000, 'A puppeted the cell actors');
 
   // Stand next to the creature: a bite has a reach, and the avatar follow-teleports with us.
-  const names = Object.values(await netObjs(a));
-  const probe = await probeOf(a);
-  const victim = names.find((r) => probe[r] && !probe[r].dead);
+  let names, probe, victim;
+  ({ found: victim, probes: [names, probe] } = await pickUntil(ctx, async () => [Object.values(await netObjs(a)), await probeOf(a)], (names, probe) => names.find((r) => probe[r] && !probe[r].dead)));
   assert.ok(victim, `no living named creature in the probe: net=${JSON.stringify(names)} probe=${JSON.stringify(Object.keys(probe))}`);
   const p = probe[victim];
   await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`);

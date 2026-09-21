@@ -8,6 +8,7 @@
 // un-restored avatar three seconds later"). Unit-tier: avatarstats.test.ts. This is it live:
 // get bitten, heal to full on the client, and the PEER-reported bars must follow up.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const SPOT = '-12500,-53100,512';
@@ -24,9 +25,8 @@ export default async function run(ctx) {
   await a.cmd('snapto:' + SPOT);
   await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'A built a named creature');
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 30_000, 'A puppeted the cell actors');
-  const names = Object.values(await netObjs(a));
-  const probe = await probeOf(a);
-  const victim = names.find((r) => probe[r] && !probe[r].dead);
+  let names, probe, victim;
+  ({ found: victim, probes: [names, probe] } = await pickUntil(ctx, async () => [Object.values(await netObjs(a)), await probeOf(a)], (names, probe) => names.find((r) => probe[r] && !probe[r].dead)));
   assert.ok(victim, 'no living named creature');
   const p = probe[victim];
   await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`);

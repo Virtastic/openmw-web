@@ -6,6 +6,7 @@
 // north must BOTH see their NPC die. Before the anchor design a peer simulated the one cell
 // it stood in and everyone else fought statues.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 
 export const managedPeer = true;
 const STEP = 30_000;
@@ -43,10 +44,13 @@ export default async function run(ctx) {
   }
   ctx.log(`holders: A's cell=${await holderOf(a)} B's cell=${await holderOf(b)} (one peer, two anchors)`);
 
-  const pa = await probeOf(a);
-  const va = Object.keys(pa).find((r) => r !== 'player' && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
-  const pb = await probeOf(b);
-  const vb = Object.keys(pb).find((r) => r !== 'player' && !pb[r].dead);
+  let pa, pb, va, vb;
+  await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (qa, qb) => {
+    pa = qa; pb = qb;
+    va = Object.keys(pa).find((r) => r !== 'player' && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
+    vb = Object.keys(pb).find((r) => r !== 'player' && !pb[r].dead);
+    return va && vb;
+  });
   assert.ok(va && vb, `need a living actor in each cell: A=${JSON.stringify(Object.keys(pa))} B=${JSON.stringify(Object.keys(pb))}`);
 
   const [da, db] = await Promise.all([killOne(ctx, a, va, 'A in Seyda Neen'), killOne(ctx, b, vb, 'B two cells north')]);
