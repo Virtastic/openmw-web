@@ -106,7 +106,9 @@ export default async function run(ctx) {
     ctx.log(`the stung ${victim} is ${range.toFixed(0)} units off`);
   }
   // The sting itself went out under our name (it is the relay hook); the KILL must not.
-  await a.eval("if (window.omw.state) window.omw.state.hitFwd = undefined; 'cleared';");
+  // COUNT, not clear: the mirror is re-read from the engine, so a page-side clear does not
+  // stick and the sting's own 'net:1.0' read as a forwarded kill (#137; s164's lesson).
+  const fwdBefore = String(await a.eval('window.omw.state.hitFwdCount'));
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   const deadline = Date.now() + 180_000;
   let shots = 0, died = false;
@@ -153,10 +155,10 @@ export default async function run(ctx) {
       ctx.log(`shot ${shots}: me=${await a.eval('window.omw.state.pose')} mark=(${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) dead=${q.dead} div=${await a.eval('window.omw.state.selfDivergence')} flags=${await a.eval('window.omw.state.selfFlags')} batchesIn=${await a.eval('window.omw.state.actorBatchesIn')} hp=${await a.eval('window.omw.state.hp')}`);
     }
   }
-  const fwd = String(await a.eval('window.omw.state.hitFwd'));
-  ctx.log(`${shots} shot(s) loosed by the avatar; dead=${died}; hitFwd=${fwd}; selfFlags=${await a.eval('window.omw.state.selfFlags')}`);
+  const fwd = String(await a.eval('window.omw.state.hitFwdCount'));
+  ctx.log(`${shots} shot(s) loosed by the avatar; dead=${died}; forwards ${fwdBefore} -> ${fwd}; selfFlags=${await a.eval('window.omw.state.selfFlags')}`);
   assert.ok(died, `the ${victim} never died after ${shots} shots: the avatar did not draw, did not release, missed every time, or its hits are not applied by the peer`);
-  assert.equal(fwd, 'undefined', `a real ranged hit went out under the OWNER's name (hitFwd=${fwd}); the peer's avatar must be the one shooting`);
+  assert.equal(fwd, fwdBefore, `a real ranged hit went out under the OWNER's name (forwards ${fwdBefore} -> ${fwd}); the peer's avatar must be the one shooting`);
   await a.waitFor(deadExpr, STEP, "the creature is dead on the archer's screen");
   ctx.log(`PASS: the peer's avatar drew, loosed and killed the ${victim} with ${shots} shot(s); the owner's copy only aimed`);
 }
