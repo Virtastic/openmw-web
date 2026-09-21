@@ -1557,7 +1557,7 @@ window.omw = (function(){
                  + 'letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
                // ON PURPOSE: tell the world before going, so a Party world closes to its
                // guests now rather than after the crash grace (see net.lua switchTo).
-               btn.onclick = function(){ window.__omwAllowLeave = true; try { sessionStorage.removeItem('omwmp:bootfrag'); sessionStorage.removeItem('omwmp:chatlog'); } catch(e){} try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = signedIn ? 'launcher.html#characters' : 'launcher.html'; }, 150); };
+               btn.onclick = function(){ window.__omwExitToLauncher(signedIn ? 'launcher.html#characters' : 'launcher.html'); };
                if (opts && opts.reload) {
                  var rl = document.createElement('button');
                  rl.textContent = 'Reload';
@@ -4232,12 +4232,19 @@ window.omw = (function(){
   // THE IN-GAME EXIT (mainmenu.cpp): a deliberate departure says so, so a Party host's guests
   // are sent home now rather than after the ninety-second crash grace with no host in the
   // world -- the same call the error modal's button makes. Then the launcher.
-  window.__omwExitToLauncher = function(){
+  // WAIT FOR THE WORD TO GO OUT. 'leaving' is a queued command Lua drains on its next frame,
+  // and a client at three seconds a frame navigated away 150 ms later with it still queued,
+  // so the world closed by the crash grace after all (#133 rehearsal). The ack means the
+  // event is on the wire; four seconds is the cap either way.
+  window.__omwExitToLauncher = function(dest){
     window.__omwAllowLeave = true;
     try { sessionStorage.removeItem('omwmp:bootfrag'); sessionStorage.removeItem('omwmp:chatlog'); } catch (e) {}
-    try { window.omw.send('leaving', 300); } catch (e) {}
-    try { if (window.Module) Module.__omwRunning = false; } catch (e) {}
-    setTimeout(function(){ location.href = 'launcher.html#characters'; }, 150);
+    var go = function(){
+      try { if (window.Module) Module.__omwRunning = false; } catch (e) {}
+      location.href = dest || 'launcher.html#characters';
+    };
+    var p; try { p = window.omw.send('leaving', 4000); } catch (e) {}
+    (p && p.then ? p : Promise.resolve()).then(go, go);
   };
 
   // Lua cannot navigate, so net.switchTo publishes the destination here instead.
