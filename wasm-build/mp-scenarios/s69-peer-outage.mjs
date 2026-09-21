@@ -114,8 +114,10 @@ export default async function run(ctx) {
   assert.notEqual(owner2, 'none', 'the restarted peer never re-took the cell');
   ctx.log(`peer restarted: owner=${owner2}`);
   await ctx.sleep(4_000); // avatars re-spawn, streams resume
-  p0 = await puppetPosOf(ctx, a, bId);
-  assert.ok(p0, 'the watcher lost the walker entirely (no puppet mirror entry)');
+  // The mirror entry comes back with the avatar, on the same slow chain as the movement below
+  // (#132: 4 s + 15 s was not enough under full-suite load); give it the same 90 s.
+  p0 = await puppetPosOf(ctx, a, bId, 90_000);
+  assert.ok(p0, 'the watcher lost the walker entirely (no puppet mirror entry 90 s after the peer returned)');
   await b.walk(0, 1, 3000, 40, 10);
   // THE SLOWEST TRANSITION IN THE SUITE, so it gets the longest deadline. Coming back from an
   // outage is four things in sequence -- the peer boots, re-claims the cell, re-spawns an
