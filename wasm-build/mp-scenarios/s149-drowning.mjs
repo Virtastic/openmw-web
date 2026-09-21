@@ -50,19 +50,25 @@ export default async function run(ctx) {
   await a.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${s0.b + 58}`, STEP, 'the max rose');
   await a.cmd(`sethp:${s0.b + 60}`);
   await a.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${s0.b + 50}`, STEP, 'the pool filled');
+  // B GOES FIRST, AND CLEARS THE WATER. B stands at the surface of the sea spot (a vertical
+  // teleport off the seabed: left down there B drowned too, #131) and kills the cell's
+  // slaughterfish through the test hook before A dives -- a bite is what read as 'hurt before
+  // the breath ran out' whenever one wandered by (#132; the two builder runs had none near).
+  // Only a client in the cell can name its actors, and A is still on dry land.
+  await b.cmd(`snapto:${SEABED.x + 300},${SEABED.y},${SEABED.z}`);
+  await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z < -250', STEP, 'B is at the sea spot');
+  await b.cmd('tpz:1400');
+  await ctx.sleep(3_000);
+  for (let i = 0; i < 4; i++) { await b.cmd('killnpc:slaughterfish'); await b.cmd('killnpc:slaughterfish_small'); await ctx.sleep(500); }
+  await ctx.sleep(4_000); // the deaths travel client -> server -> peer
   const start = await bars(a);
   await a.cmd(`snapto:${SEABED.x},${SEABED.y},${SEABED.z}`);
-  await b.cmd(`snapto:${SEABED.x + 300},${SEABED.y},${SEABED.z}`);
   const t0 = Date.now(); // the breath clock: A went under now
   await a.waitFor('JSON.parse(window.omw.state.pose||"{}").z < -250', STEP, 'A is deep under');
   const at = await pose(a);
   ctx.log(`A under water at z=${at.z.toFixed(0)} with ${start.c}/${start.b}`);
   assert.ok(at.z < -250, `A is not deep under (z=${at.z.toFixed(0)})`);
   await b.waitFor(`${rowOf}.z < -250`, STEP, "B's puppet of A is under water too");
-  // B WATCHES FROM THE SURFACE. Left on the seabed B drowns too (#131: B dead at t+40 s,
-  // respawned two cells away, its puppet of A gone); a vertical teleport puts B swimming at
-  // the surface, 300 u aside and well inside interest range of A below.
-  await b.cmd('tpz:1400');
   // Hold the depth: sneak is swim-down.
   await a.cmd(`walk:0,0,${HOLD_S * 1000}:sneak`);
 
