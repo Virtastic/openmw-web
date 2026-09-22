@@ -2,6 +2,26 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.4.1
+
+**Nobody can hide the world from everybody.** A client may toggle refs in cells it is nowhere
+near -- that is how Morrowind's own scripts work, disabling a hundred quest refs across the
+island as your game loads -- and the disable half of that message hides a door, a shopkeeper or
+a quest trigger for *every* player who walks in afterwards, permanently. There was nothing
+stopping a stream of them. The reveal is untouched; the hiding is budgeted: the world-load
+burst (about a hundred refs, twice over) is free, and past it twelve a minute, logged with a
+moderation note. Bounded rather than ended, honestly: ending it needs the server to know which
+refs the content's own scripts toggle.
+
+**The one-cell load soak runs again.** It had been dead since the peer took over simulation --
+it waited to be handed authority over the cell it was crowding, which no player is ever given
+now -- and died on a timeout that named nothing. It asks who holds the cell instead, and a
+standalone run brings its own holder.
+
+Also: the peer says what an avatar was left able to do after shedding items it should not have
+(encumbrance, capacity, walk speed), read a frame later so the number is the result rather than
+the thing about to change.
+
 ## 1.4.0
 
 Multiplayer, played to the end. Every scenario in the browser suite -- 126 of them, two real
