@@ -420,6 +420,9 @@ async function main(): Promise<void> {
     let actorSeq = 0;
     let actorPaused = true; // the holder only broadcasts inside a measured window
     let holderEpoch: number | undefined;
+    // Backlog 492: under peer-everywhere the cell is held by the server's own peer, so the
+    // bots are receivers and the holder-side half of --onecell does not apply.
+    let peerHeld = false;
     let rssStart = NaN;
     const authVerified = new Set<string>(); // non-holders whose ActorAuthorityInfo has landed
 
@@ -645,13 +648,33 @@ async function main(): Promise<void> {
       // In --attach the cell is already held by whoever got there first (a real browser
       // client in s42), so the bots are pure load and pure receivers: no synthetic actor
       // stream, no holder-side assertions. Standalone, bots[0] entered first and MUST hold.
+      // WHO HOLDS THE CELL IS ASKED, NOT ASSUMED (backlog 492). This used to wait for
+      // bots[0]'s own ActorAuthorityGrant, on the rule that whoever entered first holds --
+      // true until peer-everywhere, where the server's own simulating peer holds every
+      // occupied cell and no player is ever granted one. The mode then died on a 15 s
+      // 'timeout waiting for event ActorAuthorityGrant' that named nothing. Both worlds are
+      // legitimate: a bot holder streams synthetic actors and is asserted against; a peer
+      // holder makes every bot a receiver, exactly as --attach already does.
       if (ONECELL && !ATTACH && holderEpoch === undefined) {
-        const grant = await bots[0]!.client.waitEvent('ActorAuthorityGrant', () => true, 15_000);
-        holderEpoch = Number((grant.value as { epoch?: number }).epoch);
-        if (!Number.isInteger(holderEpoch)) throw new Error(`ActorAuthorityGrant carried no usable epoch: ${JSON.stringify(grant.value)}`);
-        console.log(`[soak] holder=${bots[0]!.name} pid=${bots[0]!.playerId} cell=${ONE_CELL_KEY} epoch=${holderEpoch}`);
+        const info = await bots[0]!.client.waitEvent('ActorAuthorityInfo', () => true, 15_000)
+          .catch(() => undefined);
+        const holderId = info && (info.value as { holderId?: number }).holderId;
+        const epoch = info && Number((info.value as { epoch?: number }).epoch);
+        if (!info || !Number.isInteger(epoch)) {
+          throw new Error(`no ActorAuthorityInfo for ${ONE_CELL_KEY} in 15 s: nobody holds the cell. `
+            + "With [simPeer] enabled the server's peer holds it; without one, run the spread soak "
+            + '(--bots 24 --cells 6) instead, which needs no holder.');
+        }
+        if (holderId === bots[0]!.playerId) {
+          holderEpoch = epoch as number;
+          console.log(`[soak] holder=${bots[0]!.name} pid=${bots[0]!.playerId} cell=${ONE_CELL_KEY} epoch=${holderEpoch}`);
+        } else {
+          peerHeld = true;
+          console.log(`[soak] the cell is held by the server's own peer (holderId=${String(holderId)}, epoch=${epoch}): `
+            + 'the bots are receivers -- no synthetic actor stream, no holder-side assertions (backlog 492)');
+        }
       }
-      if (ONECELL && !ATTACH) {
+      if (ONECELL && !ATTACH && !peerHeld) {
         // Every non-holder must be TOLD who the holder is. Without this the divergence
         // check below could pass on a cell nobody was ever wired into. Awaited, not
         // sampled: the Info chases the bot's PlayerCellChange through the op queue and is
@@ -768,7 +791,7 @@ async function main(): Promise<void> {
       // than printing nothing: a number that alarming and that wrong teaches an operator to
       // ignore the column that actually matters in one-cell runs.
       const actorMeasured = sent > 0 || bots.slice(1).some((b) => b.rxActorBatches > 0);
-      if (ONECELL && !ATTACH) {
+      if (ONECELL && !ATTACH && !peerHeld) {
         // The relay excludes the sender: an echo back to the holder would double every
         // client's actor cost and is worth failing on, not just noting.
         if (bots[0]!.rxActorBatches > 0) failures.push(`holder received ${bots[0]!.rxActorBatches} of its own ActorMoveBatch frames (relay echo)`);
