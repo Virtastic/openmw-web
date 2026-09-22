@@ -699,8 +699,21 @@ local function applyAvatarDoc(id)
                 want[worldmp.toLocal(recordId)] = true
             end
             local inventory = types.Actor.inventory(obj)
+            local shed = false
             for _, item in ipairs(inventory:getAll()) do
-                if not want[item.recordId] then print(string.format('[mp] avatar #%s sheds %d x %s (not in the doc)', tostring(id), item.count or 1, tostring(item.recordId))); pcall(function() item:remove(item.count or 1) end) end
+                if not want[item.recordId] then shed = true; print(string.format('[mp] avatar #%s sheds %d x %s (not in the doc)', tostring(id), item.count or 1, tostring(item.recordId))); pcall(function() item:remove(item.count or 1) end) end
+            end
+            -- WHAT THE SHED LEFT THE BODY ABLE TO DO (backlog 507): s151 dropped twelve
+            -- cuirasses, the peer shed what it had -- three of them, the doc having lagged --
+            -- and the avatar still did not move for four ten-second walks. Encumbrance says
+            -- whether the weight was ever the reason; the walk speed says whether the body
+            -- could move at all. One line per shed, so it costs nothing while nothing sheds.
+            if shed then
+                pcall(function()
+                    print(string.format('[mp] avatar #%s after the shed: encumbrance %.0f/%.0f walk %.0f speed %.0f',
+                        tostring(id), types.Actor.getEncumbrance(obj), types.Actor.getCapacity(obj),
+                        types.Actor.getWalkSpeed(obj), types.Actor.getCurrentSpeed(obj)))
+                end)
             end
         end)
     end
