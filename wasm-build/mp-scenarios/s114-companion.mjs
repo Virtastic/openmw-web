@@ -29,7 +29,7 @@ export default async function run(ctx) {
   // A living NPC both see, that is not a guard (guards have their own ideas).
 
   let pa, pb, rec;
-  ({ found: rec, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard)));
+  ({ found: rec, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|cliff/.test(r)))); // an NPC, not wildlife: #139 tried to talk a slaughterfish into following
   assert.ok(rec, 'need a living NPC visible to both clients');
   const start = pa[rec];
   ctx.log(`A recruits "${rec}" at (${Math.round(start.x)},${Math.round(start.y)})`);
