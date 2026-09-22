@@ -85,7 +85,15 @@ export default async function run(ctx) {
   const victims = Object.keys(pa).filter((r) => r !== 'player' && pb[r] && !pa[r].guard
     && pa[r].dead !== true && pb[r].dead !== true);
   assert.ok(victims.length > 0, 'need at least one living NPC visible to both clients');
+  // THE ONE STANDING STILLEST. Fire Bite is a touch spell cast from beside the mark, and on a
+  // client at 4.5 s a frame a wanderer is gone by the time the cast resolves: #139 landed 3 of
+  // 28 casts, the fourth on a passer-by, then nothing for four minutes. Two reads 3 s apart.
+  await ctx.sleep(3_000);
+  const pa2 = await probeOf(a);
+  const moved = (r) => (pa2[r] && pa[r]) ? Math.hypot(pa2[r].x - pa[r].x, pa2[r].y - pa[r].y) : 1e9;
+  victims.sort((x, y) => moved(x) - moved(y));
   const victim = victims[0];
+  ctx.log(`  the mark: "${victim}" (moved ${Math.round(moved(victim))} u in 3 s; ${victims.slice(1, 4).map((r) => `${r} ${Math.round(moved(r))}`).join(', ')})`);
   const target = async () => (await probeOf(a))[victim] || pa[victim];
   const p0 = await target();
   await a.cmd(`snapto:${Math.round(p0.x + 60)},${Math.round(p0.y)},${Math.round(p0.z + 8)}`);
