@@ -62,8 +62,9 @@ export default async function run(ctx) {
   // B walks away FIRST. Both clients spawn on the same point, so inviting from where they
   // already stand makes the teleport a no-op — the check would pass identically whether the
   // teleport worked or silently threw inside the global script's pcall.
-  await b.eval("window.omw.send('walk:0,1,6000')");
-  await ctx.sleep(6500);
+  // b.walk, not a one-shot: a client at two seconds a frame covered 160 u in 6 s (#138); the
+  // helper measures from the start and walks again until the ground is covered.
+  await b.walk(0, 1, 6000, 220, 3);
   const posBefore = JSON.parse(await a.eval("window.omw.state.pose||'null'"));
   const hostPos = JSON.parse(await b.eval("window.omw.state.pose||'null'"));
   const apart = Math.hypot(posBefore.x - hostPos.x, posBefore.y - hostPos.y, posBefore.z - hostPos.z);
