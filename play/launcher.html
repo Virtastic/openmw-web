@@ -1677,7 +1677,7 @@
  // consecutively on a quiet box with a real engine build, then a human playtest per
  // PLAYTEST.md §10, then delete 'card-mp' from EXPERIMENTAL below.
  (function(){
-   var EXPERIMENTAL = ['card-mp'];
+   var EXPERIMENTAL = []; // card-mp lifted: harness green on one build (Jenkins #140: 126/0 + the fresh-install rehearsal) and the §10 human playtest signed off
    var isProd = /^morrowind\.virtastic\.app$/i.test(location.hostname);
    var optIn = /[?&]experimental=1\b/.test(location.search);
    EXPERIMENTAL.forEach(function(id){ var el = $(id); if (el) el.hidden = isProd && !optIn; });
