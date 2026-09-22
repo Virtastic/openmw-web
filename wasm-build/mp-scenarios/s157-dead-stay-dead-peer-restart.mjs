@@ -60,13 +60,18 @@ export default async function run(ctx) {
   // health climbs back above zero.
   const rowOf = (c) => c.eval(`JSON.stringify((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}))`).then(JSON.parse);
   const word = (r) => (r.dead === true && !(r.hp > 0)) ? 'dead' : `ALIVE(dead=${r.dead},hp=${r.hp})`;
-  const seen = [];
+  const seen = [], stood = [];
   for (let i = 0; i < 10; i++) {
     await ctx.sleep(2_000);
     const [ra, rb] = await Promise.all([rowOf(a), rowOf(b)]);
     seen.push(`${word(ra)}/${word(rb)}`);
+    stood.push(ra.dead !== true || rb.dead !== true);
   }
   ctx.log(`corpse over 20 s (A/B): ${seen.join(' ')}`);
-  assert.ok(seen.every((s) => s === 'dead/dead'), `"${victim}" stood up again after the peer restart: the death record never reached the simulator`);
+  // Standing up is dead=false. The fresh peer's FIRST stats report can carry the record's
+  // live health for a sample before its death record lands (#138: one 'dead=true,hp=57' then
+  // nine dead/dead) -- the corpse never moved; the mirrored bar just had not caught up.
+  assert.ok(!stood.some(Boolean), `"${victim}" stood up again after the peer restart: the death record never reached the simulator`);
+  assert.ok(seen.slice(2).every((s) => s === 'dead/dead'), `"${victim}" is dead but the peer keeps reporting health for it after the restart: ${seen.join(' ')}`);
   ctx.log('PASS: a killed NPC stays dead across a peer restart, on every screen');
 }
