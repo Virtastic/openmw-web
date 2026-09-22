@@ -609,6 +609,47 @@ end
 -- frame). Drained by shedProbeTick on the peer.
 local shedProbeAt = {}
 
+-- ITEMS ON THEIR WAY INTO AN AVATAR (backlog 507). createObject + moveInto lands at the END of
+-- the frame, and countOf reads the inventory as it is NOW -- so two AvatarStates reaching the
+-- peer before the first one's add had landed each saw the same shortfall and added it again.
+-- A slow peer frame is all it takes: #141 s151 had an avatar holding 7 of a record the doc
+-- said 3 of, went over-encumbered and pinned its player in place with an empty pack. An add
+-- is pending until it sits in the avatar or has merged into a stack there (the created
+-- object is then no longer valid); it counts toward what the avatar has, and a shed cancels
+-- pending adds before it touches what has landed.
+local avatarPendingAdds = {} -- avatar id -> record id -> { created item objects }
+local function pendingItems(id, obj, recId)
+    local byRec = avatarPendingAdds[id]
+    local list = byRec and byRec[recId]
+    if not list then return {}, 0 end
+    local keep, n = {}, 0
+    for _, it in ipairs(list) do
+        local landed = true
+        pcall(function()
+            if it:isValid() then
+                local pc = it.parentContainer
+                landed = pc ~= nil and pc.id == obj.id
+            end
+        end)
+        if not landed then keep[#keep + 1] = it; n = n + (it.count or 1) end
+    end
+    byRec[recId] = (#keep > 0) and keep or nil
+    return keep, n
+end
+-- Cancel up to `n` of a record still in flight to this avatar; returns how many it cancelled.
+local function cancelPending(id, obj, recId, n)
+    local list = pendingItems(id, obj, recId)
+    local done = 0
+    for _, it in ipairs(list) do
+        if done >= n then break end
+        local c = it.count or 1
+        local take = math.min(c, n - done)
+        if pcall(function() it:remove(take) end) then done = done + take end
+    end
+    pendingItems(id, obj, recId) -- prune what is gone
+    return done
+end
+
 local function applyAvatarDoc(id)
     local doc = avatarDocs[id]
     local p = puppets and puppets[id]
@@ -647,7 +688,8 @@ local function applyAvatarDoc(id)
             local wantId = worldmp.toLocal(entry.id)
             local want = entry.n or 1
             local okc, have = pcall(function() return inventory:countOf(wantId) end)
-            have = (okc and have) or 0
+            local _, inFlight = pendingItems(id, obj, wantId)
+            have = ((okc and have) or 0) + inFlight
             local short = want - have
             -- Phase 4D: a REFRESH must also shed SURPLUS (the owner dropped, sold or used
             -- it), or the avatar accumulates everything it was ever handed. Removing from
@@ -655,6 +697,7 @@ local function applyAvatarDoc(id)
             if short < 0 then
                 print(string.format('[mp] avatar #%s sheds %d x %s (doc says %d, had %d)', tostring(id), -short, tostring(wantId), want, have))
                 local extra = -short
+                extra = extra - cancelPending(id, obj, wantId, extra)
                 for _, item in ipairs(inventory:getAll()) do
                     if extra <= 0 then break end
                     if item.recordId == wantId then
@@ -668,6 +711,8 @@ local function applyAvatarDoc(id)
                 local okCreate, item = pcall(function() return world.createObject(wantId, short) end)
                 if okCreate then
                     item:moveInto(inventory)
+                    local byRec = avatarPendingAdds[id] or {}; avatarPendingAdds[id] = byRec
+                    byRec[wantId] = byRec[wantId] or {}; table.insert(byRec[wantId], item)
                 else
                     -- THE PLACEHOLDER BAN (Phase 2b). A cosmetic puppet may substitute a
                     -- stand-in; an authoritative avatar must not — a placeholder weapon
@@ -717,6 +762,9 @@ local function applyAvatarDoc(id)
             -- the END of the frame, so reading the encumbrance here reports the weight the
             -- shed was meant to remove and reads like a shed that did nothing (#141 s151:
             -- "encumbrance 367/150" printed in the same breath as the removes).
+            for recId in pairs(avatarPendingAdds[id] or {}) do
+                if not want[recId] then local _, n = pendingItems(id, obj, recId); if n > 0 then shed = true; cancelPending(id, obj, recId, n) end end
+            end
             if shed then shedProbeAt[id] = core.getRealTime() + 1.0 end
         end)
     end
