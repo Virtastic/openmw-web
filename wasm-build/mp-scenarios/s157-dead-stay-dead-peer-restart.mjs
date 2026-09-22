@@ -30,7 +30,7 @@ export default async function run(ctx) {
   }
 
   let pa, pb, victim;
-  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard)));
+  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && (pa[r].n ?? 1) === 1 && (pb[r].n ?? 1) === 1))); // UNIQUE in the cell: the probe is keyed by record, first wins, and after the restart 'mudcrab' was a different, living mudcrab on both screens (#139)
   assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   // 180 s: at #116's frame rate the test hits landed 8 s apart and 90 s was eleven of them.
