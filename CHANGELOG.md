@@ -2,6 +2,52 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.4.0
+
+Multiplayer, played to the end. Every scenario in the browser suite -- 126 of them, two real
+browsers and a simulating peer each -- passes on one build, and a fresh-install rehearsal (empty
+directory, wizard, restart, launcher sign-in, a session with a friend: walk, fight, loot, drown,
+relog, the host drops and comes back, both exit) runs green after it. What that took, in the
+order a player would meet it:
+
+**The world is simulated for everyone by one body.** The server's own peer runs an avatar for
+each player and every NPC; your browser drives yours with raw input and is reconciled to what
+the peer says happened. Melee, ranged, magic, falls, drowning, encumbrance, sneak attacks,
+on-strike enchantments, deaths and respawns are resolved once, on the peer, and shown to every
+screen the same way. A body ruled by the peer takes no local damage twice.
+
+**A peer restart no longer moves anyone.** The replacement peer spawned every avatar the frame
+it joined and streamed their poses the same tick -- before the bodies were placed, so it said
+(0,0,0) for everyone and players with a hand on the keys were snapped to the middle of the sea.
+An unplaced avatar is not streamed. A killed NPC stays dead across the restart, on every screen.
+
+**Leaving means leaving.** The in-game Exit told the server it was going and then left the page
+150 ms later; on a slow machine the word never got out and a Party host's friends sat ninety
+seconds in a hostless world before being sent home. Exit now waits for the notice to go out.
+A self-initiated disconnect closes its own socket; F5 rejoins the same world in the same role;
+a resume that names a still-open session takes it over in place.
+
+**Sound could freeze the game.** A teleport gave a sound source a velocity of thousands of
+units per second, the Doppler clamp turned that into Infinity, and WebAudio threw on a
+non-finite playback rate -- the engine stopped mid-frame. Every value handed to the audio
+layer is finite and sane now.
+
+**Puppets and avatars behave like players.** They carry the torch their owner holds at noon
+(the NPC daytime rule unequipped it), swing from eye height with their owner's pitch so a scrib
+is hittable, keep their equipment through a slow join, and the "can this actor look down" and
+"who is in range" gates the engine reserved for the local player apply to them.
+
+**Hosting.** Nobody who self-hosts compiles anything: the release publishes the server image to
+ghcr.io. A server with no peer configured says so at once instead of holding every join. Bans
+reach every world; erasing an account erases its credentials; a mod with hundreds of loose
+assets is packed into one archive at install; the dashboard's "respawn here" sets a real point.
+
+**Death, where you come back.** With no configured respawn point you come back where you fell;
+under the sea that means the surface, not the seabed again (six deaths in three minutes).
+
+The full accounting -- what each of the 130 scenarios proves and why -- is in
+server/docs/MP-BACKLOG.md rows 355-507 and MP-COVERAGE-MAP.md.
+
 ## 1.3.4
 
 Multiplayer had never simulated a world on a released image. Found by playing the game as a
