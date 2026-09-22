@@ -604,6 +604,11 @@ local function applyPartyLevel()
     end
 end
 
+-- Backlog 507: ids whose avatar shed something, and when to read what the shed left them
+-- able to do (a frame later: the engine applies a Lua inventory change at the end of the
+-- frame). Drained by shedProbeTick on the peer.
+local shedProbeAt = {}
+
 local function applyAvatarDoc(id)
     local doc = avatarDocs[id]
     local p = puppets and puppets[id]
@@ -708,13 +713,11 @@ local function applyAvatarDoc(id)
             -- and the avatar still did not move for four ten-second walks. Encumbrance says
             -- whether the weight was ever the reason; the walk speed says whether the body
             -- could move at all. One line per shed, so it costs nothing while nothing sheds.
-            if shed then
-                pcall(function()
-                    print(string.format('[mp] avatar #%s after the shed: encumbrance %.0f/%.0f walk %.0f speed %.0f',
-                        tostring(id), types.Actor.getEncumbrance(obj), types.Actor.getCapacity(obj),
-                        types.Actor.getWalkSpeed(obj), types.Actor.getCurrentSpeed(obj)))
-                end)
-            end
+            -- ...AND ASK AGAIN A FRAME LATER. The engine applies a Lua inventory change at
+            -- the END of the frame, so reading the encumbrance here reports the weight the
+            -- shed was meant to remove and reads like a shed that did nothing (#141 s151:
+            -- "encumbrance 367/150" printed in the same breath as the removes).
+            if shed then shedProbeAt[id] = core.getRealTime() + 1.0 end
         end)
     end
     if doc.spells ~= nil then
@@ -781,9 +784,34 @@ local function avatarLanded(data)
     end
 end
 
+-- WHAT A SHED LEFT THE BODY ABLE TO DO (backlog 507), read a frame after the shed so the
+-- engine has applied it. One line per shed: encumbrance against capacity says whether the
+-- weight is still the reason the avatar will not walk, and the item line says what is left.
+local function shedProbeTick(now)
+    for id, at in pairs(shedProbeAt) do
+        if now >= at then
+            shedProbeAt[id] = nil
+            local pp = puppets[id]
+            if pp and pp.obj and pp.obj:isValid() then
+                pcall(function()
+                    local held, inv = {}, types.Actor.inventory(pp.obj)
+                    for _, item in ipairs(inv:getAll()) do
+                        if #held < 8 then held[#held + 1] = string.format("%sx%d", tostring(item.recordId), item.count or 1) end
+                    end
+                    print(string.format("[mp] avatar #%s a frame after the shed: encumbrance %.0f/%.0f walk %.0f speed %.0f; carrying %s",
+                        tostring(id), types.Actor.getEncumbrance(pp.obj), types.Actor.getCapacity(pp.obj),
+                        types.Actor.getWalkSpeed(pp.obj), types.Actor.getCurrentSpeed(pp.obj),
+                        #held > 0 and table.concat(held, " ") or "nothing"))
+                end)
+            end
+        end
+    end
+end
+
 local function avatarStreamTick(now)
     if not (mp.isSystem and mp.isSystem()) then return end
     avatarDrownProbe(now)
+    shedProbeTick(now)
     if now - avatarStreamAt < AVATAR_STREAM_EVERY then return end
     avatarStreamAt = now
     local entries = {}
