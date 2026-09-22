@@ -133,6 +133,9 @@ const NAME_PREFIX = (() => {
 })();
 // --server-password <pw>: the [server] password of an ATTACHED world, which is what lets a
 // fake system peer be believed (backlog 87). Absent = no peer.
+// The password a standalone --onecell run gives its own fake peer (backlog 492). Random per
+// run: it is written into that run's throwaway config and never leaves the box.
+const ONECELL_PEER_PASSWORD = `soak-${Math.random().toString(36).slice(2)}`;
 const SERVER_PASSWORD = (() => {
   const i = process.argv.indexOf('--server-password');
   if (i === -1) return '';
@@ -369,7 +372,12 @@ async function main(): Promise<void> {
     // ratelimit.test.ts; here we want throughput. maxPlayers is raised to match the fleet.
     writeFileSync(
       join(dataDir, 'config.toml'),
-      `[server]\nmaxPlayers = ${Math.max(64, MAX_BOTS * 2)}\n\n` +
+      // A HOLDER FOR THE ONE-CELL MODE (backlog 492). Under peer-everywhere no player is
+      // ever granted a cell, so a standalone --onecell run has nobody holding the cell it
+      // crowds and died before the first step. testhost has no sim peer, so the mode brings
+      // its own: the fake system peer below needs a [server] password to be let in at all.
+      `[server]\nmaxPlayers = ${Math.max(64, MAX_BOTS * 2)}\n`
+      + (ONECELL ? `password = "${ONECELL_PEER_PASSWORD}"\n` : '') + `\n` +
       `[limits]\nmaxConnsPerIp = ${MAX_BOTS * 4 + 8}\nloginPerMinPerIp = 100000\n\n` +
       // Shed and backpressure are the whole point of a crowded-cell ramp: without the
       // scrape the run cannot tell "nothing was dropped" from "drops were invisible".
@@ -404,10 +412,13 @@ async function main(): Promise<void> {
     // bots' object/container traffic also crosses the peer relay (backlog 87). Only with a
     // password: an unset one refuses every system connection, and standalone runs set none.
     // It answers the wire and simulates nothing — a smoke tool, not the sim peer.
-    if (SERVER_PASSWORD) {
-      fakePeer = await TestClient.simPeer(port, SERVER_PASSWORD, `${NAME_PREFIX}peer`);
+    const peerPassword = SERVER_PASSWORD || (!ATTACH && ONECELL ? ONECELL_PEER_PASSWORD : '');
+    if (peerPassword) {
+      fakePeer = await TestClient.simPeer(port, peerPassword, `${NAME_PREFIX}peer`);
       fakePeer.sendCellChange(ONE_CELL_KEY, CELL_ORIGIN.x, CELL_ORIGIN.y, 0);
-      console.log('[soak] fake system peer connected (holds the cell, simulates nothing)');
+      console.log('[soak] fake system peer connected (holds the cell, simulates nothing): '
+        + 'the bots are receivers and the actor columns read zero -- this mode measures the '
+        + 'PLAYER fan-out of a crowded cell (backlog 492)');
     }
 
     const samples: { t: number; rss: number; latency: number }[] = [];
