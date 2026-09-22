@@ -189,6 +189,10 @@ export interface Player {
   // Backlog 337/384: the distinct far cells this session's ObjectEnabled messages have named.
   // A far exterior must be well-formed; at most MAX_FAR_ENABLE_CELLS distinct far cells.
   farEnableCells?: Set<string>;
+  // Backlog 368: when this session's far DISABLES happened (ms), newest last, trimmed to the
+  // rate window. A far disable hides a door/NPC/trigger for every entrant and persists.
+  farDisablesAt?: number[];
+  farDisableTotal?: number;
 }
 
 export class Roster {

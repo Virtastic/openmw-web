@@ -31,6 +31,19 @@ const MAX_FIRST_OPEN_GOLD = 50_000;
 // (MAX_ABS_COORD / 8192), or an interior the session has been sent, up to this many distinct.
 const MAX_FAR_CELL_COORD = Math.floor(MAX_ABS_COORD / 8192);
 const MAX_FAR_ENABLE_CELLS = 64;
+// Backlog 368. A far ENABLE reveals a quest ref; a far DISABLE hides a door, an NPC or a
+// quest trigger for every entrant, and it persists in the cell doc. Both come from the same
+// client message, and the server cannot tell a script's disable from a hand-written one --
+// so the legitimate pattern is what is allowed: a client's Startup disables a hundred refs
+// across the world in a burst as its world loads, and after that a far disable is a rare,
+// quest-driven event. The burst is free -- a budget of 256 a session, which covers a vanilla
+// Startup twice over whenever its scripts happen to run -- and a session that keeps streaming
+// disables past it is capped. This BOUNDS the grief, it does not end it: ending it needs the
+// server to know which refs the content's scripts toggle, which it cannot without reading
+// them. A far ENABLE -- the quest reveal -- is never capped.
+const FAR_DISABLE_FREE = 256;
+const FAR_DISABLE_WINDOW_MS = 60_000;
+const MAX_FAR_DISABLES_PER_WINDOW = 12;
 const MAX_HUMAN_ACTOR_SPAWN_COUNT = 10; // backlog 338
 // #365: one stack in a first-open roll. No levelled list or merchant stocks more than a few
 // dozen of one thing; "64 stacks x 10,000 daedric" was legit for friends via server take.
@@ -1198,7 +1211,7 @@ export class WorldState {
     // session names no more than MAX_FAR_ENABLE_CELLS distinct far cells. An interior needs
     // no prior visit (backlog 384): a quest enable into a never-visited interior is the
     // ordinary case, and refusing it left the enable on one client only.
-    const farOk = name === 'ObjectEnabled' && (player.system === true || this.farEnableAllowed(player, cellKey));
+    const farOk = name === 'ObjectEnabled' && (player.system === true || this.farEnableAllowed(player, cellKey, body.get('enabled') === false));
     if (!player.system && !fare && !farOk && !cellsVisible(player.cellKey, cellKey)) {
       log('warn', 'object.out_of_reach', { from: player.name, name, at: player.cellKey ?? null, cellKey });
       return undefined;
@@ -1233,13 +1246,34 @@ export class WorldState {
     return { doc, ref, cellKey };
   }
 
-  private farEnableAllowed(player: Player, cellKey: string): boolean {
+  private farEnableAllowed(player: Player, cellKey: string, hiding: boolean): boolean {
     if (cellsVisible(player.cellKey, cellKey)) return true;
     const ext = parseExterior(cellKey);
     if (ext && (Math.abs(ext.x) > MAX_FAR_CELL_COORD || Math.abs(ext.y) > MAX_FAR_CELL_COORD)) return false;
+    if (hiding && !this.farDisableAllowed(player)) return false;
     const far = (player.farEnableCells ??= new Set());
     if (!far.has(cellKey) && far.size >= MAX_FAR_ENABLE_CELLS) return false;
     far.add(cellKey);
+    return true;
+  }
+
+  // The disable half of the far-enable gate (backlog 368): free through the world-load burst,
+  // then a rate cap. A refusal is a moderation signal, not a protocol error -- the client's
+  // own copy keeps whatever its scripts decided, exactly as an out-of-reach op does.
+  private farDisableAllowed(player: Player): boolean {
+    const now = Date.now();
+    const total = (player.farDisableTotal ?? 0) + 1;
+    player.farDisableTotal = total;
+    if (total <= FAR_DISABLE_FREE) return true;
+    const at = (player.farDisablesAt ??= []);
+    while (at.length > 0 && now - at[0]! > FAR_DISABLE_WINDOW_MS) at.shift();
+    if (at.length >= MAX_FAR_DISABLES_PER_WINDOW) {
+      log('warn', 'object.far_disable_capped', { from: player.name, account: player.accountKey, total });
+      metrics.rateLimited.inc({ budget: 'far_disable' });
+      this.moderationNote?.(player.accountKey, 'far_disable');
+      return false;
+    }
+    at.push(now);
     return true;
   }
 

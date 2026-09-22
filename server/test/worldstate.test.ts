@@ -386,6 +386,44 @@ test('a far enable persists for a real exterior, is refused past the world bound
   assert.equal(stored.filter((k) => k.startsWith('far interior ')).length, 64 - 2, 'the 64-per-session cap bounds the doc count');
 });
 
+// Backlog 368: a far DISABLE hides a door, an NPC or a quest trigger for every entrant, and it
+// persists -- so the grief is bounded without refusing what the content's own scripts do. The
+// world-load burst (a Startup that disables a hundred refs) is free; a session that keeps
+// streaming disables long past it is capped, and its EARLIER work is untouched. A far ENABLE
+// -- the quest reveal -- is never capped, even from the same session in the same breath.
+test('a far disable stream is capped past the free burst; far enables never are', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  await host.joinAsNew('Host');
+  host.sendCellChange('0,0', 0, 0, 0);
+  await host.waitEvent('PlayerCellChange');
+  const ref = (i: number) => ({ __refnum: { index: 5000 + i, contentFile: 0 } });
+  // ONE far cell throughout, so the 64-distinct-cell cap of the test above cannot be what
+  // refuses anything here: this is the per-session disable budget alone.
+  const cell = "ilunibi, soul's rattle";
+  // The free burst: 256 disables (FAR_DISABLE_FREE), sent under the session message bucket.
+  for (let i = 0; i < 300; i++) {
+    host.sendEvent('ObjectEnabled', { ref: ref(i), cellKey: cell, enabled: false });
+    if (i % 30 === 29) await new Promise((r) => setTimeout(r, 550));
+  }
+  await new Promise((r) => setTimeout(r, 1200)); // clear of the session message bucket
+  // ...and the reveal still works from the very same session, capped or not: a player whose
+  // quest enables a ref must never be blocked by someone else's grief budget.
+  host.sendEvent('ObjectEnabled', { ref: ref(9999), cellKey: cell, enabled: true });
+  await new Promise((r) => setTimeout(r, 400));
+  await server.flush();
+  const store = new CellStore(dataDir);
+  t.after(() => store.close());
+  const enabled = (await store.get(cell)).enabled ?? {};
+  const off = Object.keys(enabled).filter((k) => enabled[k] === false).length;
+  assert.ok(off >= 256, `the free burst must land in full, got ${off}`);
+  assert.ok(off < 300, `the stream past the burst must be capped, got ${off} of 300`);
+  assert.equal(enabled['c:14999:0'], true, 'a far enable was refused by the disable cap');
+});
+
 // Backlog 338: a human's actor spawn is placed beside the asker, a few at a time.
 test("a human's actor spawn is refused from afar and past ten bodies", async (t) => {
   const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
