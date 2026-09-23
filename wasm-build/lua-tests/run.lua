@@ -2250,6 +2250,8 @@ do
   local cpp = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('character.cpp does not smooth a puppet\'s speed a second time (the peer already did)',
     cpp:find('if (isFirstPersonPlayer || MWMP::isPuppet(mPtr.getCellRef().getRefNum()))', 1, true) ~= nil)
+end
+
 print('an avatar moves for exactly as long as its owner simulated, and its poses match the owner\'s ring')
 do
   -- The real avatar.lua at the peer's 20 fps against a stub controller (movement x run speed).
