@@ -1546,6 +1546,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Anchors held past occupancy (idle-decay): cellKey -> last known position + expiry.
   // Walking a cell border must not flap the peer's grid; dropping an anchor is cheap.
   const heldAnchors = new Map<string, { x: number; y: number; z: number; until: number }>();
+  // The exterior cells AROUND each player, held for their NPCs (cellKey -> expiry). Both
+  // engines load and run the 3x3 around a player; holding only the middle cell left each
+  // engine running its own AI for the eight around it, so NPCs across a cell border stood in
+  // different places on the peer and on the player's screen, and the player's avatar walked
+  // into NPCs they could not see (dev box, 2026-09-23). Held, the peer streams them and every
+  // client puppets them (actors.lua attaches on the first ActorMoveBatch for an actor).
+  const heldRing = new Map<string, number>();
   // Cells the peer currently holds, so authority is DIFFED rather than re-entered every tick
   // (re-entering bumps the epoch and forces a full re-sync).
   const claimed = new Set<string>();
@@ -1586,6 +1593,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // the loading client spends that startup on time the player is already waiting through.
     if (roster.humanCount === 0) {
       heldAnchors.clear();
+      heldRing.clear();
       claimed.clear();
       simPeers.markIdle(WORLD_KEY);
       simPeers.sweep();
@@ -1633,20 +1641,67 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (a.until <= now || (!parseExterior(ck) && !occupied.has(ck))) heldAnchors.delete(ck);
     }
 
+    // THE RING AROUND EACH PLAYER. Safe now where it was not when this was narrowed to one
+    // cell: every player is an anchor at their OWN position (below), so every NPC a player's
+    // engine processes (within its processing range of that player) is within the same range
+    // of an anchor on the peer -- the peer simulates everything it holds that anyone can see.
+    // Never within one cell of someone still in character creation: the sanctuary around
+    // the opening (see inChargenCells above) must stay unheld, neighbours included.
+    const chargenNear = (ck: string): boolean => {
+      if (isChargenCell(ck) || inChargenCells.has(ck)) return true;
+      const e = parseExterior(ck);
+      if (!e) return false;
+      for (const c of inChargenCells) {
+        const f = parseExterior(c);
+        if (f && Math.abs(f.x - e.x) <= 1 && Math.abs(f.y - e.y) <= 1) return true;
+      }
+      return false;
+    };
+    for (const p of humans) {
+      if (p.inChargen === true) continue;
+      const e = parseExterior(p.cellKey!);
+      if (!e) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const n = `${e.x + dx},${e.y + dy}`;
+          if (!heldAnchors.has(n) && !chargenNear(n)) heldRing.set(n, now + idleMs);
+        }
+      }
+    }
+    for (const [ck, until] of [...heldRing]) {
+      if (until <= now || heldAnchors.has(ck) || chargenNear(ck)) heldRing.delete(ck);
+    }
+
     // EVERY held cell is covered, interior or exterior, by ONE peer. Exteriors anchor by
     // position; interiors anchor by NAME, because an interior has no coordinate. Both are
     // held without the peer standing in them, so players spread across the map are all
     // simulated from a single process. Before interiors could be anchored, an indoor quest
     // simply never advanced — chargen is entirely indoors, which is why it stalled at the
     // census office every time.
-    const cells = [...heldAnchors.keys()].sort();
+    const held = new Set<string>([...heldAnchors.keys(), ...heldRing.keys()]);
+    const cells = [...held].sort();
+    // ONE ANCHOR PER PLAYER, not per cell. Keyed by cell, the last player processed won, so
+    // two players at opposite edges of one cell (up to 11,585 u apart, past the 7168 u
+    // processing range) left the NPCs beside one of them held but unsimulated -- frozen
+    // puppets on that player's screen. A cell whose players have all gone keeps its last
+    // position until idle-decay, as before.
     const anchors: { x: number; y: number; z: number }[] = [];
     const interiors: string[] = [];
-    for (const ck of cells) {
-      const a = heldAnchors.get(ck)!;
-      if (parseExterior(ck)) anchors.push({ x: a.x, y: a.y, z: a.z });
-      else interiors.push(ck);
+    const anchoredByPlayer = new Set<string>();
+    for (const p of humans) {
+      const ck = p.cellKey!;
+      if (!heldAnchors.has(ck) || !parseExterior(ck) || !p.pose) continue;
+      anchors.push({ x: p.pose.x, y: p.pose.y, z: p.pose.z });
+      anchoredByPlayer.add(ck);
     }
+    for (const ck of [...heldAnchors.keys()].sort()) {
+      const a = heldAnchors.get(ck)!;
+      if (!parseExterior(ck)) interiors.push(ck);
+      else if (!anchoredByPlayer.has(ck)) anchors.push({ x: a.x, y: a.y, z: a.z });
+    }
+    // Stable order for an unchanged roster (the list is diffed and logged; roster order is not
+    // a property of the world).
+    anchors.sort((p, q) => p.x - q.x || p.y - q.y || p.z - q.z);
 
     // Where the peer's own avatar stands: a real player's position, so a cold boot lands on
     // ground that exists rather than a computed point inside terrain. Vestigial for
@@ -1694,7 +1749,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // AUTHORITY FOR EVERY ANCHORED CELL, on the one peer. The old revoke loop ("authority
     // follows the peer that can actually simulate") is gone because after the engine fix it
     // can simulate all of them. Diffed so epochs are stable.
-    for (const gone of [...claimed].filter((c) => !heldAnchors.has(c))) {
+    for (const gone of [...claimed].filter((c) => !held.has(c))) {
       world.authorityLeave(peerPlayer.id, gone, true);
       claimed.delete(gone);
     }
@@ -1724,7 +1779,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
           const n = `${e.x + dx},${e.y + dy}`;
-          if (!heldAnchors.has(n)) inRing.add(n);
+          if (!held.has(n)) inRing.add(n);
         }
       }
     }
@@ -1746,7 +1801,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       });
     }
   };
-  const simPeerTick = setInterval(simPeerPass, 5_000);
+  // Every 2 s (was 5): anchors are player positions, and a running player covers ~1000 u
+  // between passes at 5 s -- the edge of the peer's processing range trailing the edge of
+  // theirs. The pass is diffed (authority, ring, the log line), so a shorter one costs little.
+  const simPeerTick = setInterval(simPeerPass, 2_000);
   // A peer finishing its hello should not wait up to a full tick to be put to work —
   // that is 5s of the player holding a loading screen for no reason.
   ctx.onPeerJoined = () => simPeerPass();

@@ -239,7 +239,10 @@ test('the holder hears the exterior neighbours of a held cell, and nothing past 
 
 // What happened in the ring BEFORE the peer heard it lives only in the cell doc. The anchored
 // cell asks for its own record on the grant; the pass sends the neighbours'.
-test('on the wire: the peer is sent the record of each exterior neighbour of an anchor', async (t) => {
+// The 3x3 around a player is HELD now (server.ts heldRing): the peer owns those NPCs and gets
+// each cell's record the way every held cell does, by asking on its grant. The pushed record
+// is for the ring BEYOND that -- cells it hears but does not hold.
+test('on the wire: the peer holds the 3x3 around a player, and is sent the record of the ring beyond it', async (t) => {
   const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
     configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } } });
   t.after(() => server.close());
@@ -248,14 +251,21 @@ test('on the wire: the peer is sent the record of each exterior neighbour of an 
   await bob.joinAsNew('Bob');
   bob.sendCellChange('0,0', 100, 100, 0);
   await bob.waitEvent('PlayerCellChange');
-  // Bob opens a door across the border before any peer exists.
-  bob.sendEvent('DoorState', { ref: { __refnum: { index: 502, contentFile: 2 } }, cellKey: '1,0', open: true });
-  await bob.waitEvent('DoorState', (v) => (v as { cellKey: string }).cellKey === '1,0');
+  // Bob opens a door two cells out before any peer exists (he can see it: cellsVisible is the
+  // player's own 3x3, and 2,0 is the peer's ring once it holds 1,0).
+  bob.sendCellChange('1,0', 8292, 100, 0);
+  await bob.waitEvent('PlayerCellChange', (v) => (v as { cellKey: string }).cellKey === '1,0');
+  bob.sendEvent('DoorState', { ref: { __refnum: { index: 502, contentFile: 2 } }, cellKey: '2,0', open: true });
+  await bob.waitEvent('DoorState', (v) => (v as { cellKey: string }).cellKey === '2,0');
+  bob.sendCellChange('0,0', 100, 100, 0);
+  await bob.waitEvent('PlayerCellChange', (v) => (v as { cellKey: string }).cellKey === '0,0');
 
   server.config.simPeer.enabled = true; // no binary: the pass talks to the TestClient peer
   const peer = await TestClient.simPeer(server.port, PEER_PASS);
   t.after(() => peer.close());
-  const state = (await peer.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '1,0', 14_000)
-    .catch(() => assert.fail('the neighbour record never reached the peer'))).value as { doors: Record<string, boolean> };
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '1,0', 14_000)
+    .catch(() => assert.fail('the peer was not given the neighbour cell: NPCs there run twice'));
+  const state = (await peer.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '2,0', 14_000)
+    .catch(() => assert.fail('the ring record never reached the peer'))).value as { doors: Record<string, boolean> };
   assert.equal(state.doors['c:502:2'], true, 'the peer learns the door was opened');
 });
