@@ -21,6 +21,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { startServer, type RunningServer } from '../src/server';
 import type { DeepPartial, Config } from '../src/config';
 import { LoginTicketStore } from '../src/auth/identities';
+import { resetInviteBudgets } from '../src/auth/invite';
 import { TestClient, tmpDataDir } from './helpers';
 
 // ------------------------------------------------------------- mock provider
@@ -732,6 +733,7 @@ test('SSO respects the server registration policy', async (t) => {
   });
 
   await t.test('an invite-only server requires the invite through SSO too', async (tt) => {
+    resetInviteBudgets();
     const h = await boot(tt, { login: { inviteCode: 'letmein' } });
     const without = await ssoLogin(h, { sub: 'invite-1', nameHint: 'NoInvite' });
     assert.equal(without.error, 'invite_required', without.location);
@@ -741,6 +743,23 @@ test('SSO respects the server registration policy', async (t) => {
     const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', cookie);
     assert.ok(fragment(res.headers.get('location')).get('mpticket'), res.headers.get('location') ?? '');
     assert.deepEqual(await accountNames(h.dataDir), ['invited.json']);
+  });
+
+  await t.test('the invite passphrase cannot be brute-forced: guesses run out, then even the right one is refused', async (tt) => {
+    resetInviteBudgets();
+    // The general auth budget (5 a minute per IP) would refuse these starts first; it is not
+    // what is under test, so it is widened here and the passphrase budget stands alone.
+    const h = await boot(tt, { login: { inviteCode: 'letmein' }, limits: { loginPerMinPerIp: 1000 } });
+    const guess = async (sub: string, invite: string): Promise<string | null> => {
+      const { authorize, cookie } = await startFlow(h, 'custom', `?invite=${invite}`);
+      const code = h.idp.issueCode(authorize, { sub, nameHint: sub });
+      const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', cookie);
+      return fragment(res.headers.get('location')).get('mperror');
+    };
+    for (let i = 0; i < 5; i++) assert.equal(await guess('guesser', `wrong-${i}`), 'invite_required');
+    assert.equal(await guess('guesser', 'letmein'), 'invite_locked', 'the right passphrase after the budget ran out');
+    assert.equal(await guess('someone-else', 'letmein'), 'invite_locked', 'the same address is locked, not just the identity');
+    assert.deepEqual(await accountNames(h.dataDir), []);
   });
 });
 
@@ -780,6 +799,41 @@ test('the /auth routes do not disturb the rest of the HTTP surface', async (t) =
     const res = await fetch(`${h.base}/auth/discord/start`, { redirect: 'manual' });
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'provider_disabled');
   });
+});
+
+// ---------------------------------------------------- SSO lands on a role holder's account
+
+// The operator sets the dashboard up as realowner@example.com, then "Continue with Google" as
+// realowner@example.com. That is them: same account, dashboard and game, no invite needed.
+// And the guard that makes it safe: a self-registered account claiming an address is not a
+// role holder, so nobody can pre-register your email and catch your first Google sign-in.
+test('a verified Google email signs in AS the matching dashboard account, and only that', async (t) => {
+  resetInviteBudgets();
+  const h = await boot(t, { login: { inviteCode: 'letmein' } });
+  const owner = await fetch(`${h.base}/admin/api/setup/owner`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'realowner@example.com', password: 'a-long-enough-passphrase' }),
+  });
+  assert.equal(owner.status, 200);
+
+  // Dashboard: a session, not an invite_required, from the operator's own Google account.
+  const { authorize, cookie } = await startFlow(h, 'google', '?return=admin');
+  const code = h.idp2.issueCode(authorize, { sub: 'owner-google', email: 'RealOwner@example.com' });
+  const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
+  assert.match(res.headers.get('location') ?? '', /\/admin#t=/, res.headers.get('location') ?? '');
+
+  // Game: the same account, and still no new one.
+  const play = await ssoLogin(h, { sub: 'owner-google', email: 'realowner@example.com' }, 'google', h.idp2);
+  assert.ok(play.ticket, play.location);
+  assert.deepEqual(await accountNames(h.dataDir), ['realowner@example.com.json']);
+
+  // A squatter: a plain player account carrying someone else's address. Not a role holder,
+  // so their Google sign-in is a NEW player, which on this server needs the invite.
+  const squat = await h.server.accounts.register('squatter', 'squatter-password-1');
+  assert.ok(typeof squat !== 'string');
+  h.server.accounts.setEmail(squat, 'victim@example.com');
+  const victim = await ssoLogin(h, { sub: 'victim-google', email: 'victim@example.com' }, 'google', h.idp2);
+  assert.equal(victim.error, 'invite_required', 'the victim must not land in the squatter\'s account');
 });
 
 // ------------------------------------------------------------------- admin dashboard SSO

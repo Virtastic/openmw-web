@@ -77,6 +77,7 @@ import {
 import { log } from '../log';
 import { parseRefKey, objRefToJs, type ObjRef } from '../proto/ref';
 import { HARNESS_PASSWORD } from '../auth/harness';
+import { checkInvite } from '../auth/invite';
 import { metrics } from '../metrics';
 
 export type SessionState = 'CONNECTED' | 'HELLO_OK' | 'AUTHED' | 'IN_WORLD' | 'CLOSED';
@@ -1526,9 +1527,15 @@ export class Connection implements Peer {
       this.authFail('register', 'AUTH_FAILED', 'registration is disabled');
       return;
     }
-    if (cfg.inviteCode !== '' && msg.inviteCode !== cfg.inviteCode && !this.systemAuthAllowed()) {
-      this.authFail('register', 'AUTH_FAILED', 'invalid invite code');
-      return;
+    // The same guess budget as SSO sign-up (auth/invite.ts), keyed by address. The sim peer is
+    // exempt as above, and checked first so it never spends anyone's budget.
+    if (cfg.inviteCode !== '' && !this.systemAuthAllowed()) {
+      const invite = checkInvite(cfg.inviteCode, msg.inviteCode, [`ip:${this.ip}`]);
+      if (invite !== 'ok') {
+        this.authFail('register', 'AUTH_FAILED',
+          invite === 'locked' ? 'too many invite code attempts; try again later' : 'invalid invite code');
+        return;
+      }
     }
     if (this.refuseIfBanned('register', msg.account)) return;
     if (this.refuseHarnessAuth('register', msg.password)) return;

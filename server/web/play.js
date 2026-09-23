@@ -216,6 +216,13 @@
   const err = /[#&]mperror=([^&]+)/.exec(hash);
   if (err) {
     history.replaceState(null, '', location.pathname);
-    note(`Sign-in did not finish (${esc(decodeURIComponent(err[1]))}). Try again.`, 'err');
+    // Words for the codes a player can act on; anything else keeps the code for a bug report.
+    const code = decodeURIComponent(err[1]);
+    const said = {
+      invite_required: 'That invite passphrase was not right. Check it with whoever runs this server.',
+      invite_locked: 'Too many invite passphrase attempts. Wait a while before trying again.',
+      registration_disabled: 'This server is not taking new players.',
+    }[code];
+    note(said ? esc(said) : `Sign-in did not finish (${esc(code)}). Try again.`, 'err');
   }
 })();

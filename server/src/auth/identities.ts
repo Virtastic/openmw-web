@@ -136,6 +136,37 @@ async function pickDisplayName(accounts: AccountStore, provider: ProviderId, hin
 
 // Resolve a verified identity to an account, creating one on first sight. Returns the
 // account plus whether it was just created (the caller logs it).
+/**
+ * The existing account a first-time SSO identity should sign in AS, by email: so an operator
+ * who set up the dashboard as you@example.com is that same account when they "Continue with
+ * Google" as you@example.com, rather than a stranger needing an invite.
+ *
+ * Narrow on purpose, because this hands over an account without its password:
+ *  - Only Google and Discord, and only a provider-VERIFIED address (identity.email is set only
+ *    then, see oidc.ts). Microsoft's email claim can be set by a tenant admin to any address
+ *    ("nOAuth"), and a custom issuer's claims are whatever that issuer says.
+ *  - Only accounts holding a DASHBOARD ROLE. An ordinary account's email is typed by whoever
+ *    registered it, never verified, so matching those would let someone register your address
+ *    first and have your later Google sign-in land in an account they hold the password to.
+ *    Role holders are made by the operator, never self-registered.
+ *  - Exactly one match, or none.
+ *
+ * ponytail: a full scan of the accounts table, once per FIRST sign-in of an identity. Add an
+ * email index if servers ever hold enough accounts for that to show.
+ */
+export function accountForVerifiedEmail(
+  accounts: AccountStore,
+  provider: ProviderId,
+  identity: Identity,
+): { accountKey: string; accountName: string } | undefined {
+  if ((provider !== 'google' && provider !== 'discord') || !identity.email) return undefined;
+  const want = identity.email.toLowerCase();
+  const hits = accounts.listAll().filter((a) => a.dashboardRole && !a.banned
+    && (a.email?.toLowerCase() === want || a.name.toLowerCase() === want));
+  if (hits.length !== 1) return undefined;
+  return { accountKey: hits[0]!.name.toLowerCase(), accountName: hits[0]!.name };
+}
+
 export async function resolveSsoAccount(
   accounts: AccountStore,
   identities: IdentityStore,
@@ -178,6 +209,14 @@ export async function resolveSsoAccount(
     }
     await adoptEmail(existing.accountKey);
     return { accountKey: existing.accountKey, accountName: account.name, created: false };
+  }
+  // First sight of this identity, but it is a role holder's own verified address: sign in AS
+  // that account, and bind the identity so every later sign-in takes the path above.
+  const byEmail = accountForVerifiedEmail(accounts, provider, identity);
+  if (byEmail) {
+    await identities.bind(identity.iss, identity.sub, byEmail.accountKey);
+    log('info', 'auth.linked_by_email', { provider, account: byEmail.accountKey });
+    return { ...byEmail, created: false };
   }
   const name = await pickDisplayName(accounts, provider, identity.nameHint);
   const created = await accounts.createSso(name);
