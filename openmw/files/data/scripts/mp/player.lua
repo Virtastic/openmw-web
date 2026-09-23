@@ -181,12 +181,25 @@ local INPUT_EVERY = 1 / 30
 -- by RTT x speed on a real link (invisible on the LAN harness, #197). Reconciliation
 -- compares the sample with where we were at that seq instead. ~2 s at 30 Hz.
 local POS_RING_N = 64
-local posRing = {} -- [seq % POS_RING_N] = {seq, x, y, z}
+local posRing = {} -- [seq % POS_RING_N] = {seq, x, y, z, cx, cy, cz}
+-- EVERY CORRECTION ALREADY SENT, summed. A ring entry is where we stood when its input left;
+-- a correction applied after that moved us, and the entry did not know. With several samples
+-- in flight at once (the round trip is 150-300 ms at ~15 samples/s) each one measured the
+-- SAME gap again and corrected it again: 3-6 x the gain, an overshoot, a smaller swing back --
+-- ringing that read as constant rubber-banding. Each entry records the total at the time it
+-- was taken, and posAt adds whatever has been corrected since.
+local corrX, corrY, corrZ = 0, 0, 0
+-- The total as of the START of this frame: an entry recorded later in the frame (inputTick
+-- runs after selfReconcileTick) was taken before this frame's correction lands, since the
+-- engine applies it at the end of the frame.
+local frameCorrX, frameCorrY, frameCorrZ = 0, 0, 0
 local function posAt(seq)
     seq = tonumber(seq)
     if seq == nil then return nil end
     local r = posRing[seq % POS_RING_N]
-    if r and r.seq == seq then return r end
+    if r and r.seq == seq then
+        return { x = r.x + (corrX - r.cx), y = r.y + (corrY - r.cy), z = r.z + (corrZ - r.cz) }
+    end
     return nil -- older than the ring (a long stall): the caller uses the current position
 end
 
@@ -204,6 +217,11 @@ local function inputTick(now)
             local dbg = require('openmw.debug')
             if not dbg.isGodMode() then dbg.toggleGodMode() end
         end)
+        -- AND NOTHING WALKS INTO IT. It stands 200 u beside a real player on every cell change,
+        -- where no client can see it, and its capsule held back the avatars walking there: the
+        -- owner was rubber-banded against something that was not on their screen. Re-asserted
+        -- every tick (the engine ignores a no-op) because a cell change can rebuild the body.
+        if mp.setSelfCollisionBody then mp.setSelfCollisionBody(false) end
         return
     end
     if not tookControlsSaid then
@@ -223,7 +241,8 @@ local function inputTick(now)
     lastInputSend = now
     inputSeq = inputSeq + 1
     local p = self.position
-    posRing[inputSeq % POS_RING_N] = { seq = inputSeq, x = p.x, y = p.y, z = p.z }
+    posRing[inputSeq % POS_RING_N] = { seq = inputSeq, x = p.x, y = p.y, z = p.z,
+        cx = frameCorrX, cy = frameCorrY, cz = frameCorrZ }
     local c = self.controls
     local flags = 0
     if c.run then flags = flags + 1 end
@@ -262,6 +281,7 @@ end
 --   small divergence  -> a capped mp.correctSelf offset, resolved by the next physics step
 --   past the hard threshold -> one snap through the global teleport path (cooldown below)
 local SNAP_DIST = 256
+local CORRECT_CAP = 48 -- = maxCorrectPerCall in mwmp/luabindings.cpp
 local CORRECT_GAIN = 0.25 -- fraction of the divergence per FRAME that has a fresh sample
 local latestSelf = nil -- newest authoritative self pose, consumed by selfReconcileTick
 local lastSnapAt = 0
@@ -362,8 +382,16 @@ local function selfReconcileTick()
     if mp.correctSelf then
         -- The engine caps the per-call offset (it is load-bearing: an uncapped correction
         -- pushes through geometry before physics gets a say); the gain keeps the approach
-        -- smooth over several frames instead of a visible yank.
-        mp.correctSelf(dx * CORRECT_GAIN, dy * CORRECT_GAIN, dz * CORRECT_GAIN)
+        -- smooth over several frames instead of a visible yank. The same cap is applied here
+        -- so the running total (posAt) records what actually moved us.
+        local cx, cy, cz = dx * CORRECT_GAIN, dy * CORRECT_GAIN, dz * CORRECT_GAIN
+        local len = math.sqrt(cx * cx + cy * cy + cz * cz)
+        if len > CORRECT_CAP then
+            local k = CORRECT_CAP / len
+            cx, cy, cz = cx * k, cy * k, cz * k
+        end
+        mp.correctSelf(cx, cy, cz)
+        corrX, corrY, corrZ = corrX + cx, corrY + cy, corrZ + cz
     end
 end
 
@@ -398,6 +426,7 @@ local function movementTick()
         self.controls.sideMovement = 0
         self.controls.jump = false
     end
+    frameCorrX, frameCorrY, frameCorrZ = corrX, corrY, corrZ -- before this frame's correction
     selfReconcileTick() -- Phase 3: one correction per frame toward the newest peer pose
     inputTick(now) -- Phase 3: raw intent to the peer, beside the pose stream
     identity.tick(now) -- M2: appearance/equipment/stats/inventory diff broadcasts

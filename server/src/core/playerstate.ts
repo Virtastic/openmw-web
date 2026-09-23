@@ -374,7 +374,7 @@ function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'at
     for (const [k, v] of Object.entries(map)) {
       // #393: a key the previous declaration omitted is a raise FROM ZERO, not a free pass --
       // dropping Long Blade and re-adding it at 100 was measured against nothing. Damage keys
-      // come and go with the effect (identity.lua emits "<id>_damage" only while dmg != 0)
+      // were emitted only while dmg != 0 by older clients (now always, 0 included)
       // and only ever lower the stat, so those alone start from wherever they appear.
       const from = had[k] ?? (k.endsWith('_damage') ? v : 0);
       if (!raiseWithin(player, `${field}:${k}`, v - from, STAT_RAISE_PER_WINDOW)) {

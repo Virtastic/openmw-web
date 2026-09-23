@@ -572,6 +572,10 @@ end
 -- that avatar — stamped onto the authoritative pose stream so the owner's client knows how
 -- much of its input the pose already contains (reconciliation hangs off it).
 local lastInputSeq = {}
+-- The newest seq each avatar has APPLIED (avatar.lua mpAvatarApplied), which is what the pose
+-- stream is stamped with. lastInputSeq above is what has been ROUTED, a frame or two ahead of
+-- the body; stamping that made every pose claim input it did not yet contain.
+local appliedSeq = {}
 local avatarUsing = {} -- id -> the use bit of the newest routed input (mirrors "attacking")
 -- The owner's whole posture, not just the use bit. The avatar stream used to forward only
 -- "attacking" and "weapon drawn", so under the peer a friend sneaking walked upright on every
@@ -828,7 +832,7 @@ local function avatarStreamTick(now)
                 local animVel = walkSpeed > 0 and (types.Actor.getCurrentSpeed(p.obj) / walkSpeed) or 0
                 entries[#entries + 1] = {
                     id = id,
-                    lastInputSeq = lastInputSeq[id] or 0,
+                    lastInputSeq = appliedSeq[id] or 0,
                     x = pos.x, y = pos.y, z = pos.z,
                     yaw = p.obj.rotation:getYaw(),
                     pitch = p.obj.rotation:getPitch(),
@@ -3437,6 +3441,15 @@ local eventHandlers = {
     mpAvatarLanded = avatarLanded,
 
     -- Backlog 307 (peer): an armour/block skill use on an avatar, to its owner's progression.
+    -- An avatar has put input `seq` into its controls. Checked against the body we know for
+    -- that id, so a stale body (a rebuild in flight) cannot stamp its successor's stream.
+    mpAvatarApplied = function(data)
+        if not (data and data.id and data.seq and data.obj) then return end
+        local p = puppets[data.id]
+        if not (p and p.obj and p.obj:isValid() and p.obj.id == data.obj.id) then return end
+        if appliedSeq[data.id] == nil or data.seq > appliedSeq[data.id] then appliedSeq[data.id] = data.seq end
+    end,
+
     mpAvatarSkillUse = function(data)
         if not (data and data.obj and data.skill) then return end
         for id, p in pairs(puppets) do

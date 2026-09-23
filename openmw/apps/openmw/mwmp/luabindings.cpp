@@ -890,6 +890,22 @@ namespace MWMP
                 "MPCorrectSelf");
         };
 
+        // mp.setSelfCollisionBody(on): whether OTHER actors collide with this process's player.
+        // For the SIM PEER's own dummy player only. It stands 200 u beside whichever real player
+        // anchors a cell (global.lua MP_SimAnchors) and no client ever sees it, yet its capsule
+        // blocked the avatars: players were held back and rubber-banded against something that
+        // was not on their screen, on paths, bridges and door exits they had just walked. The
+        // console's TCL is no help here -- it deliberately keeps the body solid to others
+        // (PhysicsSystem::toggleCollisionMode). Queued like correctSelf; idempotent in the engine.
+        api["setSelfCollisionBody"] = [luaManager = context.mLuaManager](bool on) {
+            luaManager->addAction(
+                [on] {
+                    MWBase::World* world = MWBase::Environment::get().getWorld();
+                    world->enableActorCollision(world->getPlayerPtr(), on);
+                },
+                "MPSelfCollisionBody");
+        };
+
         // SIM ANCHORS. The server tells this process which regions to keep simulated: one
         // anchor per player, as {x, y, z} WORLD POSITIONS (the player's live pose). Only the
         // sim peer is ever sent them — a normal client passes nothing and behaves exactly as

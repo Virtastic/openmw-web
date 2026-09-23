@@ -248,8 +248,11 @@ local function snapProgression()
         -- DAMAGE RIDES ALONG, as "<id>_damage" in the same map (no new wire shape): a Damage
         -- Attribute that outlives its spell, and the Restore that heals it, are facts about
         -- the character the avatar and the next login must carry, and .base alone lost them.
-        local dmg = st.damage or 0
-        if dmg ~= 0 then attributes[id .. '_damage'] = dmg end
+        -- ALWAYS SENT, 0 included. It used to ride only while non-zero, and a cure removed the
+        -- key -- which the avatar (avatar.lua applies only keys it is given) read as "no news",
+        -- so a Damage Speed or Strength the owner had cured stayed on the avatar: it ran slower
+        -- or carried less than the owner, and every step was corrected back.
+        attributes[id .. '_damage'] = st.damage or 0
     end
     for _, id in ipairs(skillIds()) do
         skills[id] = NPC.stats.skills[id](self).base

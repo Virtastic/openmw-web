@@ -574,8 +574,22 @@ do
     and g:find('eventHandlers.mpCombatCast = combat.onCast', 1, true) ~= nil)
   -- Backlog 197-202, 205, 211: movement feel on a real link.
   check('player.lua reconciles against where it stood at lastInputSeq, not where it is now (197)',
-    pl:find('posRing[inputSeq % POS_RING_N] = { seq = inputSeq, x = p.x, y = p.y, z = p.z }', 1, true) ~= nil
+    pl:find('posRing[inputSeq % POS_RING_N] = { seq = inputSeq, x = p.x, y = p.y, z = p.z,', 1, true) ~= nil
     and pl:find('local pos = posAt(e.lastInputSeq) or self.position', 1, true) ~= nil)
+  -- Dev box 2026-09-23, constant micro rubber-banding. Three halves of one loop:
+  check('player.lua shifts each ring entry by the corrections sent since it was taken',
+    pl:find('cx = frameCorrX, cy = frameCorrY, cz = frameCorrZ }', 1, true) ~= nil
+    and pl:find('x = r.x + (corrX - r.cx)', 1, true) ~= nil
+    and pl:find('corrX, corrY, corrZ = corrX + cx, corrY + cy, corrZ + cz', 1, true) ~= nil
+    and pl:find('frameCorrX, frameCorrY, frameCorrZ = corrX, corrY, corrZ', 1, true) ~= nil)
+  check('the avatar reports the seq it APPLIED, and the pose stream is stamped with that',
+    av:find("core.sendGlobalEvent('mpAvatarApplied'", 1, true) ~= nil
+    and g:find('lastInputSeq = appliedSeq[id] or 0,', 1, true) ~= nil
+    and g:find('mpAvatarApplied = function(data)', 1, true) ~= nil)
+  check('identity.lua always sends attribute damage, 0 included, so a cure reaches the avatar',
+    io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a'):find("attributes[id .. '_damage'] = st.damage or 0", 1, true) ~= nil)
+  check("the sim peer's own dummy player is not a collision body for the avatars",
+    pl:find('if mp.setSelfCollisionBody then mp.setSelfCollisionBody(false) end', 1, true) ~= nil)
   check('avatar.lua latches the jump and use edges until onUpdate consumes them (198)',
     av:find('if bit(data.flags, 2) then jumpLatch = true end', 1, true) ~= nil
     and av:find('local jump = jumpLatch or bit(input.flags, 2)', 1, true) ~= nil

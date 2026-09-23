@@ -31,6 +31,7 @@ local avatarObjIds = {}
 
 local input = nil -- latest {seq, move, side, yaw, pitch, flags}
 local inputAt = 0
+local appliedSeqSent = nil -- the newest input seq this body has put into its controls
 -- 1.0, not 0.35: a TCP retransmit stall (300 ms RTO, seconds on a Wi-Fi roam) must not stop
 -- the avatar while the owner keeps running -- the burst collapses to the newest input and the
 -- owner is snapped back by v x stall (#205).
@@ -206,6 +207,17 @@ return {
             jumpLatch = false
             self.controls.jump = jump and not prevJump
             prevJump = jump
+            -- THE SEQ THIS BODY HAS ACTUALLY APPLIED. The pose stream used to be stamped with the
+            -- newest input the global script had RECEIVED, but that input only reaches these
+            -- controls a frame later (a local event) and moves the body a frame after that, so
+            -- every pose claimed ~100-150 ms of input it did not contain. The owner's client
+            -- compares a pose with where it stood when that seq left (player.lua posAt), so the
+            -- false claim was a correction on every start, stop and turn: constant micro
+            -- rubber-banding. Reported once per new seq; global.lua stamps the stream with it.
+            if input.seq and input.id and input.seq ~= appliedSeqSent then
+                appliedSeqSent = input.seq
+                core.sendGlobalEvent('mpAvatarApplied', { obj = self.object, id = input.id, seq = input.seq })
+            end
             -- Phase 4C: THE AVATAR SWINGS. The owner's use bit drives the attack control, and
             -- this engine computes the hit natively against the actors it simulates. Safe
             -- now because combat.lua no longer forwards a real swing while the peer holds
