@@ -1,5 +1,7 @@
 #include "magicbindings.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <format>
 
 #include <components/esm3/activespells.hpp>
@@ -755,6 +757,15 @@ namespace MWLua
                 // remains, never extend it, so the exploit direction is closed by
                 // construction. Omitted (every existing caller) = exactly the old behaviour.
                 const float elapsed = std::max(0.f, options.get_or("elapsed", 0.f));
+                // MP: magnitudes ALREADY ROLLED elsewhere, keyed by effect index. The avatar mirrors
+                // its owner's buffs and the owner mirrors what the world did to the avatar; each
+                // side re-rolling a ranged effect (Fortify Speed 5-15, Burden, Levitate) left the
+                // two bodies moving at different speeds for the whole duration, and movement
+                // reconciliation corrected the owner every step. Pinned as min == max, so roll()
+                // returns exactly it; capped at the record's max so a sender can never exceed a
+                // legitimate roll (not floored at the min: a resisted roll sits below it).
+                // Omitted (every existing caller) = the engine rolls, exactly the old behaviour.
+                const sol::optional<sol::table> rolled = options.get<sol::optional<sol::table>>("magnitudes");
                 if (effects.empty())
                     throw std::runtime_error("Error:  Parameter 'effects': cannot be an empty list/table");
                 const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
@@ -784,6 +795,15 @@ namespace MWLua
                     effect.mMinMagnitude = static_cast<float>(enam.mData.mMagnMin);
                     effect.mMaxMagnitude = static_cast<float>(enam.mData.mMagnMax);
                     effect.mEffectIndex = static_cast<int32_t>(enam.mIndex);
+                    if (rolled)
+                    {
+                        const sol::optional<float> m = rolled->get<sol::optional<float>>(static_cast<int>(enam.mIndex));
+                        if (m && std::isfinite(*m))
+                        {
+                            const float cap = std::max(effect.mMinMagnitude, effect.mMaxMagnitude);
+                            effect.mMinMagnitude = effect.mMaxMagnitude = std::clamp(*m, 0.f, std::max(0.f, cap));
+                        }
+                    }
                     effect.mFlags = ESM::ActiveEffect::Flag_None;
                     if (ignoreReflect)
                         effect.mFlags |= ESM::ActiveEffect::Flag_Ignore_Reflect;

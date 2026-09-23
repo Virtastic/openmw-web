@@ -313,11 +313,21 @@ local function snapActive()
                 if peerEffects[sp.id] then
                     peerNow[tostring(sp.activeSpellId)] = sp.id
                 else
-                    local idx = {}
+                    -- The ROLLED magnitude rides along (-1 = none), so the avatar gets this
+                    -- Fortify Speed 12, not its own roll of 5-15: a different roll is a
+                    -- different speed and reconciliation corrects us every step. An effect
+                    -- still at 0 with a floor above 0 is not rolled yet (added this frame):
+                    -- the instance waits for the next tick rather than go out unrolled.
+                    local idx, mags, rolled = {}, {}, true
                     for _, e in ipairs(sp.effects or {}) do
-                        if e.index ~= nil then idx[#idx + 1] = e.index end
+                        if e.index ~= nil then
+                            local m = e.magnitudeThisFrame
+                            if m == 0 and (e.minMagnitude or 0) > 0 then rolled = false end
+                            idx[#idx + 1] = e.index
+                            mags[#idx] = type(m) == 'number' and m or -1
+                        end
                     end
-                    if #idx > 0 then set[tostring(sp.activeSpellId)] = { id = sp.id, effects = idx } end
+                    if #idx > 0 and rolled then set[tostring(sp.activeSpellId)] = { id = sp.id, effects = idx, mags = mags } end
                 end
             end
         end
@@ -633,7 +643,7 @@ function identity.tick(now)
             for _, c in ipairs(cured or {}) do remove[#remove + 1] = c end
             for key, sp in pairs(active) do
                 if not (last.active and last.active[key]) then
-                    add[#add + 1] = { key = key, id = sp.id, effects = sp.effects }
+                    add[#add + 1] = { key = key, id = sp.id, effects = sp.effects, mags = sp.mags }
                 end
             end
             for key, sp in pairs(last.active or {}) do
