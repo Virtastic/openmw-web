@@ -2385,6 +2385,7 @@ do
   -- The crash: the socket drops, the redial presents the resume token, the new process never
   -- heard of it.
   net.state = 'Joined'
+  net.resumeToken = 'tok1' -- the engine parks it (the stub's setResumeToken keeps nothing)
   net.onClose()
   env.advance(120); net.tick()
   local r = authSent()
