@@ -2173,6 +2173,20 @@ do
     check('restore (shed=false): a surplus and an unlisted item stay -- picked up since the last flush',
       inv:countOf('gold_001') == 300 and inv:countOf('ingred_marshmerrow_01') == 2)
   end
+
+  -- #8 PHANTOM SPELLS. The template NPC's spells on a fresh body are not the player's.
+  do
+    local tmpl = { present = { ['ancestor guardian'] = true, ['fireball'] = true, ['common disease'] = true },
+      doc = { ['fireball'] = true } }
+    local notYet = R.worldGivenSpells(tmpl.present, tmpl.doc, {}, nil)
+    local g = R.generation()
+    local sameFrame = R.worldGivenSpells(tmpl.present, tmpl.doc, {}, g)
+    R.nextFrame()
+    local later = R.worldGivenSpells({ fireball = true, ['common disease'] = true }, tmpl.doc, {}, g)
+    check('world-given spells: none before the doc is applied, none in its frame, then only what the doc lacks',
+      #notYet == 0 and #sameFrame == 0 and #later == 1 and later[1] == 'common disease',
+      string.format('notYet=%d sameFrame=%d later=%s', #notYet, #sameFrame, table.concat(later, ',')))
+  end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

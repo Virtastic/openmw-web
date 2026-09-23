@@ -571,6 +571,8 @@ local avatarDocs = {}
 -- Avatars whose doc must be (re)applied this frame: MP_AvatarState marks, the per-frame tick
 -- applies ONCE with the latest doc, and a pass that left anything in flight marks again.
 local avatarDocDirty = {}
+-- The frame each avatar's doc was last applied in (reconcile.worldGivenSpells reads it).
+local avatarDocAppliedGen = {}
 
 -- The party leader's level, from their avatar doc, onto the engine (peer only). Called when
 -- the leader is named (WorldMode) and whenever their doc arrives or changes (AvatarState).
@@ -676,6 +678,7 @@ local function applyAvatarDoc(id)
         for _, sid in ipairs(drop) do pcall(function() spells:remove(sid) end) end
     end)
     end
+    if doc.spells ~= nil then avatarDocAppliedGen[id] = reconcile.generation() end
     mp.set('avatarApplied', tostring(id))
     -- RE-BIND THE HANDS TO THE RECONCILED STACKS. The equipment push can arrive before the
     -- inventory doc and fabricates a single item for an empty slot; the doc then grants the
@@ -995,14 +998,14 @@ local function avatarEffectsTick(now)
             avatarSpellsReported[id] = avatarSpellsReported[id] or {}
             local okS = pcall(function()
                 local present = {}
-                for _, spell in pairs(types.Actor.spells(p.obj)) do
-                    present[spell.id] = true
-                    if not docSpells[spell.id] and not avatarSpellsReported[id][spell.id] then
-                        avatarSpellsReported[id][spell.id] = true
-                        entry.spellsAdd = entry.spellsAdd or {}
-                        entry.spellsAdd[#entry.spellsAdd + 1] = worldmp.toNet(spell.id)
-                        any = true
-                    end
+                for _, spell in pairs(types.Actor.spells(p.obj)) do present[spell.id] = true end
+                -- Only against a doc applied in an earlier frame (reconcile.worldGivenSpells).
+                local applied = (not avatarDocDirty[id]) and avatarDocAppliedGen[id] or nil
+                for _, sid in ipairs(reconcile.worldGivenSpells(present, docSpells, avatarSpellsReported[id], applied)) do
+                    avatarSpellsReported[id][sid] = true
+                    entry.spellsAdd = entry.spellsAdd or {}
+                    entry.spellsAdd[#entry.spellsAdd + 1] = worldmp.toNet(sid)
+                    any = true
                 end
                 -- FORGET WHAT IS GONE. "Reported" was never cleared, so a disease the owner
                 -- cured (the doc dropped it, applyAvatarDoc shed it) could not be reported
@@ -1310,6 +1313,7 @@ local function despawnPuppet(id)
     avatarItemStatesSentAt[id] = nil
     ownerActive[id] = nil
     avatarSpellsReported[id] = nil
+    avatarDocAppliedGen[id] = nil
     avatarEffectsReported[id] = nil
     avatarOwnerEffectsSeen[id] = nil
     -- Guarded, and deliberately AFTER the bookkeeping above: remove() throws when the

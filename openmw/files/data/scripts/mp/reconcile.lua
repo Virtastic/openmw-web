@@ -185,4 +185,22 @@ function R.reconcileInventory(opts)
     return out
 end
 
+-- ---------------------------------------------------------------- spells the world gave
+-- Which spells on an avatar's body to report as the WORLD's (a disease, blight, a curse) rather
+-- than its owner's: present on the body, absent from the doc, not reported yet. Only once the
+-- doc has been applied in an EARLIER frame: spell add/remove land at the end of the frame
+-- (magicbindings.cpp), so until then the body still carries the template NPC's spells, or one
+-- the doc just dropped -- and every one of them was reported as the player's and kept by the
+-- server for good (phantom spells, PLAYTEST item 12). appliedGen is the frame the doc was last
+-- applied in, nil when it has not been or is due again.
+function R.worldGivenSpells(present, docSpells, reported, appliedGen)
+    local adds = {}
+    if appliedGen == nil or appliedGen >= gen then return adds end
+    for sid in pairs(present) do
+        if not docSpells[sid] and not reported[sid] then adds[#adds + 1] = sid end
+    end
+    table.sort(adds)
+    return adds
+end
+
 return R
