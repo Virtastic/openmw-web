@@ -269,6 +269,15 @@ export class MoveBroadcaster {
     const nowMs = Date.now();
     for (const p of this.roster.inWorld()) {
       if (p.system === true || p.bot === true) continue;
+      // NOT DURING CHARACTER CREATION. The peer's world is past chargen (creation only ever
+      // advances in the player's own engine; see the chargen sanctuary in worldstate.ts), so
+      // its Seyda Neen is not the one the player is walking through: objects the opening
+      // enables and disables, and NPCs the player's own engine is running, stand elsewhere.
+      // Reconciling against that body rubber-banded every step of the opening and held the
+      // player on the dock bridge against something only the peer's world had. The client's
+      // own path rules until ChargenComplete (the degraded mode below, already safe); the
+      // avatar rejoins the player at the Census office door, a cell change it follows.
+      if (p.inChargen === true) continue;
       if (p.peerPoseAt === undefined || nowMs - p.peerPoseAt > PEER_POSE_FRESH_MS) continue;
       if (!p.pose || p.lastInputSeq === undefined) continue;
       p.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH,

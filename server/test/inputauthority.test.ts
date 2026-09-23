@@ -93,6 +93,30 @@ test('the peer\'s AvatarMoveBatch is the pose everyone sees, and the owner recon
   assert.equal(Math.round(mine.pose.x), 512);
 });
 
+test('no reconciliation during character creation; it resumes once creation is done', async (t) => {
+  // The peer's world is past chargen, so correcting a creating player against it pinned them
+  // on the Seyda Neen dock (dev box, 2026-09-23). Their own engine rules until ChargenComplete.
+  const { server, peer, a } = await world(t);
+  let inputSeq = 0;
+  const inputTimer = setInterval(() => a.sendInput({ move: 1 }, ++inputSeq), 100);
+  t.after(() => clearInterval(inputTimer));
+  const streamTimer = setInterval(() => peer.sendAvatarMoveBatch([
+    { id: a.playerId, lastInputSeq: 77, pose: { x: 512, y: 640, z: 10, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
+  ]), 60);
+  t.after(() => clearInterval(streamTimer));
+  const me = server.roster.get(a.playerId!)!;
+  me.inChargen = true;
+  const mine = () => a.inbox.stateBatches.filter((sb) => sb.entries.some((e) => e.id === a.playerId)).length;
+
+  await new Promise((r) => setTimeout(r, 1500)); // many ticks of fresh peer poses
+  a.inbox.stateBatches.length = 0;
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.equal(mine(), 0, 'a player in character creation must not be corrected against the peer');
+
+  me.inChargen = false;
+  await poll(() => (mine() > 0 ? true : undefined), 8000, 'reconciliation after creation');
+});
+
 test('a CLIENT sending AvatarMoveBatch is refused and counted; the real peer still lands', async (t) => {
   const { peer, a } = await world(t);
   // The peer's pose only RULES a player who is actually driving the input tier: without
