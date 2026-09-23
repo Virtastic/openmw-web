@@ -1553,6 +1553,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // into NPCs they could not see (dev box, 2026-09-23). Held, the peer streams them and every
   // client puppets them (actors.lua attaches on the first ActorMoveBatch for an actor).
   const heldRing = new Map<string, number>();
+  world.peerHolds = (cellKey) => heldAnchors.has(cellKey) || heldRing.has(cellKey);
   // Cells the peer currently holds, so authority is DIFFED rather than re-entered every tick
   // (re-entering bumps the epoch and forces a full re-sync).
   const claimed = new Set<string>();

@@ -196,3 +196,33 @@ test('on the wire: the peer holds the 3x3 around a player, but nothing next to a
     assert.ok(!granted.has(`${-2 + dx},${-9 + dy}`), `held next to a player in chargen: ${-2 + dx},${-9 + dy}`);
   }
 });
+
+// The peer's dummy follows the first player's cell. Walking out of a cell nobody STANDS in used
+// to release it, but with the 3x3 held that cell is a player's neighbour: revoked, then
+// re-granted at a new epoch a pass later, and every creature in it flipped to the client's
+// local AI and back mid-fight (dev box, 2026-09-23).
+test('on the wire: the peer walking out of a held neighbour cell does not revoke it', async (t) => {
+  const PEER_PASS = 'peer-secret-4';
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } } });
+  t.after(() => server.close());
+  server.config.simPeer.enabled = true;
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  await c.joinAsNew('Walker');
+  await c.waitEvent('PlayerList');
+  c.sendCellChange('0,0', 10, 10, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '1,1', 12_000)
+    .catch(() => assert.fail('the neighbour 1,1 was never held'));
+
+  peer.sendCellChange('1,1', 8300, 8300, 0); // the dummy stands in the neighbour...
+  await new Promise((r) => setTimeout(r, 300));
+  peer.inbox.events.length = 0;
+  peer.sendCellChange('0,0', 20, 20, 0); // ...and follows the player back
+  await new Promise((r) => setTimeout(r, 1_000)); // inside one pass: a revoke would show here
+  const revoked = peer.inbox.events.filter((e) => e.name === 'ActorAuthorityRevoke'
+    && (e.value as { cellKey: string }).cellKey === '1,1');
+  assert.equal(revoked.length, 0, 'the held neighbour was revoked because the dummy walked out of it');
+});

@@ -320,6 +320,9 @@ export class WorldState {
   // Who holds the conversation lock on an NPC (quests.ts). Wired by server.ts; the second
   // actor fact a non-holder may state hangs off it (see actorEvent, ActorDisposition).
   dialogueHolder?: (refKey: string) => number | undefined;
+  // The cells simPeerPass has the peer holding right now (anchors and the ring around each
+  // player). Set by server.ts; absent (tests, no peer) = none.
+  peerHolds?: (cellKey: string) => boolean;
 
   /** Backlog 298: the peer's manifest just became the world's content list (connection.ts
    *  handleHello, ContentGate.setAuthoritative). Every c:<index>:<contentFile> key in the cell
@@ -554,6 +557,13 @@ export class WorldState {
       // peer simulating them, so dropping authority here only produced a dormancy window that
       // clients now see (puppets detach, swings stop landing) before simPeerPass re-grants.
       if (system && this.roster.inWorld().some((p) => p.cellKey === c)) continue;
+      // ...AND NEITHER DO CELLS THE PASS HOLDS. The peer now holds the 3x3 around every player,
+      // and its dummy follows the first player's cell: stepping from -2,-9 to -2,-8 released
+      // -2,-9 (nobody standing IN it) although it is the player's neighbour, and the next pass
+      // re-granted it at a new epoch. Every creature there flipped to the client's local AI
+      // and back, mid-fight (dev box, 2026-09-23). simPeerPass owns this footprint and
+      // releases a cell itself, by its diff, when it truly leaves every player's ring.
+      if (system && this.peerHolds?.(c)) continue;
       this.authorityLeave(playerId, c, connected);
     }
   }
