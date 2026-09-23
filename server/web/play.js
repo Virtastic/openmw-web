@@ -51,7 +51,10 @@
   // player brings their own copy through their locker.
   let hostedData = false;
   try {
-    const s = await (await fetch('/admin/api/state')).json();
+    // no-store, like the dashboard's api(): a browser that once cached a 308 for this URL
+    // (a proxy's redirect loop) replayed it forever, the read failed, and the page fell back
+    // to single player on a multiplayer server, sending a signed-in player to the wrong game.
+    const s = await (await fetch('/admin/api/state', { cache: 'no-store' })).json();
     if (s.serverName) { $('#name').textContent = s.serverName; document.title = s.serverName; }
     singlePlayer = s.setup?.deploymentMode !== 'multiplayer';
     hostedData = s.setup?.deliveryModel === 'serve';
@@ -64,7 +67,7 @@
   if (singlePlayer) $('#glyph').innerHTML = CLOUD_GLYPH;
 
   let auth = null;
-  try { auth = await (await fetch('/auth/providers')).json(); } catch { /* handled below */ }
+  try { auth = await (await fetch('/auth/providers', { cache: 'no-store' })).json(); } catch { /* handled below */ }
   const box = $('#options');
   if (!auth) {
     box.innerHTML = '<div class="note">Could not reach the server to ask how sign-in works. '
