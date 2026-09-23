@@ -49,7 +49,9 @@ const MAX_BUCKETS = 10_000;
 export class IpRateLimiter {
   private buckets = new Map<string, TokenBucket>();
 
-  constructor(private readonly perMinute: number) {}
+  // `burst` defaults to a minute's worth. Set it apart for slow budgets: (5 / 60, 5) is five
+  // tries, then one every twelve minutes.
+  constructor(private readonly perMinute: number, private readonly burst = perMinute) {}
 
   allow(ip: string): boolean {
     let b = this.buckets.get(ip);
@@ -59,7 +61,7 @@ export class IpRateLimiter {
       this.buckets.delete(ip);
       this.buckets.set(ip, b);
     } else {
-      b = new TokenBucket(this.perMinute / 60, this.perMinute);
+      b = new TokenBucket(this.perMinute / 60, this.burst);
       this.buckets.set(ip, b);
     }
     // Unbounded-growth guard. This used to be `if (size > 10000) clear()` — which made the

@@ -24,9 +24,10 @@ import type { BanStore } from '../persist/banstore';
 import type { IpRateLimiter } from '../net/ratelimit';
 import { clientIp, isSecureRequest, readCookie, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
 import { OidcError, OidcService, isProviderId, type ProviderId } from './oidc';
-import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, resolveSsoAccount } from './identities';
+import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, accountForVerifiedEmail, resolveSsoAccount } from './identities';
 import { log } from '../log';
 import { metrics } from '../metrics';
+import { checkInvite } from './invite';
 
 const STATE_COOKIE = 'omwmp_oauth';
 const COOKIE_PATH = '/auth'; // sent on the callback, on nothing else
@@ -217,11 +218,20 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     }
 
     // ---- login: resolve (iss,sub) to an account, creating one on first sight.
-    const known = identities.get(identity.iss, identity.sub);
+    // A role holder's own verified address counts as known: it resolves to their existing
+    // account (identities.ts), so no account is created and the gates below do not apply.
+    const known = identities.get(identity.iss, identity.sub)
+      ?? accountForVerifiedEmail(accounts, provider, identity);
     if (!known) {
       if (!config.login.allowRegistration)
         return fail(req, res, 'registration_disabled', 'this server does not accept new accounts', ip);
-      if (config.login.inviteCode !== '' && pending.invite !== config.login.inviteCode)
+      // Budgeted per IP, per identity and server-wide (auth/invite.ts): a wrong passphrase
+      // used to cost nothing beyond the general 5-a-minute auth budget.
+      const invite = checkInvite(config.login.inviteCode, pending.invite,
+        [`ip:${ip}`, `id:${identity.iss}|${identity.sub}`]);
+      if (invite === 'locked')
+        return fail(req, res, 'invite_locked', 'too many invite passphrase attempts', ip);
+      if (invite === 'wrong')
         return fail(req, res, 'invite_required', 'this server is invite-only', ip);
     }
     let resolved;
