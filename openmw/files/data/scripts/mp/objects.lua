@@ -26,6 +26,10 @@ local deps = nil
 local DROP_DETECT_RANGE = 600 -- only the dropper relays (someone must own the spawn)
 local CONTAINER_WATCH_SECONDS = 15 -- native container UI has no close signal; poll window
 local CONTAINER_POLL = 0.25
+-- Frames counted by objects.tick. A network apply lands on the next delayed-actions pass, so
+-- three frames on, whatever differs from what was applied is the player's own doing (s175).
+local frameNo = 0
+local EXPECT_FRAMES = 3
 local LOCK_WATCH_SECONDS = 4
 local DOOR_READ_DELAY = 0.4 -- door starts turning on activation; read the resulting state
 -- Containers get the same treatment for a sharper reason. Morrowind resolves a container's
@@ -313,7 +317,18 @@ local function setContainerContents(obj, items)
     -- second opener, and a friend's purchase deleted a matching item from our own pack. The
     -- baseline is taken on the next poll instead, from the store as it really is.
     local watch = containerWatch[obj.id]
-    if watch then watch.last = nil; watch.rebase = true; watch.nextPoll = core.getRealTime() + CONTAINER_POLL end
+    if watch then
+        watch.last = nil; watch.rebase = true; watch.nextPoll = core.getRealTime() + CONTAINER_POLL
+        -- ...and WHAT the store will hold once it has: a put made between this apply and the
+        -- rebase poll used to be swallowed into the new baseline -- the item left the player's
+        -- pack and never reached the server's chest (s175).
+        local expect = {}
+        for _, entry in ipairs(items or {}) do
+            local id = worldmp.toLocal(entry.id)
+            expect[id] = (expect[id] or 0) + entry.n
+        end
+        watch.expect, watch.expectFrame = expect, frameNo + EXPECT_FRAMES
+    end
 end
 
 local function applyContainerDelta(obj, itemId, dn)
@@ -336,7 +351,29 @@ local function applyContainerDelta(obj, itemId, dn)
         end
     end)
     local watch = containerWatch[obj.id]
-    if watch then watch.last = nil; watch.rebase = true; watch.nextPoll = core.getRealTime() + CONTAINER_POLL end
+    if watch then
+        -- The expected store is the old baseline plus this delta; with no baseline there is
+        -- nothing to expect, and the plain rebase stands.
+        local expect = nil
+        if watch.last then
+            expect = {}
+            for id, n in pairs(watch.last) do expect[id] = n end
+            expect[itemId] = math.max(0, (expect[itemId] or 0) + dn)
+            if expect[itemId] == 0 then expect[itemId] = nil end
+        elseif watch.expect then
+            expect = watch.expect -- a delta on top of an apply still landing
+            expect[itemId] = math.max(0, (expect[itemId] or 0) + dn)
+            if expect[itemId] == 0 then expect[itemId] = nil end
+        end
+        watch.last = nil; watch.rebase = true; watch.nextPoll = core.getRealTime() + CONTAINER_POLL
+        watch.expect, watch.expectFrame = expect, expect and frameNo + EXPECT_FRAMES or nil
+    end
+end
+
+local function sameCounts(a, b)
+    for id, n in pairs(a) do if (b[id] or 0) ~= n then return false end end
+    for id, n in pairs(b) do if (a[id] or 0) ~= n then return false end end
+    return true
 end
 
 -- Diff a watched container against its last snapshot and report every change. Extracted so the
@@ -348,11 +385,26 @@ local function diffContainer(obj, watch)
         return
     end
     if watch.rebase or watch.last == nil then
-        -- The first read after a network apply: the store as it really is, now that the
-        -- deferred rewrite has landed. Nothing to report.
-        watch.rebase = nil
-        watch.last = current
-        return
+        if watch.expect then
+            if sameCounts(current, watch.expect) then
+                -- The apply has landed and nothing else happened: this is the baseline.
+                watch.rebase, watch.expect, watch.expectFrame = nil, nil, nil
+                watch.last = current
+                return
+            elseif frameNo < watch.expectFrame then
+                return -- still landing; look again next poll
+            end
+            -- Landed frames ago and the store still differs: the difference is the player's.
+            -- Diff against what was applied, below, instead of absorbing it.
+            watch.last = watch.expect
+            watch.rebase, watch.expect, watch.expectFrame = nil, nil, nil
+        else
+            -- The first read after a network apply: the store as it really is, now that the
+            -- deferred rewrite has landed. Nothing to report.
+            watch.rebase = nil
+            watch.last = current
+            return
+        end
     end
     local seen = {}
     for recId, n in pairs(current) do
@@ -1158,6 +1210,7 @@ end
 -- ---------------------------------------------------------------- tick
 
 function objects.tick(now)
+    frameNo = frameNo + 1
     -- Phase 4: watch the player's cell for scripted enable/disable. Cheap (a boolean read
     -- per object at 1 Hz) and only for the cell we are standing in. The fallback behind
     -- onScriptNote above, for an engine baked before the choke-point hook existed.

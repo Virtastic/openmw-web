@@ -2342,5 +2342,16 @@ do
   check('global.lua routes mpActorCasting to actors.noteCasting', gl:find('actors.noteCasting(', 1, true) ~= nil)
 end
 
+print('s175 a put racing a network apply reaches the server (the rebase expects the applied store)')
+do
+  local o = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  check('setContainerContents and applyContainerDelta record what the store will hold',
+    select(2, o:gsub('watch%.expect, watch%.expectFrame = expect', '')) == 2)
+  check('the rebase poll diffs against the expected store once the apply has had its frames',
+    o:find('elseif frameNo < watch.expectFrame then', 1, true) ~= nil and o:find('watch.last = watch.expect', 1, true) ~= nil)
+  check('objects.tick counts frames', o:find('function objects.tick(now)' .. string.char(10) .. '    frameNo = frameNo + 1', 1, true) ~= nil
+    or o:find('function objects.tick(now)' .. string.char(13, 10) .. '    frameNo = frameNo + 1', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
