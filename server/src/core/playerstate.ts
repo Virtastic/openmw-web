@@ -864,7 +864,7 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
     }, 'sweep');
     const wire: Record<string, JsLike[]> = {};
     for (const [rid, bucket] of Object.entries(merged)) wire[rid] = bucket as JsLike[];
-    p.peer.sendEvent('SelfItemStates', { itemStates: wire }); // bare name; the engine adds MP_
+    if (process.env.OMW_EXP_NO_SELF_ITEMSTATES !== '1') p.peer.sendEvent('SelfItemStates', { itemStates: wire }); // bare name; the engine adds MP_ -- EXPERIMENT 507
   }
 }
 
