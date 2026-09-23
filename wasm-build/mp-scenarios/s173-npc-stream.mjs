@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s160: THE NPC POSE STREAM REACHES A LONE PLAYER'S SCRIPTS.
+// s173: THE NPC POSE STREAM REACHES A LONE PLAYER'S SCRIPTS.
 //
 // 2026-09-23, dev box: the server relayed ~41 ActorMoveBatch frames/s to a solo player and the
 // browser received every one, yet actors.lua counted none -- NPCs ran their own AI on that

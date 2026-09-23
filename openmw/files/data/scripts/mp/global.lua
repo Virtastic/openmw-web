@@ -582,6 +582,8 @@ local lastInputSeq = {}
 -- stream is stamped with. lastInputSeq above is what has been ROUTED, a frame or two ahead of
 -- the body; stamping that made every pose claim input it did not yet contain.
 local appliedSeq = {}
+local appliedPose = {} -- id -> {x,y,z,at}: the pose as of appliedSeq[id]
+local APPLIED_POSE_FRESH_S = 0.25
 local avatarUsing = {} -- id -> the use bit of the newest routed input (mirrors "attacking")
 -- The owner's whole posture, not just the use bit. The avatar stream used to forward only
 -- "attacking" and "weapon drawn", so under the peer a friend sneaking walked upright on every
@@ -833,7 +835,10 @@ local function avatarStreamTick(now)
         -- origin for everyone with fresh input (s69, #132 / backlog 503).
         if p.obj and p.obj:isValid() and p.obj.cell then
             local ok = pcall(function()
-                local pos = p.obj.position
+                -- The seq-matched pose while inputs are flowing; the body's own position once they
+                -- stop (the avatar coasts, falls, is shoved, and nothing re-stamps it then).
+                local ap = appliedPose[id]
+                local pos = (ap and now - ap.at < APPLIED_POSE_FRESH_S) and ap or p.obj.position
                 local walkSpeed = types.Actor.getWalkSpeed(p.obj)
                 local animVel = walkSpeed > 0 and (types.Actor.getCurrentSpeed(p.obj) / walkSpeed) or 0
                 entries[#entries + 1] = {
@@ -1384,6 +1389,7 @@ local function despawnPuppet(id)
     if not p then return end
     puppets[id] = nil
     avatarStatsLast[id] = nil
+    appliedPose[id] = nil -- a rejoin must not stream the last body's place
     pushAvatarPolicyQueued = true
     avatarStatsSentAt[id] = nil
     avatarUsing[id] = nil
@@ -3488,7 +3494,12 @@ local eventHandlers = {
         if not (data and data.id and data.seq and data.obj) then return end
         local p = puppets[data.id]
         if not (p and p.obj and p.obj:isValid() and p.obj.id == data.obj.id) then return end
-        if appliedSeq[data.id] == nil or data.seq > appliedSeq[data.id] then appliedSeq[data.id] = data.seq end
+        if appliedSeq[data.id] == nil or data.seq >= appliedSeq[data.id] then
+            appliedSeq[data.id] = data.seq
+            -- The pose AS OF that seq (avatar.lua backs it off to when the seq arrived), so the
+            -- stream sends a matching pair instead of "seq N" with 1-2 frames of N already in it.
+            if data.x then appliedPose[data.id] = { x = data.x, y = data.y, z = data.z, at = core.getRealTime() } end
+        end
     end,
 
     mpAvatarSkillUse = function(data)

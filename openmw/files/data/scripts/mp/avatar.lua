@@ -20,6 +20,7 @@ local types = require('openmw.types')
 local core = require('openmw.core')
 local I = require('openmw.interfaces')
 local mp = require('openmw.mp')
+local util = require('openmw.util')
 
 -- PvP POLICY, pushed by global.lua (mpAvatarPolicy) on spawn and whenever it changes.
 -- The peer resolves avatar-vs-avatar melee NATIVELY, so with pvp off the server's
@@ -32,6 +33,13 @@ local avatarObjIds = {}
 local input = nil -- latest {seq, move, side, yaw, pitch, flags}
 local inputAt = 0
 local appliedSeqSent = nil -- the newest input seq this body has put into its controls
+-- WHERE THIS BODY STOOD WHEN THE SEQ ARRIVED, not where it stands a frame or two later. The
+-- peer steps at 20 fps and the owner sends at 30 Hz, so a pose stamped "seq N" already held
+-- up to 1.5 frames (up to 75 ms) of N's movement that the owner's ring entry for N does not:
+-- 0-12 units of phantom divergence on every running sample, corrected as if it were real.
+-- Backed off by the frames N has run plus half a frame for when inside a frame it arrived.
+local frameNo, appliedFrame, lastPos, stepVel = 0, 0, nil, nil
+local FRAME_STEP_MAX = 200 -- a per-frame move beyond this is a teleport, not a velocity
 -- 1.0, not 0.35: a TCP retransmit stall (300 ms RTO, seconds on a Wi-Fi roam) must not stop
 -- the avatar while the owner keeps running -- the burst collapses to the newest input and the
 -- owner is snapped back by v x stall (#205).
@@ -172,6 +180,13 @@ return {
             if mp.setAvatar then mp.setAvatar(self.object, true) end
         end,
         onUpdate = function()
+            frameNo = frameNo + 1
+            do
+                local pos = self.position
+                local step = lastPos and (pos - lastPos) or nil
+                stepVel = (step and step:length() <= FRAME_STEP_MAX) and step or nil
+                lastPos = pos
+            end
             equipTick(core.getRealTime())
             fallProbe()
             -- I.Combat comes from the builtin combat script on this body; if it was not up
@@ -214,9 +229,19 @@ return {
             -- compares a pose with where it stood when that seq left (player.lua posAt), so the
             -- false claim was a correction on every start, stop and turn: constant micro
             -- rubber-banding. Reported once per new seq; global.lua stamps the stream with it.
-            if input.seq and input.id and input.seq ~= appliedSeqSent then
-                appliedSeqSent = input.seq
-                core.sendGlobalEvent('mpAvatarApplied', { obj = self.object, id = input.id, seq = input.seq })
+            if input.seq and input.id then
+                if input.seq ~= appliedSeqSent then
+                    appliedSeqSent = input.seq
+                    appliedFrame = frameNo
+                end
+                -- Every frame, the (seq, pose) PAIR: the position read here is last frame's
+                -- physics, which holds (frameNo - appliedFrame) frames of this seq.
+                local pos = self.position
+                local v = stepVel or util.vector3(0, 0, 0)
+                local back = v * ((frameNo - appliedFrame) + 0.5)
+                local at = pos - back
+                core.sendGlobalEvent('mpAvatarApplied', { obj = self.object, id = input.id, seq = input.seq,
+                    x = at.x, y = at.y, z = at.z })
             end
             -- Phase 4C: THE AVATAR SWINGS. The owner's use bit drives the attack control, and
             -- this engine computes the hit natively against the actors it simulates. Safe
