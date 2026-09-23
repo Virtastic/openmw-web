@@ -217,7 +217,7 @@ export async function startGatewayAndClient(ctx, opts = {}) {
     const ownUrl = `ws://127.0.0.1:${gwPort}/w/${ownId}`;
     const client = await ctx.launchClient(name, '', { mpUrl: ownUrl, homeUrl: ownUrl, ...boot });
     await grantLockerSession(client, gwPort, account);
-    return { client, gwPort, ownId, account, stop };
+    return { client, gwPort, ownId, account, stop, proc: gw };
   } catch (err) {
     stop();
     throw err;

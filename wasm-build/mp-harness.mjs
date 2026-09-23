@@ -765,6 +765,21 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       await new Promise((r) => setTimeout(r, ms));
       await bsend('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base, buttons: 0 }, sessionId);
     };
+    // A REAL left click at a point on the game canvas, as FRACTIONS of its size (fx, fy in
+    // 0..1), for the engine's own MyGUI widgets (the main menu's Exit, its confirm box) that
+    // no DOM selector reaches. Fractions, because the window size is a scenario variable.
+    handle.clickCanvas = async (fx, fy) => {
+      const box = await handle.eval(
+        `(function(){ var c = document.querySelector('canvas'); if (!c) return null;
+           var r = c.getBoundingClientRect(); return JSON.stringify({ x: r.left + r.width*${Number(fx)}, y: r.top + r.height*${Number(fy)} }); })()`);
+      if (!box) throw new Error('clickCanvas: no canvas');
+      const { x, y } = JSON.parse(box);
+      await bsend('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 }, sessionId);
+      await bsend('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, buttons: 1 }, sessionId);
+      await new Promise((r) => setTimeout(r, 120));
+      await bsend('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, buttons: 0 }, sessionId);
+      return { x: Math.round(x), y: Math.round(y) };
+    };
     // eval WITH transient user activation. Gesture-gated APIs (requestPointerLock, fullscreen)
     // are rejected outright from a plain Runtime.evaluate, which silently turns any test of
     // them into a no-op that passes whether or not the code under test works.
