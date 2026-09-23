@@ -115,7 +115,11 @@ local stuckSince = nil
 local placed = false
 local lastProgressPos = nil
 local prevJump = false
-local prevUse = false -- the owner's use bit last pose: its release is one swing to show
+-- The use bit's edges AS RECEIVED, latched until a frame plays them (s171). A creature's bite
+-- holds the bit for ONE peer frame (50 ms); read off the render-delayed target once per client
+-- frame, that pulse fell between frames on any client under 20 fps and the rat bit the player
+-- to death standing idle. Every pose is seen here, so no edge is lost to the frame rate.
+local rxUse, pressLatch, releaseLatch = false, false, false
 
 -- A SWING YOU CAN SEE. The pose stream carries the owner's use bit, and nothing here drew a
 -- swing: a friend fighting beside you stood with the weapon out and the enemy took damage
@@ -134,11 +138,12 @@ local SWING_GROUP_OF_TYPE = {
 -- 'min attack' until released), the blow on the RELEASE. Played as one clip on release the
 -- wind-up began after the enemy had already taken the damage. In the spell stance the hands
 -- glow instead of a weapon swinging (MP_CastFx adds the sound and the casting vfx).
-local function showSwing(release)
+-- `full`: press and release landed in one frame (a creature's bite always does): the whole blow.
+local function showSwing(release, full)
     pcall(function()
         local anim = require('openmw.animation')
         if types.Actor.getStance(self) == types.Actor.STANCE.Spell then
-            if not release then
+            if not release or full then
                 anim.playBlendedAnimation(self, 'spellcast', {
                     priority = anim.PRIORITY.Weapon, startKey = 'self start', stopKey = 'self stop' })
             end
@@ -151,12 +156,14 @@ local function showSwing(release)
             local groups = {}
             for i = 1, 3 do if anim.hasGroup(self, 'attack' .. i) then groups[#groups + 1] = 'attack' .. i end end
             if #groups == 0 then return end
+            -- THE WHOLE BITE ON THE PRESS (s171). A creature's use bit is up for ONE peer frame:
+            -- its AI never holds an attack, so the release follows 50 ms later. Played as two
+            -- halves, the lunge (start -> max attack) was cut after a frame by the recovery
+            -- (max attack -> stop), and all a player saw of a rat's bite was it flinching back.
+            -- The peer's creature starts its whole attack on the press too.
+            if release and not full then return end
             local group = groups[math.random(#groups)]
-            if release then
-                anim.playBlendedAnimation(self, group, { priority = anim.PRIORITY.Weapon, startKey = 'max attack', stopKey = 'stop' })
-            else
-                anim.playBlendedAnimation(self, group, { priority = anim.PRIORITY.Weapon, startKey = 'start', stopKey = 'max attack', autoDisable = false })
-            end
+            anim.playBlendedAnimation(self, group, { priority = anim.PRIORITY.Weapon, startKey = 'start', stopKey = 'stop' })
             return
         end
         local group = 'handtohand'
@@ -172,7 +179,7 @@ local function showSwing(release)
         if release then
             anim.playBlendedAnimation(self, group, {
                 priority = anim.PRIORITY.Weapon,
-                startKey = kind .. ' max attack',
+                startKey = kind .. (full and ' start' or ' max attack'),
                 stopKey = ranged and 'shoot release' or 'chop follow stop',
             })
             core.sound.playSound3d('Weapon Swish', self)
@@ -331,13 +338,31 @@ local function forwardMagicHits()
     })
 end
 
+-- THE TARGET'S OWN SPEED, PLUS THE GAP (s171). Proportional-only (dist / 96) made a puppet trail
+-- by 96 u x (its speed / its top speed) before it moved at full pace: a charging creature's
+-- puppet sat 110-150 u behind the peer's and crept the last stretch at a quarter walk -- "they
+-- move slowly towards me". Feed the target's speed forward and close what is left in CATCHUP_S.
+-- Floored so it always closes the gap rather than creeping forever.
+local CATCHUP_S = 0.15
+local function steerMovement(dist2d, now, running)
+    local ok, top = pcall(running and types.Actor.getRunSpeed or types.Actor.getWalkSpeed, self)
+    if not ok or type(top) ~= 'number' or top <= 0 then return math.max(0.25, math.min(1, dist2d / 96)) end
+    return math.max(0.25, math.min(1, (interp:speed(now) + dist2d / CATCHUP_S) / top))
+end
+
 local function onUpdate(dt)
     ensureHitHandler()
     forwardMagicHits()
     if dt <= 0 or (not playerId and not actorKey) then return end
     if dead then
         zeroControls()
+        pressLatch, releaseLatch = false, false
         return
+    end
+    -- The swing first: nothing below (a snap, a far tier, a parked puppet) may swallow it.
+    if pressLatch or releaseLatch then
+        showSwing(releaseLatch, pressLatch and releaseLatch)
+        pressLatch, releaseLatch = false, false
     end
     local now = core.getRealTime()
     equipTick(now)
@@ -442,12 +467,16 @@ local function onUpdate(dt)
     end
 
     local curYaw = self.rotation:getYaw()
+    -- Mirror the remote actor's run flag while steering. The speed below is a fraction of the
+    -- top speed this picks, so a run no longer overshoots a small correction (it used to be
+    -- withheld inside STEER_START, which left a charging creature's puppet walking).
+    local run = bit(target.flags, 0) and steering
+    if run then runUntil = now + RUN_HOLD_S end
+    self.controls.run = run or now < runUntil
     if steering then
         -- Steer toward the target point (MW yaw: 0 = +Y, clockwise positive).
         self.controls.yawChange = shortestArc(math.atan(dx, dy) - curYaw)
-        -- Full speed while there is ground to cover, easing to a walk over the last stretch.
-        -- Floored so it always closes the gap rather than creeping forever.
-        self.controls.movement = math.max(0.25, math.min(1, dist2d / 96))
+        self.controls.movement = steerMovement(dist2d, now, self.controls.run)
     else
         -- Close enough: hold position, face the remote player's actual heading.
         self.controls.movement = 0
@@ -456,11 +485,6 @@ local function onUpdate(dt)
     -- Look up and down too (avatar.lua applies the input's pitch the same way).
     self.controls.pitchChange = (target.pitch or 0) - self.rotation:getPitch()
     self.controls.sideMovement = 0
-    -- Mirror the remote player's run flag, but never while closing the last few units: running
-    -- is what turns a small correction into an overshoot.
-    local run = bit(target.flags, 0) and steering and dist2d > STEER_START
-    if run then runUntil = now + RUN_HOLD_S end
-    self.controls.run = run or now < runUntil
     self.controls.sneak = bit(target.flags, 1)
     -- Posture: a friend with a sword out looks like it. Purely visual here -- the puppet never
     -- swings (its controls.use stays 0); the peer's avatar does the hitting.
@@ -486,10 +510,6 @@ local function onUpdate(dt)
     local jumpEdge = bit(target.flags, 2)
     self.controls.jump = jumpEdge and not prevJump
     prevJump = jumpEdge
-    -- Press is the wind-up, release is the blow: one edge each.
-    local using = bit(target.flags, 3)
-    if using ~= prevUse then showSwing(not using) end
-    prevUse = using
 end
 
 return {
@@ -527,6 +547,10 @@ return {
             -- fallback must be full fidelity, never a silent degrade.
             tier = e.tier or TIER_NEAR
             interp:push(e)
+            local u = bit(e.flags, 3)
+            if u and not rxUse then pressLatch = true end
+            if rxUse and not u then releaseLatch = true end
+            rxUse = u
             -- The LAST pose this puppet was handed, and the tier it came at. With global.lua's
             -- moveRx this pins a movement fault to ONE hop -- never routed, routed but not
             -- pushed, or pushed and not steered -- which is exactly the distinction that took
@@ -575,6 +599,15 @@ return {
                 local recent = core.getRealTime() - lastSwingAt <= SWING_FEEL_WINDOW_S
                 if hpDrop then
                     core.sound.playSound3d('Health Damage', self)
+                    -- ...and the FLINCH (s171). The holder's actor plays its hit reaction on a
+                    -- damaging blow; the puppet only changed a number, so a landed hit looked like
+                    -- a miss to the player who landed it. Not on the killing blow (death plays).
+                    if data.hp and (data.hp.c or 0) > 0 then
+                        local anim = require('openmw.animation')
+                        local hits = {}
+                        for i = 1, 5 do if anim.hasGroup(self, 'hit' .. i) then hits[#hits + 1] = 'hit' .. i end end
+                        if #hits > 0 then anim.playBlendedAnimation(self, hits[math.random(#hits)], { priority = anim.PRIORITY.Hit }) end
+                    end
                     if recent and lastSwingPos and I.Combat and I.Combat.spawnBloodEffect then
                         I.Combat.spawnBloodEffect(lastSwingPos)
                     end

@@ -59,6 +59,16 @@ function Interp:target(now)
     return buf[n]
 end
 
+-- Ground speed (u/s) of the rendered path at `now`: the same delayed target the puppet steers to,
+-- over SPEED_WINDOW so one jittery arrival time cannot spike it. 0 with fewer than two samples.
+local SPEED_WINDOW = 0.1
+function Interp:speed(now)
+    if #self.buf < 2 then return 0 end
+    local a, b = self:target(now - SPEED_WINDOW), self:target(now)
+    if not (a and b) then return 0 end
+    return math.sqrt((b.x - a.x) ^ 2 + (b.y - a.y) ^ 2) / SPEED_WINDOW
+end
+
 function Interp:clear()
     self.buf = {}
 end

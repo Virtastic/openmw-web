@@ -586,6 +586,7 @@ window.omw = (function(){
    // Binary frames as the BROWSER receives them, by envelope type: tells "never arrived"
    // apart from "arrived and the engine dropped it" (the Lua counters only see the latter).
    var wsRx = {}, lastSeq = 0, dumped = false;
+   var actorTap = window.__omwActorTap = { last: {}, edges: [], events: [] };
    var NativeWS = window.WebSocket;
    if (NativeWS) {
      window.WebSocket = function(url, protocols){
@@ -603,6 +604,23 @@ window.omw = (function(){
            if (seq <= lastSeq) wsRx[t + ':stale'] = (wsRx[t + ':stale'] || 0) + 1; else lastSeq = seq;
            if (ty === 0x200 && (d.byteLength < 11 || d.byteLength !== 11 + v.getUint8(10) * 28))
              wsRx['200:size' + d.byteLength] = (wsRx['200:size' + d.byteLength] || 0) + 1;
+         }
+         // Per-actor tap (s171): the newest pose each actor got AS RECEIVED, and every edge of
+         // its use bit (bit 3), so a scenario can tell "never sent" from "sent, not shown".
+         // Keys: 'n<netId>' for a named runtime actor (contentFile -2), '<cf>:<index>' otherwise.
+         var now = Date.now();
+         if (ty === 0x200 && d.byteLength >= 11) {
+           for (var i = 0, n = v.getUint8(10); i < n && 11 + (i + 1) * 28 <= d.byteLength; i++) {
+             var o = 11 + i * 28, cf = v.getInt32(o + 4, true), k = (cf === -2 ? 'n' : cf + ':') + v.getUint32(o, true);
+             var fl = v.getUint8(o + 23), was = actorTap.last[k];
+             if (was && ((was.fl ^ fl) & 8)) actorTap.edges.push([now, k, fl]);
+             actorTap.last[k] = { t: now, x: v.getFloat32(o + 8, true), y: v.getFloat32(o + 12, true), z: v.getFloat32(o + 16, true), fl: fl, yaw: v.getUint16(o + 20, true) * 2 * Math.PI / 65536 };
+           }
+           if (actorTap.edges.length > 600) actorTap.edges.splice(0, 300);
+         } else if (ty === 0x0002 && d.byteLength > 7) {
+           var nl = v.getUint8(6), nm = '';
+           for (var j = 0; j < nl && 7 + j < d.byteLength; j++) nm += String.fromCharCode(v.getUint8(7 + j));
+           if (nm === 'ActorStatsDynamic' || nm === 'ActorAI') { actorTap.events.push([now, nm]); if (actorTap.events.length > 600) actorTap.events.splice(0, 300); }
          }
        });
        return ws;

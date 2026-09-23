@@ -736,6 +736,12 @@ end
 -- so this is the only "is it fighting" the follow-teleport (global.lua) can ask.
 local inCombat = {}
 
+-- The dialogue lock lives in quests.lua; required lazily (both load inside global.lua).
+local function talkingTo(obj)
+    local ok, quests = pcall(require, 'scripts.mp.quests')
+    return ok and type(quests) == 'table' and quests.isTalkingTo ~= nil and quests.isTalkingTo(obj) == true
+end
+
 function actors.inCombat(obj)
     return inCombat[refKeyOf(obj)] == true
 end
@@ -754,6 +760,10 @@ function actors.noteCombat(obj, target)
         -- drifts into the next cell to bite it produced this claim per frame, refused per frame.
         local own = deps.ownIdFn and deps.ownIdFn() or nil
         if foeId == nil or foeId ~= own or (mp.isSystem and mp.isSystem()) then return end
+        -- ONLY FROM THE CONVERSATION (s171). The holder's own fight reaches this puppet as
+        -- MP_ActorAI and stacks a Combat package on it; companion.lua then read that package
+        -- back and claimed it as ours -- refused by the server, every time a creature engaged.
+        if not talkingTo(obj) then return end
     end
     local body = withAddr({
         cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, combat = foeId or false,
@@ -770,9 +780,12 @@ function actors.noteTravel(obj, dest)
     if not (obj and obj:isValid()) or type(dest) ~= 'table' or type(dest.x) ~= 'number' then return end
     local cellKey = actors.cellKeyOfObj(obj)
     if not cellKey then return end
+    -- A non-holder's claim stands only from the conversation (as noteCombat): a puppet's Travel
+    -- the holder relayed, or one its record carries, is not ours to claim.
+    if not actors.isHolderOf(cellKey) and not talkingTo(obj) then return end
     local body = withAddr({
         cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0,
-        travel = { x = dest.x, y = dest.y or 0, z = dest.z or 0 },
+        travel ={ x = dest.x, y = dest.y or 0, z = dest.z or 0 },
     }, obj)
     if body then mp.sendEvent('ActorAI', body) end
 end

@@ -555,9 +555,14 @@ do
   check('player.lua puts the use control in pose bit 3, not inAir',
     pl:find('self.controls.use ~= 0) or core.getRealTime() < forceUseUntil then flags = flags + 8', 1, true) ~= nil
     and not pl:find('isOnGround(self) then flags = flags + 8', 1, true))
-  check('puppet.lua reads pose bit 3 as the swing, on both edges',
-    pp:find('local using = bit(target.flags, 3)', 1, true) ~= nil
-    and pp:find('if using ~= prevUse then showSwing(not using) end', 1, true) ~= nil)
+  -- s171: the edges are latched as RECEIVED (a creature's bite is one 50 ms peer frame, which
+  -- fell between frames of a slow client read off the render-delayed target).
+  check('puppet.lua reads pose bit 3 as the swing, on both edges, latched per received pose',
+    pp:find('local u = bit(e.flags, 3)', 1, true) ~= nil
+    and pp:find('if u and not rxUse then pressLatch = true end', 1, true) ~= nil
+    and pp:find('if rxUse and not u then releaseLatch = true end', 1, true) ~= nil
+    and pp:find('showSwing(releaseLatch, pressLatch and releaseLatch)', 1, true) ~= nil
+    and pp:find('prevUse', 1, true) == nil)
   -- Backlog 132: the movement-shaping effects reach the observer's puppet, or it pogos
   -- under a levitating friend.
   local vis = g:match('local VISIBLE_EFFECT = (%b{})')
@@ -1678,7 +1683,7 @@ do
     and ac:find("isPlaying(obj, 'spellcast')", 1, true) ~= nil
     and lb:find('api["isAttacking"]', 1, true) ~= nil
     and pp:find("anim.hasGroup(self, 'attack' .. i)", 1, true) ~= nil
-    and pp:find("startKey = 'max attack', stopKey = 'stop'", 1, true) ~= nil)
+    and pp:find("startKey = 'start', stopKey = 'stop' })", 1, true) ~= nil)
   -- #217: the peer watches every scripted object in a held cell; a scripted Say is relayed.
   check('the peer arms open-ended member watches over held cells, with the cell key on the wire',
     g:find('heldCellsFn = function() return actors.heldCells() end, -- #217', 1, true) ~= nil
@@ -1754,6 +1759,37 @@ do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
   check('noteCombat: a non-holder "fights ME" claim never leaves the system peer',
     ac:find('if foeId == nil or foeId ~= own or (mp.isSystem and mp.isSystem()) then return end', 1, true) ~= nil)
+end
+
+print('s171 a puppet never echoes the holder\'s fight or travel back as the player\'s own claim')
+do
+  -- The peer's creature engages us -> MP_ActorAI stacks Combat on our puppet -> companion.lua
+  -- reads it back -> noteCombat. Before s171 that went out as ActorAI {combat=me} and the
+  -- server refused it ("combat claim without the conversation") every time a creature engaged.
+  fresh()
+  package.loaded['scripts.mp.actors'] = nil
+  local env = stubs.install({})
+  local talking = false
+  package.loaded['scripts.mp.quests'] = { isTalkingTo = function() return talking end }
+  local actors = require('scripts.mp.actors')
+  local me = { id = 'player' }
+  actors.init({ ownIdFn = function() return 7 end, netIdOf = function() return 42 end,
+    playerIdOf = function(o) return o == me and 7 or nil end })
+  local rat = { id = 'rat', isValid = function() return true end, cell = { isExterior = true, gridX = -2, gridY = -7 } }
+  local function claims()
+    local n = 0
+    for _, c in ipairs(env.calls.events) do if c.name == 'ActorAI' then n = n + 1 end end
+    return n
+  end
+  actors.noteCombat(rat, me)
+  actors.noteTravel(rat, { x = 1, y = 2, z = 3 })
+  check('a relayed fight or travel on a puppet is not claimed outside a conversation', claims() == 0, 'claims=' .. claims())
+  talking = true
+  actors.noteCombat(rat, me)
+  actors.noteTravel(rat, { x = 1, y = 2, z = 3 })
+  check('...and a taunt or AITravel from our own conversation still is', claims() == 2, 'claims=' .. claims())
+  package.loaded['scripts.mp.quests'] = nil
+  package.loaded['scripts.mp.actors'] = nil
 end
 
 print('#431 a fresh holder streams no bars for a cell until the world record has answered')
@@ -2073,6 +2109,109 @@ do
   local m = rm({ effects = { 0, 2, 5 }, mags = { 12, -1, 7.5 } })
   check('rolledMagnitudes keys by effect index and drops -1', m[0] == 12 and m[2] == nil and m[5] == 7.5)
   check('rolledMagnitudes of an older sender (no mags) is empty: the engine rolls', next(rm({ effects = { 0 } })) == nil)
+end
+
+print('s171 a creature bite held for one peer frame is shown on a client that saw no frame of it')
+do
+  -- The real puppet.lua, stubbed engine. A rat's use bit is set on ONE peer frame: two poses
+  -- (8 then 0) arrive between two client frames. Before s171 the edge was read off the
+  -- render-delayed target in onUpdate and a slow client (s171 measured the rat biting the
+  -- player 35 -> 12 hp while its puppet stood idle) never saw it.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.animation', 'scripts.mp.interp' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local played = {}
+  local hpStat = { base = 20, current = 20 }
+  local vec = function(x, y, z) return { x = x, y = y, z = z } end
+  local now = 10
+  package.loaded['openmw.core'] = { getRealTime = function() return now end, sendGlobalEvent = function() end,
+    sound = { playSound3d = function() end } }
+  package.loaded['openmw.self'] = { object = {}, controls = {}, position = vec(0, 0, 0),
+    rotation = { getYaw = function() return 0 end, getPitch = function() return 0 end }, enableAI = function() end }
+  package.loaded['openmw.types'] = {
+    Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 1 end, setStance = function() end,
+      stats = { dynamic = { health = function() return hpStat end, magicka = function() return nil end, fatigue = function() return nil end } } },
+    Creature = { objectIsInstance = function() return true end },
+  }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4 }, hasGroup = function(_, g) return g == 'attack1' or g == 'hit1' end,
+    playBlendedAnimation = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
+  package.loaded['scripts.mp.interp'] = nil
+  local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+  pup.engineHandlers.onInit({ actorKey = 'o:rat' })
+  local pose = function(fl) return { x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = fl, t = now } end
+  pup.eventHandlers.MP_Pose(pose(16)); pup.engineHandlers.onUpdate(0.5)
+  now = now + 0.05; pup.eventHandlers.MP_Pose(pose(24))
+  now = now + 0.05; pup.eventHandlers.MP_Pose(pose(16))
+  now = now + 0.5; pup.engineHandlers.onUpdate(0.5)
+  check('a one-frame bite plays the whole attack once', #played == 1 and played[1] == 'attack1:start>stop', table.concat(played, ' '))
+  now = now + 0.5; pup.engineHandlers.onUpdate(0.5)
+  check('...and never again without a new edge', #played == 1, table.concat(played, ' '))
+  -- A fast client sees the press and the release in two frames: still the whole bite, never
+  -- cut to its recovery half by the release (what a player saw of every bite before s171).
+  now = now + 0.05; pup.eventHandlers.MP_Pose(pose(24)); pup.engineHandlers.onUpdate(0.05)
+  now = now + 0.05; pup.eventHandlers.MP_Pose(pose(16)); pup.engineHandlers.onUpdate(0.05)
+  check('press and release in separate frames: one whole bite, not cut by the release', #played == 2 and played[2] == 'attack1:start>stop', table.concat(played, ' '))
+  -- A blow the holder applied: the puppet flinches, as the holder's actor did; the kill does not.
+  pup.eventHandlers.MP_Stats({ hp = { c = 12, b = 20 } })
+  check('a landed hit (hp drop) plays a hit reaction on the puppet', #played == 3 and played[3] == 'hit1:nil>nil', table.concat(played, ' '))
+  pup.eventHandlers.MP_Stats({ hp = { c = 0, b = 20 } })
+  check('...but not the killing blow', #played == 3, table.concat(played, ' '))
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+end
+
+print('s171 a charging creature\'s puppet keeps up with it and arrives with it')
+do
+  -- The real puppet.lua against a stub character controller (movement x walk/run speed, yaw
+  -- applied in full) at 30 fps. The peer's rat stands 600 u off, runs at the player at its run
+  -- speed and stops 140 u short; poses at 20 Hz, 50 ms in flight. Before s171 (dist / 96 with no
+  -- feed-forward) the puppet trailed by 121-128 u and got there 1.2 s after the peer's rat.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.animation', 'scripts.mp.interp' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local a1 = math.atan
+  math.atan = function(y, x) if x then return math.atan2(y, x) end return a1(y) end -- the client's Lua 5.4
+  local RUN, WALK, now = 250, 147, 0
+  local function v3(x, y, z) return setmetatable({ x = x, y = y, z = z }, { __sub = function(p, q) return v3(p.x - q.x, p.y - q.y, p.z - q.z) end,
+    __index = { length = function(p) return math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) end } }) end
+  local me = { controls = {}, position = v3(0, 600, 0), yaw = 0, object = {}, enableAI = function() end }
+  me.rotation = { getYaw = function() return me.yaw end, getPitch = function() return 0 end }
+  package.loaded['openmw.core'] = { getRealTime = function() return now end, sound = { playSound3d = function() end },
+    sendGlobalEvent = function(name, d) if name == 'mpSnapRequest' then me.snap = d end end }
+  package.loaded['openmw.self'] = me
+  package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 1 end,
+    setStance = function() end, getRunSpeed = function() return RUN end, getWalkSpeed = function() return WALK end },
+    Creature = { objectIsInstance = function() return true end } }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlendedAnimation = function() end }
+  package.loaded['scripts.mp.interp'] = nil
+  local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+  pup.engineHandlers.onInit({ actorKey = 'o:rat' })
+  local function truth(t) return t < 1 and 600 or math.max(140, 600 - RUN * (t - 1)) end
+  local nextPose, dt, worst, arrived = 0, 1 / 30, 0, nil
+  while now < 5 do
+    while nextPose <= now - 0.05 do
+      local y = truth(nextPose)
+      pup.eventHandlers.MP_Pose({ x = 0, y = y, z = 0, yaw = math.pi, pitch = 0, flags = 16 + ((y > 140 and nextPose >= 1) and 1 or 0), t = now })
+      nextPose = nextPose + 0.05
+    end
+    pup.engineHandlers.onUpdate(dt)
+    if me.snap then me.position = v3(me.snap.x, me.snap.y, me.snap.z); me.snap = nil end
+    local c = me.controls
+    me.yaw = me.yaw + (c.yawChange or 0)
+    local step = (c.movement or 0) * (c.run and RUN or WALK) * dt
+    me.position = v3(me.position.x + math.sin(me.yaw) * step, me.position.y + math.cos(me.yaw) * step, 0)
+    now = now + dt
+    if now > 1.2 and truth(now) > 140 then worst = math.max(worst, math.abs(me.position.y - truth(now))) end
+    if not arrived and now > 1 and me.position.y <= 150 then arrived = now end
+  end
+  check('while it charges the puppet trails the peer by < 80 u (was 128)', worst < 80, string.format('worst %.0f u', worst))
+  check('the puppet arrives within 0.4 s of the peer\'s rat (was 1.2 s)', arrived ~= nil and arrived - (1 + 460 / RUN) < 0.4,
+    string.format('arrived %s, peer %.2f', tostring(arrived), 1 + 460 / RUN))
+  math.atan = a1
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

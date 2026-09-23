@@ -529,6 +529,13 @@ end
 local lockDisposition = nil -- the NPC's disposition when the conversation began
 local lockAi = nil -- and its Fight/Flee/Alarm (#229), read the same way
 
+-- Is this client in conversation with `obj` (holding the server's dialogue lock on it)? The
+-- server admits a non-holder's combat/travel claim about an actor on exactly this condition
+-- (worldstate.ts), so actors.lua asks before sending one it would only see refused.
+function quests.isTalkingTo(obj)
+    return lockHeld ~= nil and obj ~= nil and lockHeld:isValid() and lockHeld.id == obj.id
+end
+
 function quests.releaseLock(why)
     local obj = lockHeld
     lockHeld = nil
