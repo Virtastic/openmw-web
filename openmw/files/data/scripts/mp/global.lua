@@ -533,6 +533,7 @@ local function pushEquipmentToPuppet(id)
         local grantId = worldmp.toLocal(recordId)
         local ok, count = pcall(function() return inventory:countOf(grantId) end)
         if not ok or count == 0 then
+            if mp.isSystem and mp.isSystem() then print(string.format('[mp] avatar #%s equip-fabricates %s (slot count %s)', tostring(id), tostring(grantId), tostring(count))) end
             local okc, item = pcall(function() return world.createObject(grantId) end)
             if okc then
                 item:moveInto(inventory)
@@ -708,6 +709,7 @@ local function applyAvatarDoc(id)
                 end
             end
             if short > 0 then
+                print(string.format('[mp] avatar #%s adds %d x %s (doc says %d, landed %d, in flight %d)', tostring(id), short, tostring(wantId), want, (okc and inventory:countOf(wantId)) or -1, inFlight or -1))
                 local okCreate, item = pcall(function() return world.createObject(wantId, short) end)
                 if okCreate then
                     item:moveInto(inventory)
