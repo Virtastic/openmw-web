@@ -21,7 +21,8 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const NICE = { discord: 'Discord', google: 'Google', microsoft: 'Microsoft' };
+  const NICE = { google: 'Google', discord: 'Discord', microsoft: 'Microsoft' };
+  const ICONS = window.PROVIDER_ICONS || {}; // providers.js; absent = plain labelled buttons
 
   const note = (msg, kind = '') => {
     const el = $('#note');
@@ -55,6 +56,12 @@
     singlePlayer = s.setup?.deploymentMode !== 'multiplayer';
     hostedData = s.setup?.deliveryModel === 'serve';
   } catch { /* keep the default heading, and the safer mode */ }
+  // The launcher's words for the two modes, and its cloud glyph for the single-player one.
+  $('#title').textContent = singlePlayer ? 'Sign in to play anywhere' : 'Sign in to play together';
+  const CLOUD_GLYPH = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">'
+    + '<path d="M14 34h20a7 7 0 0 0 .6-13.97A10 10 0 0 0 15.2 18.4 6.6 6.6 0 0 0 14 34z"/>'
+    + '<path d="M24 22v10M20 28l4 4 4-4"/></svg>';
+  if (singlePlayer) $('#glyph').innerHTML = CLOUD_GLYPH;
 
   let auth = null;
   try { auth = await (await fetch('/auth/providers')).json(); } catch { /* handled below */ }
@@ -65,7 +72,8 @@
     return;
   }
 
-  const providers = (auth.providers || []).filter((p) => NICE[p]);
+  // In NICE's order (the launcher's: Google, Discord, Microsoft), not the config's.
+  const providers = Object.keys(NICE).filter((p) => (auth.providers || []).includes(p));
   if (!auth.allowPasswordLogin && !providers.length) {
     box.innerHTML = '<div class="note">This server has no sign-in method switched on yet. '
       + 'Its operator can turn one on in the <a href="/admin">admin dashboard</a>.</div>';
@@ -81,17 +89,40 @@
       + '<input id="pwPass" name="password" type="password" autocomplete="current-password" required></label>'
       + '<button class="btn primary" type="submit" id="pwGo">Play now</button></form>';
   }
+  // THE INVITE PASSPHRASE. An invite-only server checks it when an SSO sign-in would create a
+  // new account, but nothing used to ask for it, so every new player hit invite_required.
+  // Prefilled from ?invite=, which makes https://<server>/?invite=<passphrase> the invite link.
+  const invited = new URLSearchParams(location.search).get('invite') || '';
   if (providers.length) {
     if (auth.allowPasswordLogin) out += '<div class="rule">or</div>';
+    if (auth.inviteRequired) {
+      out += '<label class="fld"><span>Invite passphrase</span>'
+        + `<input id="invite" autocomplete="off" spellcheck="false" value="${esc(invited)}"></label>`;
+    }
     for (const p of providers) {
-      out += `<a class="btn" href="/auth/${esc(p)}/start">Continue with ${NICE[p]}</a>`;
+      out += `<a class="prov" href="/auth/${esc(p)}/start">${ICONS[p] || ''}<span>Continue with ${NICE[p]}</span></a>`;
     }
   }
   box.innerHTML = out;
+  if (auth.inviteRequired) {
+    // Read at click time, so what was typed is what is sent. The server checks it only when
+    // the sign-in would create an account; a returning player's is ignored.
+    for (const a of box.querySelectorAll('a.prov')) {
+      a.addEventListener('click', () => {
+        const u = new URL(a.href);
+        const v = $('#invite').value.trim();
+        if (v) u.searchParams.set('invite', v); else u.searchParams.delete('invite');
+        a.href = u.href;
+      });
+    }
+  }
 
   if (auth.allowRegistration === false) {
-    note('This server is invite-only: sign-in works for existing accounts, but new ones '
-      + 'cannot be created here.');
+    note('This server is not taking new players: sign-in works for existing accounts, but new '
+      + 'ones cannot be created here.');
+  } else if (auth.inviteRequired) {
+    note('New players need the invite passphrase from whoever runs this server. '
+      + 'Returning players can leave it empty.');
   }
 
   /**

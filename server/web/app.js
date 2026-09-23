@@ -1765,13 +1765,15 @@ function pageLogin(totpRequired = false, notice = '') {
   // fetch is best-effort: with no providers (or no network) the password form stands alone.
   fetch('/auth/providers').then((r) => r.json()).then((auth) => {
     const box = $('#liSso');
-    const providers = (auth.providers || []).filter((p) => LOGIN_LABEL[p]);
+    // The launcher's provider buttons and order (Google, Discord, Microsoft), marks from
+    // providers.js, so the operator's door matches the players'.
+    const providers = ['google', 'discord', 'microsoft'].filter((p) => (auth.providers || []).includes(p));
     if (!box || !providers.length) return;
+    const icons = window.PROVIDER_ICONS || {};
     box.innerHTML = html`
       <div class="text-center text-secondary small my-3 text-uppercase" style="letter-spacing:.06em">or</div>
       ${raw(providers.map((p) => html`
-        <a class="btn btn-outline-secondary w-100 mb-2" href="/auth/${p}/start?return=admin">
-          Continue with ${LOGIN_LABEL[p]}</a>`).join(''))}
+        <a class="vt-prov" href="/auth/${p}/start?return=admin">${raw(icons[p] || '')}<span>Continue with ${LOGIN_LABEL[p]}</span></a>`).join(''))}
       <div class="form-text text-center">Works for accounts that already have dashboard access.</div>`;
   }).catch(() => { /* password-only, which always works */ });
 }
