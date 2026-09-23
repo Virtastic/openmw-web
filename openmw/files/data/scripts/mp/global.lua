@@ -479,6 +479,9 @@ local function puppetRecordId(id, name)
         print('[mp] no NPC record available for the puppet template')
         return nil
     end
+    -- No look yet: a template body until the first PlayerAppearance, whose relay always
+    -- rebuilds (MP_PlayerAppearance: no previous look is never "same").
+    if not app then print('[mp] puppet #' .. tostring(id) .. ' built from the template (no appearance yet)') end
     local draft = { template = template, name = name }
     if app then
         draft.race = app.race
@@ -490,7 +493,10 @@ local function puppetRecordId(id, name)
     local ok, record = pcall(function() return world.createRecord(types.NPC.createRecordDraft(draft)) end)
     if not ok then
         -- Bad/foreign record ids in the appearance (content mismatch): fall back to template look.
-        print('[mp] puppet record build failed (' .. tostring(record) .. '), using template look')
+        -- LOUD: a template body is the wrong race, and race weight changes run speed -- the
+        -- owner is corrected every step for as long as this body stands.
+        print(string.format('[mp] WARNING puppet record build failed for #%s (race=%s head=%s hair=%s class=%s): %s -- using template look, owner will be corrected every step',
+            tostring(id), tostring(app.race), tostring(app.head), tostring(app.hair), tostring(app.class), tostring(record)))
         record = world.createRecord(types.NPC.createRecordDraft({ template = template, name = name }))
     end
     puppetRecordIds[key] = record.id
@@ -1268,11 +1274,17 @@ local function pushAvatarPolicy()
     end
 end
 
-local removeRetry = {} -- obj -> deadline: remove() refused (teleport in flight), retried each tick
+-- obj -> next try: remove() refused (teleport in flight). NO DEADLINE: giving up after 30 s
+-- left a live, solid, AI-off body standing -- on the peer, usually right where the
+-- reconnected owner's new avatar spawns, blocking and shoving it. The body is disabled at
+-- the refusal (despawnPuppet), so waiting costs nothing; once a second bounds the churn.
+local removeRetry = {}
 local function removeRetryTick(now)
-    for obj, until_ in pairs(removeRetry) do
-        if not obj:isValid() or now > until_ or pcall(function() obj:remove() end) then
+    for obj, at in pairs(removeRetry) do
+        if not obj:isValid() then
             removeRetry[obj] = nil
+        elseif now >= at then
+            if pcall(function() obj:remove() end) then removeRetry[obj] = nil else removeRetry[obj] = now + 1 end
         end
     end
 end
@@ -1378,8 +1390,16 @@ local function despawnPuppet(id)
     -- a frame a second the despawn lands in that same frame often enough: fresh6's guest kept
     -- a live, untracked body of the host at the new spot whose puppet.lua then drove the
     -- tracked successor to its stale target every 3 s for the rest of the session.
+    -- OUT OF THE AVATAR REGISTRY FIRST. avatar.lua's mpAvatarDetach is the only other place
+    -- that clears it, and a despawn never goes through it: a SUPERSEDED reconnect left the
+    -- old body registered beside the new one ("avatar registry ... (now 2)"), and guard and
+    -- crime checks treat every registered body as a player.
+    if mp.setAvatar then pcall(mp.setAvatar, p.obj, false) end
     if p.obj:isValid() and not pcall(function() p.obj:remove() end) then
-        removeRetry[p.obj] = core.getRealTime() + 30
+        -- Disabled NOW, removed later: a disabled object leaves the scene and its collision
+        -- with it, so the retry can take as long as the teleport does.
+        pcall(function() p.obj.enabled = false end)
+        removeRetry[p.obj] = core.getRealTime() + 1
     end
     print('[mp] puppet despawned for ' .. p.name .. ' (#' .. tostring(id) .. ')')
 end

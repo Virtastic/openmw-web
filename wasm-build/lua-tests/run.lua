@@ -1907,7 +1907,7 @@ do
     g:find('if p and data.obj ~= nil and p.obj ~= data.obj then return end', 1, true) ~= nil)
   check('despawnPuppet retries a remove() refused mid-teleport instead of forgetting the body',
     g:find('if p.obj:isValid() and not pcall(function() p.obj:remove() end) then', 1, true) ~= nil
-    and g:find('removeRetry[p.obj] = core.getRealTime() + 30', 1, true) ~= nil
+    and g:find('removeRetry[p.obj] = core.getRealTime() + 1', 1, true) ~= nil
     and g:find('removeRetryTick(now) -- a despawn refused mid-teleport lands now (480)', 1, true) ~= nil)
   check('spawnPuppet skips a pose outside the loaded neighbourhood (a lagging avatar two cells back)',
     g:find('if not poseInView(pose) then return end', 1, true) ~= nil
@@ -1916,6 +1916,26 @@ do
   local key = function(x, y) return math.floor(x / 8192) .. ',' .. math.floor(y / 8192) end
   check('the pose cell key floors like ESM::positionToExteriorCellLocation',
     key(-12288, -69632) == '-2,-9' and key(-12500, -53100) == '-2,-7' and key(-1, -1) == '-1,-1' and key(0, 8191) == '0,0')
+end
+
+print('avatar bookkeeping: a despawned body leaves the registry and the scene, a rebuilt one gets the effects back')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
+  check('a refused remove() disables the body at once (no solid ghost while the retry waits)',
+    g:find('pcall(function() p.obj.enabled = false end)', 1, true) ~= nil)
+  check('the remove retry has no deadline, on a once-a-second cadence',
+    g:find('if pcall(function() obj:remove() end) then removeRetry[obj] = nil else removeRetry[obj] = now + 1 end', 1, true) ~= nil
+    and g:find('now > until_', 1, true) == nil)
+  check('despawnPuppet takes the body out of the avatar registry',
+    g:find('if mp.setAvatar then pcall(mp.setAvatar, p.obj, false) end', 1, true) ~= nil)
+  check('the owner re-sends its active effects when its look (the peer rebuild keys) changes',
+    idn:find("for i, k in ipairs({ 'race', 'head', 'hair', 'isMale', 'class', 'birthsign', 'name' }) do look[i] = tostring(app[k]) end", 1, true) ~= nil
+    and idn:find('lastLook = look\r?\n%s*identity%.resyncActive%(%)') ~= nil
+    and g:find("for _, k in ipairs({ 'race', 'head', 'hair', 'isMale', 'class', 'birthsign', 'name' }) do", 1, true) ~= nil)
+  check('a template body and a failed record build are logged',
+    g:find("built from the template (no appearance yet)", 1, true) ~= nil
+    and g:find('[mp] WARNING puppet record build failed for #%s', 1, true) ~= nil)
 end
 
 print('#481 the overlay hold leaves the engine in Interface when on and off drain in one frame')
