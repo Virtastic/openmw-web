@@ -190,7 +190,24 @@ git fetch --tags --force origin || die "Could not fetch from GitHub. Are you off
 TAG=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
 [ -n "$TAG" ] || die "No release tags found."
 say "Newest release: $TAG"
-git -c advice.detachedHead=false checkout "refs/tags/$TAG" || die "Could not check out $TAG (local changes in the way?)"
+# THE SERVED CLIENT IS NOT GIT'S TO CHANGE. The release zip and the dashboard's engine update
+# write the bundle straight into play/, over files git also tracks (index.html is stamped with
+# the engine hash), and a plain checkout refuses to overwrite them. So set those aside, move to
+# the release, and put them back: the page keeps pointing at the engine that is actually there.
+# Same function in deploy/updater.sh, which does this checkout for the Update button.
+checkout_release() { # $1 = repo dir, $2 = tag
+  held=$(mktemp -d)
+  git -C "$1" diff --name-only --diff-filter=d HEAD -- play > "$held/list"
+  if [ -s "$held/list" ]; then
+    tar -C "$1" -cf "$held/play.tar" -T "$held/list" && git -C "$1" checkout -q HEAD -- play \
+      || { rm -rf "$held"; return 1; }
+  fi
+  git -C "$1" -c advice.detachedHead=false checkout "refs/tags/$2"; rc=$?
+  if [ -s "$held/list" ]; then tar -C "$1" -xf "$held/play.tar" || rc=1; fi
+  rm -rf "$held"
+  return $rc
+}
+checkout_release . "$TAG" || die "Could not check out $TAG (local changes in the way?)"
 env_set OPENMW_WEB_TAG "$TAG" "The release whose server image runs (ghcr.io/virtastic/openmw-web-server). Managed by setup.sh; set an older tag and re-run to roll back."
 
 step "Pulling the server image"

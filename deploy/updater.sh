@@ -59,6 +59,25 @@ status() { # $1 = phase, $2 = error (optional)
 # and a status whose updatedAt froze at the phase transition reads as a dead updater and a
 # stuck pull to the dashboard, both wrongly.
 OUT=/tmp/updater-step.out
+
+# THE SERVED CLIENT IS NOT GIT'S TO CHANGE. The dashboard's engine update writes the release
+# bundle straight into play/, over files git also tracks (index.html is stamped with the engine
+# hash), and a plain checkout refuses to overwrite them -- every Update after the first engine
+# install failed on "local changes". Set them aside, move to the release, put them back: the
+# client is updated by the dashboard's engine card, never by this checkout. Same in setup.sh.
+checkout_release() { # $1 = repo dir, $2 = tag
+  held=$(mktemp -d)
+  git -C "$1" diff --name-only --diff-filter=d HEAD -- play > "$held/list"
+  if [ -s "$held/list" ]; then
+    tar -C "$1" -cf "$held/play.tar" -T "$held/list" && git -C "$1" checkout -q HEAD -- play \
+      || { rm -rf "$held"; return 1; }
+  fi
+  git -C "$1" -c advice.detachedHead=false checkout "refs/tags/$2"; rc=$?
+  if [ -s "$held/list" ]; then tar -C "$1" -xf "$held/play.tar" || rc=1; fi
+  rm -rf "$held"
+  return $rc
+}
+
 run_step() { # $1 = label for the failure message, then the command
   label="$1"; shift
   "$@" > "$OUT" 2>&1 &
@@ -99,7 +118,7 @@ do_update() {
   if ! printf '%s' "$TAG" | grep -Eq '^v[0-9A-Za-z.-]{1,32}$'; then
     status failed "the newest tag has an unexpected name"; return
   fi
-  run_step "checking out $TAG" git -C "$REPO" -c advice.detachedHead=false checkout "refs/tags/$TAG" || return
+  run_step "checking out $TAG" checkout_release "$REPO" "$TAG" || return
 
   # Pull the release's prebuilt image FIRST (the env var outranks .env for compose), and only
   # then pin it in .env (docker-compose.yml reads OPENMW_WEB_TAG) the way setup.sh does -
