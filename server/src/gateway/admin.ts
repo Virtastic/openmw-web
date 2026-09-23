@@ -29,7 +29,7 @@ import { request as httpRequest } from 'node:http';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from '../config';
-import type { AccountStore } from '../core/accounts';
+import { roleAtLeast, type AccountStore } from '../core/accounts';
 import type { AdminSessionStore } from '../auth/identities';
 import { Moderation } from '../core/moderation';
 import { gameDataDir } from '../core/gamedata';
@@ -156,7 +156,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     // PEOPLE FIRST. Rows are players, each labelled with whose game they are in; the games
     // and the box's health come after. This is the reading the page exists to give here,
     // and the one a single game's "World" card and player cap could never give.
-    overview: async () => {
+    overview: async (role) => {
       const now = Date.now();
       const cap = deps.worlds.capacity();
       const cfg = deps.config();
@@ -174,6 +174,10 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
           capacityReason: cap.reason,
         },
         games: rows,
+        // THE INVITE LINK, owners only: the passphrase is a secret and the link carries
+        // it. The page builds the URL from its own origin; this is only the code.
+        ...(roleAtLeast(role, 'owner') && cfg.login.allowRegistration && cfg.login.inviteCode !== ''
+          ? { inviteCode: cfg.login.inviteCode } : {}),
         players: rows.flatMap((g) => g.players.map((p) => ({
           ...p, game: g.id, gameLabel: g.label, gameMode: g.mode, owner: g.owner,
         }))),

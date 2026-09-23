@@ -92,40 +92,38 @@
       + '<input id="pwPass" name="password" type="password" autocomplete="current-password" required></label>'
       + '<button class="btn primary" type="submit" id="pwGo">Play now</button></form>';
   }
-  // THE INVITE PASSPHRASE. An invite-only server checks it when an SSO sign-in would create a
-  // new account, but nothing used to ask for it, so every new player hit invite_required.
-  // Prefilled from ?invite=, which makes https://<server>/?invite=<passphrase> the invite link.
-  const invited = new URLSearchParams(location.search).get('invite') || '';
+  // THE INVITE LINK. An invite-only server checks the passphrase when an SSO sign-in would
+  // create a new account. Players never type it: it rides in https://<server>/?invite=<code>,
+  // the link the dashboard hands out. Kept for the tab, so a redirect that drops the query
+  // (the front door bouncing through /join) does not lose it.
+  let invited = new URLSearchParams(location.search).get('invite') || '';
+  try {
+    if (invited) sessionStorage.setItem('omwmp:invite', invited);
+    else invited = sessionStorage.getItem('omwmp:invite') || '';
+  } catch { /* storage blocked: the query is all there is */ }
   if (providers.length) {
     if (auth.allowPasswordLogin) out += '<div class="rule">or</div>';
-    if (auth.inviteRequired) {
-      out += '<label class="fld"><span>Invite passphrase</span>'
-        + `<input id="invite" autocomplete="off" spellcheck="false" value="${esc(invited)}"></label>`;
-    }
     for (const p of providers) {
       out += `<a class="prov" href="/auth/${esc(p)}/start">${ICONS[p] || ''}<span>Continue with ${NICE[p]}</span></a>`;
     }
   }
   box.innerHTML = out;
-  if (auth.inviteRequired) {
-    // Read at click time, so what was typed is what is sent. The server checks it only when
-    // the sign-in would create an account; a returning player's is ignored.
+  if (auth.inviteRequired && invited) {
+    // The server checks it only when the sign-in would create an account; a returning
+    // player's is ignored.
     for (const a of box.querySelectorAll('a.prov')) {
-      a.addEventListener('click', () => {
-        const u = new URL(a.href);
-        const v = $('#invite').value.trim();
-        if (v) u.searchParams.set('invite', v); else u.searchParams.delete('invite');
-        a.href = u.href;
-      });
+      const u = new URL(a.href);
+      u.searchParams.set('invite', invited.trim());
+      a.href = u.href;
     }
   }
 
   if (auth.allowRegistration === false) {
     note('This server is not taking new players: sign-in works for existing accounts, but new '
       + 'ones cannot be created here.');
-  } else if (auth.inviteRequired) {
-    note('New players need the invite passphrase from whoever runs this server. '
-      + 'Returning players can leave it empty.');
+  } else if (auth.inviteRequired && !invited) {
+    note('This server is invite-only. New players need the invite link from whoever runs it; '
+      + 'returning players can sign in as usual.');
   }
 
   /**
@@ -223,9 +221,12 @@
     history.replaceState(null, '', location.pathname);
     // Words for the codes a player can act on; anything else keeps the code for a bug report.
     const code = decodeURIComponent(err[1]);
+    // A refused invite is a stale one: forget it, or every retry sends it again.
+    if (code === 'invite_required') { try { sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ } }
     const said = {
-      invite_required: 'That invite passphrase was not right. Check it with whoever runs this server.',
-      invite_locked: 'Too many invite passphrase attempts. Wait a while before trying again.',
+      invite_required: 'This server is invite-only, and that sign-in had no working invite. '
+        + 'Open the invite link from whoever runs it (it may have changed).',
+      invite_locked: 'Too many attempts with a wrong invite. Wait a while before trying again.',
       registration_disabled: 'This server is not taking new players.',
     }[code];
     note(said ? esc(said) : `Sign-in did not finish (${esc(code)}). Try again.`, 'err');

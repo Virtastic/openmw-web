@@ -118,7 +118,8 @@ export interface AdminDeps {
   setupToken: SetupToken;
 
   // --- the original moderation surface, unchanged ---
-  overview(): unknown | Promise<unknown>;
+  /** `role` is the caller's, for fields only some roles may see (the invite link). */
+  overview(role: DashboardRole): unknown | Promise<unknown>;
   reports(limit: number): Promise<unknown>;
   /** `by` is the signed-in operator's account name, so a ban row names who issued it. */
   action(kind: string, target: string, detail: string, by: string): Promise<{ ok: boolean; message: string }>;
@@ -574,8 +575,9 @@ export function adminRoutes(deps: AdminDeps) {
 
     // --- the original three, byte-compatible ----------------------------------------------
     if (method === 'GET' && path === '/admin/api/overview') {
-      if (!await gate(req, res, auth, 'viewer')) return true;
-      json(res, 200, await deps.overview());
+      const ctx = await gate(req, res, auth, 'viewer');
+      if (!ctx) return true;
+      json(res, 200, await deps.overview(ctx.role));
       return true;
     }
     if (method === 'GET' && path === '/admin/api/reports') {
