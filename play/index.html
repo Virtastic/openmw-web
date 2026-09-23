@@ -624,7 +624,10 @@ window.omw = (function(){
      if (s.netstate !== 'Joined') { frames = 0; worstGap = 0; div = []; return; }
      var now = Date.now(), secs = (now - lastSent) / 1000; lastSent = now;
      var cur = { a: +s.actorBatchesIn || 0, m: +s.moveRx || 0 };
-     var rate = function(k){ return prev ? ((cur[k] - prev[k]) / secs).toFixed(1) : '-'; };
+     // Rates are taken against the PREVIOUS reading, so it is captured before `prev` moves on
+     // (it used to be overwritten first, and every rate read 0.0).
+     var last = prev;
+     var rate = function(k){ return last ? ((cur[k] - last[k]) / secs).toFixed(1) : '-'; };
      prev = cur;
      div.sort(function(a, b){ return a - b; });
      var q = function(p){ return div.length ? div[Math.min(div.length - 1, Math.floor(p * div.length))].toFixed(1) : '-'; };
