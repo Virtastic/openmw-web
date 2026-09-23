@@ -488,6 +488,16 @@ export class WorldSupervisor {
         log('info', 'world.stopped', { id });
         return;
       }
+      // A CLEAN EXIT IS NOT A CRASH. A world that ran past the startup window and exited 0 shut
+      // down on purpose (SIGTERM from an operator or a deploy: it disconnected everyone with
+      // the transient SHUTDOWN code and flushed). Backing that off refused every player's
+      // reconnect for restartBackoffMs, which is exactly the window their clients spend
+      // retrying, and logged a crash nobody had. The next dial revives it at once. A clean exit
+      // on startup, or any non-zero one, still backs off: that is the spin this guards.
+      if (code === 0 && this.now() - world.startedAt >= 5_000) {
+        log('info', 'world.exited', { id, lifeMs: this.now() - world.startedAt });
+        return;
+      }
       this.blockedUntil.set(id, this.now() + s.restartBackoffMs);
       // Bounded. World ids are per CHARACTER, so this key space grows with every character
       // anyone ever made, and entries were only removed on a rolling restart or a clean run.

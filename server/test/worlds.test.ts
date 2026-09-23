@@ -176,6 +176,21 @@ test('worlds: a crash backs off instead of hot-looping', () => {
   assert.ok(sup.ensure('crashy', 'private'), 'but it comes back after the backoff');
 });
 
+// A world that ran and then exited 0 (SIGTERM handled: players got SHUTDOWN, stores flushed)
+// shut down on purpose. Backing it off refused every client's reconnect for the whole window
+// (dev box, 2026-09-23: 30 s of world.backoff after a deploy restart).
+test('worlds: a clean exit after startup revives at once; a clean exit ON startup still backs off', () => {
+  const { sup, spawned, advance } = harness();
+  sup.ensure('w', 'private');
+  advance(60_000);
+  spawned[0]!.child.emit('exit', 0, null);
+  assert.ok(sup.ensure('w', 'private'), 'a clean shutdown is not a crash: the next dial revives it');
+
+  sup.ensure('quick', 'private');
+  spawned[spawned.length - 1]!.child.emit('exit', 0, null); // exited 0 within the startup window
+  assert.equal(sup.ensure('quick', 'private'), null, 'an instant exit is still the spin the backoff guards');
+});
+
 // An operator's stop must be a stop. The owner's client is still connected and redials within
 // a second; the front door revives a private world on dial (ensure), so without a hold the
 // game was back 400 ms after it was stopped. The hold is the same instrument as crash backoff.
