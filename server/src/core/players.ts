@@ -154,7 +154,10 @@ export interface Player {
   // by coincidence (interior->interior doors: both near the origin), so distance alone is
   // not proof the avatar arrived -- the entry must also have consumed input newer than the
   // teleport. Distance is 3-D for the same reason.
-  teleportPose?: { x: number; y: number; z: number; at: number; seq: number };
+  // `armedAt`: when the teleport happened (`at` is re-armed by the never-arrived warn).
+  // `rebase`: a cross-cell move whose avatar may still be moved ONCE to where the client
+  // walked while the peer loaded the cell (connection.ts, the door-snap fix).
+  teleportPose?: { x: number; y: number; z: number; at: number; seq: number; armedAt?: number; rebase?: boolean };
   avatarPoseLogged?: boolean;
   statsDropLogged?: boolean; // one simpeer.avatar_stats_gated log per streak // simpeer.avatar_first_pose emitted for this session
   peerPoseAt?: number;

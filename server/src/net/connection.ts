@@ -32,6 +32,12 @@ const MAX_CELLS_PER_SESSION = 4096;
 // #361: a same-cell PlayerCellChange further than this from the last pose, with nothing
 // seen that explains a teleport, is refused. A room is smaller; a Recall is explained.
 const SAME_CELL_JUMP = 1024;
+// The door-snap rebase (handleAvatarMoveBatch): the client's hard-snap distance
+// (player.lua SNAP_DIST), and how far past a door a player can have walked while the peer
+// loaded the cell -- a sprint with room to spare, capped at a large interior's span.
+const SNAP_DIST = 256;
+const REBASE_SPEED = 1000;
+const REBASE_MAX = 8192;
 
 /** Chat gets its own budget on top of limits.msgsPerSec, because chat AMPLIFIES: one inbound
  *  line becomes one outbound event per player in the world. limits.msgsPerSec only kills the
@@ -988,6 +994,29 @@ export class Connection implements Peer {
           }
           continue;
         }
+        // THE AVATAR ARRIVED AT THE DOOR; THE PLAYER DID NOT WAIT FOR IT. A cold cell load on
+        // the peer takes seconds, the client walks on meanwhile (client-authoritative behind
+        // this gate), and the avatar -- which keeps only the LATEST input -- spawns at the
+        // doorway having replayed none of that walk. Accepting it now hard-snaps the owner
+        // back past SNAP_DIST to the door. So the body goes to the player instead, the same
+        // follow-teleport a cell change sends, and the gate re-arms on that spot.
+        // Not a free teleport: once per cross-cell move, same cell (a cell change clears
+        // this gate), and no farther from the door than walking could have carried them in
+        // the time since it -- the same poses the server already relayed to everyone.
+        const tp = p.teleportPose;
+        const here = p.pose;
+        if (tp.rebase === true && here && p.cellKey) {
+          const d2 = (here.x - e.pose.x) ** 2 + (here.y - e.pose.y) ** 2 + (here.z - e.pose.z) ** 2;
+          const walked = Math.hypot(here.x - tp.x, here.y - tp.y, here.z - tp.z);
+          const reach = Math.min(REBASE_MAX, REBASE_SPEED * (now - (tp.armedAt ?? tp.at)) / 1000);
+          if (d2 > SNAP_DIST * SNAP_DIST && walked <= reach) {
+            p.teleportPose = { x: here.x, y: here.y, z: here.z, at: now, seq: p.inputSeq ?? 0, armedAt: now };
+            this.ctx.worldPeer()?.peer.sendEvent('PlayerCellChange',
+              { id: p.id, cellKey: p.cellKey, x: here.x, y: here.y, z: here.z });
+            log('info', 'simpeer.avatar_rebased', { id: p.id, name: p.name, dist: Math.round(Math.sqrt(d2)), walked: Math.round(walked) });
+            continue;
+          }
+        }
         p.teleportPose = undefined;
       }
       // The peer's answer IS the canonical pose: it feeds the same broadcaster that fans
@@ -1217,7 +1246,8 @@ export class Connection implements Peer {
         else player.peer.sendEvent('QuestSpawn', body);
       }
     });
-    player.teleportPose = { x, y, z, at: Date.now(), seq: player.inputSeq ?? 0 }; // peer poses ignored until the avatar arrives (players.ts)
+    player.teleportPose = { x, y, z, at: Date.now(), seq: player.inputSeq ?? 0, armedAt: Date.now(), // peer poses ignored until the avatar arrives (players.ts)
+      rebase: oldCell !== undefined && oldCell !== cellKey };
     player.cellKey = cellKey;
     const prev = player.pose;
     player.pose = {
