@@ -120,7 +120,10 @@ fi
 # ---------------------------------------------------------------------------------------
 step "Preparing folders"
 
-mkdir -p data gamedata
+# data/caddy too: it is the caddy service's bind source, and a source Docker has to create
+# itself is created as ROOT. The server (uid 1001) then cannot write its Caddyfile, and Caddy
+# crash-loops on a missing config while the dashboard answers only on the container's port.
+mkdir -p data/caddy gamedata
 if [ ! -f .env ]; then
   cat > .env <<'ENVEOF'
 # Settings the containers read at startup. Safe to edit; re-run ./setup.sh afterwards.
