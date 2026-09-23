@@ -112,6 +112,16 @@ test('a rescue reboot mid-creation keeps mpnew, a character switch still drops i
   assert.doesNotMatch(fn[0], /k !== 'mpnew'/, 'an unconditional mpnew drop is the bug');
 });
 
+test('an F5 into a deleted character goes to the character screen, not a dead world', clientOpts, () => {
+  // A tab left open on a character deleted elsewhere restored its fragment on reload and
+  // dialled that character's discarded world forever (404 each time).
+  const block = /var mchS = [\s\S]*?location\.replace\('launcher\.html#characters'\);/.exec(index);
+  assert.ok(block, 'no stale-character check on the restored fragment');
+  assert.match(block[0], /fetch\('\/auth\/characters'/);
+  assert.match(block[0], /!\/\(\^\|&\)mpnew=\/\.test\(savedFrag\)/, 'a character in creation must be exempt');
+  assert.match(block[0], /sessionStorage\.removeItem\('omwmp:bootfrag'\)/);
+});
+
 test('the launcher no longer emits mpstart and index.html no longer boots with --start', clientOpts, () => {
   // 406: an unknown --start cell dies in the engine's own "Failed to start new game" box, so the
   // reboot-once retry in fatalOverlay was unreachable; __omwAwaitRestore holds the screen instead.

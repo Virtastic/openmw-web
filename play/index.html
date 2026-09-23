@@ -731,7 +731,30 @@ window.omw = (function(){
  try {
    if (!location.hash && (location.search === '' || location.search === '?')) {
      var savedFrag = sessionStorage.getItem('omwmp:bootfrag');
-     if (savedFrag) history.replaceState(null, '', location.pathname + location.search + '#' + savedFrag);
+     if (savedFrag) {
+       history.replaceState(null, '', location.pathname + location.search + '#' + savedFrag);
+       // ...BUT ONLY IF THAT CHARACTER STILL EXISTS. A tab left open on a character that was
+       // then deleted rebooted, on F5, into the deleted character's world: discarded with it,
+       // so the gateway answered 404 on every dial and the tab retried forever (dev box,
+       // 2026-09-23). Asked in the background, from the token the fragment already carries;
+       // a missing character sends the tab to the character screen. Anything unclear (offline,
+       // an expired token) leaves the reload alone, and so does a character still in creation:
+       // a provisional one (mpnew) is not in the list until ChargenComplete adopts it.
+       var mchS = /(^|&)mpchar=([^&]+)/.exec(savedFrag), lokS = /(^|&)mplocker=([^&]+)/.exec(savedFrag);
+       if (mchS && lokS && !/(^|&)mpnew=/.test(savedFrag)) {
+         var savedChar = decodeURIComponent(mchS[2]);
+         fetch('/auth/characters', { cache: 'no-store',
+           headers: { authorization: 'Bearer ' + decodeURIComponent(lokS[2]) } })
+           .then(function(r){ return r.ok ? r.json() : null; })
+           .then(function(d){
+             if (!d || !Array.isArray(d.characters)) return;
+             if (d.characters.some(function(c){ return c && c.id === savedChar; })) return;
+             try { sessionStorage.removeItem('omwmp:bootfrag'); } catch (e) {}
+             window.__omwAllowLeave = true;
+             location.replace('launcher.html#characters');
+           }).catch(function(){});
+       }
+     }
    }
  } catch (e) {}
  if (location.pathname.endsWith('/index.html')
