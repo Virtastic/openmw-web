@@ -106,6 +106,8 @@ local combat = require('scripts.mp.combat')
 local quests = require('scripts.mp.quests')
 local worldmp = require('scripts.mp.world')
 local admin = require('scripts.mp.admin')
+-- Inventory reconciliation under the engine's end-of-frame rule (backlog 507, MP-READINESS-AUDIT).
+local reconcile = require('scripts.mp.reconcile')
 
 local roster = {} -- array of {id=u16, name=string}, server order
 -- Monotonic across every "this was done TO you" event (world closed). The UI
@@ -229,34 +231,10 @@ end
 -- the inventory (a partly-used or souled item never restacks: ContainerStore::stacks), so one
 -- Soultrap kill fills one gem, not the whole stack. An entry without `n` (a pre-#234 doc)
 -- takes the whole stack, as it always did. Returns how many entries wrote a state.
-local function applyItemStates(inventory, localId, bucket)
-    local stacks = {}
-    for _, item in ipairs(inventory:getAll()) do
-        if item.recordId == localId then stacks[#stacks + 1] = item end
-    end
-    local si, left, applied = 1, stacks[1] and (stacks[1].count or 1) or 0, 0
-    for _, st in ipairs(bucket) do
-        local item = stacks[si]
-        if not item then break end
-        local n = st.n or left
-        local stateful = st.condition ~= nil or st.charge ~= nil or st.soul ~= nil
-        local piece = item
-        if stateful and n < left then piece = item:split(n) end
-        if stateful then
-            local d = types.Item.itemData(piece)
-            if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
-            if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
-            if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
-            applied = applied + 1
-        end
-        if piece ~= item then piece:moveInto(inventory) end
-        left = left - n
-        if left <= 0 then
-            si = si + 1
-            left = stacks[si] and (stacks[si].count or 1) or 0
-        end
-    end
-    return applied
+-- Implemented in reconcile.lua, where it is tested against an engine-shaped stub; `key`
+-- records the split pieces as in flight for a reconcile later in the same frame.
+local function applyItemStates(inventory, localId, bucket, key)
+    return reconcile.applyItemStates(inventory, localId, bucket, types.Item.itemData, key)
 end
 
 -- Throttle for MP_CombatRefused: one explanation per situation, not one per swing.
@@ -531,11 +509,14 @@ local function pushEquipmentToPuppet(id)
         -- §M7: a peer's custom item arrives as the server's recordNetId; resolve it to the
         -- record THIS client built from RecordsSync (never trust a foreign local id).
         local grantId = worldmp.toLocal(recordId)
-        local ok, count = pcall(function() return inventory:countOf(grantId) end)
-        if not ok or count == 0 then
+        -- COUNT WHAT IS ON ITS WAY IN. At spawn the doc grant and this push (twice) ran in one
+        -- frame, each reading 0 because adds land at the end of it, so every equipped item was
+        -- granted three times -- a player in heavy armour spawned carrying three sets.
+        local key = 'p:' .. tostring(id)
+        if reconcile.held(inventory, key, grantId) == 0 then
             local okc, item = pcall(function() return world.createObject(grantId) end)
             if okc then
-                item:moveInto(inventory)
+                reconcile.moveInto(item, inventory, key, grantId)
             else
                 if mp.isSystem and mp.isSystem() then
                     -- THE PLACEHOLDER BAN, equipment half (Phase 2b): an authoritative avatar
@@ -547,9 +528,8 @@ local function pushEquipmentToPuppet(id)
                 else
                     grantId = placeholderItemId() -- client puppet: a visible stand-in is fine
                     if grantId then
-                        local okp, cnt = pcall(function() return inventory:countOf(grantId) end)
-                        if not okp or cnt == 0 then
-                            world.createObject(grantId):moveInto(inventory)
+                        if reconcile.held(inventory, key, grantId) == 0 then
+                            reconcile.moveInto(world.createObject(grantId), inventory, key, grantId)
                         end
                     end
                 end
@@ -588,6 +568,9 @@ local AVATAR_STREAM_EVERY = 0.05 -- 20 Hz, matching the peer's own frame pacing
 -- sends the whole PlayerDoc (AvatarState) and it is applied to the body here. Client
 -- processes never receive AvatarState and never enter this path.
 local avatarDocs = {}
+-- Avatars whose doc must be (re)applied this frame: MP_AvatarState marks, the per-frame tick
+-- applies ONCE with the latest doc, and a pass that left anything in flight marks again.
+local avatarDocDirty = {}
 
 -- The party leader's level, from their avatar doc, onto the engine (peer only). Called when
 -- the leader is named (WorldMode) and whenever their doc arrives or changes (AvatarState).
@@ -639,87 +622,45 @@ local function applyAvatarDoc(id)
     for _, sid in ipairs(doc.spells or {}) do
         pcall(function() types.Actor.spells(obj):add(sid) end)
     end
-    -- Inventory: reconcile the SHORTFALL, same idiom as the rejoin restore (restoreTick) —
-    -- re-applying a doc must never duplicate what the body already holds.
+    -- INVENTORY: the doc is the avatar's truth. reconcile.lua grants the shortfall and sheds the
+    -- surplus and every record the doc does not list -- the template NPC's own kit included (the
+    -- body is built from an NPC record that brings its sword and spells) -- counting what is
+    -- still in flight this frame, so two docs in one slow peer frame converge instead of
+    -- stacking (backlog 507). What the owner has EQUIPPED is kept: pushEquipmentToPuppet
+    -- fabricates an item for a slot the doc's list may not mention, and stripping it left an
+    -- unarmed avatar. `nil` means "not synced yet" and sheds nothing; an EMPTY list is a real
+    -- statement ("this player carries nothing") and does. THE PLACEHOLDER BAN (Phase 2b): an
+    -- item that cannot be built is loud and simply absent -- a stand-in weapon computes the
+    -- wrong damage.
     pcall(function()
         local inventory = types.Actor.inventory(obj)
+        local key = 'p:' .. tostring(id)
+        local items = {}
         for _, entry in ipairs(doc.inventory or {}) do
-            local wantId = worldmp.toLocal(entry.id)
-            local want = entry.n or 1
-            local okc, have = pcall(function() return inventory:countOf(wantId) end)
-            have = (okc and have) or 0
-            local short = want - have
-            -- Phase 4D: a REFRESH must also shed SURPLUS (the owner dropped, sold or used
-            -- it), or the avatar accumulates everything it was ever handed. Removing from
-            -- the tail of that record's stack is the positional mirror of the state buckets.
-            if short < 0 then
-                print(string.format('[mp] avatar #%s sheds %d x %s (doc says %d, had %d)', tostring(id), -short, tostring(wantId), want, have))
-                local extra = -short
-                for _, item in ipairs(inventory:getAll()) do
-                    if extra <= 0 then break end
-                    if item.recordId == wantId then
-                        local n = math.min(extra, item.count or 1)
-                        pcall(function() item:remove(n) end)
-                        extra = extra - n
-                    end
-                end
-            end
-            if short > 0 then
-                local okCreate, item = pcall(function() return world.createObject(wantId, short) end)
-                if okCreate then
-                    item:moveInto(inventory)
-                else
-                    -- THE PLACEHOLDER BAN (Phase 2b). A cosmetic puppet may substitute a
-                    -- stand-in; an authoritative avatar must not — a placeholder weapon
-                    -- computes the wrong damage. Loud, and the item is simply absent.
-                    print('[mp] AVATAR ITEM UNRESOLVABLE for #' .. tostring(id) .. ': ' .. tostring(entry.id))
-                    mp.set('avatarUnresolvable', tostring(entry.id))
-                end
-            end
+            items[#items + 1] = { id = worldmp.toLocal(entry.id), n = entry.n or 1 }
         end
-        -- Per-item state, best-effort, after the grant (see restoreTick for the reasoning).
+        local keep = {}
+        local eq = remoteIdentity[id] and remoteIdentity[id].equipment
+        for _, recordId in pairs((eq and eq.slots) or {}) do keep[worldmp.toLocal(recordId)] = true end
+        local r = reconcile.reconcileInventory({
+            inventory = inventory, items = items, key = key, keep = keep, shed = doc.inventory ~= nil,
+            createObject = function(rid, n) return world.createObject(rid, n) end,
+            log = function(msg) print('[mp] avatar #' .. tostring(id) .. ' ' .. msg) end,
+        })
+        for _, rid in ipairs(r.unresolved) do
+            print('[mp] AVATAR ITEM UNRESOLVABLE for #' .. tostring(id) .. ': ' .. tostring(rid))
+            mp.set('avatarUnresolvable', tostring(rid))
+        end
+        -- Per-item state onto what has LANDED; a record still in flight gets its state on the
+        -- pass that finds it there. Idempotent: a layout already applied splits nothing.
         for recId, bucket in pairs(doc.itemStates or {}) do
-            pcall(applyItemStates, inventory, worldmp.toLocal(recId), bucket)
+            pcall(applyItemStates, inventory, worldmp.toLocal(recId), bucket, key)
         end
+        -- What the shed left the body able to do, read a frame later (backlog 507).
+        if r.removed > 0 then shedProbeAt[id] = core.getRealTime() + 1.0 end
+        -- Not finished while anything is in flight: again next frame, and it converges.
+        if r.pending or reconcile.anyInFlight(key) then avatarDocDirty[id] = true end
     end)
-    -- SHED THE TEMPLATE'S KIT. The body is built from an NPC record (villager_00 or the
-    -- first humanoid in the content chain), and that record brings its own inventory and
-    -- spells. The doc reconciliation above only touches records the DOC lists, so the
-    -- template's sword and spells survived -- an avatar fighting with gear its player never
-    -- owned, and casting spells they never learned. Anything not in the doc goes.
-    -- ONLY when the doc actually carries the field. `nil` means "not synced yet", and
-    -- shedding against an absent list would strip the avatar bare; an EMPTY list is a real
-    -- statement ("this player carries nothing") and does shed.
-    if doc.inventory ~= nil then
-        pcall(function()
-            local want = {}
-            for _, entry in ipairs(doc.inventory) do want[worldmp.toLocal(entry.id)] = true end
-            -- KEEP WHAT IS EQUIPPED. pushEquipmentToPuppet fabricates an item whenever the
-            -- equipped record is not already in the inventory (a slot the doc's item list
-            -- does not mention), so shedding on the doc alone stripped the avatar's weapon
-            -- the next time any inventory snapshot arrived -- and the equipment relay is
-            -- diff-driven, so nothing re-pushed it. An unarmed avatar computes every melee.
-            local eq = remoteIdentity[id] and remoteIdentity[id].equipment
-            for _, recordId in pairs((eq and eq.slots) or {}) do
-                want[worldmp.toLocal(recordId)] = true
-            end
-            local inventory = types.Actor.inventory(obj)
-            local shed = false
-            for _, item in ipairs(inventory:getAll()) do
-                if not want[item.recordId] then shed = true; print(string.format('[mp] avatar #%s sheds %d x %s (not in the doc)', tostring(id), item.count or 1, tostring(item.recordId))); pcall(function() item:remove(item.count or 1) end) end
-            end
-            -- WHAT THE SHED LEFT THE BODY ABLE TO DO (backlog 507): s151 dropped twelve
-            -- cuirasses, the peer shed what it had -- three of them, the doc having lagged --
-            -- and the avatar still did not move for four ten-second walks. Encumbrance says
-            -- whether the weight was ever the reason; the walk speed says whether the body
-            -- could move at all. One line per shed, so it costs nothing while nothing sheds.
-            -- ...AND ASK AGAIN A FRAME LATER. The engine applies a Lua inventory change at
-            -- the END of the frame, so reading the encumbrance here reports the weight the
-            -- shed was meant to remove and reads like a shed that did nothing (#141 s151:
-            -- "encumbrance 367/150" printed in the same breath as the removes).
-            if shed then shedProbeAt[id] = core.getRealTime() + 1.0 end
-        end)
-    end
     if doc.spells ~= nil then
     pcall(function()
         local keep = {}
@@ -741,6 +682,15 @@ local function applyAvatarDoc(id)
     -- real stack beside it. An avatar whose quiver slot still pointed at that lone arrow
     -- loosed exactly one shot and then stood there with 19 in the pack (s138).
     pushEquipmentToPuppet(id)
+end
+
+-- One apply per avatar per frame, with the latest doc (MP_AvatarState only marks). Keys are
+-- collected first: a pass may mark its own avatar dirty again for the next frame.
+local function avatarDocTick()
+    local ids = {}
+    for id in pairs(avatarDocDirty) do ids[#ids + 1] = id end
+    avatarDocDirty = {}
+    for _, id in ipairs(ids) do applyAvatarDoc(id) end
 end
 
 -- Phase 3 (peer only): stream the authoritative avatar poses back. mp.sendAvatarMoveBatch
@@ -1585,6 +1535,23 @@ local function restorePositionTick(now)
 end
 
 local restoreWaitUntil = nil
+-- Item states waiting for a restore grant to land (restoreTick queues, selfStatesTick applies).
+local pendingSelfStates = nil
+local function selfStatesTick()
+    if not pendingSelfStates or reconcile.generation() <= pendingSelfStates.gen then return end
+    local player = playerScript()
+    if not player then return end
+    local states = pendingSelfStates.states
+    pendingSelfStates = nil
+    local inventory = types.Actor.inventory(player)
+    local restored = 0
+    for recId, bucket in pairs(states) do
+        local okAll, n = pcall(applyItemStates, inventory, worldmp.toLocal(recId), bucket, 'self')
+        if okAll then restored = restored + n
+        else print('[mp] restore: item state for "' .. tostring(recId) .. '" did not apply') end
+    end
+    if restored > 0 then print('[mp] restored state on ' .. tostring(restored) .. ' item(s)') end
+end
 local function restoreTick()
     if not pendingRestore then return end
     local player = playerScript()
@@ -1622,40 +1589,28 @@ local function restoreTick()
     -- since the last flush — treating that as a dupe to be confiscated would destroy real
     -- items to fix a cosmetic count. This stops the growth; it does not heal an inventory
     -- already inflated by the old behaviour.
+    -- MAP THE RECORD ID FIRST. A player-made item (enchanted, alchemy) is a DYNAMIC record, and
+    -- dynamic ids are minted per world by an engine-global counter -- so world A's
+    -- "Generated:0x3" and world B's are different records wearing the same string. Handing the
+    -- doc's raw id to createObject in another world builds whatever that string happens to mean
+    -- HERE, silently. The object path has guarded this since M7 (objects.lua:325).
+    local items = {}
     for _, entry in ipairs(record.inventory or {}) do
-        -- MAP THE RECORD ID FIRST. A player-made item (enchanted, alchemy) is a DYNAMIC record,
-        -- and dynamic ids are minted per world by an engine-global counter — so world A's
-        -- "Generated:0x3" and world B's are different records wearing the same string. Handing
-        -- the doc's raw id to createObject in another world therefore builds whatever that
-        -- string happens to mean HERE, silently. The object path has guarded this since M7
-        -- (objects.lua:325); the character doc never did.
-        local wantId = worldmp.toLocal(entry.id)
-        local want = entry.n or 1
-        local okc, have = pcall(function() return inventory:countOf(wantId) end)
-        local short = want - ((okc and have) or 0)
-        if short > 0 then
-            local ok, item = pcall(function() return world.createObject(wantId, short) end)
-            if ok then
-                item:moveInto(inventory)
-                granted = granted + 1
-            end
-        end
+        items[#items + 1] = { id = worldmp.toLocal(entry.id), n = entry.n or 1 }
     end
-    -- PER-ITEM STATE, applied after the grant and strictly best-effort. Without this every
-    -- rejoin handed the character fully repaired gear, fully charged enchantments and empty
-    -- soul gems, because createObject builds a FRESH object and the doc only ever recorded a
-    -- record id and a count. Each failure in here is swallowed on purpose: the item itself is
-    -- already correctly in the inventory, and losing its wear is a far smaller harm than
-    -- aborting the rest of the restore over it.
-    local restored = 0
-    for recId, bucket in pairs(record.itemStates or {}) do
-        local okAll, n = pcall(applyItemStates, inventory, worldmp.toLocal(recId), bucket)
-        if okAll then restored = restored + n end
-        if not okAll then
-            print('[mp] restore: item state for "' .. tostring(recId) .. '" did not apply')
-        end
+    local r = reconcile.reconcileInventory({
+        inventory = inventory, items = items, key = 'self', shed = false,
+        createObject = function(rid, n) return world.createObject(rid, n) end,
+    })
+    granted = r.added
+    -- PER-ITEM STATE, after the grant has LANDED. Without it every rejoin handed back fully
+    -- repaired gear, fully charged enchantments and empty soul gems (createObject builds a
+    -- FRESH object; the doc keeps the state). Applied in the grant's own frame it wrote onto
+    -- stacks that were not there yet -- the adds land at the end of the frame -- and did the
+    -- same thing silently. selfStatesTick applies it once the frame is over.
+    if record.itemStates and next(record.itemStates) ~= nil then
+        pendingSelfStates = { states = record.itemStates, gen = reconcile.generation() }
     end
-    if restored > 0 then print('[mp] restored state on ' .. tostring(restored) .. ' item(s)') end
 
     -- A position in a cell this load order no longer has: the Welcome's respawn point
     -- (flags.respawn, the world's [rules].respawn*) instead, and say so (backlog 317).
@@ -2327,7 +2282,7 @@ local eventHandlers = {
         if not (mp.isSystem and mp.isSystem()) then return end
         if not data or not data.id then return end
         avatarDocs[data.id] = data
-        applyAvatarDoc(data.id)
+        avatarDocDirty[data.id] = true -- applied once this frame, by avatarDocTick
         if data.id == partyOwnerId then applyPartyLevel() end
     end,
 
@@ -3855,7 +3810,12 @@ return {
                 avatarItemStatesTick(now) -- Phase 4D: peer reports avatar wear/charge/soul
                 avatarArrestTick() -- a guard reached a wanted avatar: tell its owner
                 avatarEffectsTick(now) -- disease, paralysis: what the world did to the avatar
+                avatarDocTick() -- one doc apply per avatar per frame (backlog 507)
             end
+            selfStatesTick() -- a restore's item states, once its grant has landed
+            -- LAST: every event handler and onUpdate of this frame has run; the adds they
+            -- queued land in applyDelayedActions right after (luamanagerimp.cpp).
+            reconcile.nextFrame()
         end,
     },
     eventHandlers = eventHandlers,
