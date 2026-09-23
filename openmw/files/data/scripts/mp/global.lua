@@ -2083,6 +2083,14 @@ local eventHandlers = {
     MP_SelfStats = function(data)
         toPlayer('MP_SelfStats', data)
     end,
+    -- Backlog 307, the missing last link: every server event arrives HERE (netmanager.cpp
+    -- delivers MP_<name> as a global event), and player.lua's MP_SelfSkillUse is only
+    -- reached through a forward. Without this line the server sent it, the player script
+    -- counted it -- and nothing carried it between them, so on any peer-run world Block,
+    -- Light/Medium/Heavy Armor and Unarmored never improved. Each half had its own test.
+    MP_SelfSkillUse = function(data)
+        toPlayer('MP_SelfSkillUse', data)
+    end,
 
     -- Phase 4D: our item states as the peer simulated them (weapon wear from 4C swings,
     -- charge spent, souls captured). Applied HERE, not forwarded: the applier splits stacks

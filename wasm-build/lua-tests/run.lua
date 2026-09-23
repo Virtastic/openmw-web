@@ -1357,6 +1357,28 @@ do
     and av:find('if not SKILL_USE_FORWARDED[skillid] then return end', 1, true) ~= nil, tostring(fam))
   check('global.lua sends the use to the server as AvatarSkillUse with the owner id',
     g:find("mp.sendEvent('AvatarSkillUse', { id = id, skill = data.skill, useType = data.useType or 0 })", 1, true) ~= nil)
+  -- THE DELIVERY INVARIANT. Server events reach Lua ONLY as global events (netmanager.cpp:
+  -- addGlobalEvent("MP_" + name)), so an MP_ handler in player.lua fires only if some script
+  -- forwards it (global.lua's toPlayer, or an object's sendEvent). #307 shipped with the
+  -- server sending SelfSkillUse and player.lua counting it, both tested, and the forward
+  -- between them missing: armour and block never progressed. Asserted for every handler.
+  do
+    local all = {}
+    for _, name in ipairs({ 'global', 'actors', 'admin', 'avatar', 'combat', 'companion', 'identity', 'net', 'objects', 'puppet', 'quests', 'social', 'world' }) do
+      local f = io.open('./openmw/files/data/scripts/mp/' .. name .. '.lua')
+      if f then all[#all + 1] = f:read('*a'); f:close() end
+    end
+    local senders = table.concat(all, '
+')
+    local orphans = {}
+    for h in p:gmatch('
+%s+(MP_[%w_]+) = function') do
+      if not (senders:find("toPlayer('" .. h .. "'", 1, true) or senders:find("sendEvent('" .. h .. "'", 1, true)
+          or p:find("sendEvent('" .. h .. "'", 1, true)) then orphans[#orphans + 1] = h end
+    end
+    check('every MP_ handler in player.lua is forwarded by some script (server events arrive at global only)',
+      #orphans == 0, table.concat(orphans, ', '))
+  end
   check('player.lua counts MP_SelfSkillUse through I.SkillProgression',
     p:find('MP_SelfSkillUse = function(data)', 1, true) ~= nil
     and p:find('pcall(I.SkillProgression.skillUsed, data.skill, { useType = data.useType or 0 })', 1, true) ~= nil)
