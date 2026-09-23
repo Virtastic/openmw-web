@@ -792,6 +792,17 @@ export class Connection implements Peer {
     }
     if (name === 'PlayerLeaving') {
       this.ctx.onPlayerLeaving?.(this.player.accountKey);
+      // A DELIBERATE DEPARTURE ENDS THE SESSION NOW. The page sends this on Exit (and on a
+      // character switch or a join) and then navigates away, and until now the server waited
+      // for the socket to close to take the character out of the world. Behind a proxy that
+      // close can arrive only when the keepalive gives up: on the dev box the character stood
+      // in the world for 86 s after Exit, and deleting it from the character screen was
+      // refused as "being played right now" the whole time (2026-09-23). Same teardown as a
+      // dropped socket (flush, leave the world, park the resume ticket), then close without a
+      // disconnect frame: the page is already on its way out and has nothing to show.
+      log('info', 'conn.leaving', { player: this.player.name });
+      this.cleanup();
+      this.ws.close(1000, 'leaving');
       return;
     }
     if (name === 'PlayerArrest') {

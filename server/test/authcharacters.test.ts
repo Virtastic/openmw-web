@@ -140,6 +140,36 @@ test('DELETE refuses a character whose own world is up with players, through the
   assert.equal((await j(call(base, auth))).characters.length, 0);
 });
 
+// The world list is a poll (5 s). A player who pressed Exit and went straight to delete was
+// refused against the poll from before they left (dev box, 2026-09-23). The front door now
+// re-polls before refusing: a stale "in play" that a fresh poll clears lets the delete through.
+test('DELETE re-reads the worlds before refusing: a stale "in play" does not block', async (t) => {
+  const dir = tmpDataDir();
+  let cached = 1; // what the last poll said
+  let live = 0; // what the world says now: they have left
+  let polls = 0;
+  const worlds: { id: string; mode: string; up: boolean; playerCount: number }[] = [];
+  const fd = await buildFrontDoor(dir, undefined, 8080, undefined, () => worlds,
+    async () => { polls++; cached = live; });
+  t.after(() => fd.close());
+  const server: Server = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    void Promise.resolve(fd.route(req, res, url)).then((claimed: boolean) => { if (!claimed) { res.writeHead(404); res.end(); } });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  await fd.accounts.createSso('Alice');
+  const c = await adopt(fd.accounts, 'JustLeft');
+  const auth = `Bearer ${fd.mintSession('alice')}`;
+  worlds.push({ id: `priv-alice-${c.id.slice(-8)}`, mode: 'private', up: true, get playerCount() { return cached; } });
+
+  const r = await fetch(`${base}/auth/characters?id=${encodeURIComponent(c.id)}`,
+    { method: 'DELETE', headers: { authorization: auth } }).then((x) => x.json() as Promise<Json>);
+  assert.equal(r.ok, true, `refused on a stale poll: ${String(r.error)}`);
+  assert.equal(polls, 1, 'the refusal must be checked against a fresh poll');
+});
+
 test('cannot exceed MAX_CHARACTERS', async (t) => {
   const { base, auth, accounts } = await boot(t);
   // The cap counts characters that EXIST, so fill it with finished ones — a provisional id

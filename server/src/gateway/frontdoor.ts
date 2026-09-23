@@ -127,6 +127,10 @@ export function characterRoutes(
   // Is this character in play right now (#284)? Deleting it from a second device used to stop
   // and remove the world the first device was standing in, which then reconnected forever.
   isPlayed?: (charId: string) => boolean,
+  // Re-reads every world's status now. isPlayed answers from the last 5 s poll, so a player
+  // who had just pressed Exit was still "in play" for up to a poll -- asked again before
+  // refusing, so the refusal is about now, not about five seconds ago.
+  refreshWorlds?: () => Promise<void>,
 ): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/characters') return false;
@@ -146,6 +150,7 @@ export function characterRoutes(
       // doc: a crash between the two leaves an orphan doc rather than a slot pointing at
       // nothing, which is the harmless direction to fail in.
       const id = url.searchParams.get('id') ?? '';
+      if (isPlayed?.(id) && refreshWorlds) await refreshWorlds().catch(() => undefined);
       if (isPlayed?.(id)) { sendJson(res, 200, { ok: false, error: 'That character is being played right now. Sign out there first.' }); return true; }
       if (!accounts.deleteCharacter(account, id)) { sendJson(res, 200, { ok: false, error: 'No such character.' }); return true; }
       await accounts.flush();
@@ -336,6 +341,8 @@ export async function buildFrontDoor(
   // The live world list, for /auth/friends-playing. Absent (a standalone front door) the
   // route answers an empty list.
   worldsNow?: () => { ownerAccount?: string; ownerPresent?: boolean; mode: string; up: boolean; playerCount: number; id: string }[],
+  // Poll every world's status right now (the gateway's WorldSupervisor.poll).
+  refreshWorlds?: () => Promise<void>,
 ): Promise<FrontDoor> {
   const config = loadConfig(sharedDir, undefined, sharedDir);
   // The gateway front door loads its own config, so it needs its own call: without this the
@@ -442,7 +449,8 @@ export async function buildFrontDoor(
   // ponytail: misses a character playing as a GUEST in someone else's world; add a charId
   // to the world status when that matters.
   const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted, (charId) =>
-    (worldsNow?.() ?? []).some((w) => w.id.startsWith('priv-') && w.id.endsWith('-' + charId.slice(-8)) && w.up && w.playerCount > 0));
+    (worldsNow?.() ?? []).some((w) => w.id.startsWith('priv-') && w.id.endsWith('-' + charId.slice(-8)) && w.up && w.playerCount > 0),
+    refreshWorlds);
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
   const social = new SocialStore(sharedDir);
   const playing = friendsPlayingRoutes(accounts, lockerSessions, social, worldsNow ?? (() => []));
