@@ -399,8 +399,26 @@ export class WorldState {
   // The HOLDER hears everything about a cell it simulates, wherever its own avatar stands:
   // the peer anchors far interiors and exteriors, and a door opened there must open for its
   // pathing too, not only for the players within a cell of it.
+  //
+  // AND THE RING AROUND EACH HELD EXTERIOR. The peer's engine loads the vanilla 3x3 around
+  // every anchor (Scene::setSimAnchors) and runs the AI there out to 7168 units of the
+  // anchoring player -- what that player's own engine does. A door opened, a ref disabled, a
+  // crate moved in a neighbour reached every client that could see it and never the peer, so
+  // its copy of the street diverged one cell from each player and the avatar walked into what
+  // the player could not see. Hearing is not holding: who simulates NPCs is unchanged (see
+  // loadedCells). The ring's recorded state reaches the peer from server.ts simPeerPass.
   private hears(p: Player, cellKey: string): boolean {
-    return cellsVisible(p.cellKey, cellKey) || (p.system === true && this.authority.holderOf(cellKey) === p.id);
+    if (cellsVisible(p.cellKey, cellKey)) return true;
+    if (p.system !== true) return false;
+    if (this.authority.holderOf(cellKey) === p.id) return true;
+    const at = parseExterior(cellKey);
+    if (!at) return false;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (this.authority.holderOf(`${at.x + dx},${at.y + dy}`) === p.id) return true;
+      }
+    }
+    return false;
   }
 
   private relayCell(cellKey: string, name: string, body: JsLike): void {
