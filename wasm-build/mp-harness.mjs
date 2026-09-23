@@ -506,6 +506,8 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // two wrong hypotheses while the answer sat in the log the whole time. Surfaced per
     // client so it is never buried again.
     luaErrors: () => logs.filter((l) => l.includes('Lua error')),
+    // Every console line matching `re`, for scenarios that count engine prints (s172: snaps).
+    logMatches: (re) => logs.filter((l) => re.test(l)),
     // UNCAUGHT JS EXCEPTIONS, promoted to a first-class signal for the same reason Lua errors
     // were. A ReferenceError inside a setInterval callback kills the REST of that callback
     // forever while the page keeps running and every mirror this harness reads stays fresh
