@@ -364,7 +364,30 @@
    *,body::before{animation:none!important}
    .reveal{opacity:1; transform:none}
  }
-</style></head>
+/* DOOR MODE (/join): only the sign-in steps, never the demo chooser behind them. */
+html.door .topbar, html.door .wrap { display:none !important }
+</style>
+<script>
+ // DOOR MODE. A self-hosted server's front door (play.html) signs a player in and hands the
+ // ticket to /join, which is THIS page with the showcase stripped away: the username, character
+ // and world steps on the bare ground, nothing to choose between. The launcher is the hosted
+ // site's demo chooser, and a player who came to play on someone's server must never land on it.
+ //
+ // Remembered for the tab, because the game's own exits are hard-wired to launcher.html
+ // (#characters to pick another character); on a door tab those come straight back here.
+ // Runs in <head>, before anything paints, so the chooser never flashes.
+ (function(){ try {
+   var door = location.pathname === '/join';
+   if (!door && sessionStorage.getItem('omw-door') === '1'){ location.replace('/join' + location.hash); return; }
+   if (!door) return;
+   sessionStorage.setItem('omw-door', '1');
+   document.documentElement.classList.add('door');
+   document.title = 'Play'; // not the showcase's "Morrowind in your browser" pitch
+   // Nothing to continue here without a ticket or a session to return to: back to the door.
+   if (!/[#&](mpticket|mperror|characters)\b/.test(location.hash)) location.replace('/');
+ } catch(e){} })();
+</script>
+</head>
 <body>
 <header class="topbar">
   <a class="home" href="https://virtastic.app" target="_blank" rel="noopener" aria-label="Virtastic home">
@@ -614,6 +637,10 @@
 <script>
  'use strict';
  const $ = (id) => document.getElementById(id);
+ // Door mode (/join, see the <head>): every "back out to the launcher" goes to the server's
+ // own front door instead, since on a door there is no launcher to go back to.
+ const DOOR = document.documentElement.classList.contains('door');
+ function leaveDoor(){ if (DOOR) location.href = '/'; }
  // Themed error dialog (reuses the .modal styling) instead of a raw browser alert().
  function launcherError(title, msg){
    const body = $('modal-body');
@@ -823,7 +850,7 @@
          + (password && !providers.length ? '.' : ' and choose how you want to sign in.');
      }
    }
-   function close(){ bd.classList.remove('show'); }
+   function close(){ bd.classList.remove('show'); leaveDoor(); }
    // The "?" buttons live inside clickable cards — stop the event so the card's start/pick handler
    // doesn't also fire (on both click and keyboard activation).
    [['help-sample','sample'],['help-local','local'],['help-mp','mp'],['help-hosted','hosted'],
@@ -1369,6 +1396,7 @@
        });
        grid.parentNode.insertBefore(wrap, grid.nextSibling);
      }
+     if (DOOR) $('cs-back').textContent = '‹ Back to sign-in';
      $('cs-back').onclick = () => done(null);
      note.textContent = '';
      bd.classList.add('show');
@@ -1529,9 +1557,9 @@
    if (location.hash !== '#characters') return;
    history.replaceState(null, '', location.pathname);
    const sess = mpSession();
-   if (!sess || !sess.lockerToken) return; // no session, the normal launcher shows
+   if (!sess || !sess.lockerToken) return leaveDoor(); // no session, the normal launcher shows
    const ch = await runCharacterSelect(sess.gwHttp, sess.lockerToken).catch(() => null);
-   if (!ch) return; // backed out to the launcher
+   if (!ch) return leaveDoor(); // backed out to the launcher
    await bootGame(sess, '', ch); // no spare ticket: bootGame mints the boot ticket itself
  })();
 
@@ -1610,7 +1638,7 @@
      let st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
      if (st && st.needsProfile){
        const ok = await runOnboarding(gwHttp, lockerToken, st.hasEmail);
-       if (!ok) return; // closed without finishing, do not enter a world unnamed
+       if (!ok) return leaveDoor(); // closed without finishing, do not enter a world unnamed
        st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
      }
      // Carry the PUBLIC username in the session: the world id is derived from it so that no
@@ -1642,7 +1670,7 @@
    let chosenChar = null;
    try { chosenChar = await runCharacterSelect(gwHttp, lockerToken); }
    catch(e){ chosenChar = null; }
-   if (!chosenChar) return; // backed out to the launcher
+   if (!chosenChar) return leaveDoor(); // backed out to the launcher
    // A new player lands in their own PRIVATE world — that is where character creation happens.
    // Party and public come after (a fresh character must be created in private first).
    let username = '';

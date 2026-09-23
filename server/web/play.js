@@ -161,7 +161,9 @@
       return;
     }
 
-    location.href = '/launcher.html'
+    // /join, not /launcher.html: the same multiplayer steps (username, character, world) with
+    // the hosted site's demo chooser stripped away. See DOOR MODE in play/launcher.html.
+    location.href = '/join'
       + `#mpticket=${encodeURIComponent(res.ticket)}`
       + acct
       + lock;
