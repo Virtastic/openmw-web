@@ -21,7 +21,9 @@ you -- blocking, armour, the weapon you swing -- now reaches your character shee
 
 **Sign-ins after a restart.** A household signing back in through the launcher after a server
 restart shares one address; launcher sign-ins now have their own allowance, apart from the
-password-guessing one, so nobody is locked out as flooding.
+password-guessing one, so nobody is locked out as flooding. And a server that *crashed* (rather
+than restarting cleanly) no longer strands players who sign in with a password: the client used
+to give up after its saved session was refused instead of simply signing in again.
 
 **On a LAN over plain http, the page says why it cannot start.** A friend on a second machine was
 told to find a desktop browser while sitting at one. The real cause is that `http://<address>` is
