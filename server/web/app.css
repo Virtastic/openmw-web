@@ -588,3 +588,17 @@ body.sidebar-collapse .app-sidebar .nav-header {
   visibility: visible;
   opacity: 1;
 }
+
+/* SIGN-IN PROVIDER BUTTONS: launcher.html's .mp-prov, so the dashboard login matches the
+   players' front door (play.html .prov) instead of Bootstrap's grey outline. */
+.vt-prov {
+  display: flex; align-items: center; justify-content: center; gap: 11px; width: 100%;
+  padding: 12px 16px; margin-bottom: 9px; border-radius: 5px; text-decoration: none;
+  font: 600 14px/1 "Optima", "Gill Sans", -apple-system, "Segoe UI", sans-serif; letter-spacing: .01em;
+  background: #f6f4ee; color: #20242b; border: 1px solid #d9d3c4;
+  transition: background .14s ease, transform .06s ease;
+}
+.vt-prov:hover { background: #fff; color: #20242b; }
+.vt-prov:active { transform: translateY(1px); }
+.vt-prov:focus-visible { outline: 2px solid #d3a84e; outline-offset: 2px; }
+.vt-prov svg { width: 19px; height: 19px; flex: none; }

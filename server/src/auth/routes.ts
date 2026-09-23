@@ -352,6 +352,10 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
         providers: oidc.enabledProviders(),
         allowPasswordLogin: config.auth.allowPasswordLogin,
         allowRegistration: config.login.allowRegistration,
+        // Whether a NEW account needs the invite passphrase. A flag, never the passphrase: the
+        // page asks for it and sends it as ?invite= on /auth/<provider>/start. Without this no
+        // page knew to ask, so an invite-only server refused every SSO sign-up (invite_required).
+        inviteRequired: config.login.allowRegistration && config.login.inviteCode !== '',
       });
       return true;
     }
