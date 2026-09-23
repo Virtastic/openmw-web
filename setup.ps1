@@ -194,8 +194,23 @@ if ($LASTEXITCODE -ne 0) { Write-Fail "Could not fetch from GitHub. Are you offl
 $tag = (git tag -l 'v*' --sort=-v:refname | Select-Object -First 1)
 if (-not $tag) { Write-Fail "No release tags found." }
 Write-Host "Newest release: $tag"
+# THE SERVED CLIENT IS NOT GIT'S TO CHANGE. The release zip and the dashboard's engine update
+# write the bundle straight into play\, over files git also tracks (index.html is stamped with
+# the engine hash), and a plain checkout refuses to overwrite them. Set those aside, move to
+# the release, and put them back (same as setup.sh and deploy/updater.sh).
+$held = @(git diff --name-only --diff-filter=d HEAD -- play)
+$heldDir = Join-Path ([IO.Path]::GetTempPath()) ('omw-play-' + [guid]::NewGuid())
+foreach ($f in $held) {
+  $dest = Join-Path $heldDir $f
+  New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+  Copy-Item -LiteralPath $f -Destination $dest
+}
+if ($held.Count -gt 0) { git checkout -q HEAD -- play }
 git -c advice.detachedHead=false checkout "refs/tags/$tag"
-if ($LASTEXITCODE -ne 0) { Write-Fail "Could not check out $tag (local changes in the way?)" }
+$checkedOut = ($LASTEXITCODE -eq 0)
+foreach ($f in $held) { Copy-Item -LiteralPath (Join-Path $heldDir $f) -Destination $f -Force }
+Remove-Item -Recurse -Force -LiteralPath $heldDir -ErrorAction SilentlyContinue
+if (-not $checkedOut) { Write-Fail "Could not check out $tag (local changes in the way?)" }
 Set-EnvValue 'OPENMW_WEB_TAG' $tag 'The release whose server image runs (ghcr.io/virtastic/openmw-web-server). Managed by setup.ps1; set an older tag and re-run to roll back.'
 
 Write-Step "Pulling the server image"
