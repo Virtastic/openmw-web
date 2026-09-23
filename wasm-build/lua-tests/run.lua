@@ -2234,5 +2234,67 @@ do
   end
 end
 
+-- ============================================================ every MP_ handler, exercised
+-- MP-READINESS-AUDIT item 3: of ~127 MP_ handlers 3 were executed by any test. A handler that
+-- throws takes its whole subsystem down SILENTLY (the engine logs it and carries on), so the
+-- floor every one of them must meet is: a malformed server event -- an empty body, or none --
+-- does not throw. global.lua is loaded WHOLE here (its merged modules included), with engine
+-- calls the stubs do not model answered by a permissive stand-in: this exercises the handlers'
+-- own logic against bad input, not the engine.
+print('global.lua -- every MP_ handler in the global context survives an empty and a nil body')
+do
+  for _, m in ipairs({ 'scripts.mp.net', 'scripts.mp.identity', 'scripts.mp.json', 'scripts.mp.objects', 'scripts.mp.actors',
+      'scripts.mp.combat', 'scripts.mp.quests', 'scripts.mp.world', 'scripts.mp.admin', 'scripts.mp.reconcile' }) do
+    package.loaded[m] = nil
+  end
+  local env = stubs.install({ system = true })
+  -- ANYTHING: an engine value the stubs do not model. Indexing, calling and arithmetic answer
+  -- with another stand-in (arithmetic with 0), so a handler's own logic runs to its end.
+  local anything
+  local mt = {}
+  mt.__index = function() return anything end
+  mt.__call = function() return anything end
+  mt.__add = function() return 0 end; mt.__sub = mt.__add; mt.__mul = mt.__add; mt.__div = mt.__add
+  mt.__unm = function() return 0 end
+  mt.__concat = function(a, b) return tostring(type(a) == 'table' and '' or a) .. tostring(type(b) == 'table' and '' or b) end
+  mt.__len = function() return 0 end
+  mt.__tostring = function() return '<anything>' end
+  anything = setmetatable({}, mt)
+  local function permissive(t)
+    local old = getmetatable(t)
+    local oldIndex = old and old.__index
+    return setmetatable(t, { __index = function(tbl, k)
+      if oldIndex then
+        local v = type(oldIndex) == 'function' and oldIndex(tbl, k) or oldIndex[k]
+        if v ~= nil then return v end
+      end
+      return anything
+    end })
+  end
+  for _, name in ipairs({ 'openmw.world', 'openmw.core', 'openmw.types', 'openmw.util', 'openmw.interfaces', 'openmw.mp' }) do
+    permissive(package.loaded[name])
+  end
+  for _, sub in ipairs({ 'Actor', 'NPC', 'Item', 'Player' }) do permissive(env.types[sub]) end
+  permissive(env.core.magic); permissive(env.world.mwscript)
+
+  local okLoad, script = pcall(function() return assert(loadfile('./openmw/files/data/scripts/mp/global.lua'))() end)
+  check('global.lua loads whole under the stubs (merged modules included)', okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table',
+    tostring(script))
+  if okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table' then
+    local names = {}
+    for name in pairs(script.eventHandlers) do if name:match('^MP_') then names[#names + 1] = name end end
+    table.sort(names)
+    local failures = {}
+    for _, name in ipairs(names) do
+      for _, body in ipairs({ 'empty', 'nil' }) do
+        local ok, err = pcall(script.eventHandlers[name], body == 'empty' and {} or nil)
+        if not ok then failures[#failures + 1] = name .. '(' .. body .. '): ' .. tostring(err):gsub('^.-:%d+: ', ''):sub(1, 90) end
+      end
+    end
+    check(string.format('every MP_ handler survives an empty and a nil body (%d handlers, %d calls)', #names, #names * 2),
+      #failures == 0, #failures .. ' threw:\n        ' .. table.concat(failures, '\n        '))
+  end
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
