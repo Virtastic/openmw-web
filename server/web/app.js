@@ -1953,14 +1953,11 @@ function renderPlatformOverview(o, stat, upText) {
       </td></tr>`).join('')
     : html`<tr><td colspan="5" class="vt-empty">No games are running. One starts when somebody plays.</td></tr>`;
 
-  const memTone = h.budgetMb > 0 && h.committedMb / h.budgetMb > 0.85 ? 'warning' : 'secondary';
   view().innerHTML = html`
     <div class="row">
       ${raw(stat('Playing now', `${players.length}`, 'bi-people', 'primary'))}
       ${raw(stat(h.capacity ? `Games running (of ${h.capacity})` : 'Games running', `${h.games ?? games.length}`, 'bi-collection-play', 'success'))}
       ${raw(stat('Sim peers', `${h.peers ?? 0}`, 'bi-cpu', 'info'))}
-      ${raw(stat(h.budgetMb > 0 ? `Memory committed (of ${h.budgetMb} MB)` : 'Memory committed (no budget set)',
-        `${h.committedMb ?? 0} MB`, 'bi-memory', memTone))}
       ${raw(stat('Uptime', upText, 'bi-clock-history', 'secondary'))}
       ${raw(sysCards(o.system))}
     </div>
