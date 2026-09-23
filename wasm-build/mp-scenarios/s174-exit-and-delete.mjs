@@ -21,6 +21,9 @@ import assert from 'node:assert/strict';
 import { startGatewayAndClient, addClient, harnessSession, grantLockerSession } from './_gateway.mjs';
 
 export const managedPeer = true;
+// The harness respawn point is the Example Suite village (26,25): open sea in retail, where A
+// was dying during setup. The shipped default (where you fell) instead.
+export const serverRules = 'respawnCellKey = ""';
 export const bootTimeoutMs = 420_000;
 const GW_PORT = 19200; // ten apart from its neighbours (see s102)
 const STEP = 30_000;
@@ -126,8 +129,11 @@ export default async function run(ctx) {
     await ctx.sleep(1500); // the menu fades in; a click before it is drawn lands on nothing
     ctx.log(`Exit at ${JSON.stringify(await A.clickCanvas(...EXIT_BUTTON))}`);
     await ctx.sleep(1500);
-    const leftAlready = await A.eval('location.pathname').catch(() => 'navigating');
-    if (/index\.html/.test(String(leftAlready))) ctx.log(`confirm at ${JSON.stringify(await A.clickCanvas(...CONFIRM_YES))}`);
+    // Yes -- again if the first click landed before the box was drawn (a frame can take seconds).
+    for (let i = 0; i < 3 && /index\.html/.test(String(await A.eval('location.pathname').catch(() => 'navigating'))); i++) {
+      ctx.log(`confirm at ${JSON.stringify(await A.clickCanvas(...CONFIRM_YES))}`);
+      await ctx.sleep(4000);
+    }
     const t0 = Date.now();
     const exitIso = new Date(t0 - 15_000).toISOString(); // the click landed before the page left
     try {
