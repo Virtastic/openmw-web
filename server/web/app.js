@@ -54,6 +54,11 @@ async function api(path, opts = {}) {
   if (token.get()) headers.authorization = `Bearer ${token.get()}`;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(`/admin/api${apiPath(path)}`, {
+    // NEVER FROM THE HTTP CACHE. API answers are live state, and a cached one is worse than
+    // none: a proxy that answered a single call with a permanent redirect (308, which browsers
+    // cache) left every later call replaying that redirect locally, never reaching the server,
+    // and the dashboard stayed broken across reloads until the browser cache was cleared.
+    cache: 'no-store',
     ...opts,
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
@@ -1627,7 +1632,10 @@ function waitForRestart() {
   const tick = async () => {
     tries++;
     try {
-      const r = await fetch('/admin/api/state');
+      // no-store: see api(). The timeout because the next tick is only scheduled once this
+      // one settles, so a single request that never answered froze the page for good: the
+      // counter stopped, and the four-minute give-up below was never reached.
+      const r = await fetch('/admin/api/state', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
       if (r.ok) {
         await refreshState();
         // ADMIN SESSIONS DO NOT SURVIVE A RESTART, they live in memory. So the last act of
