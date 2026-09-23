@@ -642,6 +642,36 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       writeFileSync(path, Buffer.from(shot.data, 'base64'));
       return path;
     };
+    // WHAT A FRAME HOLDS, so a visual scenario can assert instead of only capturing. The page
+    // decodes its own screenshot (no PNG library here) and returns, for a region given as
+    // fractions of the viewport {x, y, w, h}: distinct colours (quantised to 4 bits a channel),
+    // the share of the most common one, and mean luminance. A flat fill -- the black frame, the
+    // solid white/blue minimap -- is a dominant share near 1 and a handful of colours.
+    handle.frameStats = async (region = { x: 0, y: 0, w: 1, h: 1 }, path = null) => {
+      const shot = await bsend('Page.captureScreenshot', { format: 'png' }, sessionId);
+      if (path) writeFileSync(path, Buffer.from(shot.data, 'base64'));
+      return handle.evalAsync(`(async () => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,${shot.data}';
+        await img.decode();
+        const r = ${JSON.stringify(region)};
+        const x = Math.floor(img.width * r.x), y = Math.floor(img.height * r.y);
+        const w = Math.max(1, Math.floor(img.width * r.w)), h = Math.max(1, Math.floor(img.height * r.h));
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const g = cv.getContext('2d'); g.drawImage(img, x, y, w, h, 0, 0, w, h);
+        const d = g.getImageData(0, 0, w, h).data;
+        const counts = new Map(); let lum = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const k = (d[i] >> 4) << 8 | (d[i + 1] >> 4) << 4 | (d[i + 2] >> 4);
+          counts.set(k, (counts.get(k) || 0) + 1);
+          lum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+        }
+        const n = d.length / 4;
+        let top = 0, topKey = 0; for (const [k, c] of counts) if (c > top) { top = c; topKey = k; }
+        return { width: w, height: h, colours: counts.size, dominant: top / n,
+          dominantRgb: [(topKey >> 8) * 17, ((topKey >> 4) & 15) * 17, (topKey & 15) * 17], meanLum: lum / n };
+      })()`);
+    };
     handle.eval = async (expr) => {
       const r = await bsend('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId);
       if (r.exceptionDetails) throw new Error(`eval(${expr}): ` + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));

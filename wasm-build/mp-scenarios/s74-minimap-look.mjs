@@ -9,12 +9,12 @@
 // something that cannot work and drew garbage instead of failing loudly. That fallback is gone
 // now.
 //
-// This scenario does not assert the minimap is CORRECT -- no automated check can tell a
-// plausible map from a wrong one, and pretending otherwise would be worse than not looking.
-// What it does is produce the artefact a person can look at in one step, instead of the bug
-// staying "undiagnosed" because checking it was a whole afternoon of setup.
+// Asserted: after a walk, the full map WINDOW shows drawn content -- not a flat fill, and not the
+// deliberate diagnostic blue localmap.cpp clears to (a map that is only that blue drew nothing).
+// Whether the map is CORRECT stays a human call: the PNGs are kept for that.
 //
 // The minimap is part of the HUD, so ordinary gameplay is enough; no UI has to be opened.
+import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -27,14 +27,13 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'harness-out');
 mkdirSync(ROOT, { recursive: true });
 
-export const diagnostic = true; // asserts nothing: reported as DIAG, not counted as a PASS
 export default async function run(ctx) {
   const a = await ctx.launchClient('map-look');
 
   // Let the world settle. The local map renders as cells load, and a shot taken during the
   // first frames says nothing about whether the RTT path works.
   await ctx.sleep(8000);
-  const before = await a.screenshot(join(ROOT, 'minimap-before-walk.png'));
+  const before = await a.frameStats(undefined, join(ROOT, 'minimap-before-walk.png'));
 
   // WALK FIRST, then look again. The map panel on a character who has just spawned shows
   // unexplored FOG OF WAR, which in Morrowind is a flat tan field -- indistinguishable in a
@@ -48,7 +47,7 @@ export default async function run(ctx) {
   await a.eval("window.omw.send('walk:0,1,20000')");
   await ctx.sleep(22000);
 
-  const after = await a.screenshot(join(ROOT, 'minimap-after-walk.png'));
+  const after = await a.frameStats(undefined, join(ROOT, 'minimap-after-walk.png'));
 
   // THE FULL MAP WINDOW, as a discriminator the HUD panel alone cannot give. Both widgets read
   // the SAME per-cell texture (LocalMap::getMapTexture) through different MyGUI widgets, so:
@@ -60,14 +59,15 @@ export default async function run(ctx) {
   // link in the chain and the only one still unmeasured.
   await a.eval("window.omw.send('ui:Map')");
   await ctx.sleep(3000);
-  const win = await a.screenshot(join(ROOT, 'minimap-window.png'));
-  ctx.log(`  map WINDOW: ${win}`);
-  ctx.log(`  before walking: ${before}`);
-  ctx.log(`  after walking:  ${after}`);
+  // The window's middle: the map itself, clear of the title bar and the HUD.
+  const win = await a.frameStats({ x: 0.25, y: 0.2, w: 0.5, h: 0.6 }, join(ROOT, 'minimap-window.png'));
+  ctx.log(`  map WINDOW (centre): ${JSON.stringify(win)}`);
+  ctx.log(`  before walking: ${JSON.stringify(before)}`);
+  ctx.log(`  after walking:  ${JSON.stringify(after)}`);
   ctx.log('  compare the map panel in the HUD corner -- identical means it never drew');
 
   // PRINT THE ENGINE'S OWN LINES. The harness only dumps a client's console when a scenario
-  // FAILS, and this one passes by design -- it produces artefacts rather than asserting. So
+  // FAILS, and a passing run would otherwise hide them. So
   // the local-map diagnostics went into a log nobody read, and their absence looked like
   // evidence when it was just a log that was never shown.
   const lines = (a.logTail?.(400) ?? '').split('\n').filter((l) => /Local map:/i.test(l));
@@ -98,4 +98,10 @@ export default async function run(ctx) {
   ctx.log(`  GL-level complaints (${gl.length} distinct):`);
   for (const l of gl.slice(0, 20)) ctx.log(`    ${l.slice(0, 200)}`);
   if (!gl.length) ctx.log('    none — the framebuffer is not complaining, so incompleteness is NOT the cause');
+
+  const [r, g, b] = win.dominantRgb;
+  const diagBlue = Math.abs(r - 51) < 24 && Math.abs(g - 102) < 24 && Math.abs(b - 204) < 24;
+  assert.ok(win.colours > 32 && win.dominant < 0.8,
+    `the map window is a flat fill: ${win.colours} colours, ${Math.round(win.dominant * 100)}% rgb(${win.dominantRgb})`);
+  assert.ok(!(diagBlue && win.dominant > 0.5), 'the map window is mostly the diagnostic clear blue: nothing was drawn into the local map');
 }
