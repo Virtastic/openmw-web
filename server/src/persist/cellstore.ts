@@ -471,6 +471,13 @@ export class CellStore {
     return this.cache.get(cellKey);
   }
 
+  /** Does this cell already have a document (loaded, or stored)? Answers without creating
+   *  one, which get() would: the far-enable budget charges only cells that would be NEW. */
+  has(cellKey: string): boolean {
+    if (this.cache.has(cellKey)) return true;
+    return this.db.prepare('SELECT 1 FROM cells WHERE cellKey = ?').get(cellKey) !== undefined;
+  }
+
   markDirty(cellKey: string): void {
     this.dirty.add(cellKey);
   }

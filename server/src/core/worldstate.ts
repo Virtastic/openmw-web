@@ -1251,6 +1251,14 @@ export class WorldState {
     const ext = parseExterior(cellKey);
     if (ext && (Math.abs(ext.x) > MAX_FAR_CELL_COORD || Math.abs(ext.y) > MAX_FAR_CELL_COORD)) return false;
     if (hiding && !this.farDisableAllowed(player)) return false;
+    // THE BUDGET IS FOR CELLS THAT WOULD BE NEW. What it guards (backlog 337) is get()
+    // minting and persisting a doc for any key it is handed. A cell that already has a doc
+    // costs nothing to write to, and charging it spent the whole budget in the first second:
+    // the client's own Startup toggles a hundred refs across Vvardenfell on every load, into
+    // cells the peer's Startup has already written. A later quest enable or disable into a
+    // genuinely far cell was then refused, the peer's world kept the old state, and the
+    // avatar walked through (or into) something the player's world did not have.
+    if (this.cells.has(cellKey)) return true;
     const far = (player.farEnableCells ??= new Set());
     if (!far.has(cellKey) && far.size >= MAX_FAR_ENABLE_CELLS) return false;
     far.add(cellKey);

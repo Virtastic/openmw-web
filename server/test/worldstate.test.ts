@@ -355,6 +355,44 @@ test("a human's far-cell disable persists and replays; a later enable persists a
   assert.deepEqual(second.enabled, ['c:4242:0'], 'the enable did not persist as a reveal');
 });
 
+// The budget is for cells that would be NEW. The client's Startup toggles refs in dozens of far
+// cells on every load, cells the peer's own Startup has already written; charging those spent
+// the whole budget in the first second, and a real quest enable into a new far cell was refused
+// (dev box, 2026-09-23: object.out_of_reach at session start).
+test('far toggles into cells that already have a doc cost nothing; a new far cell still gets through', async (t) => {
+  const dataDir = tmpDataDir();
+  {
+    const seed = new CellStore(dataDir);
+    for (let i = 0; i < 70; i++) {
+      const doc = await seed.get(`known interior ${i}`);
+      (doc.enabled ??= {})['c:1:0'] = false;
+      seed.markDirty(`known interior ${i}`);
+    }
+    await seed.flushAll();
+    seed.close();
+  }
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  await host.joinAsNew('Host');
+  host.sendCellChange('0,0', 0, 0, 0);
+  await host.waitEvent('PlayerCellChange');
+  const ref = { __refnum: { index: 4242, contentFile: 0 } };
+  for (let i = 0; i < 35; i++) host.sendEvent('ObjectEnabled', { ref, cellKey: `known interior ${i}`, enabled: true });
+  await new Promise((r) => setTimeout(r, 1100));
+  for (let i = 35; i < 70; i++) host.sendEvent('ObjectEnabled', { ref, cellKey: `known interior ${i}`, enabled: true });
+  await new Promise((r) => setTimeout(r, 1100));
+  host.sendEvent('ObjectEnabled', { ref, cellKey: 'a quest cave nobody has seen', enabled: true });
+  await new Promise((r) => setTimeout(r, 300));
+  await server.flush();
+  const store = new CellStore(dataDir);
+  t.after(() => store.close());
+  assert.equal((await store.get('known interior 69')).enabled?.['c:4242:0'], true, 'a toggle into an existing far cell lands');
+  assert.equal((await store.get('a quest cave nobody has seen')).enabled?.['c:4242:0'], true,
+    'seventy writes into existing cells must not have spent the new-cell budget');
+});
+
 // Backlog 337/384: a far enable creates a cell doc for whatever key it names, so a far exterior
 // has to be a real one inside the world; an interior needs no visit, and the per-session
 // distinct-cell cap is what bounds the doc count.
