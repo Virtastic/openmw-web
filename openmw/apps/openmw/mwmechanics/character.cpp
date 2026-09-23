@@ -2042,7 +2042,11 @@ namespace MWMechanics
                 float deltaLen = delta.length();
 
                 float maxDelta;
-                if (isFirstPersonPlayer)
+                // MULTIPLAYER: a PUPPET's motion was already smoothed by the engine that simulates
+                // it (the sim peer, or the remote player's own client). Smoothing it again here
+                // is a second third-of-a-second ramp at every start and stop, which puppet.lua's
+                // steering can only answer by trailing its target or overshooting it (s172).
+                if (isFirstPersonPlayer || MWMP::isPuppet(mPtr.getCellRef().getRefNum()))
                     maxDelta = 1;
                 else if (std::abs(speedDelta) < deltaLen / 2)
                     // Turning is smooth for player and less smooth for NPCs (otherwise NPC can miss a path point).

@@ -2214,5 +2214,43 @@ do
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
+print('s172 a friend\'s or an NPC\'s blow plays keys that exist; a puppet\'s speed is not ramped twice')
+do
+  -- Every key a puppet plays must exist in the retail animations: Animation::reset refuses a
+  -- missing one SILENTLY. The follow sections are small/medium/large only (Morrowind.bsa:
+  -- 'weapononehand: chop small follow stop' and no size-less one), so a friend's or an NPC's
+  -- swing released into nothing and its wind-up stayed held.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.animation', 'scripts.mp.interp' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local played, now = {}, 10
+  package.loaded['openmw.core'] = { getRealTime = function() return now end, sendGlobalEvent = function() end, sound = { playSound3d = function() end } }
+  package.loaded['openmw.self'] = { object = {}, controls = {}, position = { x = 0, y = 0, z = 0 },
+    rotation = { getYaw = function() return 0 end, getPitch = function() return 0 end }, enableAI = function() end }
+  package.loaded['openmw.types'] = {
+    Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 1 end, setStance = function() end,
+      EQUIPMENT_SLOT = { CarriedRight = 16 }, getEquipment = function() return nil end },
+    Creature = { objectIsInstance = function() return false end },
+    Weapon = { objectIsInstance = function() return false end, TYPE = {} },
+  }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4 }, hasGroup = function() return true end,
+    playBlendedAnimation = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
+  package.loaded['scripts.mp.interp'] = nil
+  local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+  pup.engineHandlers.onInit({ playerId = 7 })
+  local pose = function(fl) return { x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = fl, t = now } end
+  pup.eventHandlers.MP_Pose(pose(16)); pup.engineHandlers.onUpdate(0.05)
+  now = now + 0.05; pup.eventHandlers.MP_Pose(pose(24)); pup.engineHandlers.onUpdate(0.05)
+  now = now + 0.5; pup.eventHandlers.MP_Pose(pose(16)); pup.engineHandlers.onUpdate(0.05)
+  check('a friend\'s swing: wind-up to min attack on the press, the blow to SMALL follow stop on the release',
+    played[1] == 'handtohand:chop start>chop min attack' and played[2] == 'handtohand:chop max attack>chop small follow stop', table.concat(played, ' '))
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+  local cpp = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
+  check('character.cpp does not smooth a puppet\'s speed a second time (the peer already did)',
+    cpp:find('if (isFirstPersonPlayer || MWMP::isPuppet(mPtr.getCellRef().getRefNum()))', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

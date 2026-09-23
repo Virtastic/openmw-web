@@ -180,7 +180,11 @@ local function showSwing(release, full)
             anim.playBlendedAnimation(self, group, {
                 priority = anim.PRIORITY.Weapon,
                 startKey = kind .. (full and ' start' or ' max attack'),
-                stopKey = ranged and 'shoot release' or 'chop follow stop',
+                -- SMALL follow stop: the follow sections exist as small/medium/large only
+                -- (character.cpp picks one by attack strength); a size-less one is not a key in
+                -- any retail weapon group, Animation::reset refused it silently, and the blow
+                -- never played: the wind-up above stayed held (s172, keys read off the .bsa).
+                stopKey = ranged and 'shoot release' or 'chop small follow stop',
             })
             core.sound.playSound3d('Weapon Swish', self)
         else
