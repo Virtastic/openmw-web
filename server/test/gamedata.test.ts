@@ -255,8 +255,10 @@ test('but an ENABLED expansion still requires its archive', () => {
   assert.deepEqual(r.missing, ['Tribunal.bsa']);
 });
 
-test('the peer settings put physics on its own thread (#267)', () => {
-  assert.match(buildPeerSettings(), /^\[Physics\]\nasync num threads = 1$/m);
+// #267 put physics on its own thread; that landed each avatar's move a frame after the pose was
+// read and stamped, and owners were corrected 15-25 u on every running step (2026-09-23).
+test('the peer settings keep physics on the main thread, so a stamped pose includes its move', () => {
+  assert.match(buildPeerSettings(), /^\[Physics\]\nasync num threads = 0$/m);
 });
 
 // Backlog 299: a mod's plugins are hashed from gamedata/mods/<slug>/, keyed lowercase.

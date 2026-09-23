@@ -583,6 +583,24 @@ window.omw = (function(){
    var frames = 0, worstGap = 0, lastFrame = 0;
    function tick(t){ if (lastFrame) { var g = t - lastFrame; if (g > worstGap) worstGap = g; } lastFrame = t; frames++; requestAnimationFrame(tick); }
    requestAnimationFrame(tick);
+   // Binary frames as the BROWSER receives them, by envelope type: tells "never arrived"
+   // apart from "arrived and the engine dropped it" (the Lua counters only see the latter).
+   var wsRx = {};
+   var NativeWS = window.WebSocket;
+   if (NativeWS) {
+     window.WebSocket = function(url, protocols){
+       var ws = protocols === undefined ? new NativeWS(url) : new NativeWS(url, protocols);
+       ws.addEventListener('message', function(e){
+         var d = e.data;
+         if (!(d instanceof ArrayBuffer) || d.byteLength < 2) return;
+         var t = new DataView(d).getUint16(0, true).toString(16);
+         wsRx[t] = (wsRx[t] || 0) + 1;
+       });
+       return ws;
+     };
+     window.WebSocket.prototype = NativeWS.prototype;
+     ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function(k){ window.WebSocket[k] = NativeWS[k]; });
+   }
    var div = [], snaps = 0, lastSnap = '', prev = null, lastSent = Date.now();
    function st(){ return (window.omw && window.omw.state) || {}; }
    setInterval(function(){
@@ -604,8 +622,9 @@ window.omw = (function(){
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
        + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
-       + ' cell=' + (s.cell || '?') + ' holder=' + (s.authorityHolder || '?') + ' actors=' + (s.actorCount || '?');
-     frames = 0; worstGap = 0; div = []; snaps = 0;
+       + ' cell=' + (s.cell || '?') + ' holder=' + (s.authorityHolder || '?') + ' actors=' + (s.actorCount || '?')
+       + ' puppeted=' + (s.puppetedActors || '?') + ' wsRx=' + JSON.stringify(wsRx);
+     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {};
      fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
        body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
    }, 5000);

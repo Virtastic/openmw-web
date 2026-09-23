@@ -227,6 +227,23 @@ export class WorldState {
   // cellKey -> count of ActorMoveBatch frames relayed for that cell, the phase source for
   // actor LOD striding. Cleared when the cell empties.
   private readonly actorBatchNo = new Map<string, number>();
+  // RELAY ACCOUNTING, logged every 30 s while there is traffic (actor.relay_stats): frames
+  // accepted per cell, rejected by reason, and relayed per recipient. A client whose NPCs
+  // stand still can then be told apart from a peer that is not streaming, a holder/epoch
+  // mismatch, and a relay that skips the player -- without enabling /metrics.
+  private relayStats = { accepted: new Map<string, number>(), rejected: new Map<string, number>(), sent: new Map<string, number>(), shed: new Map<string, number>() };
+  private relayStatsAt = Date.now();
+  private noteRelay(kind: 'accepted' | 'rejected' | 'sent' | 'shed', key: string): void {
+    const m = this.relayStats[kind];
+    m.set(key, (m.get(key) ?? 0) + 1);
+    const now = Date.now();
+    if (now - this.relayStatsAt < 30_000) return;
+    const obj = (x: Map<string, number>) => Object.fromEntries([...x].sort());
+    log('info', 'actor.relay_stats', { secs: Math.round((now - this.relayStatsAt) / 1000),
+      accepted: obj(this.relayStats.accepted), rejected: obj(this.relayStats.rejected), sent: obj(this.relayStats.sent), shed: obj(this.relayStats.shed) });
+    this.relayStats = { accepted: new Map(), rejected: new Map(), sent: new Map(), shed: new Map() };
+    this.relayStatsAt = now;
+  }
   // #364: cellKey -> refKey -> last time the holder streamed it as an actor.
   private readonly actorRefs = new Map<string, Map<string, number>>();
   private isActorRef(cellKey: string, refKey: string): boolean {
@@ -1005,15 +1022,18 @@ export class WorldState {
       // (not just dropped) so forgery is VISIBLE — a modified client trying to move
       // everyone's NPCs shows up in /metrics instead of failing silently.
       metrics.actorBatchRejected.inc({ reason: cellKey ? 'not_holder' : 'no_cell' });
+      this.noteRelay('rejected', `${cellKey ?? '?'}:${cellKey ? 'not_holder' : 'no_cell'}`);
       return;
     }
     if (this.authority.currentEpoch(cellKey) !== epoch) {
       metrics.actorBatchRejected.inc({ reason: 'stale_epoch' });
+      this.noteRelay('rejected', `${cellKey}:stale_epoch`);
       return;
     }
     // Liveness: this holder is demonstrably doing the job. Recorded only for ACCEPTED
     // frames, so a stale-epoch sender cannot keep a dead cell looking alive.
     this.authority.noteActorFrame(cellKey);
+    this.noteRelay('accepted', cellKey);
     const batchNo = (this.actorBatchNo.get(cellKey) ?? 0) + 1;
     this.actorBatchNo.set(cellKey, batchNo);
     // #364: remember WHICH refs the holder streams as actors (one frame in twenty: the set
@@ -1052,7 +1072,8 @@ export class WorldState {
         if (st > 1 && (batchNo + p.id) % st !== 0) continue;
       }
       frame ??= packEnvelope(MSG_ACTOR_MOVE_BATCH, nextBroadcastSeq(), payload);
-      p.peer.sendBinaryFrame(MSG_ACTOR_MOVE_BATCH, frame);
+      const ok = p.peer.sendBinaryFrame(MSG_ACTOR_MOVE_BATCH, frame);
+      this.noteRelay(ok ? 'sent' : 'shed', `${p.name}@${p.cellKey}`);
     }
   }
 
