@@ -2473,6 +2473,7 @@ local eventHandlers = {
     end,
 
     MP_PlayerLeaveWorld = function(data)
+        if data.id == nil then return end -- no key, nothing to clear: t[nil] = nil throws, and a throwing handler goes silent
         for i, p in ipairs(roster) do
             if p.id == data.id then
                 toPlayer('MP_UiChatMessage',

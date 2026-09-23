@@ -606,6 +606,7 @@ handlers.MP_WorldWeather = function(data)
 end
 
 handlers.MP_RecordCreateAck = function(data)
+    if data.tempId == nil then return end -- no key, nothing to clear: t[nil] = nil throws, and a throwing handler goes silent
     local localId = pendingRecords[data.tempId]
     pendingRecords[data.tempId] = nil
     if not localId or type(data.recordNetId) ~= 'string' then return end
@@ -616,7 +617,7 @@ end
 -- The server would not mint the record (caps or ceiling, backlog 323): forget the pending
 -- id so a later ack for a reused tempId cannot bind the wrong local record, and say why.
 handlers.MP_RecordCreateRefused = function(data)
-    pendingRecords[data.tempId] = nil
+    if data.tempId ~= nil then pendingRecords[data.tempId] = nil end
     print('[mp] record refused: ' .. tostring(data.reason))
 end
 

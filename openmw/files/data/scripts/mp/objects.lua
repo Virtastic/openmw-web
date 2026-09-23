@@ -710,6 +710,7 @@ end
 local handlers = {}
 
 handlers.MP_ObjectSpawnAck = function(data)
+    if data.tempId == nil then return end -- no key, nothing to clear: t[nil] = nil throws, and a throwing handler goes silent
     local obj = pendingSpawns[data.tempId]
     pendingSpawns[data.tempId] = nil
     if not (obj and obj:isValid() and data.netId) then return end
