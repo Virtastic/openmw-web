@@ -815,6 +815,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     content: contentGate,
     engine: new EngineGate(config.engine.enforce, config.engine.pin),
     loginLimiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
+    // Tickets are server-minted and unguessable; this bounds a flood, not a guess (connection.ts
+    // checkAuthGate). 60 a minute covers a LAN party reconnecting after a restart.
+    ticketLimiter: new IpRateLimiter(60),
     chatCtx,
     hooks,
     players: playerStore,

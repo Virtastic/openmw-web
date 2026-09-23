@@ -108,6 +108,8 @@ export interface ServerCtx {
   // pinned as the world's canonical content list.
   gameDataOk?: boolean;
   loginLimiter: IpRateLimiter;
+  /** Ticket redemptions per IP (their own budget: a signed ticket is not a guess). Absent = loginLimiter. */
+  ticketLimiter?: IpRateLimiter;
   chatCtx: ChatContext;
   hooks: HookBus;
   players: PlayerStore;
@@ -1367,7 +1369,15 @@ export class Connection implements Peer {
   }
 
   private checkAuthGate(op: AuthOp, serverPassword: string | undefined): boolean {
-    if (!this.ctx.loginLimiter.allow(this.ip)) {
+    // A TICKET IS NOT A GUESS. The per-IP login budget (5 a minute by default) is there to slow
+    // password brute force, and a login ticket is a short-lived server-minted token nobody can
+    // guess -- but it spent the same five. After a server restart every player's resume is
+    // refused and falls back to its ticket, so a household or a LAN party behind one router
+    // could run the bucket dry and the sixth player got RATE, which the client treats as
+    // terminal ("disconnected for flooding"). Every prod update is a server restart. Tickets
+    // draw on their own, generous budget; passwords keep the tight one.
+    const limiter = op === 'ticket' ? (this.ctx.ticketLimiter ?? this.ctx.loginLimiter) : this.ctx.loginLimiter;
+    if (!limiter.allow(this.ip)) {
       metrics.rateLimited.inc({ budget: 'login' });
       this.authFail(op, 'RATE', 'too many auth attempts');
       return false;

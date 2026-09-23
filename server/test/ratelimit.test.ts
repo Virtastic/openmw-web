@@ -59,3 +59,33 @@ test('rate limits', async (t) => {
     }
   });
 });
+
+// A household or LAN party behind one address, after a server restart: every resume is refused
+// and falls back to its login ticket. Tickets used to spend the per-IP PASSWORD budget (5 a
+// minute), so the sixth player was cut off with a terminal RATE. They have their own budget now,
+// and a password guesser from that address is still stopped at the sixth attempt.
+test('ticket sign-ins from one address have their own budget; password attempts keep theirs', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { limits: { loginPerMinPerIp: 5, maxConnsPerIp: 64 } },
+  });
+  t.after(() => server.close());
+  async function attempt(msg: Record<string, unknown>): Promise<string> {
+    const c = await TestClient.connect(server.port);
+    try {
+      c.hello();
+      await c.waitJson('SessionHelloOk');
+      c.sendJson(msg);
+      const d = await c.waitJson('SessionDisconnect');
+      return String((d as { code?: unknown }).code);
+    } finally { c.close(); }
+  }
+  const tickets: string[] = [];
+  for (let i = 0; i < 8; i++) tickets.push(await attempt({ t: 'SessionLoginTicket', ticket: 'spent-ticket-' + i }));
+  assert.deepEqual(tickets, Array(8).fill('AUTH_FAILED'),
+    'eight ticket sign-ins from one address must each be judged on the ticket, never cut off as RATE');
+  const guesses: string[] = [];
+  for (let i = 0; i < 6; i++) guesses.push(await attempt({ t: 'SessionLoginRequest', account: 'nobody', password: 'guess-' + i }));
+  assert.ok(guesses.slice(0, 5).every((code) => code !== 'RATE'), 'the first five password attempts are judged: ' + guesses.join(','));
+  assert.equal(guesses[5], 'RATE', 'the sixth password attempt from one address inside a minute is still refused');
+});
