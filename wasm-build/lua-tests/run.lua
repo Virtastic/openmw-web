@@ -2054,15 +2054,9 @@ do
   check('reconcile.lua is required only in the global context, and the global onUpdate ends the frame',
     #offenders == 0 and g:find('reconcile.nextFrame()', 1, true) ~= nil, table.concat(offenders, ', '))
   -- The call sites the behavioural cases below stand for: revert any of them and this fails.
-  local ad = g:match('local function applyAvatarDoc%(id%)(.-)
-end
-') or ''
-  local pe = g:match('local function pushEquipmentToPuppet%(id%)(.-)
-end
-') or ''
-  local rt = g:match('local function restoreTick%(%)(.-)
-end
-') or ''
+  local ad = g:match('local function applyAvatarDoc%(id%)(.-)\nend\n') or ''
+  local pe = g:match('local function pushEquipmentToPuppet%(id%)(.-)\nend\n') or ''
+  local rt = g:match('local function restoreTick%(%)(.-)\nend\n') or ''
   check('applyAvatarDoc reconciles through reconcile.reconcileInventory and reruns while anything is in flight',
     ad:find('reconcile.reconcileInventory(', 1, true) ~= nil and ad:find('avatarDocDirty[id] = true', 1, true) ~= nil)
   check('MP_AvatarState only marks the avatar; avatarDocTick applies once per frame',
