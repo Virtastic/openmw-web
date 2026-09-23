@@ -881,6 +881,17 @@
  (function gateOnCapability(){
    if (!engineUnsupported()) return;         // desktop Chromium: nothing changes
    $('unsupported').hidden = false;
+   // AN INSECURE PAGE, NOT AN INCAPABLE BROWSER. Cross-origin isolation needs a secure context,
+   // so a desktop Chrome on http://<LAN address> fails the same check a phone does -- and was
+   // told to "open this on a desktop" while sitting at one. Say what is actually wrong.
+   if (!self.isSecureContext) {
+     $('unsupported').dataset.reason = 'insecure';
+     $('unsupported').querySelector('h2').textContent = 'Open this page over HTTPS';
+     $('unsupported').querySelector('.lead').textContent = 'Your browser can run the game, but not '
+       + 'from a plain http:// address: the engine needs a secure page, and browsers only treat '
+       + 'https:// (or this computer\'s own localhost) as one. Ask the server\'s owner for its '
+       + 'https:// address, or play on the server machine itself at http://localhost.';
+   }
    document.querySelector('.cards').classList.add('demoted');
 
    // Capture the intent we would otherwise lose: hand the URL to the share sheet so they can

@@ -27,6 +27,7 @@ export default async function run(ctx) {
   await ctx.sleep(1500);
   // Third person on A so A's own avatar shares the frame with B's puppet standing at spawn
   // (?start deep-links leave the player in first person, where the own body is invisible).
+  await a.dismissTour();
   await a.eval(`window.omw.send('cam:3p')`);
   await ctx.sleep(700);
 

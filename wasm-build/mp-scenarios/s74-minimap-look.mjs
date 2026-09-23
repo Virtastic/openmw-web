@@ -29,6 +29,7 @@ mkdirSync(ROOT, { recursive: true });
 
 export default async function run(ctx) {
   const a = await ctx.launchClient('map-look');
+  await a.dismissTour();
 
   // Let the world settle. The local map renders as cells load, and a shot taken during the
   // first frames says nothing about whether the RTT path works.

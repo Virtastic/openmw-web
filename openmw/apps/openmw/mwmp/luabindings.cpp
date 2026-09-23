@@ -775,6 +775,15 @@ namespace MWMP
         // clear, exposed so the restore can reset to a clean slate before re-adding. The
         // engine re-applies each ability on the next update, guarded by isSpellActive, so the
         // count after a restore is exactly one and cannot climb.
+        // HARNESS: go to jail, exactly as the guard's "Go to jail" choice does (its result script is
+        // GoToJail -> World::goToJail, mwscript/miscextensions.cpp). The first call forfeits the
+        // bounty and confiscates stolen goods; World::update finishes it the next frame (prison
+        // marker, the jail screen, days of rest and the clock). A headless client cannot click a
+        // dialogue choice, and without this no scenario could reach jail at all (backlog 45).
+        api["goToJail"] = [luaManager = context.mLuaManager]() {
+            luaManager->addAction([] { MWBase::Environment::get().getWorld()->goToJail(); }, "MPGoToJail");
+        };
+
         api["clearActiveSpells"] = [luaManager = context.mLuaManager]() {
             luaManager->addAction(
                 [] {

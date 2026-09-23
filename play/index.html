@@ -747,7 +747,13 @@ window.omw = (function(){
  // Hard requirement check: this build uses pthreads (SharedArrayBuffer), which needs
  // cross-origin isolation and a capable browser. Fail with a CLEAR message, not a cryptic
  // instantiation error (Safari/iOS and non-isolated hosts land here).
- if (!self.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined'){
+ if (!self.isSecureContext){
+   // The launcher says the same: a desktop browser on http://<LAN address> is not "unsupported".
+   fatalOverlay('Open this page over HTTPS',
+     'The engine needs a secure page, and browsers only treat https:// (or this computer\'s own '
+     + 'localhost) as one. Ask the server\'s owner for its https:// address, or play on the '
+     + 'server machine itself at http://localhost.', false);
+ } else if (!self.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined'){
    fatalOverlay('Browser not supported',
      'This build needs SharedArrayBuffer + cross-origin isolation (COOP/COEP headers). '
      + 'Use a desktop Chrome/Edge/Firefox, and serve via play/server.py or an HTTPS host '

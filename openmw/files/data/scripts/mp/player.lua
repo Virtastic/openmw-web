@@ -893,6 +893,16 @@ local function dispatch(cmd)
             end)
             mp.set('body', ok and v or ('err:' .. tostring(v)))
         end
+        -- whoami: what character creation made of us -- name, race, class, birthsign (s176).
+        if cmd == 'whoami' then
+            local ok, v = pcall(function()
+                local rec = types.NPC.record(self)
+                local okb, sign = pcall(function() return types.Player.getBirthSign(self) end)
+                return json.encode({ name = rec.name, race = rec.race, class = rec.class,
+                    sign = okb and tostring(sign or '') or '' })
+            end)
+            mp.set('whoami', ok and v or ('err:' .. tostring(v)))
+        end
         -- actives: the ids of our active spells right now (did the cast take?).
         if cmd == 'actives' then
             local ids = {}
@@ -1178,6 +1188,10 @@ local function dispatch(cmd)
         if cmd == 'takeowned' then core.sendGlobalEvent('mpTestTakeOwned', {}) end
         local bountyN = cmd:match('^bounty:(%d+)$')
         if bountyN then core.sendGlobalEvent('mpTestBounty', { n = tonumber(bountyN) }) end
+        -- jail: what the guard's "Go to jail" choice does (mp.goToJail = World::goToJail).
+        if cmd == 'jail' then
+            if mp.goToJail then mp.goToJail() else print('[mp] jail: this engine has no mp.goToJail') end
+        end
         local facId, facRank = cmd:match('^faction:([^:]+):(%d+)$')
         if facId then
             core.sendGlobalEvent('mpTestFaction', { id = facId, rank = tonumber(facRank) })

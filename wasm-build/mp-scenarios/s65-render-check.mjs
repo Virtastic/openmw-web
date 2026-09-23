@@ -32,6 +32,7 @@ export default async function run(ctx) {
   mkdirSync(OUT, { recursive: true });
   // Seyda Neen: trees and foliage in view, which is where the alpha fault was reported.
   const c = await ctx.launchClient('eyes', '', BOOT);
+  await c.dismissTour();
   await ctx.sleep(6000); // let the cell finish streaming in before looking at it
 
   const world = await c.frameStats(undefined, join(OUT, 'render-check-world.png'));

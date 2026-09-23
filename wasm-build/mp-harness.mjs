@@ -183,26 +183,31 @@ async function startGameServer(extraRules = '', extraEnv = {}, opts = {}) {
   // password means no peer can authenticate at all, which is what testhost shipped. Without a
   // peer nothing can hold cell authority (canSimulate is `p.system === true`), so no browser
   // scenario could exercise the M4/M5 layer.
-  const proc = spawn(process.execPath,
-    [dist, '--data', dataDir, '--port', String(port), '--server-password', SERVER_PASSWORD], {
-    cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...extraEnv },
-    // Its own process group, so the sim peers the SERVER spawns can be reaped with it. A
-    // SIGKILLed server leaves them orphaned (the engine ignores TERM), and six of them from
-    // earlier scenarios were still burning CPU an hour later -- the load that timed out
-    // s60b/s69 in run 12 (2026-09-04). kill()/stop() below take the whole group.
-    detached: true,
-  });
-  const killGroup = () => { try { process.kill(-proc.pid, 'SIGKILL'); } catch { /* gone */ } };
   const out = [];
-  proc.stdout.on('data', (d) => out.push(String(d)));
-  proc.stderr.on('data', (d) => out.push(String(d)));
-  try {
-    await waitHttp(`http://127.0.0.1:${port}/healthz`, 45_000, 'omw-mp /healthz');
-  } catch (e) {
-    try { proc.kill('SIGKILL'); } catch {}
-    throw new Error(e.message + '\nserver output:\n' + out.join(''));
-  }
+  let proc;
+  // Spawned by a function so restart() can bring the SAME world back on the same port.
+  const spawnServer = async () => {
+    proc = spawn(process.execPath,
+      [dist, '--data', dataDir, '--port', String(port), '--server-password', SERVER_PASSWORD], {
+      cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...extraEnv },
+      // Its own process group, so the sim peers the SERVER spawns can be reaped with it. A
+      // SIGKILLed server leaves them orphaned (the engine ignores TERM), and six of them from
+      // earlier scenarios were still burning CPU an hour later -- the load that timed out
+      // s60b/s69 in run 12 (2026-09-04). kill()/stop() below take the whole group.
+      detached: true,
+    });
+    proc.stdout.on('data', (d) => out.push(String(d)));
+    proc.stderr.on('data', (d) => out.push(String(d)));
+    try {
+      await waitHttp(`http://127.0.0.1:${port}/healthz`, 45_000, 'omw-mp /healthz');
+    } catch (e) {
+      try { proc.kill('SIGKILL'); } catch {}
+      throw new Error(e.message + '\nserver output:\n' + out.join(''));
+    }
+  };
+  const killGroup = () => { try { process.kill(-proc.pid, 'SIGKILL'); } catch { /* gone */ } };
+  await spawnServer();
   // THE PORT WE HAND OUT MUST BE THE PORT THIS SERVER IS ON.
   //
   // /healthz answering on `port` is not proof of that: a LEAKED server from an earlier
@@ -238,6 +243,16 @@ async function startGameServer(extraRules = '', extraEnv = {}, opts = {}) {
     logTail: (n = 40) => out.join('').split('\n').slice(-n).join('\n'),
     // Abrupt death (no SessionDisconnect, no clean close) — for connection-lost scenarios.
     kill: () => killGroup(),
+    // A SERVER RESTART, the world kept: TERM (drains and flushes, like a deploy) or KILL (a
+    // crash), then the same data dir back on the same port -- what a client redials.
+    restart: async ({ crash = false, downMs = 0 } = {}) => {
+      const gone = new Promise((r) => proc.once('exit', r));
+      if (crash) killGroup(); else try { proc.kill('SIGTERM'); } catch {}
+      const t = setTimeout(killGroup, 15_000);
+      await gone; clearTimeout(t); killGroup();
+      if (downMs) await sleep(downMs);
+      await spawnServer();
+    },
     stop: () => {
       // TERM the server itself so it drains (stores flushed, peers told to leave), then sweep
       // the group once it has exited -- or after a bound, so a wedged server cannot hold the
@@ -420,7 +435,12 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   // only active actors are the player and MP puppets), so shared-NPC authority can only be
   // exercised against content that actually places actors. ?stream lazy-mounts the BSAs
   // (range reads) so the boot only pulls the bytes it touches.
-  const world = opts.retail
+  // opts.newGame: a FRESH SLOT the way the launcher boots one -- no ?start (which bypasses
+  // chargen: chargenstate -1) and #mpnew=1, i.e. --new-game: the prison ship and character
+  // creation. Every other boot skips chargen.
+  const world = opts.retail && opts.newGame
+    ? '?stream&novid&skipintro=1'
+    : opts.retail
     ? `?stream&novid&skipintro=1&start=${encodeURIComponent(opts.startCell ?? 'Seyda Neen')}`
     : `?nomw&skipintro=1&start=${encodeURIComponent(opts.startCell ?? 'Village')}`;
   // NOTE: a locker session is NOT passed here. #mplocker in the URL flips index.html into
@@ -433,7 +453,8 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   // just landed -- go Solo from Public and it asks the PUBLIC world to turn private. The
   // launcher sets this in production and it rides every switch; a harness client had none.
   // Unlike #mplocker this does not flip the page into locker mode, so it is safe in the URL.
-  const frag = opts.homeUrl ? `#mphome=${encodeURIComponent(opts.homeUrl)}` : '';
+  const frag = [opts.homeUrl ? `mphome=${encodeURIComponent(opts.homeUrl)}` : '', opts.newGame ? 'mpnew=1' : '']
+    .filter(Boolean).map((f, i) => (i ? '&' : '#') + f).join('');
   // opts.url: a page that is NOT the game. The admin dashboard is served by the same
   // processes this harness drives, and nothing else in CI ever loaded it in a browser -- so
   // a scenario may point a client at it and use the same eval/waitFor/jsErrors machinery.
@@ -793,6 +814,28 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       await new Promise((r) => setTimeout(r, ms));
       await bsend('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base, buttons: 0 }, sessionId);
     };
+    // THE FIRST-JOIN TOUR ("You are in the world") covers the game on a fresh character, so a
+    // frame judged before closing it measures the tour (s65/s74, 2026-09-22). Closed the way
+    // a player does: its x button. Waits briefly for it, since it opens a moment after join.
+    handle.dismissTour = async (waitMs = 8000) => {
+      const up = () => handle.eval(`(function(){ var t = document.getElementById('omw-tour'); return !!t && t.classList.contains('show'); })()`);
+      const until = Date.now() + waitMs;
+      while (!(await up()) && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
+      for (let i = 0; i < 3 && (await up()); i++) {
+        await handle.click('#omw-tour .x').catch(() => {});
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      if (await up()) throw new Error('the first-join tour would not close');
+    };
+    // A REAL click at page coordinates -- for MyGUI widgets, which live on the canvas and have
+    // no DOM element for click(selector) to find (a service window's rows, its buttons).
+    handle.clickAt = async (x, y) => {
+      const base = { x, y, button: 'left', clickCount: 1 };
+      await bsend('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 }, sessionId);
+      await bsend('Input.dispatchMouseEvent', { type: 'mousePressed', ...base, buttons: 1 }, sessionId);
+      await new Promise((r) => setTimeout(r, 80));
+      await bsend('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base, buttons: 0 }, sessionId);
+    };
     // eval WITH transient user activation. Gesture-gated APIs (requestPointerLock, fullscreen)
     // are rejected outright from a plain Runtime.evaluate, which silently turns any test of
     // them into a no-op that passes whether or not the code under test works.
@@ -1055,6 +1098,7 @@ for (const file of files) {
       // The server's own stdout: the one place a death is undeniable (respawn.sent).
       serverLogTail: (n = 400) => server.logTail(n),
       serverKill: server.kill,
+      serverRestart: server.restart,
       sleep,
       log: (...a) => {
         const first = typeof a[0] === 'string' ? a[0] : '';
