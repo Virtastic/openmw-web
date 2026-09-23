@@ -252,3 +252,29 @@ test('on the wire: the dummy is placed once per peer and never moved after', asy
   const moves = peer.inbox.events.filter((e) => e.name === 'SimAnchors' && (e.value as Anchors).place !== undefined);
   assert.equal(moves.length, 0, `the dummy was moved: ${JSON.stringify(moves.map((m) => (m.value as Anchors).place))}`);
 });
+
+// The client reports 0,0 for a few dozen ms at join, before its restore places it. That blip
+// used to become an anchor: the peer loaded and held the island's centre for the whole idle
+// grace, right while the player was joining (dev box, 2026-09-23).
+test('on the wire: the cell a player reports in the instant after joining is not anchored', async (t) => {
+  const PEER_PASS = 'peer-secret-6';
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } } });
+  t.after(() => server.close());
+  server.config.simPeer.enabled = true;
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  await c.joinAsNew('Restorer');
+  await c.waitEvent('PlayerList');
+  c.sendCellChange('0,0', 4096, 4096, 0); // the pre-restore blip
+  await new Promise((r) => setTimeout(r, 80));
+  c.sendCellChange('-2,-9', -15000, -67000, 0); // where the character really is
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '-2,-9', 12_000)
+    .catch(() => assert.fail('the real cell was never held'));
+  await new Promise((r) => setTimeout(r, 2_500)); // another pass
+  const blip = peer.inbox.events.filter((e) => e.name === 'ActorAuthorityGrant'
+    && ['0,0', '1,1', '-1,-1'].includes((e.value as { cellKey: string }).cellKey));
+  assert.equal(blip.length, 0, `held around the join blip: ${blip.map((e) => (e.value as { cellKey: string }).cellKey)}`);
+});

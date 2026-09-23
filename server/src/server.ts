@@ -1621,9 +1621,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const inChargenCells = new Set(humans.filter((p) => p.inChargen === true).map((p) => p.cellKey!));
     const now = Date.now();
     const idleMs = Math.max(0, config.simPeer.anchorIdleSec) * 1000;
+    // A JUST-JOINED PLAYER'S CELL IS NOT YET WHERE THEY ARE. The client reports 0,0 for a few
+    // dozen ms at join, before its restore places it (dev box, 2026-09-23: 0,0 at 19:01:12.580,
+    // -2,-9 76 ms later). A cell change triggers this pass, which anchored 0,0: the peer loaded
+    // and held the island's centre for the whole idle grace while the player was joining.
+    // Anchoring waits JOIN_SETTLE_MS past the join; the chargen sanctuary still sees everyone.
+    const JOIN_SETTLE_MS = 1_500;
+    const settled = humans.filter((p) => p.joinedWorldAt === undefined || now - p.joinedWorldAt >= JOIN_SETTLE_MS);
     // FRESH POSITIONS EVERY PASS. 32 players x 3 floats every 5 s is nothing, and a stale
     // anchor position is the one thing that reintroduces frozen NPCs.
-    for (const p of humans) {
+    for (const p of settled) {
       const ck = p.cellKey!;
       if (isChargenCell(ck) || inChargenCells.has(ck)) continue;
       const prev = heldAnchors.get(ck);
@@ -1660,7 +1667,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       }
       return false;
     };
-    for (const p of humans) {
+    for (const p of settled) {
       if (p.inChargen === true) continue;
       const e = parseExterior(p.cellKey!);
       if (!e) continue;
@@ -1691,7 +1698,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const anchors: { x: number; y: number; z: number }[] = [];
     const interiors: string[] = [];
     const anchoredByPlayer = new Set<string>();
-    for (const p of humans) {
+    for (const p of settled) {
       const ck = p.cellKey!;
       if (!heldAnchors.has(ck) || !parseExterior(ck) || !p.pose) continue;
       anchors.push({ x: p.pose.x, y: p.pose.y, z: p.pose.z });

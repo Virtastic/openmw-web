@@ -570,6 +570,46 @@ window.omw = (function(){
      queue.push(text);
    };
  })();
+ // MOVEMENT TELEMETRY, every 5 s while in a multiplayer world: what the player's screen is
+ // doing, which the server otherwise never sees. Frame rate and the worst frame gap (browser
+ // stalls), the self-correction distances (selfDivergence, sampled every 100 ms: p50/p95/max),
+ // hard snaps, and the rate of the streams that drive the screen (own moves, actor batches).
+ // One /clientlog line, info level, on the same bounded route the error reporter uses. Off
+ // with ?clientlog=off like the rest of it. A diagnostic, not analytics: no account, a
+ // per-load session id only.
+ (function omwTelemetry(){
+   if (/[?&]clientlog=(0|off)/.test(location.search)) return;
+   var session = Math.random().toString(36).slice(2, 10);
+   var frames = 0, worstGap = 0, lastFrame = 0;
+   function tick(t){ if (lastFrame) { var g = t - lastFrame; if (g > worstGap) worstGap = g; } lastFrame = t; frames++; requestAnimationFrame(tick); }
+   requestAnimationFrame(tick);
+   var div = [], snaps = 0, lastSnap = '', prev = null, lastSent = Date.now();
+   function st(){ return (window.omw && window.omw.state) || {}; }
+   setInterval(function(){
+     var s = st();
+     if (s.netstate !== 'Joined') return;
+     var d = parseFloat(s.selfDivergence);
+     if (!isNaN(d)) div.push(d);
+     if (s.selfSnap && s.selfSnap !== lastSnap) { if (lastSnap) snaps++; lastSnap = s.selfSnap; }
+   }, 100);
+   setInterval(function(){
+     var s = st();
+     if (s.netstate !== 'Joined') { frames = 0; worstGap = 0; div = []; return; }
+     var now = Date.now(), secs = (now - lastSent) / 1000; lastSent = now;
+     var cur = { a: +s.actorBatchesIn || 0, m: +s.moveRx || 0 };
+     var rate = function(k){ return prev ? ((cur[k] - prev[k]) / secs).toFixed(1) : '-'; };
+     prev = cur;
+     div.sort(function(a, b){ return a - b; });
+     var q = function(p){ return div.length ? div[Math.min(div.length - 1, Math.floor(p * div.length))].toFixed(1) : '-'; };
+     var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
+       + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
+       + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
+       + ' cell=' + (s.cell || '?') + ' holder=' + (s.authorityHolder || '?') + ' actors=' + (s.actorCount || '?');
+     frames = 0; worstGap = 0; div = []; snaps = 0;
+     fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
+       body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
+   }, 5000);
+ })();
  // Themed loading overlay controller. Driven by setStatus (engine download %), append()
  // log lines (game-data download / local mount phases), and hidden on the first engine frame.
  window.__omwLoading = (function(){
