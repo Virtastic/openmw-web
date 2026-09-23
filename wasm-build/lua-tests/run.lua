@@ -2281,6 +2281,9 @@ do
   check('global.lua loads whole under the stubs (merged modules included)', okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table',
     tostring(script))
   if okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table' then
+    -- What the engine does first: onInit runs start(), which hands every module its deps.
+    local okInit, errInit = pcall(script.engineHandlers.onInit)
+    check('global.lua onInit runs under the stubs (every module initialised)', okInit, tostring(errInit))
     local names = {}
     for name in pairs(script.eventHandlers) do if name:match('^MP_') then names[#names + 1] = name end end
     table.sort(names)

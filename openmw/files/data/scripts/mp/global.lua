@@ -3753,6 +3753,13 @@ I.Activation.addHandlerForType(types.Door, function(door, actor)
     signalCellLoad()
 end)
 
+-- A SERVER EVENT WITH NO BODY IS AN EMPTY ONE. Every MP_ handler indexes its body, and one that
+-- throws takes its whole subsystem down silently (the engine logs it and carries on). Normalised
+-- once, here, after every handler is assigned -- run.lua calls each one with none.
+for name, fn in pairs(eventHandlers) do
+    if name:sub(1, 3) == 'MP_' then eventHandlers[name] = function(data) return fn(data or {}) end end
+end
+
 return {
     engineHandlers = {
         onInit = start,
