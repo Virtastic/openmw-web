@@ -116,7 +116,9 @@ if ($busy.Count -gt 0) {
 # ---------------------------------------------------------------------------------------
 Write-Step "Preparing folders"
 
-foreach ($d in 'data', 'gamedata') {
+# data\caddy too: Caddy's bind source. Created by Docker it would be root's, and the server
+# could not write its Caddyfile (see setup.sh).
+foreach ($d in 'data', 'data\caddy', 'gamedata') {
   if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null }
 }
 

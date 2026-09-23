@@ -60,7 +60,13 @@ if [ -n "$RUN_AS" ] && [ "$(id -u)" = "0" ]; then
     # and left the game files owned by the other uid. They stay world-READABLE, so nothing
     # looked broken -- until a WRITE, and the dashboard's game-file upload lands in exactly
     # that directory.
-    for d in "$DATA" "$DATA/gamedata"; do
+    #
+    # $DATA/caddy likewise: it is the caddy service's bind source, so when Docker creates it
+    # (compose run by hand, without setup.sh) it is root's, and the server's Caddyfile write
+    # fails EACCES while Caddy crash-loops on the missing file. Created here first, so the
+    # usual start order (openmw-web before caddy) never lets Docker make it.
+    mkdir -p "$DATA/caddy" 2>/dev/null || true
+    for d in "$DATA" "$DATA/gamedata" "$DATA/caddy"; do
       # Plain `if`, not `[ x = y ] && continue`: this script runs under `set -e`, where a
       # bare AND-OR list whose test fails is the classic way to exit a shell by accident.
       if [ ! -d "$d" ]; then continue; fi
