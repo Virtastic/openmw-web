@@ -146,6 +146,13 @@ ${launcher || multiplayer ? '' : `	# THE LAUNCHER IS OFF UNLESS SOMEBODY ASKED F
 	}
 `}
 
+	# /join IS launcher.html in DOOR MODE: the multiplayer steps (username, character, world)
+	# the front door hands a signed-in player to, with the hosted site's demo chooser stripped
+	# away (see the <head> of play/launcher.html). A rewrite, so the address stays /join; that
+	# path is how the page knows it is a door.
+	@join path /join
+	rewrite @join /launcher.html
+
 	# The ROOT path always goes to the server, even when client files are staged: the server
 	# serves the sign-in landing page there, and the game (launcher.html and friends) is what
 	# that page links into.
@@ -177,7 +184,7 @@ ${launcher || multiplayer ? '' : `	# THE LAUNCHER IS OFF UNLESS SOMEBODY ASKED F
 	# answer stays a 304 with no body. The engine keeps heuristic caching: openmw.wasm/.data
 	# are tens of megabytes, and a stale one is refused loudly at SessionHello by the engine
 	# hash rather than silently misbehaving like a stale shell.
-	@shell path *.html /
+	@shell path *.html / /join
 	header @shell Cache-Control "no-cache"
 
 	@static file

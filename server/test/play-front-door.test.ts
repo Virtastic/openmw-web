@@ -39,7 +39,8 @@ test('multiplayer hands the ticket to the launcher, never dials /ws itself', () 
   // Backlog 171: a multiplayer front door is a GATEWAY whose socket accepts only /w/<id>, so
   // booting #mp=wss://host/ws was a 502 forever. The launcher is what picks the world; it
   // reads the same #mpticket fragment an SSO round trip returns with.
-  assert.match(play, /'\/launcher\.html'\s*\+\s*`#mpticket=\$\{encodeURIComponent\(res\.ticket\)\}`/);
+  // Through /join: the launcher's multiplayer steps in door mode, never its demo chooser.
+  assert.match(play, /'\/join'\s*\+\s*`#mpticket=\$\{encodeURIComponent\(res\.ticket\)\}`/);
   assert.doesNotMatch(play, /[#&]mp=\$\{/, 'nothing on this page may dial the gateway socket');
 });
 

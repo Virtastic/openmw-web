@@ -171,3 +171,16 @@ test('the app shell revalidates, so a deploy cannot reach half a client', () => 
   // one is refused loudly by the engine hash at SessionHello.
   assert.doesNotMatch(cfg, /@shell path[^\n]*\.wasm/, 'the engine must stay cacheable');
 });
+
+test('/join serves the launcher in door mode, on every server shape, and revalidates', () => {
+  // The front door hands a signed-in multiplayer player to /join (play.js): the launcher's
+  // username/character/world steps without its demo chooser. A missing rewrite sends /join to
+  // the server, which 404s, and the player is stranded right after signing in.
+  for (const opts of [{ domain: '', multiplayer: true }, { domain: '' }, { domain: 'mp.example.test', multiplayer: true }]) {
+    const cfg = renderCaddyfile(opts);
+    assert.match(cfg, /@join path \/join\s+rewrite @join \/launcher\.html/, JSON.stringify(opts));
+    assert.match(cfg, /@shell path [^\n]*\/join/, 'the door page must revalidate like the other shells');
+    // Rewrite BEFORE the root proxy, which must never claim /join.
+    assert.ok(cfg.indexOf('@join') < cfg.indexOf('@root path'), JSON.stringify(opts));
+  }
+});
