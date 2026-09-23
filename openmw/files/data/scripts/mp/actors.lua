@@ -156,8 +156,15 @@ local function stanceOf(obj) return types.Actor.getStance(obj) end
 -- Bit 3 (use, the player pose's bit): the AI's wind-up-to-release window, plus a spell cast
 -- in flight -- setAttackingOrSpell drops the moment the cast animation starts, so the 10 Hz
 -- sample would miss every spell without the animation read (#288).
+-- The cast half comes from companion.lua on the actor itself (mpActorCasting): openmw.animation
+-- does not load in this global script, and the require used to throw inside the pcall, so no
+-- NPC spell ever reached another screen (s172).
+local casting = {}
+function actors.noteCasting(obj, on)
+    if obj and obj:isValid() then casting[refKeyOf(obj)] = on == true or nil end
+end
 local function attackingOf(obj)
-    return (mp.isAttacking and mp.isAttacking(obj)) or require('openmw.animation').isPlaying(obj, 'spellcast')
+    return (mp.isAttacking and mp.isAttacking(obj)) or casting[refKeyOf(obj)] == true
 end
 
 local function actorPose(obj)

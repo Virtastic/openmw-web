@@ -3372,6 +3372,9 @@ local eventHandlers = {
     mpActorFollow = function(data)
         actors.noteFollow(data and data.actor, data and data.target, data and data.escort)
     end,
+    mpActorCasting = function(data)
+        actors.noteCasting(data and data.actor, data and data.on)
+    end,
     mpActorCombat = function(data)
         actors.noteCombat(data and data.actor, data and data.target)
     end,

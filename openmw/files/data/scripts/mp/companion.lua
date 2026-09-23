@@ -21,6 +21,8 @@ local I = require('openmw.interfaces')
 -- 1 Hz. Recruiting is a dialogue action and losing a follower is a conversation or a death --
 -- none of it needs a fast beat, and the cost here is multiplied by every actor in the cell.
 local POLL = 1.0
+local isPeer = nil -- resolved on the first update (openmw.mp answers only once the session runs)
+local reportedCast = false
 local nextPoll = 0
 -- The last thing we told the global script, so a follower standing still says nothing at all.
 -- Starts nil, which is also "following nobody" -- so an ordinary NPC, which is almost all of
@@ -126,6 +128,23 @@ end
 return {
     engineHandlers = {
         onUpdate = function()
+            -- A CAST IS SEEN (s172). The holder's pose stream marks an attacking actor with the
+            -- use bit, but a spell cast is only visible in the animation, and openmw.animation
+            -- does not load in the global script that builds the stream -- so every NPC spell
+            -- played on the peer and nowhere else. This script runs ON the actor, where it does
+            -- load; peer only, reported on change, every frame (a cast is ~1 s).
+            if isPeer == nil then
+                local okp, mpapi = pcall(require, 'openmw.mp')
+                isPeer = okp and mpapi.isSystem ~= nil and mpapi.isSystem() == true
+            end
+            if isPeer then
+                local okc, casting = pcall(function() return require('openmw.animation').isPlaying(self, 'spellcast') end)
+                casting = okc and casting == true
+                if casting ~= reportedCast then
+                    reportedCast = casting
+                    core.sendGlobalEvent('mpActorCasting', { actor = self.object, on = casting })
+                end
+            end
             local now = core.getRealTime()
             if now < nextPoll then return end
             nextPoll = now + POLL

@@ -1680,7 +1680,7 @@ do
   -- #288: the holder samples the AI's attack window into bit 3; creature puppets swing attack1..3.
   check('the holder sets the use bit from mp.isAttacking/spellcast and creature puppets play attack1..3',
     ac:find('if okU and using then flags = flags + 8 end', 1, true) ~= nil
-    and ac:find("isPlaying(obj, 'spellcast')", 1, true) ~= nil
+    and ac:find('casting[refKeyOf(obj)]', 1, true) ~= nil -- the cast comes from companion.lua (s172)
     and lb:find('api["isAttacking"]', 1, true) ~= nil
     and pp:find("anim.hasGroup(self, 'attack' .. i)", 1, true) ~= nil
     and pp:find("startKey = 'start', stopKey = 'stop' })", 1, true) ~= nil)
@@ -2328,6 +2328,18 @@ do
   check('every pose matches the owner\'s ring entry for its seq to < 8 u', worst < 8,
     string.format('worst %.1f u at seq %d of %d', worst, at, seq))
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+end
+
+print('s172 an NPC\'s spell cast reaches other screens (reported from the actor, not the global script)')
+do
+  local cp = io.open('./openmw/files/data/scripts/mp/companion.lua'):read('*a')
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('companion.lua reads the cast on the actor and reports it on change',
+    cp:find("isPlaying(self, 'spellcast')", 1, true) ~= nil and cp:find("sendGlobalEvent('mpActorCasting'", 1, true) ~= nil)
+  check('actors.lua no longer requires openmw.animation in the global script (it threw every time)',
+    ac:find("require('openmw.animation').isPlaying(obj, 'spellcast')", 1, true) == nil and ac:find('casting[refKeyOf(obj)]', 1, true) ~= nil)
+  check('global.lua routes mpActorCasting to actors.noteCasting', gl:find('actors.noteCasting(', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
