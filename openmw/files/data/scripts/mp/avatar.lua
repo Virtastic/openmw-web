@@ -42,9 +42,13 @@ local frameNo, appliedFrame, lastPos, stepVel = 0, 0, nil, nil
 local FRAME_STEP_MAX = 200 -- a per-frame move beyond this is a teleport, not a velocity
 -- The owner's simulated time not yet spent (see the timed branch in onUpdate). Capped so a burst
 -- after a stall cannot owe the avatar seconds of running; the correction absorbs the rest.
-local timed, budget, budgetAtRead = false, 0, 0
-local BUDGET_MAX = 0.25
-local frameDt, spendPrev, lastSpend = 0, 0, 0
+local timed = false
+local segs = {} -- {t = seconds left, d = the controls for them}, played in order
+local SEGS_MAX_S = 0.5 -- a 200 ms hitch plus a burst behind it; beyond that the correction absorbs it
+local lastDone = nil -- seq of the newest input whose time has been played in full
+local prevTimed = nil -- the controls the NEXT input's time was spent under (see mpAvatarInput)
+local sinceDone = util.vector3(0, 0, 0)
+local frameDt, spendPrev, tailPrev, doneInPrev = 0, 0, 0, false
 -- 1.0, not 0.35: a TCP retransmit stall (300 ms RTO, seconds on a Wi-Fi roam) must not stop
 -- the avatar while the owner keeps running -- the burst collapses to the newest input and the
 -- owner is snapped back by v x stall (#205).
@@ -187,12 +191,20 @@ return {
         onUpdate = function(dt)
             frameNo = frameNo + 1
             frameDt = dt or 0
-            lastSpend, spendPrev = spendPrev, 0
             do
                 local pos = self.position
                 local step = lastPos and (pos - lastPos) or nil
                 stepVel = (step and step:length() <= FRAME_STEP_MAX) and step or nil
                 lastPos = pos
+                -- How far the body has moved since the owner's last fully played input ended:
+                -- last frame's step, split at the moment that input finished if it finished then.
+                if not stepVel then
+                    sinceDone = util.vector3(0, 0, 0) -- a teleport: the ring restarts there too
+                elseif doneInPrev and spendPrev > 0 then
+                    sinceDone = stepVel * (tailPrev / spendPrev)
+                else
+                    sinceDone = sinceDone + stepVel
+                end
             end
             equipTick(core.getRealTime())
             fallProbe()
@@ -210,36 +222,51 @@ return {
                 -- owner held the button (measured 1.6 per arrow from a long bow). A bow held
                 -- a moment longer harms nothing; keep it for a bounded while.
                 local keepUse = input and bit(input.flags, 3) and now - inputAt <= USE_HOLD_S
-                budget = 0
+                segs, spendPrev, doneInPrev = {}, 0, false
                 stop()
                 if keepUse then self.controls.use = 1 end
                 return
             end
-            -- MOVE FOR AS LONG AS THE OWNER DID. A timed input (simMs > 0) funds `budget` with the
-            -- seconds its owner actually simulated; each frame spends up to its own dt of it, and
-            -- the axes scale by the share it could fund. A hitch on the owner's side (their
-            -- engine caps a frame at 200 ms) therefore costs the avatar the same movement, where
+            -- MOVE FOR AS LONG AS THE OWNER DID, WITH WHAT THE OWNER DID THEN. A timed input
+            -- (simMs > 0) is a SEGMENT: the seconds its owner actually simulated, and the controls
+            -- for them. Each frame plays up to its own dt of the queue in order, the axes weighted
+            -- by time. A hitch on the owner's side (their engine caps a frame at 200 ms of
+            -- simulated time) therefore costs the avatar exactly the movement it cost the owner --
             -- it used to walk the whole wall-clock hitch and yank the owner forward after it.
-            local frac = 1
+            local ctl = input
+            local moveAxis, sideAxis = input.move or 0, input.side or 0
+            -- The pose read this frame is LAST frame's physics: pair it with the input that had
+            -- finished by then, not with whatever this frame's spend finishes.
+            local doneAtRead = lastDone
             if timed then
-                local dtNow = frameDt or 0
-                local use = math.min(budget, dtNow)
-                budgetAtRead = budget -- what the position below does not yet contain
-                frac = dtNow > 0 and use / dtNow or 0
-                budget = budget - use
-                spendPrev = use
+                local left, mSum, sSum, tail, done = frameDt, 0, 0, 0, false
+                while left > 0 and #segs > 0 do
+                    local s = segs[1]
+                    local use = math.min(s.t, left)
+                    mSum, sSum = mSum + (s.d.move or 0) * use, sSum + (s.d.side or 0) * use
+                    left, s.t, ctl = left - use, s.t - use, s.d
+                    if s.t <= 1e-6 then
+                        table.remove(segs, 1)
+                        lastDone, done, tail = s.d.seq, true, 0
+                    else
+                        tail = tail + use
+                    end
+                end
+                moveAxis = frameDt > 0 and mSum / frameDt or 0
+                sideAxis = frameDt > 0 and sSum / frameDt or 0
+                spendPrev, tailPrev, doneInPrev = frameDt - left, tail, done
             end
-            self.controls.movement = (input.move or 0) * frac
-            self.controls.sideMovement = (input.side or 0) * frac
+            self.controls.movement = moveAxis
+            self.controls.sideMovement = sideAxis
             local curYaw = self.rotation:getYaw()
-            self.controls.yawChange = shortestArc((input.yaw or curYaw) - curYaw)
+            self.controls.yawChange = shortestArc((ctl.yaw or curYaw) - curYaw)
             -- PITCH TOO. The input has always carried it (radians, same scale as the pose) and
             -- the avatar never applied it, so it aimed level: an arrow at a cliff-top archer, or
             -- a swing at a rat underfoot, went out flat no matter where the owner was looking.
             local curPitch = self.rotation:getPitch()
-            self.controls.pitchChange = (input.pitch or curPitch) - curPitch
-            self.controls.run = bit(input.flags, 0)
-            self.controls.sneak = bit(input.flags, 1)
+            self.controls.pitchChange = (ctl.pitch or curPitch) - curPitch
+            self.controls.run = bit(ctl.flags, 0)
+            self.controls.sneak = bit(ctl.flags, 1)
             local jump = jumpLatch or bit(input.flags, 2)
             jumpLatch = false
             self.controls.jump = jump and not prevJump
@@ -259,20 +286,21 @@ return {
                 -- Every frame, the (seq, pose) PAIR: the position read here is last frame's
                 -- physics, which holds (frameNo - appliedFrame) frames of this seq.
                 local pos = self.position
-                local at
+                local seq, at = input.seq, nil
                 if timed then
-                    -- EXACT, not estimated: the owner stood at ring[seq] after all the time up to
-                    -- and including this seq; the body is budgetAtRead of that time short of it.
-                    -- Carried forward at the speed the last frame's spend produced (xy only:
-                    -- gravity runs on the peer's clock, not the owner's).
-                    local vxy = (stepVel and lastSpend > 0) and (stepVel / lastSpend) or util.vector3(0, 0, 0)
-                    at = pos + util.vector3(vxy.x, vxy.y, 0) * budgetAtRead
+                    -- EXACT: where this body stood when the owner's last fully played input ended
+                    -- -- which is where the owner stood when that input's successor left
+                    -- (player.lua ring[seq]).
+                    seq = doneAtRead
+                    at = pos - sinceDone
                 else
                     local v = stepVel or util.vector3(0, 0, 0)
                     at = pos - v * ((frameNo - appliedFrame) + 0.5)
                 end
-                core.sendGlobalEvent('mpAvatarApplied', { obj = self.object, id = input.id, seq = input.seq,
-                    x = at.x, y = at.y, z = at.z })
+                if seq then
+                    core.sendGlobalEvent('mpAvatarApplied', { obj = self.object, id = input.id, seq = seq,
+                        x = at.x, y = at.y, z = at.z })
+                end
             end
             -- Phase 4C: THE AVATAR SWINGS. The owner's use bit drives the attack control, and
             -- this engine computes the hit natively against the actors it simulates. Safe
@@ -343,7 +371,22 @@ return {
             input = data
             inputAt = core.getRealTime()
             timed = (tonumber(data.simMs) or 0) > 0
-            if timed then budget = math.min(budget + data.simMs / 1000, BUDGET_MAX) end
+            if timed then
+                -- Input N carries the time the owner simulated since input N-1 left, and that time
+                -- ran under N-1's controls (the owner records ring[N] before N's controls act). So
+                -- the segment is N's time with N-1's controls; played out, the body is at ring[N].
+                local ctl = prevTimed or { move = 0, side = 0, yaw = data.yaw, pitch = data.pitch, flags = 0 }
+                segs[#segs + 1] = { t = data.simMs / 1000, d = { seq = data.seq, move = ctl.move, side = ctl.side,
+                    yaw = ctl.yaw, pitch = ctl.pitch, flags = ctl.flags } }
+                prevTimed = data
+                local total = 0
+                for _, sg in ipairs(segs) do total = total + sg.t end
+                while total > SEGS_MAX_S and #segs > 1 do
+                    total = total - segs[1].t
+                    lastDone = segs[1].d.seq
+                    table.remove(segs, 1)
+                end
+            end
             if bit(data.flags, 2) then jumpLatch = true end
             if bit(data.flags, 3) then useLatch = true end
         end,

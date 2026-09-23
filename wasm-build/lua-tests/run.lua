@@ -2292,14 +2292,17 @@ do
     if t >= ownerNext then
       local dt = 1 / 60
       if t >= 1 and t < 1 + 1 / 60 then ownerNext = t + 1; dt = 0.2 else ownerNext = t + 1 / 60 end -- the hitch
-      owner = owner + RUN * dt; acc = acc + dt; simT = simT + dt
+      local mv = (t >= 0.2 and t < 2.5) and 1 or 0 -- starts at rest (as a join does); stops at 2.5 s
       frame = frame + 1
+      -- As player.lua: the ring entry and the input go out BEFORE this frame's physics, carrying
+      -- the time simulated since the last one; this frame's time belongs to the next input.
       if frame % 2 == 0 or dt > 0.1 then
         seq = seq + 1
         ring[seq] = owner
-        inflight[#inflight + 1] = { at = t + LAT, d = { id = 1, seq = seq, move = 1, side = 0, yaw = 0, pitch = 0, flags = 1, simMs = math.floor(acc * 1000 + 0.5) } }
+        inflight[#inflight + 1] = { at = t + LAT, d = { id = 1, seq = seq, move = mv, side = 0, yaw = 0, pitch = 0, flags = 1, simMs = math.floor(acc * 1000 + 0.5) } }
         acc = 0
       end
+      owner = owner + RUN * mv * dt; acc = acc + dt; simT = simT + dt
     end
     if t >= peerNext then
       now = t
@@ -2315,12 +2318,15 @@ do
   end
   check('after the hitch the avatar stands where its owner does (was ~200 u ahead)',
     math.abs(me.position.y - owner) < 10, string.format('avatar %.0f owner %.0f', me.position.y, owner))
-  local worst = 0
+  local worst, at = 0, 0
   for i = 10, #applied do
     local a = applied[i]
-    if ring[a.seq] then worst = math.max(worst, math.abs(a.y - ring[a.seq])) end
+    if ring[a.seq] and math.abs(a.y - ring[a.seq]) > worst then worst, at = math.abs(a.y - ring[a.seq]), a.seq end
   end
-  check('every pose matches the owner\'s ring entry for its seq to < 8 u', worst < 8, string.format('worst %.1f u', worst))
+  -- Exact while the controls hold; at a start or stop the owner's 60 fps controls change between
+  -- two 30 Hz inputs, which is one frame of movement (4-8 u at a run) for that one sample.
+  check('every pose matches the owner\'s ring entry for its seq to < 8 u', worst < 8,
+    string.format('worst %.1f u at seq %d of %d', worst, at, seq))
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 

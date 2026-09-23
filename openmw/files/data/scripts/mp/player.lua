@@ -209,7 +209,9 @@ local tookControlsSaid = false -- once per session: the rejoin position hold let
 -- less than the wall clock says -- while the avatar on the peer kept walking the whole hitch,
 -- and the next correction yanked the player forward. Each input carries this (ms, u16) and the
 -- avatar moves for exactly that long (avatar.lua budget): the same movement on both sides.
-local simAcc = 0
+-- The CURRENT frame's time is not in it: ring[seq] is recorded before this frame's physics, so
+-- this frame belongs to the next input (the one whose controls it runs under).
+local simAcc, simFrameDt = 0, 0
 local function inputTick(now)
     -- The PEER's own dummy player has no avatar and the server drops its input
     -- (playerInputDropped{from_peer}); 30 Hz of frames for the bin.
@@ -278,9 +280,9 @@ local function inputTick(now)
             yaw = self.rotation:getYaw(),
             pitch = self.rotation:getPitch(),
             flags = flags,
-            simMs = math.max(1, math.min(65535, math.floor(simAcc * 1000 + 0.5))),
+            simMs = math.max(1, math.min(65535, math.floor((simAcc - simFrameDt) * 1000 + 0.5))),
         })
-        simAcc = 0
+        simAcc = simFrameDt
     end
 end
 
@@ -1368,6 +1370,7 @@ return {
         end,
         onFrame = function(dt) -- runs while paused too — the harness must not stall in menus
             simAcc = simAcc + (dt or 0) -- 0 while paused: a menu simulates nothing
+            simFrameDt = dt or 0
             pollCommands()
             faceTick()
             walkTick()
