@@ -132,7 +132,8 @@ namespace MWMP
         api["sendInput"] = [](const sol::table& t) {
             return NetManager::instance().sendInput(t.get_or("seq", 0u), t.get_or("move", 0.f),
                 t.get_or("side", 0.f), t.get_or("yaw", 0.f), t.get_or("pitch", 0.f),
-                static_cast<uint8_t>(t.get_or("flags", 0)));
+                static_cast<uint8_t>(t.get_or("flags", 0)),
+                static_cast<uint16_t>(std::clamp(t.get_or("simMs", 0), 0, 65535)));
         };
 
         // Phase 3, peer only: mp.sendAvatarMoveBatch(array of {id=,lastInputSeq=,x=,y=,z=,

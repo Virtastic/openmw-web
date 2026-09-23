@@ -264,7 +264,8 @@ namespace MWMP
         return true;
     }
 
-    bool NetManager::sendInput(uint32_t seq, float move, float side, float yaw, float pitch, uint8_t flags)
+    bool NetManager::sendInput(
+        uint32_t seq, float move, float side, float yaw, float pitch, uint8_t flags, uint16_t simMs)
     {
         if (!mSocket.isConnected())
             return false;
@@ -287,8 +288,10 @@ namespace MWMP
         appendLE<uint16_t>(frame, yawQ);
         frame.push_back(static_cast<char>(pitchQ));
         frame.push_back(static_cast<char>(flags));
-        frame.push_back('\0'); // reserved
-        frame.push_back('\0');
+        // Bytes 10-11: the ms this input's owner actually SIMULATED since the previous one (0 = an
+        // older client: the peer holds the input by wall clock as before). avatar.lua moves the
+        // avatar for exactly this long, so a hitch costs the same movement on both sides.
+        appendLE<uint16_t>(frame, simMs);
         mOutbound.push_back({ false, std::move(frame) });
         return true;
     }
@@ -588,6 +591,7 @@ namespace MWMP
                 lserKV(body, "yaw", readLE<uint16_t>(e + 8) * (2.0 * sPi / 65536.0));
                 lserKV(body, "pitch", e[10] / 255.0 * sPi - sPi / 2.0);
                 lserKV(body, "flags", e[11]);
+                lserKV(body, "simMs", readLE<uint16_t>(e + 12));
                 body.push_back(0x4); // TABLE_END
                 events.addGlobalEvent({ "MP_PlayerInput", std::move(body) });
                 continue;

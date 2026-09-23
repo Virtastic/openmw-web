@@ -70,7 +70,8 @@ namespace MWMP
         // Phase 3 input tier (0x0102, C->S, ~30 Hz): the player's raw intent, mapping 1:1
         // onto ActorControls. `seq` is echoed back in PlayerStateBatch as the consumed
         // input, which is what client reconciliation hangs off.
-        bool sendInput(uint32_t seq, float move, float side, float yaw, float pitch, uint8_t flags);
+        bool sendInput(uint32_t seq, float move, float side, float yaw, float pitch, uint8_t flags,
+            uint16_t simMs = 0);
         // Phase 3, peer only (0x0105): the authoritative result — one pose per avatar the
         // peer simulated this frame, stamped with the last input seq consumed.
         struct AvatarMoveEntry

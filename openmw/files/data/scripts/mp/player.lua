@@ -204,6 +204,12 @@ local function posAt(seq)
 end
 
 local tookControlsSaid = false -- once per session: the rejoin position hold lets go
+-- THE TIME THIS BODY WAS ACTUALLY SIMULATED since the last input left. The engine caps a frame at
+-- 200 ms of simulated time, so a hitch (a cell load, a GC pause, a busy tab) moves the player
+-- less than the wall clock says -- while the avatar on the peer kept walking the whole hitch,
+-- and the next correction yanked the player forward. Each input carries this (ms, u16) and the
+-- avatar moves for exactly that long (avatar.lua budget): the same movement on both sides.
+local simAcc = 0
 local function inputTick(now)
     -- The PEER's own dummy player has no avatar and the server drops its input
     -- (playerInputDropped{from_peer}); 30 Hz of frames for the bin.
@@ -222,6 +228,7 @@ local function inputTick(now)
         -- owner was rubber-banded against something that was not on their screen. Re-asserted
         -- every tick (the engine ignores a no-op) because a cell change can rebuild the body.
         if mp.setSelfCollisionBody then mp.setSelfCollisionBody(false) end
+        simAcc = 0
         return
     end
     if not tookControlsSaid then
@@ -271,7 +278,9 @@ local function inputTick(now)
             yaw = self.rotation:getYaw(),
             pitch = self.rotation:getPitch(),
             flags = flags,
+            simMs = math.max(1, math.min(65535, math.floor(simAcc * 1000 + 0.5))),
         })
+        simAcc = 0
     end
 end
 
@@ -409,6 +418,7 @@ end
 local function movementTick()
     if mp.status().state ~= 'Joined' then
         lastCellKey = nil -- rejoin resends PlayerCellChange (required to become visible)
+        simAcc = 0 -- time spent unjoined is not movement the avatar owes
         identity.reset() -- and the identity diffs re-upload
         return
     end
@@ -1356,7 +1366,8 @@ return {
                 toggleChat()
             end
         end,
-        onFrame = function() -- runs while paused too — the harness must not stall in menus
+        onFrame = function(dt) -- runs while paused too — the harness must not stall in menus
+            simAcc = simAcc + (dt or 0) -- 0 while paused: a menu simulates nothing
             pollCommands()
             faceTick()
             walkTick()

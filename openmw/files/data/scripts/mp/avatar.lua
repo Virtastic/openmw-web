@@ -40,6 +40,11 @@ local appliedSeqSent = nil -- the newest input seq this body has put into its co
 -- Backed off by the frames N has run plus half a frame for when inside a frame it arrived.
 local frameNo, appliedFrame, lastPos, stepVel = 0, 0, nil, nil
 local FRAME_STEP_MAX = 200 -- a per-frame move beyond this is a teleport, not a velocity
+-- The owner's simulated time not yet spent (see the timed branch in onUpdate). Capped so a burst
+-- after a stall cannot owe the avatar seconds of running; the correction absorbs the rest.
+local timed, budget, budgetAtRead = false, 0, 0
+local BUDGET_MAX = 0.25
+local frameDt, spendPrev, lastSpend = 0, 0, 0
 -- 1.0, not 0.35: a TCP retransmit stall (300 ms RTO, seconds on a Wi-Fi roam) must not stop
 -- the avatar while the owner keeps running -- the burst collapses to the newest input and the
 -- owner is snapped back by v x stall (#205).
@@ -179,8 +184,10 @@ return {
             -- belonging to nobody. See mwmp/puppets.hpp.
             if mp.setAvatar then mp.setAvatar(self.object, true) end
         end,
-        onUpdate = function()
+        onUpdate = function(dt)
             frameNo = frameNo + 1
+            frameDt = dt or 0
+            lastSpend, spendPrev = spendPrev, 0
             do
                 local pos = self.position
                 local step = lastPos and (pos - lastPos) or nil
@@ -203,12 +210,27 @@ return {
                 -- owner held the button (measured 1.6 per arrow from a long bow). A bow held
                 -- a moment longer harms nothing; keep it for a bounded while.
                 local keepUse = input and bit(input.flags, 3) and now - inputAt <= USE_HOLD_S
+                budget = 0
                 stop()
                 if keepUse then self.controls.use = 1 end
                 return
             end
-            self.controls.movement = input.move or 0
-            self.controls.sideMovement = input.side or 0
+            -- MOVE FOR AS LONG AS THE OWNER DID. A timed input (simMs > 0) funds `budget` with the
+            -- seconds its owner actually simulated; each frame spends up to its own dt of it, and
+            -- the axes scale by the share it could fund. A hitch on the owner's side (their
+            -- engine caps a frame at 200 ms) therefore costs the avatar the same movement, where
+            -- it used to walk the whole wall-clock hitch and yank the owner forward after it.
+            local frac = 1
+            if timed then
+                local dtNow = frameDt or 0
+                local use = math.min(budget, dtNow)
+                budgetAtRead = budget -- what the position below does not yet contain
+                frac = dtNow > 0 and use / dtNow or 0
+                budget = budget - use
+                spendPrev = use
+            end
+            self.controls.movement = (input.move or 0) * frac
+            self.controls.sideMovement = (input.side or 0) * frac
             local curYaw = self.rotation:getYaw()
             self.controls.yawChange = shortestArc((input.yaw or curYaw) - curYaw)
             -- PITCH TOO. The input has always carried it (radians, same scale as the pose) and
@@ -237,9 +259,18 @@ return {
                 -- Every frame, the (seq, pose) PAIR: the position read here is last frame's
                 -- physics, which holds (frameNo - appliedFrame) frames of this seq.
                 local pos = self.position
-                local v = stepVel or util.vector3(0, 0, 0)
-                local back = v * ((frameNo - appliedFrame) + 0.5)
-                local at = pos - back
+                local at
+                if timed then
+                    -- EXACT, not estimated: the owner stood at ring[seq] after all the time up to
+                    -- and including this seq; the body is budgetAtRead of that time short of it.
+                    -- Carried forward at the speed the last frame's spend produced (xy only:
+                    -- gravity runs on the peer's clock, not the owner's).
+                    local vxy = (stepVel and lastSpend > 0) and (stepVel / lastSpend) or util.vector3(0, 0, 0)
+                    at = pos + util.vector3(vxy.x, vxy.y, 0) * budgetAtRead
+                else
+                    local v = stepVel or util.vector3(0, 0, 0)
+                    at = pos - v * ((frameNo - appliedFrame) + 0.5)
+                end
                 core.sendGlobalEvent('mpAvatarApplied', { obj = self.object, id = input.id, seq = input.seq,
                     x = at.x, y = at.y, z = at.z })
             end
@@ -311,6 +342,8 @@ return {
             if input and data.seq and input.seq and data.seq <= input.seq then return end
             input = data
             inputAt = core.getRealTime()
+            timed = (tonumber(data.simMs) or 0) > 0
+            if timed then budget = math.min(budget + data.simMs / 1000, BUDGET_MAX) end
             if bit(data.flags, 2) then jumpLatch = true end
             if bit(data.flags, 3) then useLatch = true end
         end,

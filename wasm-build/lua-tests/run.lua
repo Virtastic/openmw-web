@@ -2250,6 +2250,76 @@ do
   local cpp = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('character.cpp does not smooth a puppet\'s speed a second time (the peer already did)',
     cpp:find('if (isFirstPersonPlayer || MWMP::isPuppet(mPtr.getCellRef().getRefNum()))', 1, true) ~= nil)
+print('an avatar moves for exactly as long as its owner simulated, and its poses match the owner\'s ring')
+do
+  -- The real avatar.lua at the peer's 20 fps against a stub controller (movement x run speed).
+  -- The owner runs straight at 30 Hz inputs; at t=1 its engine hitches for 1 s of wall clock but
+  -- simulates only 200 ms (the engine's per-frame cap). Before simMs the avatar ran the whole
+  -- second and the owner was yanked ~200 u forward; now both cover the same ground.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.util' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local RUN, now = 250, 0
+  local v3
+  local mt = {}
+  mt.__add = function(p, q) return v3(p.x + q.x, p.y + q.y, p.z + q.z) end
+  mt.__sub = function(p, q) return v3(p.x - q.x, p.y - q.y, p.z - q.z) end
+  mt.__mul = function(p, k) return v3(p.x * k, p.y * k, p.z * k) end
+  mt.__div = function(p, k) return v3(p.x / k, p.y / k, p.z / k) end
+  mt.__index = { length = function(p) return math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) end }
+  v3 = function(x, y, z) return setmetatable({ x = x, y = y, z = z }, mt) end
+  local me = { controls = {}, position = v3(0, 0, 0), object = { id = 'av' }, enableAI = function() end,
+    rotation = { getYaw = function() return 0 end, getPitch = function() return 0 end } }
+  local applied = {}
+  package.loaded['openmw.core'] = { getRealTime = function() return now end,
+    sendGlobalEvent = function(name, d) if name == 'mpAvatarApplied' then applied[#applied + 1] = d end end }
+  package.loaded['openmw.self'] = me
+  package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1 }, getStance = function() return 0 end,
+    setStance = function() end, inventory = function() return { getAll = function() return {} end } end } }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = {}
+  package.loaded['openmw.util'] = { vector3 = v3 }
+  local av = dofile('./openmw/files/data/scripts/mp/avatar.lua')
+  -- The owner: 60 fps, an input every other frame carrying the ms simulated since the last.
+  local owner, ring, seq, acc, simT = 0, {}, 0, 0, 0
+  local inflight = {} -- {arriveAt, data}
+  local LAT = 0.04
+  local t, frame = 0, 0
+  local ownerNext, peerNext = 0, 0
+  while t < 3 do
+    if t >= ownerNext then
+      local dt = 1 / 60
+      if t >= 1 and t < 1 + 1 / 60 then ownerNext = t + 1; dt = 0.2 else ownerNext = t + 1 / 60 end -- the hitch
+      owner = owner + RUN * dt; acc = acc + dt; simT = simT + dt
+      frame = frame + 1
+      if frame % 2 == 0 or dt > 0.1 then
+        seq = seq + 1
+        ring[seq] = owner
+        inflight[#inflight + 1] = { at = t + LAT, d = { id = 1, seq = seq, move = 1, side = 0, yaw = 0, pitch = 0, flags = 1, simMs = math.floor(acc * 1000 + 0.5) } }
+        acc = 0
+      end
+    end
+    if t >= peerNext then
+      now = t
+      local keep = {}
+      for _, m in ipairs(inflight) do if m.at <= t then av.eventHandlers.mpAvatarInput(m.d) else keep[#keep + 1] = m end end
+      inflight = keep
+      av.engineHandlers.onUpdate(0.05)
+      local c = me.controls
+      me.position = v3(0, me.position.y + (c.movement or 0) * RUN * 0.05, 0)
+      peerNext = t + 0.05
+    end
+    t = t + 0.001
+  end
+  check('after the hitch the avatar stands where its owner does (was ~200 u ahead)',
+    math.abs(me.position.y - owner) < 10, string.format('avatar %.0f owner %.0f', me.position.y, owner))
+  local worst = 0
+  for i = 10, #applied do
+    local a = applied[i]
+    if ring[a.seq] then worst = math.max(worst, math.abs(a.y - ring[a.seq])) end
+  end
+  check('every pose matches the owner\'s ring entry for its seq to < 8 u', worst < 8, string.format('worst %.1f u', worst))
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
