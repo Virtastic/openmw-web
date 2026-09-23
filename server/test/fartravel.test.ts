@@ -48,7 +48,7 @@ async function hop(server: { port: number; api: { cellOfPlayer?: (id: number) =>
 test('a private world follows every hop, and only counts them', async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    worldMode: 'private', configOverride: { limits: { farTravelPerMin: 3 } },
+    worldMode: 'private', configOverride: { limits: { farTravelPerMin: 3 }, admin: { dashboardToken: 'hop-dash' } },
   });
   t.after(() => server.close());
   const c = await TestClient.connect(server.port);
@@ -59,6 +59,8 @@ test('a private world follows every hop, and only counts them', async (t) => {
   const id = server.api.players().find((p) => p.name === 'Hopper2')?.id;
   assert.equal(server.api.cellOfPlayer?.(id!), '180,180',
     'outside the lobby this is a signal, not a gate');
+  const o = await (await fetch(`http://127.0.0.1:${server.port}/admin/api/overview`, { headers: { authorization: 'Bearer hop-dash' } })).json() as { players: { account: string; anomalies: Record<string, number> }[] };
+  assert.equal(o.players.find((p) => p.account === 'hopper2')?.anomalies.far_travel, 6, 'ten hops are nine far jumps (the first is the arrival); past a cap of three, six are recorded');
   c.close();
 });
 

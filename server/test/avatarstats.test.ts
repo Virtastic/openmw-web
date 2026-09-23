@@ -19,7 +19,7 @@ const bars = (hp: number) => ({
 async function world(t: { after(fn: () => unknown): void }) {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, admin: { dashboardToken: 'stats-dash' } },
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);
@@ -424,7 +424,7 @@ test("a player's active effects reach the other clients, and a late joiner is ca
 // respawn is a free full heal and a teleport. With the peer reporting a living body the
 // event is dropped and counted; once the peer reports zero it is honoured.
 test("a client's PlayerDeath is ignored while the peer reports it alive, honoured once the peer reports 0", async (t) => {
-  const { peer, a } = await world(t);
+  const { server, peer, a } = await world(t);
   let seq = 0;
   const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
   t.after(() => clearInterval(timer));
@@ -437,6 +437,8 @@ test("a client's PlayerDeath is ignored while the peer reports it alive, honoure
   a.sendEvent('PlayerDeath', {});
   await new Promise((r) => setTimeout(r, 400));
   assert.equal(a.inbox.events.filter((e) => e.name === 'PlayerResurrect').length, 0, 'a free respawn on a client\'s say-so');
+  const o = await (await fetch(`http://127.0.0.1:${server.port}/admin/api/overview`, { headers: { authorization: 'Bearer stats-dash' } })).json() as { players: { account: string; anomalies: Record<string, number> }[] };
+  assert.equal(o.players.find((p) => p.account === 'runner')?.anomalies.death_unconfirmed, 1, 'the claimed death is recorded for moderation');
 
   hp = 0;
   await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 0);

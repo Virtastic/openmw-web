@@ -393,7 +393,7 @@ test('a far enable persists for a real exterior, is refused past the world bound
 // -- the quest reveal -- is never capped, even from the same session in the same breath.
 test('a far disable stream is capped past the free burst; far enables never are', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride: { admin: { dashboardToken: 'far-dash' } } });
   t.after(() => server.close());
   const host = await TestClient.connect(server.port);
   t.after(() => host.close());
@@ -422,6 +422,8 @@ test('a far disable stream is capped past the free burst; far enables never are'
   assert.ok(off >= 256, `the free burst must land in full, got ${off}`);
   assert.ok(off < 300, `the stream past the burst must be capped, got ${off} of 300`);
   assert.equal(enabled['c:14999:0'], true, 'a far enable was refused by the disable cap');
+  const o = await (await fetch(`http://127.0.0.1:${server.port}/admin/api/overview`, { headers: { authorization: 'Bearer far-dash' } })).json() as { players: { account: string; anomalies: Record<string, number> }[] };
+  assert.ok((o.players.find((p) => p.account === 'host')?.anomalies.far_disable ?? 0) >= 1, 'the capped disables are recorded for moderation');
 });
 
 // Backlog 338: a human's actor spawn is placed beside the asker, a few at a time.
