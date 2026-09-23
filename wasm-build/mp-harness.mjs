@@ -1187,6 +1187,15 @@ for (const file of files) {
       if (mpl.length) console.error(`--- SIM PEER mp LOG (last ${mpl.length}) ---\n${mpl.join(NL)}`);
     }
   }
+  // OMW_HARNESS_PEER_LOG=1: the peer's narration on a PASS too -- a red that only reproduces
+  // under load (s151, backlog 507) needs the timeline of the runs that passed to compare with.
+  if (!err && process.env.OMW_HARNESS_PEER_LOG === '1') {
+    for (const buf of peerBufs) {
+      const mpl = buf.join('').split(NL).filter((l) => /[mp]/.test(l)).slice(-200);
+      if (mpl.length) console.log(`--- SIM PEER mp LOG, ${file} passed (last ${mpl.length}) ---
+${mpl.join(NL)}`);
+    }
+  }
   else if (skipReason !== null) console.log(`SKIP ${file} (${secs}s): ${skipReason}`);
   else if (isDiagnostic) console.log(`DIAG ${file} (${secs}s): ran, asserts nothing`);
   else console.log(`PASS ${file} (${secs}s)`);
