@@ -1368,11 +1368,9 @@ do
       local f = io.open('./openmw/files/data/scripts/mp/' .. name .. '.lua')
       if f then all[#all + 1] = f:read('*a'); f:close() end
     end
-    local senders = table.concat(all, '
-')
+    local senders = table.concat(all, '\n')
     local orphans = {}
-    for h in p:gmatch('
-%s+(MP_[%w_]+) = function') do
+    for h in p:gmatch('\n%s+(MP_[%w_]+) = function') do
       if not (senders:find("toPlayer('" .. h .. "'", 1, true) or senders:find("sendEvent('" .. h .. "'", 1, true)
           or p:find("sendEvent('" .. h .. "'", 1, true)) then orphans[#orphans + 1] = h end
     end
