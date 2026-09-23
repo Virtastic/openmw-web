@@ -689,7 +689,7 @@ do
   local sco = o:match('function objects%.sendContainerOp%(obj, op, itemId, n%)(.-)\nend') or ''
   check('sendContainerOp maps the item id toNet before it is pended and sent', sco:find('itemId = worldmp.toNet(itemId)', 1, true) ~= nil)
   local scc = o:match('local function setContainerContents%(obj, items%)(.-)\nend') or ''
-  check('setContainerContents creates from worldmp.toLocal(entry.id)', scc:find('world.createObject(worldmp.toLocal(entry.id)', 1, true) ~= nil,
+  check('setContainerContents creates from worldmp.toLocal(entry.id)', scc:find('id = worldmp.toLocal(entry.id)', 1, true) ~= nil and scc:find('reconcile.reconcileInventory', 1, true) ~= nil,
     "a friend's potion is created under the author's local id")
   local acd = o:match('local function applyContainerDelta%(obj, itemId, dn%)(.-)\nend') or ''
   check('applyContainerDelta maps the wire id toLocal', acd:find('itemId = worldmp.toLocal(itemId)', 1, true) ~= nil)
