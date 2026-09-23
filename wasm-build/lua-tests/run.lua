@@ -2053,6 +2053,26 @@ do
   local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
   check('reconcile.lua is required only in the global context, and the global onUpdate ends the frame',
     #offenders == 0 and g:find('reconcile.nextFrame()', 1, true) ~= nil, table.concat(offenders, ', '))
+  -- The call sites the behavioural cases below stand for: revert any of them and this fails.
+  local ad = g:match('local function applyAvatarDoc%(id%)(.-)
+end
+') or ''
+  local pe = g:match('local function pushEquipmentToPuppet%(id%)(.-)
+end
+') or ''
+  local rt = g:match('local function restoreTick%(%)(.-)
+end
+') or ''
+  check('applyAvatarDoc reconciles through reconcile.reconcileInventory and reruns while anything is in flight',
+    ad:find('reconcile.reconcileInventory(', 1, true) ~= nil and ad:find('avatarDocDirty[id] = true', 1, true) ~= nil)
+  check('MP_AvatarState only marks the avatar; avatarDocTick applies once per frame',
+    g:find('avatarDocDirty[data.id] = true', 1, true) ~= nil and g:find('avatarDocTick()', 1, true) ~= nil)
+  check('pushEquipmentToPuppet counts what is in flight (reconcile.held), so a spawn grants an equipped item once',
+    pe:find('reconcile.held(inventory, key, grantId) == 0', 1, true) ~= nil and pe:find('countOf', 1, true) == nil)
+  check('the rejoin restore applies item states in a later frame (selfStatesTick), not in the grant frame',
+    rt:find('pendingSelfStates = {', 1, true) ~= nil and rt:find('applyItemStates', 1, true) == nil)
+  check('world-given spells wait for a doc applied in an earlier frame',
+    g:find('reconcile.worldGivenSpells(present, docSpells', 1, true) ~= nil)
 end
 do
   package.loaded['scripts.mp.reconcile'] = nil
