@@ -52,6 +52,12 @@ export default async function run(ctx) {
       await a.waitFor(`window.omw.state.uiMode === 'Travel' || window.omw.state.barterGold === 'no-npc'`, 15_000, 'the Travel window opened');
       assert.notEqual(await a.eval('window.omw.state.barterGold'), 'no-npc', `no living ${CARAVANER} nearby`);
       await ctx.sleep(600);
+      if (attempt === 0) {
+        await a.screenshot(join(ROOT, 'wasm-build', 'harness-out', 's174-travel-window.png'));
+        ctx.log(`  window open: ${JSON.stringify(await a.eval(`({ lock: !!document.pointerLockElement,
+          wantsLock: !!(window.Module && Module.__omwWantsMouseLock), canvas: (function(){ var c = document.getElementById('canvas');
+          var r = c.getBoundingClientRect(); return [c.width, c.height, Math.round(r.width), Math.round(r.height)]; })() })`))}`);
+      }
     }
     const at = await a.eval(`(function(){ var c = document.getElementById('canvas'), r = c.getBoundingClientRect();
       var sx = r.width / c.width, sy = r.height / c.height;

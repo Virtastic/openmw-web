@@ -55,7 +55,7 @@ export default async function run(ctx) {
     await guest.client.waitFor(`!!document.querySelector('#omw-social .whererow .btn')`, STEP, 'the guest row offers Leave');
     const label = await guest.client.eval(`document.querySelector('#omw-social .whererow').innerText`);
     ctx.log(`panel says: ${JSON.stringify(label)}`);
-    assert.match(label, new RegExp(`Visiting\\s+${H}`), 'the panel names the host');
+    assert.match(label, new RegExp(`Visiting\\s+${H}`, 'i'), 'the panel names the host'); // the row is CSS-uppercased
     assert.equal(await guest.client.eval(`document.querySelector('#omw-social .whererow .btn').textContent`), 'Leave');
     const hit = await guest.client.click('#omw-social .whererow .btn');
     ctx.log(`clicked Leave (hit ${hit})`);
