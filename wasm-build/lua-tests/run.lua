@@ -2364,7 +2364,8 @@ do
   local function authSent()
     net.onOpen()
     net.onJson(json.encode({ t = 'SessionHelloOk', serverName = 'test' }))
-    return env.calls.json[#env.calls.json].t
+    local last = env.calls.json[#env.calls.json]
+    return last and json.decode(last).t
   end
   local function refused(detail)
     net.onJson(json.encode({ t = 'SessionDisconnect', code = 'AUTH_FAILED', detail = detail }))
