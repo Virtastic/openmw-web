@@ -101,6 +101,14 @@
     if (invited) sessionStorage.setItem('omwmp:invite', invited);
     else invited = sessionStorage.getItem('omwmp:invite') || '';
   } catch { /* storage blocked: the query is all there is */ }
+  // A REFUSED INVITE IS A STALE ONE, and it must be forgotten BEFORE the links are drawn: the
+  // refusal lands back on this page, which re-read the stored code and put it on every provider
+  // link again, so the obvious retry sent the same wrong code (s176). Only the storage was
+  // cleared, further down, after the links already carried it.
+  if (/[#&]mperror=invite_required(&|$)/.test(location.hash)) {
+    invited = '';
+    try { sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ }
+  }
   if (providers.length) {
     if (auth.allowPasswordLogin) out += '<div class="rule">or</div>';
     for (const p of providers) {
@@ -220,9 +228,7 @@
   if (err) {
     history.replaceState(null, '', location.pathname);
     // Words for the codes a player can act on; anything else keeps the code for a bug report.
-    const code = decodeURIComponent(err[1]);
-    // A refused invite is a stale one: forget it, or every retry sends it again.
-    if (code === 'invite_required') { try { sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ } }
+    const code = decodeURIComponent(err[1]); // a refused invite was already forgotten, above
     const said = {
       invite_required: 'This server is invite-only, and that sign-in had no working invite. '
         + 'Open the invite link from whoever runs it (it may have changed).',
