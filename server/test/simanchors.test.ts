@@ -82,7 +82,7 @@ test('on the wire: two occupied interiors both anchor; one emptied is gone next 
   a = await nextPass((v) => !v.interiors.includes(shop), 'the emptied interior lingered past a pass');
   assert.ok(Date.now() - t0 < 12_000, 'dropped within the pass after the exit, not after anchorIdleSec');
   assert.deepEqual(a.interiors, [club], 'the still-occupied interior is kept');
-  assert.equal(a.place?.cellKey, '-3,-2');
+  assert.equal(a.place, undefined, 'the dummy is placed once and never moved again');
 
   // Everyone indoors: the street empties into the club. The exterior anchor lingers (idle
   // grace) but nobody stands there, so the dummy is placed nowhere rather than inside the
@@ -225,4 +225,30 @@ test('on the wire: the peer walking out of a held neighbour cell does not revoke
   const revoked = peer.inbox.events.filter((e) => e.name === 'ActorAuthorityRevoke'
     && (e.value as { cellKey: string }).cellKey === '1,1');
   assert.equal(revoked.length, 0, 'the held neighbour was revoked because the dummy walked out of it');
+});
+
+// The dummy follows nobody. Every follow was a peer cell change (authority churn around it, the
+// teleport resetting actors' AI) for no simulation benefit: the anchors decide what is simulated.
+test('on the wire: the dummy is placed once per peer and never moved after', async (t) => {
+  const PEER_PASS = 'peer-secret-5';
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } } });
+  t.after(() => server.close());
+  server.config.simPeer.enabled = true;
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  await c.joinAsNew('Traveller');
+  await c.waitEvent('PlayerList');
+  c.sendCellChange('0,0', 10, 10, 0);
+  type Anchors = { place?: { cellKey: string } };
+  await peer.waitEvent('SimAnchors', (v) => (v as Anchors).place?.cellKey === '0,0', 12_000)
+    .catch(() => assert.fail('the dummy was never placed'));
+  peer.inbox.events.length = 0;
+  c.sendCellChange('4,4', 32800, 32800, 0); // far away, a different region
+  await peer.waitEvent('SimAnchors', (v) => JSON.stringify(v).includes('32800'), 12_000); // a pass after the move
+  await new Promise((r) => setTimeout(r, 2_500)); // and the one after
+  const moves = peer.inbox.events.filter((e) => e.name === 'SimAnchors' && (e.value as Anchors).place !== undefined);
+  assert.equal(moves.length, 0, `the dummy was moved: ${JSON.stringify(moves.map((m) => (m.value as Anchors).place))}`);
 });

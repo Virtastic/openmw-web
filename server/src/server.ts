@@ -1561,6 +1561,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // its record yet. Tied to one peer id; a new peer starts from an empty ring.
   const ring = new Map<string, boolean>();
   let ringPeer: number | undefined;
+  // The peer id whose dummy has been placed. It is placed ONCE per peer and then left alone.
+  let placedPeer: number | undefined;
   let lastAnchorCells = ''; // log throttle: one simpeer.anchors line per change
   let warnedUnsimulated = ''; // throttle for simpeer.cells_unsimulated
   // Is the world actually being SIMULATED? Read live from the roster rather than kept as
@@ -1745,7 +1747,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
     // Sent EVERY pass, deliberately: positions move, and the engine gates its own grid
     // rebuild on the derived cell set (Scene::setSimAnchors), so a resend is cheap there.
-    peerPlayer.peer.sendEvent('SimAnchors', { anchors, interiors, ...(place ? { place } : {}) });
+    // THE DUMMY IS PLACED ONCE, THEN LEFT ALONE. It used to follow the first player's cell, and
+    // every follow was a peer cell change: authority released and re-claimed around it, the
+    // actors' AI packages reset by the teleport. With the 3x3 around every player held, that
+    // flipped the creatures a player was fighting to local AI and back ("moving very slowly,
+    // everything is strange", dev box 2026-09-23). Nothing needs it to follow: what the peer
+    // simulates is the anchor list, the navmesh is built around every anchor (backlog 483),
+    // and its body no longer collides (mp.setSelfCollisionBody). A new peer is placed afresh.
+    const placeNow = place !== undefined && placedPeer !== peerPlayer.id;
+    if (placeNow) placedPeer = peerPlayer.id;
+    peerPlayer.peer.sendEvent('SimAnchors', { anchors, interiors, ...(placeNow ? { place } : {}) });
 
     // AUTHORITY FOR EVERY ANCHORED CELL, on the one peer. The old revoke loop ("authority
     // follows the peer that can actually simulate") is gone because after the engine fix it
