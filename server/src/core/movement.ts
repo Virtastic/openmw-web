@@ -78,6 +78,14 @@ export function parseExterior(cellKey: string): { x: number; y: number } | null 
 // placed at the cell CENTRE (half-diagonal 5793 < 7168, so the anchor is fully covered) and a
 // real measurement of what its processing radius reaches — not an assumption about what is
 // loaded.
+//
+// Anchors are player positions now, and that still does not make the ring safe to HOLD: the
+// server keeps ONE position per cell (server.ts heldAnchors, the last human seen there) and
+// resends it every 5 s, while a client ticks 7168 around its own live position. Two players at
+// opposite edges of a cell, or one running across a border, put neighbour NPCs inside the
+// client's radius and outside the peer's -- held, they would be AI-off puppets of a statue.
+// What the ring needed first was the object state, and it gets that without a hold:
+// worldstate hears() relays the 3x3 around every held exterior to the peer.
 export function loadedCells(cellKey: string): string[] {
   return [cellKey];
 }

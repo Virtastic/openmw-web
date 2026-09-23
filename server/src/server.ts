@@ -1549,6 +1549,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Cells the peer currently holds, so authority is DIFFED rather than re-entered every tick
   // (re-entering bumps the epoch and forces a full re-sync).
   const claimed = new Set<string>();
+  // The exterior ring around the anchors (worldstate hears): cellKey -> has the peer been sent
+  // its record yet. Tied to one peer id; a new peer starts from an empty ring.
+  const ring = new Map<string, boolean>();
+  let ringPeer: number | undefined;
   let lastAnchorCells = ''; // log throttle: one simpeer.anchors line per change
   let warnedUnsimulated = ''; // throttle for simpeer.cells_unsimulated
   // Is the world actually being SIMULATED? Read live from the roster rather than kept as
@@ -1702,6 +1706,33 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (claimed.has(ck) && world.holderOf(ck) === peerPlayer.id) continue;
       world.authorityEnter(peerPlayer, ck);
       claimed.add(ck);
+    }
+
+    // THE RING'S RECORD, ONE PASS LATE. From here on the peer hears every relay for the
+    // exteriors around its anchors (worldstate hears), but what happened there BEFORE -- the
+    // door opened an hour ago, the crate moved yesterday -- lives only in the cell doc. The
+    // anchored cell itself asks on its grant (actors.lua); nothing asks for its neighbours.
+    // Sent on the pass AFTER a cell joins the ring, not this one: SimAnchors above only
+    // REQUESTS the grid change (Scene::requestChangeCellGrid runs next frame), a record that
+    // lands first resolves no refs and is dropped, and a relay heard in the gap is in the doc
+    // by then anyway. Re-sent only when a cell leaves the ring and comes back.
+    if (ringPeer !== peerPlayer.id) { ring.clear(); ringPeer = peerPlayer.id; }
+    const inRing = new Set<string>();
+    for (const ck of cells) {
+      const e = parseExterior(ck);
+      if (!e) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const n = `${e.x + dx},${e.y + dy}`;
+          if (!heldAnchors.has(n)) inRing.add(n);
+        }
+      }
+    }
+    for (const ck of [...ring.keys()]) if (!inRing.has(ck)) ring.delete(ck);
+    for (const ck of inRing) {
+      const sent = ring.get(ck);
+      if (sent === undefined) ring.set(ck, false);
+      else if (!sent) { world.sendCellState(peerPlayer, ck); ring.set(ck, true); }
     }
 
     const anchorLine = cells.join(',');

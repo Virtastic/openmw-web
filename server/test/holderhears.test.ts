@@ -193,3 +193,69 @@ test("a player far from the peer's dummy gets every batch for the cell they stan
   for (let i = 0; i < 10; i++) peer.sendActorMoveBatch(e, [entry]);
   for (let i = 0; i < 10; i++) await bob.waitActorBatch((b) => b.batch.epoch === e);
 });
+
+// THE RING AROUND A HELD EXTERIOR. The peer's engine loads the 3x3 around every anchor and
+// runs AI there, like the anchoring player's own engine does -- but relays reached it only
+// for the cell it HELD. A door opened one cell over stayed shut on the peer, its NPCs pathed
+// around it and the avatar walked into what the player could not see.
+test('the holder hears the exterior neighbours of a held cell, and nothing past them', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS } },
+  });
+  t.after(() => server.close());
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  bob.sendCellChange('0,0', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+  peer.sendCellChange('9,9', 0, 0, 0); // the avatar is far away: only the hold can explain hearing
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '9,9');
+
+  const carol = await TestClient.connect(server.port);
+  t.after(() => carol.close());
+  await carol.joinAsNew('Carol');
+  carol.sendCellChange('1,1', 0, 0, 0);
+  await carol.waitEvent('PlayerCellChange');
+  peer.inbox.events.length = 0;
+  const doorRef = { __refnum: { index: 501, contentFile: 2 } };
+  carol.sendEvent('DoorState', { ref: doorRef, cellKey: '1,1', open: true });
+  const heard = await peer.waitEvent('DoorState', () => true, 3000).catch(() => assert.fail('a door in the ring never reached the peer'));
+  assert.equal((heard.value as { cellKey: string }).cellKey, '1,1');
+
+  // Two cells out is beyond the peer's grid: still quiet.
+  carol.sendCellChange('2,1', 0, 0, 0);
+  await new Promise((r) => setTimeout(r, 200));
+  peer.inbox.events.length = 0;
+  carol.sendEvent('DoorState', { ref: doorRef, cellKey: '2,1', open: true });
+  await carol.waitEvent('DoorState', (v) => (v as { cellKey: string }).cellKey === '2,1');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'DoorState').length, 0, 'a cell two out is not relayed to the peer');
+});
+
+// What happened in the ring BEFORE the peer heard it lives only in the cell doc. The anchored
+// cell asks for its own record on the grant; the pass sends the neighbours'.
+test('on the wire: the peer is sent the record of each exterior neighbour of an anchor', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } } });
+  t.after(() => server.close());
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  bob.sendCellChange('0,0', 100, 100, 0);
+  await bob.waitEvent('PlayerCellChange');
+  // Bob opens a door across the border before any peer exists.
+  bob.sendEvent('DoorState', { ref: { __refnum: { index: 502, contentFile: 2 } }, cellKey: '1,0', open: true });
+  await bob.waitEvent('DoorState', (v) => (v as { cellKey: string }).cellKey === '1,0');
+
+  server.config.simPeer.enabled = true; // no binary: the pass talks to the TestClient peer
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const state = (await peer.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '1,0', 14_000)
+    .catch(() => assert.fail('the neighbour record never reached the peer'))).value as { doors: Record<string, boolean> };
+  assert.equal(state.doors['c:502:2'], true, 'the peer learns the door was opened');
+});
