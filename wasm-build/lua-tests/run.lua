@@ -2040,6 +2040,21 @@ end
 -- engine frame: the global onUpdate ends (reconcile.nextFrame) and applyDelayedActions runs.
 print('reconcile.lua — inventories under the engine\'s end-of-frame rule')
 do
+  -- Its frame counter advances ONLY at the end of the global onUpdate; a player or object script
+  -- has its own copy of the module, whose in-flight adds would never expire.
+  local offenders = {}
+  for _, name in ipairs({ 'player', 'identity', 'social', 'puppet', 'avatar', 'companion', 'testkill', 'interp', 'menu' }) do
+    local f = io.open('./openmw/files/data/scripts/mp/' .. name .. '.lua')
+    if f then
+      local src = f:read('*a'); f:close()
+      if src:find("require('scripts.mp.reconcile')", 1, true) then offenders[#offenders + 1] = name end
+    end
+  end
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('reconcile.lua is required only in the global context, and the global onUpdate ends the frame',
+    #offenders == 0 and g:find('reconcile.nextFrame()', 1, true) ~= nil, table.concat(offenders, ', '))
+end
+do
   package.loaded['scripts.mp.reconcile'] = nil
   local R = require('scripts.mp.reconcile')
   local FW = require('frameworld')
@@ -2172,6 +2187,22 @@ do
     frame()
     check('restore (shed=false): a surplus and an unlisted item stay -- picked up since the last flush',
       inv:countOf('gold_001') == 300 and inv:countOf('ingred_marshmerrow_01') == 2)
+  end
+
+  -- #9 A CONTAINER'S CANONICAL STATE TWICE IN ONE FRAME (ContainerState + WorldCellState on
+  -- entry): it must hold the list, not twice the list.
+  do
+    local W, frame = world()
+    local chest = W.inventory()
+    chest:put('gold_001', 50)
+    chest:put('iron_dagger', 1)
+    local list = { { id = 'gold_001', n = 50 }, { id = 'misc_lockpick', n = 2 } }
+    local function apply() return R.reconcileInventory({ inventory = chest, items = list, createObject = W.createObject, key = 'c:chest', shed = true }) end
+    apply(); apply()
+    frame()
+    check('container: two canonical states in one frame hold the list once (no doubled loot)',
+      chest:countOf('gold_001') == 50 and chest:countOf('misc_lockpick') == 2 and chest:countOf('iron_dagger') == 0,
+      string.format('gold=%d picks=%d dagger=%d', chest:countOf('gold_001'), chest:countOf('misc_lockpick'), chest:countOf('iron_dagger')))
   end
 
   -- #8 PHANTOM SPELLS. The template NPC's spells on a fresh body are not the player's.
