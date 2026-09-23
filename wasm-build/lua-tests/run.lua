@@ -2299,5 +2299,55 @@ do
   end
 end
 
+
+print('player.lua -- every MP_ handler in the player script survives an empty and a nil body')
+do
+  for _, m in ipairs({ 'scripts.mp.net', 'scripts.mp.identity', 'scripts.mp.json' }) do package.loaded[m] = nil end
+  local env = stubs.install({})
+  local anything
+  local mt = {}
+  mt.__index = function() return anything end
+  mt.__call = function() return anything end
+  mt.__add = function() return 0 end; mt.__sub = mt.__add; mt.__mul = mt.__add; mt.__div = mt.__add
+  mt.__unm = function() return 0 end
+  mt.__concat = function(a, b) return tostring(type(a) == 'table' and '' or a) .. tostring(type(b) == 'table' and '' or b) end
+  mt.__len = function() return 0 end
+  anything = setmetatable({}, mt)
+  local function permissive(t)
+    local old = getmetatable(t)
+    local oldIndex = old and old.__index
+    return setmetatable(t, { __index = function(tbl, k)
+      if oldIndex then
+        local v = type(oldIndex) == 'function' and oldIndex(tbl, k) or oldIndex[k]
+        if v ~= nil then return v end
+      end
+      return anything
+    end })
+  end
+  for _, name in ipairs({ 'openmw.core', 'openmw.types', 'openmw.util', 'openmw.interfaces', 'openmw.mp', 'openmw.self' }) do
+    permissive(package.loaded[name])
+  end
+  for _, name in ipairs({ 'openmw.ui', 'openmw.async', 'openmw.input', 'openmw.nearby' }) do
+    package.loaded[name] = permissive({})
+  end
+  for _, sub in ipairs({ 'Actor', 'NPC', 'Item', 'Player' }) do permissive(env.types[sub]) end
+  local okLoad, script = pcall(function() return assert(loadfile('./openmw/files/data/scripts/mp/player.lua'))() end)
+  check('player.lua loads whole under the stubs', okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table', tostring(script))
+  if okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table' then
+    pcall(script.engineHandlers.onInit)
+    local names, failures = {}, {}
+    for name in pairs(script.eventHandlers) do if name:match('^MP_') then names[#names + 1] = name end end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      for _, body in ipairs({ 'empty', 'nil' }) do
+        local ok, err = pcall(script.eventHandlers[name], body == 'empty' and {} or nil)
+        if not ok then failures[#failures + 1] = name .. '(' .. body .. '): ' .. tostring(err):gsub('^.-:%d+: ', ''):sub(1, 90) end
+      end
+    end
+    check(string.format('every MP_ handler in player.lua survives an empty and a nil body (%d handlers)', #names),
+      #failures == 0 and #names >= 10, #failures .. ' threw:\n        ' .. table.concat(failures, '\n        '))
+  end
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
