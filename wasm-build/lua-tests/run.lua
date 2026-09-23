@@ -2349,5 +2349,57 @@ do
   end
 end
 
+
+-- ============================================================ net.lua: the ladder after a crash
+-- s171: a player who got in through LOGIN (register refused: the account exists) lost the
+-- server to a crash. The crash took the resume token with it, so the redial fell to register --
+-- refused again -- and login, the rung that works, was never tried: triedLogin was still set
+-- from the first join, and the client sat in Failed. A welcome now starts a fresh ladder.
+print('net.lua -- a crash after a login join climbs the ladder again')
+do
+  fresh()
+  local env = stubs.install({ password = 'pw' })
+  local net = require('scripts.mp.net')
+  local json = require('scripts.mp.json')
+  local function authSent()
+    net.onOpen()
+    net.onJson(json.encode({ t = 'SessionHelloOk', serverName = 'test' }))
+    return env.calls.json[#env.calls.json].t
+  end
+  local function refused(detail)
+    net.onJson(json.encode({ t = 'SessionDisconnect', code = 'AUTH_FAILED', detail = detail }))
+    net.onClose()
+  end
+  local function welcome(tok)
+    net.onJson(json.encode({ t = 'SessionWelcome', playerId = 7, sessionToken = tok, motd = '', characters = {} }))
+  end
+  net.start()
+  local first = authSent()
+  refused('account already exists')
+  local second = authSent()
+  welcome('tok1')
+  check('the first join is register, then login', first == 'SessionRegister' and second == 'SessionLoginRequest',
+    tostring(first) .. ' then ' .. tostring(second))
+
+  -- The crash: the socket drops, the redial presents the resume token, the new process never
+  -- heard of it.
+  net.state = 'Joined'
+  net.onClose()
+  env.advance(120); net.tick()
+  local r = authSent()
+  refused('resume token expired or unknown')
+  local steps, rung = { r }, nil
+  for _ = 1, 3 do
+    if net.state == 'Failed' then break end
+    rung = authSent()
+    steps[#steps + 1] = rung
+    if rung == 'SessionLoginRequest' then break end
+    refused('account already exists')
+  end
+  check('after a crash the ladder reaches login instead of Failed',
+    rung == 'SessionLoginRequest' and net.state ~= 'Failed',
+    table.concat(steps, ' -> ') .. ' / state=' .. tostring(net.state))
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

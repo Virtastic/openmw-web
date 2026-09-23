@@ -601,7 +601,14 @@ dispatch.SessionWelcome = function(msg)
     -- The ticket that got us in is now SPENT. Holding it would make the next reconnect retry
     -- a dead credential; a plain reconnect resumes, and a world switch mints a fresh one.
     net.loginTicket = nil
-    net.characters = (type(msg.characters) == 'table' and msg.characters ~= json.null) and msg.characters or {}
+    -- ARRIVED: the ladder is spent only for THIS session. Its rungs were reset in net.start()
+    -- alone, so the second outage of a page (a restart rejoined through login, then a crash)
+    -- found triedLogin still set: register was refused ("account already exists"), login was
+    -- never tried, and the player sat in Failed (s171). The next loss climbs a fresh ladder.
+    triedLogin = false
+    triedResume = false
+    triedTicket = false
+    net.characters =(type(msg.characters) == 'table' and msg.characters ~= json.null) and msg.characters or {}
     net.characterId = tostring(msg.characterId or '')
     net.profile = (type(msg.profile) == 'table' and msg.profile ~= json.null) and msg.profile or {}
     desiredCharId = nil -- confirmed (or refused before we got here); default is right now
