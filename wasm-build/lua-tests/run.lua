@@ -1101,9 +1101,11 @@ do
   local applyChunk = src:match('(local function applyItemStates%(.-\nend\n)')
   local snapChunk = src:match('(local function snapAvatarItemStates%(.-\nend\n)')
   check('applyItemStates and snapAvatarItemStates were found', applyChunk ~= nil and snapChunk ~= nil)
-  -- A fake inventory with the two engine behaviours that matter: split() hands back a NEW
-  -- object carrying the same itemData and removes the count from the source only later in the
-  -- frame (mwlua objectbindings.cpp: DelayedRemovalFn), and moveInto appends.
+  -- A simple fake inventory: split() hands back a NEW object carrying the same itemData, and
+  -- moveInto appends. NOT the engine's timing (the engine lowers a split's source AT ONCE and
+  -- lands a moveInto at the END of the frame -- objectbindings.cpp): the engine-accurate model is
+  -- frameworld.lua, and the same-frame cases are tested against it under 'reconcile.lua'. This
+  -- block pins that global.lua's applyItemStates reaches reconcile.applyItemStates.
   local function fakeInventory(items)
     local inv = { items = items }
     function inv:getAll() return self.items end
@@ -1130,7 +1132,8 @@ do
   -- condition, charge or soul ever left a client (s160 nil/nil/nil in #105).
   local fakeTypes = { Item = { itemData = function(it) return it.itemData end }, Actor = { inventory = function(obj) return obj end } }
   local ok, applyItemStates = pcall(function()
-    return assert((loadstring or load)('local types = ...\n' .. applyChunk .. '\nreturn applyItemStates'))(fakeTypes)
+    package.loaded['scripts.mp.reconcile'] = nil
+    return assert((loadstring or load)('local types, reconcile = ...\n' .. applyChunk .. '\nreturn applyItemStates'))(fakeTypes, require('scripts.mp.reconcile'))
   end)
   check('applyItemStates loads', ok and type(applyItemStates) == 'function', tostring(applyItemStates))
   if type(applyItemStates) == 'function' then
