@@ -45,6 +45,7 @@ local ACQUIRE_INTERVAL = 0.25
 local identity = {}
 
 local last = { appearance = nil, equipment = nil, dynamic = nil, progression = nil, spells = nil, inventory = nil, active = nil }
+local lastLook = nil -- the avatar-rebuilding part of the last appearance sent (identity.tick)
 local nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0, acquire = 0, active = 0 }
 -- recordId -> count, as of the last acquisition pass. Separate from `last.inventory` because
 -- that one only advances on the slow cadence, and comparing against it would re-report the same
@@ -482,7 +483,20 @@ end
 function identity.tick(now)
     if restoring then return end
 
-    diffSend('appearance', 'PlayerAppearance', snapAppearance, now)
+    local app = diffSend('appearance', 'PlayerAppearance', snapAppearance, now)
+    if app then
+        -- A NEW LOOK REBUILDS THE AVATAR (global.lua MP_PlayerAppearance: destroy-and-respawn
+        -- on these same keys), and the new body carries none of our temporary effects -- a
+        -- Levitate running at the time dropped us out of the sky. Same cure as a peer
+        -- restart: re-send the active set, which goes out after this appearance.
+        local look = {}
+        for i, k in ipairs({ 'race', 'head', 'hair', 'isMale', 'class', 'birthsign', 'name' }) do look[i] = tostring(app[k]) end
+        look = table.concat(look, '|')
+        if look ~= lastLook then
+            lastLook = look
+            identity.resyncActive()
+        end
+    end
     local eq = diffSend('equipment', 'PlayerEquipment', snapEquipment, now, function(_, snap)
         core.sendGlobalEvent('mpEquipmentOut', snap)
     end)
