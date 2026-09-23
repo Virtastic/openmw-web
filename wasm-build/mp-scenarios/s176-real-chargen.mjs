@@ -73,6 +73,7 @@ export default async function run(ctx) {
     return;
   }
   const a = await ctx.launchClient('newbie', '', { retail: true, newGame: true, joinTimeoutMs: 420_000 });
+  await a.dismissTour(15_000); // the first-join tour sits over the canvas and takes every click
   const cell0 = String(await a.eval('window.omw.state.cell||""'));
   ctx.log(`a new game starts in "${cell0}", chargenDone=${await a.eval('window.omw.state.chargenDone')}`);
   assert.notEqual(await a.eval('window.omw.state.chargenDone'), '1', 'a fresh slot must start IN character creation');

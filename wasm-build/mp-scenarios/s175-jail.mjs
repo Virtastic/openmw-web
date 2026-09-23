@@ -32,6 +32,7 @@ export default async function run(ctx) {
     return;
   }
   const a = await ctx.launchClient('jailbird', '', BOOT);
+  await a.dismissTour();
   await a.cmd(`bounty:${BOUNTY}`);
   await a.waitFor(`window.omw.state.bounty === "${BOUNTY}"`, 30_000, 'the bounty is on record');
   const cell0 = String(await a.eval('window.omw.state.cell||""'));

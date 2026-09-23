@@ -30,6 +30,7 @@ export default async function run(ctx) {
     return;
   }
   const a = await ctx.launchClient('strider', '', BOOT);
+  await a.dismissTour(); // the first-join tour sits over the canvas and takes every click
 
   // A purse for the fare: one frame drains the whole queue, so send them together.
   await a.evalAsync(`Promise.all(Array.from({ length: ${PURSE} }, () => window.omw.send('give:gold_001')))`);
