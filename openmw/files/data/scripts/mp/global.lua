@@ -1032,6 +1032,19 @@ local function withoutBarCarried(localId, indexes)
     end
     return out
 end
+-- The sender's ROLLED magnitudes, as activeSpells:add's `magnitudes` (effect index -> value).
+-- On the wire they are `mags`, parallel to `effects` with -1 for "none"; keyed by index here
+-- so the filters above can drop effects without the two lists falling out of step. Without
+-- them each body re-rolled a ranged effect and the two moved at different speeds (Fortify
+-- Speed, Burden, Levitate) -- the owner was corrected toward the avatar every step.
+local function rolledMagnitudes(sp)
+    local out = {}
+    for k, i in ipairs(sp.effects or {}) do
+        local m = type(sp.mags) == 'table' and sp.mags[k]
+        if type(i) == 'number' and type(m) == 'number' and m >= 0 then out[i] = m end
+    end
+    return out
+end
 local avatarEffectsAt = 0
 local AVATAR_EFFECTS_EVERY = 1.0
 local avatarSpellsReported = {} -- id -> { localSpellId -> true }
@@ -1089,17 +1102,23 @@ local function avatarEffectsTick(now)
                     end
                     if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil
                         and not known[sp.id] then
-                        seen[sp.activeSpellId] = sp.id
-                        if not reported[sp.activeSpellId] then
-                            local idx = {}
-                            for _, e in ipairs(sp.effects or {}) do
-                                if e.index ~= nil then idx[#idx + 1] = e.index end
+                        -- Same rolled-magnitude rule as identity.lua snapActive: the owner
+                        -- gets this Burden's roll, and an instance not rolled yet waits a tick
+                        -- (unseen, so the next tick reports it).
+                        local idx, mags, rolled = {}, {}, true
+                        for _, e in ipairs(sp.effects or {}) do
+                            if e.index ~= nil then
+                                local m = e.magnitudeThisFrame
+                                if m == 0 and (e.minMagnitude or 0) > 0 then rolled = false end
+                                idx[#idx + 1] = e.index
+                                mags[#idx] = type(m) == 'number' and m or -1
                             end
-                            if #idx > 0 then
-                                entry.effectsAdd = entry.effectsAdd or {}
-                                entry.effectsAdd[#entry.effectsAdd + 1] = { id = worldmp.toNet(sp.id), effects = idx }
-                                any = true
-                            end
+                        end
+                        if rolled or reported[sp.activeSpellId] then seen[sp.activeSpellId] = sp.id end
+                        if rolled and not reported[sp.activeSpellId] and #idx > 0 then
+                            entry.effectsAdd = entry.effectsAdd or {}
+                            entry.effectsAdd[#entry.effectsAdd + 1] = { id = worldmp.toNet(sp.id), effects = idx, mags = mags }
+                            any = true
                         end
                     end
                 end
@@ -2186,6 +2205,7 @@ local eventHandlers = {
                 toPlayer('MP_PeerEffect', { id = localId, on = true })
                 local ok, err = pcall(function()
                     spells:add({ id = localId, effects = effects, caster = player, stackable = true,
+                        magnitudes = rolledMagnitudes(sp),
                         ignoreResistances = true, ignoreSpellAbsorption = true, ignoreReflect = true })
                 end)
                 if not ok then print('[mp] peer effect apply failed: ' .. tostring(err)) end
@@ -2277,6 +2297,7 @@ local eventHandlers = {
                 local stack = (ownerActive[data.id][localId] or 0) <= 1
                 local ok, err = pcall(function()
                     spells:add({ id = localId, effects = effects, caster = p.obj, stackable = stack,
+                        magnitudes = rolledMagnitudes(sp),
                         ignoreResistances = true, ignoreSpellAbsorption = true, ignoreReflect = true, quiet = true })
                 end)
                 if not ok then print('[mp] avatar active effect add failed: ' .. tostring(err)) end
@@ -3539,7 +3560,7 @@ local eventHandlers = {
         local function mapped(list)
             local out = {}
             for i, e in ipairs(list or {}) do
-                out[i] = { key = e.key, id = worldmp.toNet(e.id), effects = e.effects }
+                out[i] = { key = e.key, id = worldmp.toNet(e.id), effects = e.effects, mags = e.mags }
             end
             return out
         end

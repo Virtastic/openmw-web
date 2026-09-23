@@ -352,6 +352,18 @@ test("a client's active effects are forwarded to the peer for the avatar, and ga
   const next = await peer.waitEvent('AvatarActiveSpells', (v) => (v as { id?: number })?.id === a.playerId);
   assert.equal((next.value as { add: { id: string }[] }).add[0]!.id, 'fortify_speed',
     'the malformed message was dropped, the well-formed one after it was forwarded');
+
+  // The ROLLED magnitude rides with each effect (-1 = none), so the avatar applies the owner's
+  // roll instead of its own -- a different Fortify Speed roll is a different speed. A list that
+  // is out of step with the indexes, or not a sane number, refuses the op like a bad index.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerActiveSpells', { add: [{ key: '11', id: 'fortify_speed', effects: [0], mags: [1e9] }], remove: [] });
+  a.sendEvent('PlayerActiveSpells', { add: [{ key: '12', id: 'fortify_speed', effects: [0], mags: [3, 4] }], remove: [] });
+  a.sendEvent('PlayerActiveSpells', { add: [{ key: '13', id: 'p_water_walking_s', effects: [0, 1], mags: [-1, 12.5] }], remove: [] });
+  const rolled = await peer.waitEvent('AvatarActiveSpells', (v) => (v as { id?: number })?.id === a.playerId);
+  const r = (rolled.value as { add: { key: string; mags?: number[] }[] }).add[0]!;
+  assert.equal(r.key, '13', 'the out-of-range and out-of-step magnitude lists were dropped');
+  assert.deepEqual(r.mags, [-1, 12.5], 'rolled magnitudes travel whole');
 });
 
 // WHAT THE WORLD DID TO THE AVATAR comes back. A bite on the peer puts a disease in the avatar's
@@ -362,13 +374,14 @@ test("the peer's report of a disease and a hostile effect reaches the owner; a c
   a.inbox.events.length = 0;
   peer.sendEvent('AvatarEffectsBatch', { entries: [{
     id: a.playerId, spellsAdd: ['ataxia'],
-    effectsAdd: [{ id: 'paralyze', effects: [0] }], effectsRemove: [{ id: 'burden' }],
+    effectsAdd: [{ id: 'paralyze', effects: [0] }, { id: 'burden', effects: [0], mags: [17] }], effectsRemove: [{ id: 'burden' }],
   }] });
   const spells = await a.waitEvent('SelfSpells');
   assert.deepEqual((spells.value as { add: string[] }).add, ['ataxia'], 'the disease reaches the owner');
   const fx = await a.waitEvent('SelfActiveSpells');
   const v = fx.value as { add: { id: string; effects: number[] }[]; remove: { id: string }[] };
   assert.equal(v.add[0]!.id, 'paralyze'); assert.deepEqual(v.add[0]!.effects, [0]);
+  assert.deepEqual((v.add[1] as { mags?: number[] }).mags, [17], 'the peer\'s roll reaches the owner');
   assert.equal(v.remove[0]!.id, 'burden');
   // Persisted: a rejoin restores the disease (the record the welcome carries lists it).
   await server.flush();

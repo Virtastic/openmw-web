@@ -896,7 +896,27 @@ function effectMagnitude(ctx: StateCtx, op: ActiveOp): number {
   }
   return sum;
 }
-type ActiveOp = { key: string; id: string; effects?: number[] };
+type ActiveOp = { key: string; id: string; effects?: number[]; mags?: number[] };
+// The sender's ROLLED magnitude per effect (identity.lua snapActive / global.lua
+// avatarEffectsTick), parallel to `effects`, -1 = none: the other body applies exactly that
+// instead of re-rolling a ranged effect into a different speed. Optional (older clients send
+// none); a malformed list refuses the op like a bad index. Bounded for shape only -- the
+// engine caps each one at its record's own max (magicbindings.cpp), so a claim can never
+// exceed a legitimate roll, and the magnitude budget above already charges that max.
+const MAX_ROLLED_MAG = 10_000;
+function magsOf(e: LTable, n: number): number[] | undefined | null {
+  const raw = e.get('mags');
+  if (raw === undefined) return undefined;
+  const t = tbl(raw);
+  if (!t || t.size !== n) return null;
+  const out: number[] = [];
+  for (const [, mv] of t) {
+    const m = finite(mv);
+    if (m === undefined || m < -1 || m > MAX_ROLLED_MAG) return null;
+    out.push(m);
+  }
+  return out;
+}
 function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolean {
   const list = (v: LValue | undefined, withEffects: boolean): ActiveOp[] | undefined => {
     const t = tbl(v);
@@ -918,7 +938,9 @@ function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolea
         if (i === undefined || !Number.isInteger(i) || i < 0 || i >= MAX_EFFECT_INDEXES) return undefined;
         effects.push(i);
       }
-      out.push({ key, id, effects });
+      const mags = magsOf(e, effects.length);
+      if (mags === null) return undefined;
+      out.push(mags ? { key, id, effects, mags } : { key, id, effects });
     }
     return out;
   };
@@ -1007,7 +1029,9 @@ export function handleAvatarEffectsBatch(ctx: StateCtx, sender: Player, value: L
         const fx = tbl(o.get('effects')); const effects: number[] = [];
         if (!fx || fx.size === 0 || fx.size > MAX_EFFECT_INDEXES) return [];
         for (const [, iv] of fx) { const i = finite(iv); if (i === undefined || !Number.isInteger(i) || i < 0 || i >= MAX_EFFECT_INDEXES) return []; effects.push(i); }
-        out.push({ key: rid, id: rid, effects });
+        const mags = magsOf(o, effects.length);
+        if (mags === null) return [];
+        out.push(mags ? { key: rid, id: rid, effects, mags } : { key: rid, id: rid, effects });
       }
       return out;
     };

@@ -2045,5 +2045,35 @@ do
     #despawned == 1 and despawned[1] == 3 and cell == nil and pose == nil)
 end
 
+-- ------------------------------------------------------------ rolled magnitudes cross bodies
+-- The avatar re-rolled every ranged effect it mirrored (Fortify Speed 5-15, Burden, Levitate)
+-- and moved at a different speed from its owner for the whole duration.
+print('active effects carry their ROLLED magnitude both ways')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
+  local cpp = io.open('./openmw/apps/openmw/mwlua/magicbindings.cpp'):read('*a')
+  check('identity.lua sends the owner roll with each effect (-1 = none)',
+    idn:find("mags[#idx] = type(m) == 'number' and m or -1", 1, true) ~= nil
+    and idn:find("add[#add + 1] = { key = key, id = sp.id, effects = sp.effects, mags = sp.mags }", 1, true) ~= nil)
+  check('identity.lua holds an instance that is not rolled yet for a tick',
+    idn:find("if m == 0 and (e.minMagnitude or 0) > 0 then rolled = false end", 1, true) ~= nil)
+  check('mpActiveSpellsOut forwards mags',
+    g:find("out[i] = { key = e.key, id = worldmp.toNet(e.id), effects = e.effects, mags = e.mags }", 1, true) ~= nil)
+  check('the peer reports the avatar roll back to the owner',
+    g:find("{ id = worldmp.toNet(sp.id), effects = idx, mags = mags }", 1, true) ~= nil)
+  local _, n = g:gsub('magnitudes = rolledMagnitudes%(sp%),', '')
+  check('both appliers (avatar and self) pass the roll to activeSpells:add', n == 2)
+  check('the engine pins a passed roll as min == max, capped at the record max',
+    cpp:find('effect.mMinMagnitude = effect.mMaxMagnitude = std::clamp(*m, 0.f, std::max(0.f, cap));', 1, true) ~= nil)
+  local s0 = g:find('local function rolledMagnitudes(sp)', 1, true)
+  local _, e0 = g:find('\n    return out\nend\n', s0, true)
+  local env = { ipairs = ipairs, type = type }
+  local rm = setfenv(assert(loadstring(g:sub(s0, e0) .. 'return rolledMagnitudes')), env)()
+  local m = rm({ effects = { 0, 2, 5 }, mags = { 12, -1, 7.5 } })
+  check('rolledMagnitudes keys by effect index and drops -1', m[0] == 12 and m[2] == nil and m[5] == 7.5)
+  check('rolledMagnitudes of an older sender (no mags) is empty: the engine rolls', next(rm({ effects = { 0 } })) == nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
