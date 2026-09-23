@@ -1305,7 +1305,7 @@ local function disableMenuPause()
     end
 end
 
-return {
+local script = {
     engineHandlers = {
         onInit = disableMenuPause,
         onLoad = disableMenuPause,
@@ -1501,3 +1501,10 @@ return {
         end,
     },
 }
+
+-- A server event with no body is an empty one (as in global.lua): a handler that throws goes
+-- silent for the rest of the session. run.lua calls each MP_ handler here with none.
+for name, fn in pairs(script.eventHandlers) do
+    if name:sub(1, 3) == 'MP_' then script.eventHandlers[name] = function(data) return fn(data or {}) end end
+end
+return script
