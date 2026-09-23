@@ -2031,5 +2031,146 @@ do
     #despawned == 1 and despawned[1] == 3 and cell == nil and pose == nil)
 end
 
+-- ============================================================ reconcile.lua against an engine-shaped frame
+-- Backlog 507 and the MP-READINESS-AUDIT same-frame class. frameworld.lua applies changes the way
+-- the engine does (removals at once, adds at the end of the frame); `frame()` is the tail of an
+-- engine frame: the global onUpdate ends (reconcile.nextFrame) and applyDelayedActions runs.
+print('reconcile.lua — inventories under the engine\'s end-of-frame rule')
+do
+  package.loaded['scripts.mp.reconcile'] = nil
+  local R = require('scripts.mp.reconcile')
+  local FW = require('frameworld')
+  local function world()
+    local W = FW.new()
+    return W, function() R.nextFrame(); W.endFrame() end
+  end
+  local function recon(W, inv, items, extra)
+    local o = { inventory = inv, items = items, createObject = W.createObject, key = 'av', shed = true }
+    for k, v in pairs(extra or {}) do o[k] = v end
+    return R.reconcileInventory(o)
+  end
+
+  -- The stub itself must behave like objectbindings.cpp, or nothing below means anything.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('gem', 3)
+    local piece = inv:getAll()[1]:split(1)
+    local afterSplit = inv:countOf('gem')
+    piece:moveInto(inv)
+    local beforeFrame, pieceCount = inv:countOf('gem'), piece.count
+    frame()
+    check('frameworld: split lowers the stack at once, a moved piece reads 0, and it lands only at the end of the frame',
+      afterSplit == 2 and pieceCount == 0 and beforeFrame == 2 and inv:countOf('gem') == 3)
+    local threw = not pcall(function() piece:moveInto(inv) end)
+    check("frameworld: moving an object that already says 0 throws, as the engine's removeFn does", threw)
+  end
+
+  -- #1 SOUL GEMS. A stack of three walked as {n=2},{n=1,soul}: exactly one gem gets the soul.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('misc_soulgem_common', 3)
+    local n = R.applyItemStates(inv, 'misc_soulgem_common', { { n = 2 }, { n = 1, soul = 'mudcrab' } }, W.itemData, 'self')
+    frame()
+    check('item states: a soul for one gem fills ONE gem, not the whole stack of three',
+      n == 1 and inv:countWhere('misc_soulgem_common', 'soul', 'mudcrab') == 1 and inv:countOf('misc_soulgem_common') == 3,
+      string.format('applied=%d souled=%d total=%d', n, inv:countWhere('misc_soulgem_common', 'soul', 'mudcrab'), inv:countOf('misc_soulgem_common')))
+  end
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('iron_cuirass', 4)
+    R.applyItemStates(inv, 'iron_cuirass', { { n = 1 }, { n = 2, condition = 50 }, { n = 1 } }, W.itemData, 'self')
+    frame()
+    check('item states: a worn pair in the middle of a stack of four wears two, and the pack still holds four',
+      inv:countWhere('iron_cuirass', 'condition', 50) == 2 and inv:countOf('iron_cuirass') == 4)
+  end
+
+  -- #2 TWO DOCS IN ONE FRAME. The avatar must hold what the doc says once the frame is over.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    recon(W, inv, { { id = 'iron_cuirass', n = 3 } })
+    recon(W, inv, { { id = 'iron_cuirass', n = 3 } })
+    frame()
+    check('avatar: the same doc twice in one frame grants the shortfall once (not 6 cuirasses)',
+      inv:countOf('iron_cuirass') == 3, 'got ' .. inv:countOf('iron_cuirass'))
+    recon(W, inv, { { id = 'iron_cuirass', n = 5 } })
+    recon(W, inv, { { id = 'iron_cuirass', n = 7 } })
+    frame()
+    check('avatar: a rising count seen twice in one frame lands at the latest figure',
+      inv:countOf('iron_cuirass') == 7, 'got ' .. inv:countOf('iron_cuirass'))
+  end
+
+  -- #3 A DROP WHILE ADDS ARE IN FLIGHT. Doc says 5 (queued), then 0, in one frame: the pass says
+  -- it is not done, and the next frame's pass finishes it.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    recon(W, inv, { { id = 'iron_cuirass', n = 5 } })
+    local r = recon(W, inv, {})
+    frame()
+    local between = inv:countOf('iron_cuirass')
+    local r2 = recon(W, inv, {})
+    frame()
+    check('avatar: a drop landing while the grant is in flight is finished on the next frame, not left behind',
+      r.pending == true and between == 5 and inv:countOf('iron_cuirass') == 0 and r2.pending == false,
+      string.format('pending=%s between=%d after=%d', tostring(r.pending), between, inv:countOf('iron_cuirass')))
+  end
+
+  -- #4 SPAWN: the doc grant and the equipment grant in one frame hand over ONE item.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    recon(W, inv, { { id = 'dwemer_cuirass', n = 1 } }, { keep = { dwemer_cuirass = true } })
+    for _ = 1, 2 do -- pushEquipmentToPuppet runs twice at spawn
+      if R.held(inv, 'av', 'dwemer_cuirass') == 0 then R.moveInto(W.createObject('dwemer_cuirass', 1), inv, 'av', 'dwemer_cuirass') end
+    end
+    frame()
+    check('avatar spawn: the equipped cuirass is granted once, not three times',
+      inv:countOf('dwemer_cuirass') == 1, 'got ' .. inv:countOf('dwemer_cuirass'))
+  end
+
+  -- #5 ITEM STATES THEN A SECOND DOC IN THE SAME FRAME: the split pieces are in flight, not missing.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('iron_longsword', 3)
+    R.applyItemStates(inv, 'iron_longsword', { { n = 1, condition = 10 }, { n = 2 } }, W.itemData, 'av')
+    recon(W, inv, { { id = 'iron_longsword', n = 3 } })
+    frame()
+    check('avatar: a doc read in the frame an item state was split does not re-grant the split piece',
+      inv:countOf('iron_longsword') == 3 and inv:countWhere('iron_longsword', 'condition', 10) == 1,
+      'got ' .. inv:countOf('iron_longsword'))
+  end
+
+  -- #6 RELOG: states applied in the grant's own frame hit nothing; applied the next frame they land.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    local r = R.reconcileInventory({ inventory = inv, items = { { id = 'misc_soulgem_grand', n = 2 } },
+      createObject = W.createObject, key = 'self', shed = false })
+    local tooSoon = R.applyItemStates(inv, 'misc_soulgem_grand', { { n = 1, soul = 'golden saint' }, { n = 1 } }, W.itemData, 'self')
+    frame()
+    local later = R.applyItemStates(inv, 'misc_soulgem_grand', { { n = 1, soul = 'golden saint' }, { n = 1 } }, W.itemData, 'self')
+    frame()
+    check('restore: item states wait for the grant to land (0 applied in its frame, 1 the next), and the soul survives the relog',
+      r.pending == true and tooSoon == 0 and later == 1 and inv:countWhere('misc_soulgem_grand', 'soul', 'golden saint') == 1)
+  end
+
+  -- #7 A PLAYER'S OWN RESTORE never takes away what the debounced doc does not list.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('gold_001', 300)
+    inv:put('ingred_marshmerrow_01', 2)
+    R.reconcileInventory({ inventory = inv, items = { { id = 'gold_001', n = 261 } }, createObject = W.createObject, key = 'self', shed = false })
+    frame()
+    check('restore (shed=false): a surplus and an unlisted item stay -- picked up since the last flush',
+      inv:countOf('gold_001') == 300 and inv:countOf('ingred_marshmerrow_01') == 2)
+  end
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
