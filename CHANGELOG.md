@@ -2,6 +2,37 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.5.0
+
+**What you carry stays what you carry.** Inventory changes in OpenMW land at the end of the frame,
+not when the script asks, and every place that brought a character's pack, a companion's gear or
+a chest in line with the server read counts that were about to change. So a stack of soul gems
+could split wrong, the equipment you spawn in could be granted three times, items restored on a
+relog could lose their charge and wear, two updates in one frame to the same chest could double
+it, and the peer's body could hold spells you never learned. All of it now goes through one
+reconciler that counts what is already on the way, tested against a model of the engine's own
+timing. The avatar's item layout no longer loops back onto your pack when the two disagree.
+
+**Skills you use on the peer's body count.** A skill raised by the body the server simulates for
+you -- blocking, armour, the weapon you swing -- now reaches your character sheet.
+
+**A server event with nothing in it cannot silence a subsystem.** Every multiplayer handler, all
+118 of them, is exercised with an empty and a missing body; four that threw on one now ignore it.
+
+**Sign-ins after a restart.** A household signing back in through the launcher after a server
+restart shares one address; launcher sign-ins now have their own allowance, apart from the
+password-guessing one, so nobody is locked out as flooding.
+
+**On a LAN over plain http, the page says why it cannot start.** A friend on a second machine was
+told to find a desktop browser while sitting at one. The real cause is that `http://<address>` is
+not a secure page; the launcher and the game page now say to use the server's `https://` address.
+
+**Proven, not assumed.** New browser scenarios take a player through what nothing tested before:
+the server restarting (and crashing) under them, a guest pressing Leave, a silt strider picked in
+the Travel window, jail, a real new character through the creation windows, and a friend on the
+LAN. The visual checks assert what the frame holds instead of only saving a screenshot, and the
+peer's gates (internal errors, keeping occupied cells, clearing named creatures) have unit tests.
+
 ## 1.4.1
 
 **Nobody can hide the world from everybody.** A client may toggle refs in cells it is nowhere

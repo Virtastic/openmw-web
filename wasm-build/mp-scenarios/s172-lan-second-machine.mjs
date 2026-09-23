@@ -57,7 +57,7 @@ export default async function run(ctx) {
 
     // And the game page itself, reached by a direct link, says the same instead of "not supported".
     const game = await ctx.launchClient('lan-game', '', {
-      url: `http://${lan}:${port}/index.html#mp=1`, noAuto: true,
+      url: `http://${lan}:${port}/index.html#mp=1`, noAuto: true, expectStuckLoading: true, // the refusal stops the boot
       waitExpr: '!!document.getElementById("omw-fatal")', waitWhat: 'the game page gave its verdict',
     });
     const g = await game.eval('document.getElementById("omw-fatal").innerText');

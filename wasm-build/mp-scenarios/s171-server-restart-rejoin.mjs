@@ -47,12 +47,14 @@ export default async function run(ctx) {
   };
 
   // A DEPLOY: SIGTERM drains -- clients get SHUTDOWN (not a failure), stores flush.
+  // The serverRestarting mark lives only while the server is away (a rejoin clears it), so it
+  // is read DURING the outage.
   await survive('graceful restart', async () => {
-    await ctx.serverRestart({ downMs: 3000 });
-    const last = String(await a.eval('window.omw.state.lastError || ""'));
-    ctx.log(`graceful restart: last disconnect "${last}", serverRestarting=${await a.eval('window.omw.state.serverRestarting')}`);
+    const back = ctx.serverRestart({ downMs: 6000 });
+    await a.waitFor('window.omw.state.serverRestarting === "1"', 6000, 'the SHUTDOWN frame was read as a restart, not a failure');
+    ctx.log(`graceful restart: last disconnect "${await a.eval('window.omw.state.lastError || ""')}"`);
+    await back;
   });
-  assert.equal(await a.eval('window.omw.state.serverRestarting'), '1', 'the SHUTDOWN frame was read as a restart, not a failure');
 
   // A CRASH: nothing is told, nothing drains. The player's state was flushed by the graceful
   // restart and has not changed since, so "in place" still holds.
