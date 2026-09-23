@@ -45,7 +45,8 @@ Reload gets the latest build (server sends no-cache). Toggle the dev log with th
 - [ ] Tooltips, drag-resize windows, right-click menus
 
 ## 5. Systems & scripting
-- [ ] **Save**: quicksave (F5), named save, auto-save on rest
+- [ ] **Save**: quicksave (F5), named save, auto-save on rest. *Single player only*: multiplayer
+      refuses every save and load path, F5 and the menu included (s68-no-saves). That is not a bug.
 - [ ] **Load**: quickload (F9), load from menu — world/player/inventory restored
 - [ ] Reload the browser tab → saved game still present (IDBFS persistence)
 - [ ] **Bring-your-own on-disk saves**: pick your `Data Files` folder → save in-game → an
@@ -76,23 +77,28 @@ Reload gets the latest build (server sends no-cache). Toggle the dev log with th
 - [ ] Console stays clean (no new error classes appearing over time)
 - [ ] Tab-out / tab-back; close tab and reopen → save intact
 
-## 9. Multiplayer (M0 — needs a human; the harness can't drive SDL keys)
-- [ ] `?nomw&mp=ws://localhost:8080/ws&name=You&pass=x` (server: `cd server && npm run dev`):
-      MOTD chat message appears in-game shortly after load
-- [ ] T opens the chat window; click the input line (no programmatic focus API in 0.52 Lua —
-      known UX gap), type, Enter sends; a second tab (different `name=`) sees it
+## 9. Multiplayer (M0)
+- [ ] Open the launcher (on the live site add `?experimental=1`: the MP tile is hidden there until
+      this playtest is done), sign in, pick the Multiplayer tile and a character. The MOTD chat
+      line appears in-game shortly after load. (URL logins like `?mp=…&name=…&pass=…` are refused
+      on hosted servers, which are SSO-only, and a bare `npm run dev` with no game data and no sim
+      peer refuses players. Use the test app server or a `setup.sh` install.)
+- [ ] T (or Enter) opens the chat overlay with the cursor already in the input. Type, Enter
+      sends, Tab switches World/Whisper. A second player (another account, in another browser
+      profile or machine) sees it.
 - [ ] Without `?mp=` absolutely nothing multiplayer-related appears (boot log, content chain)
-- [ ] Error paths look human: server not running → red top banner "could not reach the server";
-      wrong `pass=` for an existing name → banner names the auth failure; kill the server while
-      playing → in-game "connection lost — reload the page to retry" message (no banner)
+- [ ] Error paths look human. Server unreachable → a modal saying it could not reach the server.
+      Sign-in refused → a modal naming the refusal. Kill the server while playing → an in-game
+      "connection lost — reconnecting…" notice (no modal), and the client rejoins by itself when
+      the server returns. (s90, s91, s92 assert these; this pass is about how they read.)
 - [ ] "Connected to <server> as <name>" pops shortly after the world loads
 
 ## 10. Multiplayer co-op (M1–M8 — two browsers, ideally two machines)
 
 Everything below is covered by the automated suite (`node wasm-build/mp-harness.mjs`), so this
-pass is about how it *feels*, not whether it functions. Use two tabs/windows with different
-`name=`; the shared-NPC items need retail data (`play/mwdata/`) because the Example Suite demo
-ships no NPC placements at all.
+pass is about how it *feels*, not whether it functions. Use two accounts in two browser profiles
+(or two machines), each signed in through the launcher. The shared-NPC items need a server whose
+setup wizard was given retail Morrowind data: the Example Suite demo ships no NPC placements.
 
 - [ ] You can see the other player move, run, jump — motion is smooth, not teleporting
 - [ ] They look like their actual character (race/face/hair), and equipment changes show up
@@ -104,48 +110,51 @@ ships no NPC placements at all.
 - [ ] Doors and locks: one opens, both see it
 - [ ] Retail: NPCs walk the same patrol on both screens. Kill one — it dies for both and the
       shared kill tally agrees (this gates `GetDeadCount` quests)
-- [ ] Retail: close the tab of whoever is simulating a cell — the other player takes over within
-      a couple of seconds and the NPCs keep moving (NOT frozen)
+- [ ] Retail: NPCs keep moving when either player closes their tab. No player simulates
+      anything; the server's sim peer does. (A peer crash or restart is the real handover,
+      covered by s119/s69. Ask an operator to restart the peer to watch NPCs resume.)
 - [ ] Fight something together: damage lands, it dies once, both of you get credit
 - [ ] PvP is off by default — attacking each other does nothing until `[rules] pvp = true`
-- [ ] Advance a quest; the other player's journal updates and they can continue it
+- [ ] Advance a quest; the other player in the same world sees their journal update and can
+      continue it. (In a friend's world the journal is the host's; a guest's own log is set aside.)
 - [ ] Talk to an NPC while the other tries the same NPC — they're told you're busy with it
-- [ ] Rest: the clock advances for BOTH of you, weather agrees
+- [ ] Rest as the world's owner: the clock advances for both of you and the weather agrees.
+      Rest as a guest: you are told only the world owner can rest for everyone. That refusal is
+      correct (`[rules] timeSkip = "owner"` is the default).
 - [ ] Reload your page mid-session — you rejoin in place without re-entering a password
 - [ ] Latency feels acceptable on a real network (the local soak is 24 players at ~4 ms mean)
 
-### Social hub styling and ESC → Options → Social
-The hub is built from the same MWUI templates as the game's own Options screen, so it should
-read as part of the game. Automation can prove the flows work and can screenshot them; only
+### Social panel styling
+The Social panel is an HTML overlay (not a MyGUI window), styled to read as part of the game. Automation can prove the flows work and can screenshot them; only
 a person can say whether it LOOKS right next to the real menus.
 
-- [ ] Open the Social hub (F) with a real menu open behind it — do the border, transparency
-      and font colour match, or does it read as a bolt-on?
-- [ ] ESC → Options → **Social** exists and renders like every other settings page. Changing
-      "Visible to" there takes effect immediately (check a friend's view).
+- [ ] Open the Social panel (O) in-world. Does it read as part of the game next to the real
+      menus, or as a bolt-on? (By design it will not open while an engine window like dialogue
+      or rest owns the keys.)
+- [ ] Social panel (O) → **Settings** tab → "Visible to" (Everyone / Friends / Nobody). A change
+      takes effect immediately; check a friend's view. There is no Social page under ESC → Options.
 - [ ] Tab bar: the active tab is legible as active. Counts update as people join and leave.
-- [ ] With 20+ players online, does the Players tab stay usable, or does it need scrolling
-      and/or a filter? (No scroll container exists yet — this is the check that decides
-      whether one is needed.)
+- [ ] With 20+ players online, the Players tab scrolls. Is it still usable, or does it need a
+      filter?
 - [ ] Party mode: open your world to friends, have one join via the friends list, flip back
       to Solo and confirm they are returned home after the notice.
-- [ ] Privacy: set `private`, and confirm a FRIEND can no longer see your location and
+- [ ] Privacy: set "Visible to" to **Nobody**, and confirm a FRIEND can no longer see your location and
       cannot invite you.
 
-### Multiplayer windows (F = friends, G = admin)
-`s46-ui-flow` already drives these flows headlessly and writes a screenshot at each step, so
-the checks below are the ones it genuinely **cannot** make. It found three bugs a state-only
+### Multiplayer overlays (T = chat, O = Social)
+`s46-ui-flow`, `s94-social-panel` and `s99-overlays` drive these with real key events and write
+a screenshot at each step, so the checks below are the ones they genuinely **cannot** make. It found three bugs a state-only
 test could not see (windows that never rendered at all, `#` in a name eaten as a MyGUI colour
 code, replies burying the player in screen messages) — assume it catches that class and
 concentrate on judgement.
 
-- [ ] **F and G actually open the windows.** The harness cannot inject SDL keys, so the
-      automated run opens them by event. The key bindings themselves are untested.
-- [ ] Neither key fires while another UI is open, or while typing in chat (T).
-- [ ] Clicking a row does what the label says: `[invite]`, `[unfriend]`, `[accept]`,
-      `[block]`, `[join]`.
-- [ ] The text field accepts a click, then typing, then Enter. (0.52 Lua cannot focus it
-      programmatically, so a click is required — is that discoverable?)
+- [ ] O opens the Social panel and T/Enter opens chat, from normal play. Both keys are
+      rebindable (Social under Options → Controls). Admin is the web dashboard (`/admin`), not
+      an in-game window.
+- [ ] Neither key fires while an engine window is open or while typing in a field.
+- [ ] Clicking a row action does what its label says: join, invite, whisper, remove, accept
+      friend, add friend, mute, send home, block, report.
+- [ ] Text fields accept typing immediately and Enter submits.
 - [ ] Text is legible at your resolution and the window does not run off-screen with a long
       friends list or many players.
 - [ ] Accepting an invite lands you next to your friend and the world looks right afterwards
@@ -173,11 +182,13 @@ it is the only open question about this feature.**
 
 ## 11. The 2026-08-24 overhaul — what changed, and how to break it
 
-Everything here is server-verified and (for the client scripts) logic-tested, but **none of it
-has been through a browser**. These are the specific things to try, and what a failure looks
+Everything here is server-verified, logic-tested and driven by browser scenarios (named per item),
+but not yet judged by a person. These are the specific things to try, and what a failure looks
 like, so the session is spent on the parts nothing automated could answer.
 
-where you left off. **Report if:** you get the fatal modal, or have to reload, or come back
+### Losing the connection
+Kill your network or restart the server mid-session. **Expected:** "connection lost —
+reconnecting", then you are back where you left off. **Report if:** you get the fatal modal, or have to reload, or come back
 somewhere unexpected. Until today this ejected everyone permanently.
 
 ### Dying
@@ -200,11 +211,9 @@ the open. Attack something a friend is also fighting. Attack, walk one cell over
 blood. What must NOT happen is the reported symptom: the swing passing through with *nothing at
 all*, no damage and no miss.
 
-**Test this with a WEAPON, not with magic.** Spells are a known gap, not a regression of this
-fix: nothing on the client ever sends the spell-hit message, so spell damage does not reach the
-victim's owner at all and the health bar flickers back. Casting at a friend or at an NPC is
-expected to do nothing until that is built, and it needs an engine change rather than a script
-one. Report melee and ranged results; do not spend the session on magic.
+**Test weapons AND magic.** Spell hits reach the victim: s59, s116, s144 and s165 assert damage
+and heals, including on a friend. Cast a damage spell at an NPC and a heal at a friend. A cast
+that does nothing, with no "not being simulated" notice, is a bug.
 
 **Be aware which fix is which.** The contract mismatch fixed in `combat.lua` turned out to be
 narrower than first thought and is probably NOT what you were hitting. The likelier cause is an
@@ -248,7 +257,11 @@ The interesting failures are FALSE POSITIVES, so play badly on purpose:
 -banded, or other players stop seeing you move. The envelope is meant to be invisible to
 everyone playing honestly, and a false positive on a bad connection is worse than a missed cheat.
 
-## Reported from live play 2026-08-25 — OPEN, not yet reproduced here
+## Reported from live play 2026-08-25
+
+**Status, re-verified 2026-09-22:** 2&3 (NPC aggro), 7 (custom-class sheet) and 10 (weather) are
+FIXED with tests. 5 (minimap) and 9 (plants) are OPEN. 1, 4, 6 and 8 have not been reproduced.
+The "Which build" notes below are history: v1.4.0 shipped 2026-09-22.
 
 Straight from a real session, recorded before triage so nothing is lost or quietly reinterpreted.
 **None of these has been reproduced in the automated suite yet**, and the suite is green on the
@@ -393,7 +406,8 @@ re-triaged on that basis alone -- a deploy and a re-test is the only thing that 
    kind of thing that differs between backends — `@alphaToCoverage` takes a different branch in
    that shader. So this narrows it to "hardware-GL-specific, or a different build", it does not
    clear it. Re-check on a GPU box before closing.
-5. **Minimap texture corruption — solid white, blue, or black.**
+5. **Minimap texture corruption — solid white, blue, or black.** (OPEN. The minimap currently
+   clears to a deliberate diagnostic blue in localmap.cpp: a blue map is the probe, not a new bug.)
    **DOES NOT REPRODUCE on this build**, same capture. The HUD's map panel shows actual content,
    not a flat fill. Same software-rasterisation caveat as (4) — a render-to-texture path is, if
    anything, more backend-sensitive than alpha testing.
@@ -488,8 +502,7 @@ re-triaged on that basis alone -- a deploy and a re-test is the only thing that 
     and dropping the server's marker fails three server tests including "the longest-present
     occupant inherits on handoff".
 
-**Nothing above is fixed.** They are recorded here because a playtest report is worth more than
-the memory of one, and because two of them (1 and 9) touch code changed in this cycle and need a
+They are recorded here because a playtest report is worth more than the memory of one, and because two of them (1 and 9) touch code changed in this cycle and need a
 before/after comparison rather than a guess.
 
 ## Reported from live play 2026-08-25 (second round, with screenshots) — Brave
@@ -659,9 +672,9 @@ The late-filling Major Skills list is the same restore settling, not a separate 
 
 ## 12. The admin dashboard and mod manager
 
-**Nothing in this section has been through a browser.** It is covered by 1013 server tests and
-by direct runs against the real archives, but the wizard is behind a login no automated check
-here can pass, so every screen below is unseen. Start from a clean data folder: the wizard only
+The wizard's routes are driven end to end by `s170-fresh-install` and the dashboard page by
+`s93-admin-dashboard` (plus ~1080 server tests), but no automated check has looked at the wizard
+screens themselves. This pass is about how they look and read. Start from a clean data folder: the wizard only
 runs once, and half of what follows is about the first run.
 
 ### The wizard, once, in order
@@ -685,10 +698,6 @@ question at all any more (the server always supplies the game files).
 - [ ] **Maintenance** is absent from the sidebar on a single-player server (it only refuses
       multiplayer connections, which solo does not have), and the Restart page does not
       suggest it there
-- [ ] Pick multiplayer, turn the flag back off, reload mid-wizard: the answer is dropped and
-      the step asks again, rather than carrying to a save that refuses it
-- [ ] A server already set up for multiplayer keeps working with the flag off. This is the one
-      that must not regress: the gate is for new setups only
 
 **Hosting.** Answer *Internal* and give a port: check the Caddyfile it writes uses that port and
 the proxy reloads. Then check a nonsense port (0, blank, letters) is refused rather than
@@ -782,7 +791,7 @@ Install two mods that overlap (the Morrowind Optimization Patch and Weapon Sheat
 
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
-- No MSAA → jagged edges vs desktop — enhancement, deferred
-- Anisotropic filtering off → textures softer at oblique angles — OSG fix pending
+- Hardware MSAA is off on WebGL. Options → Video → Antialiasing drives supersampling (SSAA)
+  instead, at a GPU cost.
 - Safari/iOS unsupported (needs a single-threaded build); mobile has no touch controls
 - One AudioContext "gesture" console notice on first load — browser policy, harmless
