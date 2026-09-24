@@ -3221,14 +3221,20 @@ local eventHandlers = {
         local door = nearestDoor()
         if door then
             pcall(function() types.Lockable.lock(door, data.level or 50) end)
-            if not data.silent then mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache, lockLevel = data.level or 50 }) end
+            if not data.silent then
+                mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache, lockLevel = data.level or 50 })
+                objects.noteLockSent(door, data.level or 50)
+            end
         end
     end,
     mpDoorUnlock = function(data)
         local door = nearestDoor()
         if door then
             pcall(function() types.Lockable.unlock(door) end)
-            if not (data and data.silent) then mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache }) end
+            if not (data and data.silent) then
+                mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache })
+                objects.noteLockSent(door, false)
+            end
         end
     end,
 

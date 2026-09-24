@@ -911,6 +911,13 @@ handlers.MP_ObjectMove = function(data)
     end)
 end
 
+-- A lock this client has just REPORTED itself (the harness door commands): the cell poll must
+-- not see the change as a script's and report it a second time. That duplicate arrived after a
+-- friend's unlock on a slow client and locked the door again under them (s32, #144/#147).
+function objects.noteLockSent(obj, level)
+    if obj then scriptLockWatch[obj.id] = level or false end
+end
+
 handlers.MP_ObjectLock = function(data)
     if isOwnEcho(data) then return end
     local obj = resolveBody(data)
