@@ -261,6 +261,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // M8: /motd rewrites this at runtime; SessionWelcome and the motd plugin read it here.
   let motd = config.server.motd;
   const resume = new ResumeStore(config.login.resumeWindowSec);
+  // Tickets the previous process parked at a graceful shutdown (ResumeStore.save), read once.
+  const resumeFile = join(opts.dataDir, 'resume-tickets.json');
+  { const n = resume.load(resumeFile); if (n > 0) log('info', 'resume.restored', { tickets: n }); }
   const interest = interestFromLimits(config.limits);
   const world = new WorldState(roster, cellStore, interest);
   // Phase 4: scripted-spawn replay + the unstick tool. Built early because both the admin
@@ -2153,6 +2156,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       await attio.close();
       await cellStore.close();
       await recordStore.close();
+      // The disconnects above parked every in-world session: hand them to the next process.
+      try { const n = resume.save(resumeFile); if (n > 0) log('info', 'resume.saved', { tickets: n }); }
+      catch (err) { log('warn', 'resume.save_failed', { error: String(err) }); }
       resume.clear();
       oidc.close();
       tickets.clear();

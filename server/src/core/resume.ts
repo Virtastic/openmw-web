@@ -6,11 +6,13 @@
 // needed to put the player back where they were; `SessionResume {token}` inside
 // [login] resumeWindowSec skips auth and rejoins in place.
 //
-// Deliberately IN-MEMORY: a resume ticket is a live-server credential, and a restart
-// legitimately invalidates every session (the world is re-seeded, authority is re-claimed).
-// Tokens are single-use — a resumed session mints a fresh one — so a stolen token cannot
-// be replayed after the owner has used it, and never survives past the window.
+// IN-MEMORY, except across a GRACEFUL restart (save/load below): a crash still invalidates
+// every session, but an update's rolling restart hands the parked tickets to the next
+// process so connected players resume instead of being thrown out. Tokens are single-use —
+// a resumed session mints a fresh one — so a stolen token cannot be replayed after the owner
+// has used it, and never survives past the window it was minted with.
 
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { PlayerPose } from '../proto/movement';
 
 export interface ResumeTicket {
@@ -72,6 +74,39 @@ export class ResumeStore {
 
   clear(): void {
     this.tickets.clear();
+  }
+
+  // ACROSS A GRACEFUL RESTART (s175, #149). A rolling restart -- how an update is applied --
+  // shut every world, and every connected player came back to "resume token expired or
+  // unknown", then a spent login ticket, and either a full page reboot or (a guest) no way
+  // back at all. The tickets parked by that shutdown's own disconnects are handed to the
+  // next process instead: still single-use, still bound to the character, still inside the
+  // window they were minted with. A crash writes nothing, so it still invalidates everything.
+  save(path: string): number {
+    this.sweep();
+    const live = [...this.tickets];
+    if (live.length === 0) return 0;
+    writeFileSync(path, JSON.stringify(live), { mode: 0o600 });
+    return live.length;
+  }
+
+  // Read once and delete: a file left behind must not be replayable by a later boot.
+  load(path: string): number {
+    if (!this.enabled || !existsSync(path)) return 0;
+    let raw: unknown;
+    try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch { raw = null; }
+    try { unlinkSync(path); } catch { /* already gone */ }
+    if (!Array.isArray(raw)) return 0;
+    const now = Date.now();
+    let n = 0;
+    for (const e of raw) {
+      if (!Array.isArray(e) || typeof e[0] !== 'string' || !e[1] || typeof e[1] !== 'object') continue;
+      const t = e[1] as ResumeTicket;
+      if (typeof t.accountKey !== 'string' || typeof t.expiresAt !== 'number' || t.expiresAt <= now) continue;
+      this.tickets.set(e[0], t);
+      n++;
+    }
+    return n;
   }
 
   private sweep(): void {
