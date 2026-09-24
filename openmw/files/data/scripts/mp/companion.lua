@@ -23,6 +23,7 @@ local I = require('openmw.interfaces')
 local POLL = 1.0
 local isPeer = nil -- resolved on the first update (openmw.mp answers only once the session runs)
 local reportedCast = false
+local hitLogArmed = false -- the peer-only hit log (onUpdate)
 local nextPoll = 0
 -- The last thing we told the global script, so a follower standing still says nothing at all.
 -- Starts nil, which is also "following nobody" -- so an ordinary NPC, which is almost all of
@@ -136,6 +137,19 @@ return {
             if isPeer == nil then
                 local okp, mpapi = pcall(require, 'openmw.mp')
                 isPeer = okp and mpapi.isSystem ~= nil and mpapi.isSystem() == true
+            end
+            -- WHAT A BLOW DID, on the peer (s164 #150: fifteen avatar swings in range and a scrib
+            -- that never died, with nothing saying whether they hit, missed or were undone). One
+            -- line per hit this actor takes: attacker, whether it connected, the damage.
+            if isPeer and not hitLogArmed and I.Combat and I.Combat.addOnHitHandler then
+                hitLogArmed = true
+                I.Combat.addOnHitHandler(function(attack)
+                    local okn, who = pcall(function() return attack.attacker and attack.attacker.recordId end)
+                    local d = attack.damage or {}
+                    print(string.format('[mp] hit on peer: %s by %s ok=%s health=%s fatigue=%s type=%s',
+                        tostring(self.object.recordId), okn and tostring(who) or '?', tostring(attack.successful),
+                        tostring(d.health), tostring(d.fatigue), tostring(attack.sourceType)))
+                end)
             end
             if isPeer then
                 local okc, casting = pcall(function() return require('openmw.animation').isPlaying(self, 'spellcast') end)
