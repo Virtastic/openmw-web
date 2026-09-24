@@ -229,9 +229,14 @@ combat.handlers.MP_CombatHit = function(data)
     local victim = resolveVictim(data)
     if mp.isSystem and mp.isSystem() then
         local t = data.target or {}
-        print(string.format('[mp] CombatHit on peer: net=%s ref=%s cell=%s resolved=%s',
+        -- hp and whether its scripts run (active): "resolved" alone could not tell a hit that
+        -- landed from one sent to a body whose Hit handler never runs (s120, #145).
+        local okh, hp = pcall(function() return types.Actor.stats.dynamic.health(victim).current end)
+        local oka, active = pcall(function() return victim:isValid() and victim.cell ~= nil and types.Actor.isDead(victim) end)
+        print(string.format('[mp] CombatHit on peer: net=%s ref=%s cell=%s resolved=%s hp=%s dead=%s obj=%s',
             tostring(t.net), tostring(t.ref and t.ref.recordId), tostring(t.cellKey),
-            victim and tostring(victim.recordId) or 'NO'))
+            victim and tostring(victim.recordId) or 'NO', okh and tostring(hp) or '?',
+            oka and tostring(active) or '?', victim and tostring(victim.id) or '-'))
     end
     if not victim then return end
     local info = attackInfoFrom(data)
