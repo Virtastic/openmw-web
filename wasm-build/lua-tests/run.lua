@@ -2353,5 +2353,57 @@ do
     or o:find('function objects.tick(now)' .. string.char(13, 10) .. '    frameNo = frameNo + 1', 1, true) ~= nil)
 end
 
+print('s117 a companion copy settles on a stopped target at 5 fps (200 ms frames)')
+do
+  -- The real puppet.lua against a stub character controller (movement x walk/run speed, yaw
+  -- applied in full) at 30 fps. The peer's rat stands 600 u off, runs at the player at its run
+  -- speed and stops 140 u short; poses at 20 Hz, 50 ms in flight. Before s171 (dist / 96 with no
+  -- feed-forward) the puppet trailed by 121-128 u and got there 1.2 s after the peer's rat.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.animation', 'scripts.mp.interp' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local a1 = math.atan
+  math.atan = function(y, x) if x then return math.atan2(y, x) end return a1(y) end -- the client's Lua 5.4
+  local RUN, WALK, now = 250, 147, 0
+  local function v3(x, y, z) return setmetatable({ x = x, y = y, z = z }, { __sub = function(p, q) return v3(p.x - q.x, p.y - q.y, p.z - q.z) end,
+    __index = { length = function(p) return math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) end } }) end
+  local me = { controls = {}, position = v3(0, 600, 0), yaw = 0, object = {}, enableAI = function() end }
+  me.rotation = { getYaw = function() return me.yaw end, getPitch = function() return 0 end }
+  package.loaded['openmw.core'] = { getRealTime = function() return now end, sound = { playSound3d = function() end },
+    sendGlobalEvent = function(name, d) if name == 'mpSnapRequest' then me.snap = d end end }
+  package.loaded['openmw.self'] = me
+  package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 1 end,
+    setStance = function() end, getRunSpeed = function() return RUN end, getWalkSpeed = function() return WALK end },
+    Creature = { objectIsInstance = function() return true end } }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlendedAnimation = function() end }
+  package.loaded['scripts.mp.interp'] = nil
+  local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+  pup.engineHandlers.onInit({ actorKey = 'o:rat' })
+  -- The peer's NPC stands still 60 u off; the client runs 5 fps (200 ms frames, the engine cap).
+  -- Before the per-frame cap the catch-up stepped 1.3x the gap each frame and circled it.
+  me.position = v3(0, 60, 0)
+  local nextPose, dt, moved, prev = 0, 0.2, 0, nil
+  while now < 12 do
+    while nextPose <= now - 0.05 do
+      pup.eventHandlers.MP_Pose({ x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = 0, t = now })
+      nextPose = nextPose + 0.05
+    end
+    pup.engineHandlers.onUpdate(dt)
+    if me.snap then me.position = v3(me.snap.x, me.snap.y, me.snap.z); me.snap = nil end
+    local c = me.controls
+    me.yaw = me.yaw + (c.yawChange or 0)
+    local step = (c.movement or 0) * (c.run and RUN or WALK) * dt
+    me.position = v3(me.position.x + math.sin(me.yaw) * step, me.position.y + math.cos(me.yaw) * step, 0)
+    if now > 9 and prev then moved = moved + (me.position - prev):length() end
+    prev = me.position
+    now = now + dt
+  end
+  check('the copy holds still once it reaches a stopped target (moved < 10 u in the last 3 s)', moved < 10, string.format('moved %.0f u', moved))
+  math.atan = a1
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
