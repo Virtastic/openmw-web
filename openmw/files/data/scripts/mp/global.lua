@@ -3031,12 +3031,22 @@ local eventHandlers = {
             -- Several bodies can share a record (two scribs in one cell): prefer the one we
             -- puppet -- the body everyone sees -- over a local-only twin, like a real swing at
             -- the creature in front of the player would.
+            -- ...and the NEAREST such body, the one a real swing would reach. activeActors spans
+            -- the whole loaded grid, so "the first rat" was often the next cell's: s120 (#147)
+            -- killed a kwama forager a cell away (peer: hp=0 dead=true) while it watched the
+            -- one standing beside the player, alive.
+            local me = world.players[1]
+            local best, bestD, bestPuppet = nil, math.huge, false
             for _, obj in ipairs(world.activeActors) do
                 if obj:isValid() and obj.recordId == data.record then
-                    if actors.isPuppetedActor(obj) then victim = obj break end
-                    victim = victim or obj
+                    local puppet = actors.isPuppetedActor(obj)
+                    local d = me and (obj.position - me.position):length() or 0
+                    if (puppet and not bestPuppet) or (puppet == bestPuppet and d < bestD) then
+                        best, bestD, bestPuppet = obj, d, puppet
+                    end
                 end
             end
+            victim = best
         end
         if not victim then
             print('[mp] mpTestHit: no victim for ' .. json.encode(data))

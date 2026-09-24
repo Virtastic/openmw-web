@@ -44,12 +44,11 @@ export default async function run(ctx) {
   }
   ctx.log(`holders: A's cell=${await holderOf(a)} B's cell=${await holderOf(b)} (one peer, two anchors)`);
 
-  // A VICTIM A PLAYER COULD ACTUALLY FIGHT: alone under its record id (hitn and the probe both
-  // key by record, so with two rats the scenario hit one and watched the other) and within
-  // REACH of the client. The peer simulates actors within the engine's 7168 u processing range
-  // of an anchor -- exactly what single player does around the player -- so the first living
-  // actor anywhere in the cell could be a rat the next cell over, beyond it, that no real
-  // swing could reach (#145: 17 hits resolved on the peer, the rat never processed its death).
+  // A VICTIM A PLAYER COULD ACTUALLY FIGHT: alone under its record id and within REACH of the
+  // client. hitn and the probe both key by record, so with two of a kind the scenario hit one
+  // and watched the other -- #147: the peer logged the kwama forager it was hitting at hp=0
+  // dead=true a cell away while the probe's forager, beside B, stayed alive. hitn now takes the
+  // nearest match (global.lua mpTestHit); this keeps the pick to one a real swing would reach.
   const REACH = 3000;
   const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
   const [ma, mb] = [await poseOf(a), await poseOf(b)];
