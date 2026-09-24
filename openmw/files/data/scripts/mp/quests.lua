@@ -532,12 +532,22 @@ local lockAi = nil -- and its Fight/Flee/Alarm (#229), read the same way
 -- Is this client in conversation with `obj` (holding the server's dialogue lock on it)? The
 -- server admits a non-holder's combat/travel claim about an actor on exactly this condition
 -- (worldstate.ts), so actors.lua asks before sending one it would only see refused.
+-- ...OR WAS, A MOMENT AGO. A dialogue result lands as the window closes (AITravel in a topic's
+-- result script, a taunt's StartCombat), and companion.lua notices the new package on its 1 s
+-- poll -- usually after the release. The server keeps the talker as the NPC's holder for
+-- RECENT_LOCK_MS (5 s, quests.ts) for exactly this; without the same grace here the claim was
+-- never sent and the NPC stood still (s124, #150). A little under the server's window.
+local RELEASED_GRACE_S = 4
+local releasedId, releasedAt = nil, 0
 function quests.isTalkingTo(obj)
-    return lockHeld ~= nil and obj ~= nil and lockHeld:isValid() and lockHeld.id == obj.id
+    if obj == nil then return false end
+    if lockHeld ~= nil and lockHeld:isValid() and lockHeld.id == obj.id then return true end
+    return releasedId == obj.id and core.getRealTime() - releasedAt <= RELEASED_GRACE_S
 end
 
 function quests.releaseLock(why)
     local obj = lockHeld
+    if obj then releasedId, releasedAt = obj.id, core.getRealTime() end
     lockHeld = nil
     lockPending = nil
     lockAllowOnce = nil

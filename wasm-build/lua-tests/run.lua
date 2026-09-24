@@ -2493,5 +2493,16 @@ do
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
+print('s124 a dialogue result noticed just after the window closed still sends its claim')
+do
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  local qs = io.open('./server/src/core/quests.ts'):read('*a')
+  local grace = tonumber(q:match('local RELEASED_GRACE_S = (%d+)'))
+  local server = tonumber(qs:match('RECENT_LOCK_MS = ([%d_]+);') and qs:match('RECENT_LOCK_MS = ([%d_]+);'):gsub('_', '') or nil)
+  check('isTalkingTo honours a grace after release, inside the server\'s RECENT_LOCK_MS',
+    grace ~= nil and server ~= nil and grace * 1000 < server and q:find('releasedId, releasedAt = obj.id, core.getRealTime()', 1, true) ~= nil,
+    string.format('client %s s, server %s ms', tostring(grace), tostring(server)))
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
