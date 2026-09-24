@@ -241,6 +241,15 @@ return {
                     end
                 end
             end)
+            -- Fight/Flee/Alarm from ActorDisposition (actors.lua): Self-gated like the bars.
+            for k, v in pairs(type(dyn.ai) == 'table' and dyn.ai or {}) do
+                pcall(function() types.Actor.stats.ai[k](self).base = v end)
+            end
+        end,
+        -- A merchant's equipment after its stock was rewritten (objects.lua equipPending).
+        -- setEquipment is Self-gated, so the global script hands the slots over.
+        mpSetEquipment = function(slots)
+            if type(slots) == 'table' then pcall(types.Actor.setEquipment, self, slots) end
         end,
     },
 }

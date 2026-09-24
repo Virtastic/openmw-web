@@ -139,12 +139,16 @@ local SWING_GROUP_OF_TYPE = {
 -- wind-up began after the enemy had already taken the damage. In the spell stance the hands
 -- glow instead of a weapon swinging (MP_CastFx adds the sound and the casting vfx).
 -- `full`: press and release landed in one frame (a creature's bite always does): the whole blow.
+-- PLAYBLENDED, NOT PLAYBLENDEDANIMATION. openmw.animation binds `playBlended(self, group, opts)`
+-- (mwlua/animationbindings.cpp); playBlendedAnimation is the I.AnimationController wrapper's
+-- name, and on the package it is nil. Every call here threw inside its pcall: no swing, bite,
+-- cast pose or flinch ever played on a puppet, and the swish/blood after them never ran.
 local function showSwing(release, full)
     pcall(function()
         local anim = require('openmw.animation')
         if types.Actor.getStance(self) == types.Actor.STANCE.Spell then
             if not release or full then
-                anim.playBlendedAnimation(self, 'spellcast', {
+                anim.playBlended(self, 'spellcast', {
                     priority = anim.PRIORITY.Weapon, startKey = 'self start', stopKey = 'self stop' })
             end
             return
@@ -163,7 +167,7 @@ local function showSwing(release, full)
             -- The peer's creature starts its whole attack on the press too.
             if release and not full then return end
             local group = groups[math.random(#groups)]
-            anim.playBlendedAnimation(self, group, { priority = anim.PRIORITY.Weapon, startKey = 'start', stopKey = 'stop' })
+            anim.playBlended(self, group, { priority = anim.PRIORITY.Weapon, startKey = 'start', stopKey = 'stop' })
             return
         end
         local group = 'handtohand'
@@ -177,7 +181,7 @@ local function showSwing(release, full)
         local ranged = group == 'bowandarrow' or group == 'crossbow' or group == 'throwweapon'
         local kind = ranged and 'shoot' or 'chop'
         if release then
-            anim.playBlendedAnimation(self, group, {
+            anim.playBlended(self, group, {
                 priority = anim.PRIORITY.Weapon,
                 startKey = kind .. (full and ' start' or ' max attack'),
                 -- SMALL follow stop: the follow sections exist as small/medium/large only
@@ -188,7 +192,7 @@ local function showSwing(release, full)
             })
             core.sound.playSound3d('Weapon Swish', self)
         else
-            anim.playBlendedAnimation(self, group, {
+            anim.playBlended(self, group, {
                 priority = anim.PRIORITY.Weapon,
                 startKey = kind .. ' start',
                 stopKey = kind .. ' min attack',
@@ -621,7 +625,7 @@ return {
                         local anim = require('openmw.animation')
                         local hits = {}
                         for i = 1, 5 do if anim.hasGroup(self, 'hit' .. i) then hits[#hits + 1] = 'hit' .. i end end
-                        if #hits > 0 then anim.playBlendedAnimation(self, hits[math.random(#hits)], { priority = anim.PRIORITY.Hit }) end
+                        if #hits > 0 then anim.playBlended(self, hits[math.random(#hits)], { priority = anim.PRIORITY.Hit }) end
                     end
                     if recent and lastSwingPos and I.Combat and I.Combat.spawnBloodEffect then
                         I.Combat.spawnBloodEffect(lastSwingPos)
@@ -655,7 +659,7 @@ return {
         MP_CastFx = function(data)
             local anim = require('openmw.animation')
             pcall(function()
-                anim.playBlendedAnimation(self, 'spellcast', { priority = anim.PRIORITY.Weapon })
+                anim.playBlended(self, 'spellcast', { priority = anim.PRIORITY.Weapon })
             end)
             -- The school's cast sound and the effect's casting glow, as the caster's own
             -- engine played them. Best effort: a spell this client has no record for is silent.

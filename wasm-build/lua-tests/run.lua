@@ -1512,7 +1512,7 @@ do
   -- #229: Fight/Flee/Alarm ride ActorDisposition from the holder and the talking client.
   check('AI settings ride ActorDisposition as `ai` and are applied to the base',
     ac:find('disposition = disp, ai = ai }', 1, true) ~= nil
-    and ac:find('types.Actor.stats.ai[k](obj).base = math.floor(v)', 1, true) ~= nil
+    and ac:find("obj:sendEvent('mpSetStats', { ai = ai })", 1, true) ~= nil
     and q:find('lockAi = deps.aiSettingsFn and deps.aiSettingsFn(obj) or nil', 1, true) ~= nil
     and q:find('deps.dispositionOutFn(obj, now, aiChanged and ai or nil)', 1, true) ~= nil
     and ws:find("const ai = body.get('ai');", 1, true) ~= nil)
@@ -2136,7 +2136,7 @@ do
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
   package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4 }, hasGroup = function(_, g) return g == 'attack1' or g == 'hit1' end,
-    playBlendedAnimation = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
+    playBlended = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ actorKey = 'o:rat' })
@@ -2185,7 +2185,7 @@ do
     Creature = { objectIsInstance = function() return true end } }
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
-  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlendedAnimation = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ actorKey = 'o:rat' })
@@ -2236,7 +2236,7 @@ do
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
   package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4 }, hasGroup = function() return true end,
-    playBlendedAnimation = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
+    playBlended = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ playerId = 7 })
@@ -2377,7 +2377,7 @@ do
     Creature = { objectIsInstance = function() return true end } }
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
-  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlendedAnimation = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ actorKey = 'o:rat' })
@@ -2420,6 +2420,77 @@ do
   check('the weather holder reads the sky WITH a cell (getCurrent/getNext/getTransition)',
     w:find('core.weather.getCurrent(cell)', 1, true) ~= nil and w:find('core.weather.getNext(cell)', 1, true) ~= nil
     and w:find('core.weather.getTransition(cell)', 1, true) ~= nil and w:find('core.weather.getCurrent()', 1, true) == nil)
+end
+
+-- WRONG BY CONSTRUCTION, SWALLOWED BY A PCALL. Each of these threw on every call and the pcall
+-- around it hid it for months; the checks read the engine's own bindings so a stub cannot
+-- invent an API the engine does not have.
+print('engine API calls the pcalls were hiding')
+do
+  local function read(p) return io.open(p):read('*a') end
+  local mp = './openmw/files/data/scripts/mp/'
+  local animCpp = read('./openmw/apps/openmw/mwlua/animationbindings.cpp')
+  local missing = {}
+  for _, f in ipairs({ 'puppet.lua', 'companion.lua' }) do
+    local src = read(mp .. f)
+    for name in src:gmatch("anim%.(%w+)%(") do
+      if not animCpp:find('api["' .. name .. '"]', 1, true) then missing[#missing + 1] = f .. ':anim.' .. name end
+    end
+    for name in src:gmatch("require%('openmw%.animation'%)%.(%w+)%(") do
+      if not animCpp:find('api["' .. name .. '"]', 1, true) then missing[#missing + 1] = f .. ':animation.' .. name end
+    end
+  end
+  check('every openmw.animation function the local scripts call is bound by the engine',
+    #missing == 0, table.concat(missing, ' '))
+  -- `enabled` is a GObject PROPERTY; there is no setEnabled method.
+  local objCpp = read('./openmw/apps/openmw/mwlua/objectbindings.cpp')
+  local calls = {}
+  for _, f in ipairs({ 'global.lua', 'objects.lua', 'actors.lua', 'quests.lua', 'world.lua' }) do
+    if read(mp .. f):find(':setEnabled(', 1, true) then calls[#calls + 1] = f end
+  end
+  check('no script calls obj:setEnabled (the engine binds obj.enabled, a property)',
+    #calls == 0 and not objCpp:find('objectT["setEnabled"]', 1, true)
+    and objCpp:find('objectT["enabled"] = sol::property(isEnabled, setEnabled)', 1, true) ~= nil, table.concat(calls, ' '))
+  -- Self-gated setters (a `const SelfObject&` first argument, or a stat's asSelfObject cache)
+  -- cannot succeed from the global script: they have to travel to the actor's own script.
+  local gated = {}
+  for _, cpp in ipairs({ 'types/actor.cpp', 'magicbindings.cpp', 'animationbindings.cpp' }) do
+    for name in read('./openmw/apps/openmw/mwlua/' .. cpp):gmatch('%["(%w+)"%]%s*=%s*%[[^%]]*%]%(const SelfObject&') do
+      gated[#gated + 1] = name
+    end
+  end
+  local offenders = {}
+  for _, f in ipairs({ 'global.lua', 'objects.lua', 'actors.lua', 'quests.lua', 'world.lua', 'combat.lua', 'admin.lua', 'net.lua' }) do
+    for line in read(mp .. f):gmatch('[^\n]+') do
+      if not line:match('^%s*%-%-') then
+        for _, name in ipairs(gated) do
+          if line:find('%.' .. name .. '%(') then offenders[#offenders + 1] = f .. ':' .. name end
+        end
+        if line:find('stats%.[%w%.%[%]]+%(%w+%)%.%a+%s*=[^=]') then offenders[#offenders + 1] = f .. ':stat setter' end
+      end
+    end
+  end
+  check('the global-context scripts call no Self-gated setter (found ' .. #gated .. ' in the bindings)',
+    #gated >= 5 and #offenders == 0, table.concat(offenders, ' '))
+
+  -- ...and the actor's own script applies what the global script now sends it.
+  local names = { 'openmw.self', 'openmw.core', 'openmw.types', 'openmw.interfaces' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local fight, equipped = { base = 30 }, nil
+  local me = { object = {} }
+  package.loaded['openmw.self'] = me
+  package.loaded['openmw.core'] = { getRealTime = function() return 0 end }
+  package.loaded['openmw.types'] = { Actor = {
+    stats = { dynamic = {}, ai = { fight = function(o) return o == me and fight or nil end } },
+    setEquipment = function(o, slots) if o == me then equipped = slots end end } }
+  package.loaded['openmw.interfaces'] = {}
+  local comp = dofile(mp .. 'companion.lua')
+  comp.eventHandlers.mpSetStats({ ai = { fight = 90 } })
+  check('companion.lua writes Fight/Flee/Alarm on itself (mpSetStats ai)', fight.base == 90, tostring(fight.base))
+  comp.eventHandlers.mpSetEquipment({ [16] = 'iron dagger' })
+  check('companion.lua equips itself from mpSetEquipment', equipped and equipped[16] == 'iron dagger')
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

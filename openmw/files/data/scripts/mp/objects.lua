@@ -942,7 +942,11 @@ handlers.MP_ObjectEnabled = function(data)
     if not (obj and obj:isValid()) then return end
     local want = data.enabled ~= false
     enableWatch[obj.id] = want -- record BEFORE applying: the poll must not re-report this
-    pcall(function() obj:setEnabled(want) end)
+    -- A PROPERTY, NOT A METHOD. A global script turns a ref on and off by assigning
+    -- `obj.enabled` (mwlua/objectbindings.cpp); there is no obj:setEnabled, so this and the
+    -- snapshot paths below threw inside their pcalls and no enable or disable ever landed
+    -- on another client.
+    pcall(function() obj.enabled = want end)
 end
 
 handlers.MP_DoorState = function(data)
@@ -1084,7 +1088,7 @@ handlers.MP_CellSnapshotReplace = function(data)
         for _, obj in ipairs(cell:getAll()) do
             if obj:isValid() and not obj.enabled and not disabled[refKeyOfObj(obj)] then
                 enableWatch[obj.id] = true
-                pcall(function() obj:setEnabled(true) end)
+                pcall(function() obj.enabled = true end)
             end
         end
     end
@@ -1153,14 +1157,14 @@ handlers.MP_WorldCellState = function(data)
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() then
             enableWatch[obj.id] = false
-            pcall(function() obj:setEnabled(false) end)
+            pcall(function() obj.enabled = false end)
         end
     end
     for _, refKey in ipairs(data.enabled or {}) do
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() then
             enableWatch[obj.id] = true
-            pcall(function() obj:setEnabled(true) end)
+            pcall(function() obj.enabled = true end)
         end
     end
     -- M6 per-object script locals: the same apply path as a live MemberVarUpdate (quests.lua),
@@ -1321,7 +1325,10 @@ function objects.tick(now)
             end
             if ready or now > pending.until_ then
                 equipPending[id] = nil
-                pcall(function() types.Actor.setEquipment(obj, pending.slots) end)
+                -- ON THE ACTOR. setEquipment is Self-gated (mwlua/types/actor.cpp), so called
+                -- from here it threw inside the pcall and every merchant stayed stripped;
+                -- companion.lua is on every NPC and creature and equips itself.
+                pcall(function() obj:sendEvent('mpSetEquipment', pending.slots) end)
             end
         end
     end

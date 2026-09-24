@@ -668,11 +668,16 @@ actors.handlers.MP_ActorDisposition = function(data)
     local ownPlayer = world.players[1]
     if not (ownPlayer and ownPlayer:isValid()) then return end
     pcall(function() types.NPC.setBaseDisposition(obj, ownPlayer, data.disposition) end)
+    -- FIGHT/FLEE/ALARM ON THE ACTOR. Stat setters are Self-gated (mwlua/stats.cpp), unlike
+    -- setBaseDisposition: written from here they threw inside the pcall and no AI setting
+    -- ever reached another client. companion.lua (on every NPC and creature) writes them.
     if type(data.ai) == 'table' then
+        local ai = {}
         for _, k in ipairs(AI_SETTINGS) do
             local v = tonumber(data.ai[k])
-            if v then pcall(function() types.Actor.stats.ai[k](obj).base = math.floor(v) end) end
+            if v then ai[k] = math.floor(v) end
         end
+        if next(ai) then pcall(function() obj:sendEvent('mpSetStats', { ai = ai }) end) end
     end
 end
 
