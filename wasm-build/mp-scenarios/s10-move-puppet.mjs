@@ -47,7 +47,13 @@ export default async function run(ctx) {
   assert.ok(walked > 100, `walk injection barely moved A (${walked.toFixed(1)} units)`);
 
   // B's puppet-of-A must converge on A's real pose (both mirrors are 2 Hz, so give slack).
-  const deadline = Date.now() + CONVERGE_TIMEOUT;
+  // TEN SECONDS OF B'S SIMULATION, not of the wall clock (#152): the engine simulates at most
+  // 200 ms a frame, so at the builder's 0.5 fps (SwiftShader) B lived 10 s of wall time as 1 s
+  // and its puppet had walked a few steps when the clock ran out. Still judged, never skipped.
+  const fps = JSON.parse(await b.evalAsync('new Promise(function(r){var n=0,t0=performance.now();function f(){n++; if(performance.now()-t0<2000) requestAnimationFrame(f); else r(JSON.stringify({fps:n/((performance.now()-t0)/1000)}));} requestAnimationFrame(f);})')).fps;
+  const slow = Math.min(12, 1 / Math.min(1, fps * 0.2));
+  ctx.log(`B renders ${fps.toFixed(1)} fps: converge window ${(CONVERGE_TIMEOUT * slow / 1000).toFixed(0)} s of wall time`);
+  const deadline = Date.now() + CONVERGE_TIMEOUT * slow;
   let err = Infinity;
   let best = Infinity;
   while (Date.now() < deadline) {
@@ -61,7 +67,7 @@ export default async function run(ctx) {
   }
   const hostLoad = os.loadavg()[0];
   ctx.log(`puppet-of-A on B: final error ${err.toFixed(1)} units (best ${best.toFixed(1)}) `
-    + `at host load ${hostLoad.toFixed(1)}`);
+    + `at ${fps.toFixed(1)} fps, host load ${hostLoad.toFixed(1)}`);
   // A DIVERGENCE FAILS, WHATEVER THE LOAD. This used to SKIP above load 12, and a loaded
   // builder turned every real divergence into "did not run" (backlog 244). The load average
   // is printed as context for the reader, not consulted for the verdict.
