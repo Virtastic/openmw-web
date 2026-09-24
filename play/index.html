@@ -630,6 +630,25 @@ window.omw = (function(){
    }
    var div = [], snaps = 0, lastSnap = '', prev = null, lastSent = Date.now();
    function st(){ return (window.omw && window.omw.state) || {}; }
+   // NPC AGREEMENT, live: each alive actor this screen draws (the probe mirror, its own copy)
+   // against the nearest pose the server sent in the last second. The live half of the 64 u
+   // bar -- a software-rendered harness client cannot run fast enough to judge it.
+   var npcGap = [];
+   setInterval(function(){
+     var s = st();
+     if (s.netstate !== 'Joined' || !s.actorProbe) return;
+     var probe; try { probe = JSON.parse(s.actorProbe); } catch (e) { return; }
+     var now = Date.now(), rx = [];
+     for (var k in actorTap.last) { var r = actorTap.last[k]; if (now - r.t < 1000) rx.push(r); }
+     if (!rx.length) return;
+     for (var rec in probe) {
+       var p = probe[rec];
+       if (rec === 'player' || !p || p.dead || (p.n || 1) !== 1) continue;
+       var best = Infinity;
+       for (var i = 0; i < rx.length; i++) { var dx = rx[i].x - p.x, dy = rx[i].y - p.y, dd = dx * dx + dy * dy; if (dd < best) best = dd; }
+       if (best < 1024 * 1024) npcGap.push(Math.sqrt(best)); // beyond that it is another actor
+     }
+   }, 1000);
    setInterval(function(){
      var s = st();
      if (s.netstate !== 'Joined') return;
@@ -649,11 +668,15 @@ window.omw = (function(){
      prev = cur;
      div.sort(function(a, b){ return a - b; });
      var q = function(p){ return div.length ? div[Math.min(div.length - 1, Math.floor(p * div.length))].toFixed(1) : '-'; };
+     npcGap.sort(function(a, b){ return a - b; });
+     var gq = function(p){ return npcGap.length ? npcGap[Math.min(npcGap.length - 1, Math.floor(p * npcGap.length))].toFixed(0) : '-'; };
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
        + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
        + ' cell=' + (s.cell || '?') + ' holder=' + (s.authorityHolder || '?') + ' actors=' + (s.actorCount || '?')
-       + ' puppeted=' + (s.puppetedActors || '?') + ' wsRx=' + JSON.stringify(wsRx)
+       + ' puppeted=' + (s.puppetedActors || '?')
+       + ' npcGap p50=' + gq(0.5) + ' p95=' + gq(0.95) + ' n=' + npcGap.length
+       + ' wsRx=' + JSON.stringify(wsRx)
        + ' raw=' + JSON.stringify({ abi: s.actorBatchesIn, isHolder: s.isHolder, puppetRx: s.puppetRx,
            puppetMark: s.puppetMark, simReady: s.simReady, snap: s.selfSnap, stale: s.selfStale });
      // Once per load, the short state keys: what the scripts believe (holder, sim, chargen).
@@ -667,7 +690,7 @@ window.omw = (function(){
        });
        line += ' state=' + JSON.stringify(keep);
      }
-     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {};
+     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = [];
      fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
        body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
    }, 5000);
