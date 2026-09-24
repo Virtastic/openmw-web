@@ -936,12 +936,20 @@ end
 -- appearing, a hidden door becoming real). Vanilla runs these locally on every client, but
 -- only the client whose script ran sees them once quest globals stop being world-relayed —
 -- so the change travels explicitly. enableWatch mutes the echo, exactly like locks.
+-- An ACTOR switched on or off by the network, said once per apply (s59 #150: an NPC that took
+-- one spell and then no more; enable/disable only started landing with 2094ccaf).
+local function sayActorEnabled(obj, want, via)
+    local ok, actor = pcall(function() return types.Actor.objectIsInstance(obj) end)
+    if ok and actor then print(string.format('[mp] actor %s %s via %s', tostring(obj.recordId), want and 'ENABLED' or 'DISABLED', via)) end
+end
+
 handlers.MP_ObjectEnabled = function(data)
     if isOwnEcho(data) then return end
     local obj = resolveBody(data)
     if not (obj and obj:isValid()) then return end
     local want = data.enabled ~= false
     enableWatch[obj.id] = want -- record BEFORE applying: the poll must not re-report this
+    sayActorEnabled(obj, want, 'ObjectEnabled')
     -- A PROPERTY, NOT A METHOD. A global script turns a ref on and off by assigning
     -- `obj.enabled` (mwlua/objectbindings.cpp); there is no obj:setEnabled, so this and the
     -- snapshot paths below threw inside their pcalls and no enable or disable ever landed
@@ -1157,6 +1165,7 @@ handlers.MP_WorldCellState = function(data)
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() then
             enableWatch[obj.id] = false
+            sayActorEnabled(obj, false, 'cell state')
             pcall(function() obj.enabled = false end)
         end
     end
