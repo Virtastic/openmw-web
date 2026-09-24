@@ -2415,6 +2415,11 @@ do
   check('MP_WorldWeather applies `next` when the holder is mid-transition, not only `current`',
     w:find("data.next ~= data.current) and data.next or data.current", 1, true) ~= nil
     and w:find('weatherRecordAt(target)', 1, true) ~= nil)
+  -- The engine exposes these ONLY as (cell) overloads; called bare they throw inside the pcall
+  -- and the holder never speaks (every region read as a silent holder, #148).
+  check('the weather holder reads the sky WITH a cell (getCurrent/getNext/getTransition)',
+    w:find('core.weather.getCurrent(cell)', 1, true) ~= nil and w:find('core.weather.getNext(cell)', 1, true) ~= nil
+    and w:find('core.weather.getTransition(cell)', 1, true) ~= nil and w:find('core.weather.getCurrent()', 1, true) == nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

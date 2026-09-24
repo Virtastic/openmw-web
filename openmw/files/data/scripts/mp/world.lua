@@ -321,13 +321,21 @@ local function tickWeather(now)
     if now - lastWeatherAt < WEATHER_POLL then return end
     lastWeatherAt = now
     if not ownRegion or not isHolderOf(ownRegion) then return end
-    local okc, current = pcall(function() return core.weather.getCurrent() end)
+    -- THE CELL IS REQUIRED. core.weather.getCurrent/getNext/getTransition exist only as
+    -- (cell) overloads (mwlua/weatherbindings.cpp overloadForActiveCell); called bare they threw
+    -- inside this pcall, so no holder -- player or peer -- ever sent the weather, every region's
+    -- holder read as silent to the server and was handed off every three minutes, and players
+    -- never shared a sky (s175, #148; weather.silent_holder on the dev box).
+    local p = playerObj()
+    local cell = p and p.cell
+    if not cell then return end
+    local okc, current = pcall(function() return core.weather.getCurrent(cell) end)
     if not okc or not current then return end -- interiors have no sky
     local index = buildWeatherIndex()
     local body = { region = ownRegion, current = index[current.recordId] or 0 }
-    local okn, nextW = pcall(function() return core.weather.getNext() end)
+    local okn, nextW = pcall(function() return core.weather.getNext(cell) end)
     if okn and nextW then body.next = index[nextW.recordId] end
-    local okt, transition = pcall(function() return core.weather.getTransition() end)
+    local okt, transition = pcall(function() return core.weather.getTransition(cell) end)
     if okt and type(transition) == 'number' then
         body.transition = math.max(0, math.min(1, transition))
     end
