@@ -136,8 +136,11 @@ export default async function run(ctx) {
       if (c.worstGapMs > MAX_GAP_MS) fails.push(`${c.name}: worst frame ${c.worstGapMs} ms > ${MAX_GAP_MS} (${c.over100} such; uncrowded worst ${b.worstGapMs} ms)`);
     } else {
       ctx.log(`${c.name}: the empty baseline already misses the bar (${b.fpsMedian} fps, worst ${b.worstGapMs} ms): judging the crowd's cost only`);
-      if (c.worstGapMs > b.worstGapMs * CROWD_COST) {
-        fails.push(`${c.name}: the crowd raised the worst frame ${b.worstGapMs} -> ${c.worstGapMs} ms (> x${CROWD_COST})`);
+      // THROUGHPUT, not the single worst frame: at ~1 fps one GC or cell load is a 3 s outlier
+      // on its own (#150: 1283 -> 3383 ms while the frame count went 58 -> 53, 9% slower). The
+      // same measurement window rendered this many frames empty and crowded.
+      if (b.frames > 0 && c.frames * CROWD_COST < b.frames) {
+        fails.push(`${c.name}: the crowd cut the frames rendered ${b.frames} -> ${c.frames} (> x${CROWD_COST} slower)`);
       }
     }
   }
