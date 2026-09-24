@@ -38,6 +38,21 @@ Drive it through the Jenkins MCP (`mcp__jenkins__*`, authenticated as admin):
 The branch must be **pushed** — Jenkins clones from GitHub. Push the feature branch, trigger,
 keep working locally while it runs.
 
+### Fix everything first, then test ONCE
+
+A bake plus a full sweep costs **hours** (engine ~15-35 min, tier2 ~25 min, harness ~4 h). Do not
+spend them on a branch that still has known open issues. For an objective with several problems:
+
+1. Find and fix **every** known issue for the objective; commit and push each fix. Use the cheap
+   checks while fixing — Lua unit runner, `npm test`, reading code and existing logs (the harness
+   prints the server log tail after every FAIL; read that before asking for a new run).
+2. Only when nothing known is left open: **one** bake + sweep. Prefer `SCENARIOS="…"` for the
+   scenarios that cover the objective; the full suite is the final evidence before a merge/deploy.
+3. From that run, fix everything it shows, commit all of it, then one more run. Never a run per fix.
+
+Do not start ad-hoc harness containers or Jenkins builds mid-fix "to see", and do not leave a
+sweep running on a head you already know is broken (stop it and fix instead).
+
 ### When the laptop is still the right tool
 
 - Lua unit runner: `bash wasm-build/lua-tests/run.sh`
