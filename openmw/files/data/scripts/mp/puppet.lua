@@ -482,8 +482,16 @@ local function onUpdate(dt)
     self.controls.run = run or now < runUntil
     if steering then
         -- Steer toward the target point (MW yaw: 0 = +Y, clockwise positive).
-        self.controls.yawChange = shortestArc(math.atan(dx, dy) - curYaw)
-        self.controls.movement = steerMovement(dist2d, now, self.controls.run, dt)
+        local headingErr = shortestArc(math.atan(dx, dy) - curYaw)
+        self.controls.yawChange = headingErr
+        -- MOVE AS FAR AS THE HEADING ALLOWS (s117, #145/#147). The engine applies this frame's
+        -- speed along the heading the body HAD, and a puppet's speed is no longer ramped
+        -- (character.cpp, s172) -- so full speed with the target off to the side stepped the
+        -- copy sideways, every frame, and a recruited companion's copy circled its standing
+        -- target for a minute. Scaled by the cosine and zero past 60 degrees: turn first. A
+        -- chase is already facing its target, so it costs a charge nothing.
+        local facing = math.cos(headingErr)
+        self.controls.movement = facing > 0.5 and steerMovement(dist2d, now, self.controls.run, dt) * facing or 0
     else
         -- Close enough: hold position, face the remote player's actual heading.
         self.controls.movement = 0

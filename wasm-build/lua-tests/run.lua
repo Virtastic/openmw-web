@@ -2381,21 +2381,25 @@ do
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ actorKey = 'o:rat' })
-  -- The peer's NPC stands still 60 u off; the client runs 5 fps (200 ms frames, the engine cap).
-  -- Before the per-frame cap the catch-up stepped 1.3x the gap each frame and circled it.
+  -- The peer's NPC is placed (the attach snap lands the copy on it), then steps 50 u to the SIDE
+  -- and stands. The client runs 5 fps (200 ms frames, the engine cap), a puppet's speed is not
+  -- ramped (character.cpp), and the engine moves the body along the heading it HAD this frame,
+  -- turning after. Full speed with the target to the side then circled it for a minute (s117).
   me.position = v3(0, 60, 0)
   local nextPose, dt, moved, prev = 0, 0.2, 0, nil
   while now < 12 do
     while nextPose <= now - 0.05 do
-      pup.eventHandlers.MP_Pose({ x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = 0, t = now })
+      local tx, ty = 0, 0
+      if nextPose >= 1 then tx, ty = 45, 20 end
+      pup.eventHandlers.MP_Pose({ x = tx, y = ty, z = 0, yaw = 0, pitch = 0, flags = 0, t = now })
       nextPose = nextPose + 0.05
     end
     pup.engineHandlers.onUpdate(dt)
     if me.snap then me.position = v3(me.snap.x, me.snap.y, me.snap.z); me.snap = nil end
     local c = me.controls
-    me.yaw = me.yaw + (c.yawChange or 0)
     local step = (c.movement or 0) * (c.run and RUN or WALK) * dt
     me.position = v3(me.position.x + math.sin(me.yaw) * step, me.position.y + math.cos(me.yaw) * step, 0)
+    me.yaw = me.yaw + (c.yawChange or 0) -- the turn lands after the step
     if now > 9 and prev then moved = moved + (me.position - prev):length() end
     prev = me.position
     now = now + dt
