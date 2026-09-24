@@ -44,11 +44,24 @@ export default async function run(ctx) {
   }
   ctx.log(`holders: A's cell=${await holderOf(a)} B's cell=${await holderOf(b)} (one peer, two anchors)`);
 
+  // A VICTIM A PLAYER COULD ACTUALLY FIGHT: alone under its record id (hitn and the probe both
+  // key by record, so with two rats the scenario hit one and watched the other) and within
+  // REACH of the client. The peer simulates actors within the engine's 7168 u processing range
+  // of an anchor -- exactly what single player does around the player -- so the first living
+  // actor anywhere in the cell could be a rat the next cell over, beyond it, that no real
+  // swing could reach (#145: 17 hits resolved on the peer, the rat never processed its death).
+  const REACH = 3000;
+  const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
+  const [ma, mb] = [await poseOf(a), await poseOf(b)];
+  const near = (q, me, r) => !me || Math.hypot(q[r].x - me.x, q[r].y - me.y) <= REACH;
+  const pick = (q, me, ok) => Object.keys(q)
+    .filter((r) => r !== 'player' && !q[r].dead && (q[r].n ?? 1) === 1 && near(q, me, r) && ok(r))
+    .sort((r1, r2) => (me ? Math.hypot(q[r1].x - me.x, q[r1].y - me.y) - Math.hypot(q[r2].x - me.x, q[r2].y - me.y) : 0))[0];
   let pa, pb, va, vb;
   await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (qa, qb) => {
     pa = qa; pb = qb;
-    va = Object.keys(pa).find((r) => r !== 'player' && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
-    vb = Object.keys(pb).find((r) => r !== 'player' && !pb[r].dead);
+    va = pick(pa, ma, (r) => !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
+    vb = pick(pb, mb, () => true);
     return va && vb;
   });
   assert.ok(va && vb, `need a living actor in each cell: A=${JSON.stringify(Object.keys(pa))} B=${JSON.stringify(Object.keys(pb))}`);
