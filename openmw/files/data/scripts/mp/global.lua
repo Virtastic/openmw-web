@@ -1682,6 +1682,12 @@ local function restoreTick()
         local want = entry.n or 1
         local okc, have = pcall(function() return inventory:countOf(wantId) end)
         local short = want - ((okc and have) or 0)
+        -- A player-made item's restore, said once (s153 #148: two came back where one went in --
+        -- this line tells a doc that recorded 2 from a pack that read 0 while a grant landed).
+        if tostring(entry.id or ''):sub(1, 3) == 'mp_' then
+            print(string.format('[mp] restore made item %s -> %s: doc %s, pack %s, grant %s',
+                tostring(entry.id), tostring(wantId), tostring(want), tostring(okc and have or '?'), tostring(math.max(0, short))))
+        end
         if short > 0 then
             local ok, item = pcall(function() return world.createObject(wantId, short) end)
             if ok then
