@@ -2409,5 +2409,13 @@ do
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
+print('s175 a weather change reaches the other players as the transition starts')
+do
+  local w = io.open('./openmw/files/data/scripts/mp/world.lua'):read('*a')
+  check('MP_WorldWeather applies `next` when the holder is mid-transition, not only `current`',
+    w:find("data.next ~= data.current) and data.next or data.current", 1, true) ~= nil
+    and w:find('weatherRecordAt(target)', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

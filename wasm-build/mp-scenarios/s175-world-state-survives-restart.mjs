@@ -41,7 +41,7 @@ const snapshotExpr = (chestNet, dropNet, netItem) => `JSON.stringify({
   drop: !!${J('netObjects')}[${JSON.stringify(dropNet)}],
   clock: (${J('gameTime')}).abs,
   region: window.omw.state.region, holder: window.omw.state.isWeatherHolder,
-  weather: (JSON.parse(window.omw.state.weatherApplied||'null')||{}).current })`;
+  weather: (JSON.parse(window.omw.state.weatherApplied||'null')||{}).target ?? (JSON.parse(window.omw.state.weatherApplied||'null')||{}).current })`;
 
 // A RETAIL character arrives dressed, so the items moved around are its own clothes: content
 // records, whose wire name is their record id (a minted test item goes through netRecords and,
@@ -135,10 +135,10 @@ export default async function run(ctx) {
     const region = await H.eval('window.omw.state.region');
     assert.ok(hold, `nobody holds the weather for region "${region}" -- there is no weather to agree on`);
     const [holder, other] = hold;
-    const was = JSON.parse(await other.eval("window.omw.state.weatherApplied||'null'"))?.current;
+    const was = JSON.parse(await other.eval("window.omw.state.weatherApplied||'null'"))?.target;
     const WEATHER = was === 5 ? 4 : 5; // thunder, or rain if it already thunders
     await holder.cmd(`weather:${WEATHER}`);
-    await other.waitFor(`(JSON.parse(window.omw.state.weatherApplied||'null')||{}).current === ${WEATHER}`, 90_000,
+    await other.waitFor(`(JSON.parse(window.omw.state.weatherApplied||'null')||{}).target === ${WEATHER}`, 90_000,
       `${other.name} applies the holder's weather ${WEATHER} in ${region}`);
     ctx.log(`ok: ${holder.name} holds ${region}; weather ${was} -> ${WEATHER} reached ${other.name}`);
 

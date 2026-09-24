@@ -592,7 +592,13 @@ handlers.MP_WorldWeather = function(data)
     -- holder on whatever weather it rolled at boot. Solo, that is a fresh roll every session:
     -- the "weather is randomised on each load" report.
     if isHolderOf(data.region) and data.restore ~= true then return end
-    local rec = weatherRecordAt(data.current)
+    -- TRANSITION WITH THE HOLDER, not after it. changeWeather on the holder starts a transition:
+    -- its `current` stays the OLD weather, with the new one as `next`, until the transition has
+    -- run its game time -- and applying only `current` left everyone else under the old sky for
+    -- the holder's whole transition (s175: 90 s on a slow client and still not there). Start the
+    -- same transition here the moment it begins.
+    local target = (type(data.next) == 'number' and data.next ~= data.current) and data.next or data.current
+    local rec = weatherRecordAt(target)
     if not rec then
         print('[mp] weather index ' .. tostring(data.current) .. ' unknown here')
         return
@@ -602,7 +608,7 @@ handlers.MP_WorldWeather = function(data)
         print('[mp] changeWeather(' .. data.region .. ') failed: ' .. tostring(err))
         return
     end
-    weatherApplied = { region = data.region, current = data.current }
+    weatherApplied = { region = data.region, current = data.current, next = data.next, target = target }
 end
 
 handlers.MP_RecordCreateAck = function(data)
