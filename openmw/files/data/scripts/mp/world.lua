@@ -348,6 +348,7 @@ local function tickWeather(now)
     lastWeatherSent = fp
     lastWeatherSaidAt = now
     mp.sendEvent('WorldWeather', body)
+    print('[mp] weather said: ' .. fp) -- s175: which half of a missed sky stalled
 end
 
 -- ================================================================== records
@@ -617,6 +618,7 @@ handlers.MP_WorldWeather = function(data)
         return
     end
     weatherApplied = { region = data.region, current = data.current, next = data.next, target = target }
+    print(string.format('[mp] weather applied: %s current=%s next=%s target=%s', data.region, tostring(data.current), tostring(data.next), tostring(target)))
 end
 
 handlers.MP_RecordCreateAck = function(data)
