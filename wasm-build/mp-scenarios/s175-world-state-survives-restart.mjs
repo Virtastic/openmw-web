@@ -135,6 +135,13 @@ export default async function run(ctx) {
     const region = await H.eval('window.omw.state.region');
     assert.ok(hold, `nobody holds the weather for region "${region}" -- there is no weather to agree on`);
     const [holder, other] = hold;
+    // A SETTLED SKY FIRST. changeWeather lets a running transition finish before the next one
+    // starts, and both screens follow the holder through it -- #151: the guest received
+    // "current 0, next 1" for the whole 90 s, because the holder was itself still clearing to
+    // cloudy on a client at a frame or two a second. Ordered from a settled sky, the change is
+    // the only transition in flight.
+    await other.waitFor(`(() => { const w = JSON.parse(window.omw.state.weatherApplied||'null'); return !!w && (w.next === undefined || w.next === null || w.next === w.current); })()`,
+      240_000, `${other.name} sees a settled sky before the change`).catch((e) => ctx.log('  (sky still in transition: ' + e.message.split('\n')[0] + ')'));
     const was = JSON.parse(await other.eval("window.omw.state.weatherApplied||'null'"))?.target;
     const WEATHER = was === 5 ? 4 : 5; // thunder, or rain if it already thunders
     await holder.cmd(`weather:${WEATHER}`);
