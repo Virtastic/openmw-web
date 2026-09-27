@@ -14,7 +14,7 @@
 // and hold the use bit long enough to draw and release. The creature must die on our screen,
 // and no hit may have gone out under our own name (hitFwd stays unset: the peer did it).
 import assert from 'node:assert/strict';
-import { focus } from './_realfight.mjs';
+import { focus, walkTo } from './_realfight.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 const docInventory = (ctx) => {
@@ -124,7 +124,9 @@ export default async function run(ctx) {
     const p = (await probeOf(a, victim)) || p0;
     const meNow = JSON.parse(await a.eval('window.omw.state.pose||"{}"'));
     const range = Math.hypot(p.x - meNow.x, p.y - meNow.y);
-    if (range > 260) { skipped++; if (skipped % 5 === 1) ctx.log(`holding fire: ${victim} is ${range.toFixed(0)} units off`); await ctx.sleep(2_000); continue; }
+    // OUT OF A FAIR SHOT: walk up, as an archer does (W held; _realfight). Holding fire forever
+    // waited on a scrib the first arrow had not provoked, 499 u off for four minutes (#158).
+    if (range > 260) { skipped++; if (skipped % 5 === 1) ctx.log(`${victim} is ${range.toFixed(0)} units off: walking up`); await walkTo(ctx, a, () => probeOf(a, victim), 200); await a.cmd('stance:weapon'); continue; }
     // Bracket the height: the arrow leaves the drawn hand, whose exact height on the peer's
     // body this test does not know to the unit, and a scrib is forty units tall.
     const aimZ = [20, 40, 60][shots % 3];
