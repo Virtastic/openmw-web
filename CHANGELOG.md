@@ -13,6 +13,8 @@ it, and the peer's body could hold spells you never learned. All of it now goes 
 reconciler that counts what is already on the way, tested against a model of the engine's own
 timing. The avatar's item layout no longer loops back onto your pack when the two disagree.
 
+**What you make comes back once.** A potion you brewed or an item you enchanted could come back twice after a relog: the moment it appeared was reported under a name only your own game knew, and the server counted it again beside the real one.
+
 **Skills you use on the peer's body count.** A skill raised by the body the server simulates for
 you -- blocking, armour, the weapon you swing -- now reaches your character sheet.
 
