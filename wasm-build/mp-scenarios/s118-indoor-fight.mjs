@@ -9,6 +9,10 @@ import assert from 'node:assert/strict';
 import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 import { pickUntil } from './_probe.mjs';
 
+// A shopkeeper behind his counter cannot be walked up to: the real fight stalled at the counter
+// and swung from where the snap landed (#157, Arrille). A customer on the shop floor is the mark.
+const BEHIND_COUNTER = /^arrille$/;
+
 // THE SERVER'S OWN PEER. A hand-spawned peer stands in one exterior cell and never anchors a
 // room; only the production lifecycle (server.ts simPeerPass -> SimAnchors interiors) holds an
 // interior, so this is the first scenario to run it. (Found by this scenario: with the
@@ -40,7 +44,7 @@ export default async function run(ctx) {
   }
 
   let pa, pb, victim;
-  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard)));
+  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !BEHIND_COUNTER.test(r))));
   assert.ok(victim, `need a living NPC inside visible to both: A=${JSON.stringify(Object.keys(pa))} B=${JSON.stringify(Object.keys(pb))}`);
   ctx.log(`both attacking "${victim}" indoors (holder=${await a.eval('window.omw.state.authorityHolder')})`);
 
