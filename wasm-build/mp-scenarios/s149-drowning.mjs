@@ -70,7 +70,24 @@ export default async function run(ctx) {
   // ONE KILL A FRAME: a kill lands at the END of the frame, so six in one frame all went to the
   // same nearest fish and a live one bit A (#158). On a client drawing 50 fps the eight commands
   // are well under a second at the seabed (it was the 2 fps box that made them slow, #152).
-  for (let i = 0; i < 4; i++) { await b.cmd('killnpc:slaughterfish'); await b.cmd('killnpc:slaughterfish_small'); }
+  // ...AND ONLY ONCE B CAN SEE THEM. Straight after the snap the sea spot's fish were not yet
+  // in B's world (the peer enabled them a moment later), and eight kills at 50 fps all found
+  // nothing -- a live fish bit A at t+7s (#159; the 2 fps box used to be slow enough).
+  const FISH = ['slaughterfish', 'slaughterfish_small'];
+  const fishSeen = async () => {
+    const pr = JSON.parse(await b.eval('window.omw.state.actorProbe||"{}"'));
+    return FISH.map((r) => [r, pr[r] ? pr[r].n || 1 : 0]);
+  };
+  let seen = [];
+  for (const until = Date.now() + 15_000; Date.now() < until;) {
+    seen = await fishSeen();
+    if (seen.some(([, n]) => n > 0)) break;
+    await ctx.sleep(500);
+  }
+  ctx.log(`fish B sees at the sea spot: ${seen.map(([r, n]) => `${r} x${n}`).join(', ')}`);
+  for (const [rec, n] of seen) {
+    for (let i = 0; i < n; i++) { await b.cmd(`killnpc:${rec}`); await ctx.sleep(150); }
+  }
   await b.cmd('snapto:-12288,-69632,87'); // back onto land (the retail start), as A does after the hold
   await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z > 0', STEP, 'B is back on land');
   { const bp = await pose(b); // ON LAND AT THE START, not respawned somewhere dry after dying
