@@ -93,7 +93,16 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     if (swings === 1 || swings % 10 === 0) ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark, its hp ${t.hp ?? '?'}`);
     await ctx.sleep(400);
   }
-  return { done: await done(), swings, snaps };
+  const ended = await done();
+  if (!ended && swings > 0) {
+    // WHAT THE PEER SAW (companion.lua logs every hit an actor takes on the peer): whether the
+    // avatar's blows connected at all, or never reached the mark (#158: NPCs indoors outlived
+    // 100+ swings from 51 u while every creature outdoors died).
+    const tail = (ctx.serverLogTail ? ctx.serverLogTail(20000) : '').split(String.fromCharCode(10));
+    const hits = tail.filter((l) => /hit on peer:/.test(l)).map((l) => { try { return JSON.parse(l).text.replace(/^.*hit on peer: /, ''); } catch { return l.slice(0, 160); } });
+    ctx.log(`  the fight did not end after ${swings} swing(s); hits the peer logged: ${hits.length}` + (hits.length ? ' -- last: ' + hits.slice(-4).join(' | ') : ''));
+  }
+  return { done: ended, swings, snaps };
 }
 
 // START A FIGHT THE WAY A PLAYER DOES: one weak swing, then wait for it to fight back; not yet,
