@@ -2484,6 +2484,10 @@ local eventHandlers = {
         -- to go: it wins.
         releaseRestoreHold('invite')
         pendingRestore = pendingRestore and (function(r) r.position = nil return r end)(pendingRestore) or nil
+        -- ...and one NOT QUEUED YET: the Welcome has handed net its record, but the Joined
+        -- transition that queues it runs on a later update, and on a fast client the invite comes
+        -- first -- the record then took the guest back to where they logged out (s154 #158).
+        if net.playerRecord then net.playerRecord.position = nil end
         local ok, err = pcall(function()
             player:teleport(inviteCellArg(tostring(data.cellKey)), util.vector3(data.x or 0, data.y or 0, data.z or 0))
         end)

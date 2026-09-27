@@ -2811,6 +2811,16 @@ do
     end
     check('an unregistered made record is not reported; an ordinary pickup is, by its id',
       okA and #sent == 1 and sent[1] == 'iron_cuirassx2', tostring(errA) .. ' sent: ' .. table.concat(sent, ','))
+
+    -- s154 (#158): the invite can beat the Joined transition that queues the rejoin record; the
+    -- record still in net must lose its stored position, or it takes the guest back where they
+    -- logged out after the invite put them beside the host.
+    local netm = package.loaded['scripts.mp.net']
+    netm.playerRecord = { position = { cellKey = 'far', x = 1, y = 2, z = 3 }, inventory = {} }
+    local okI, errI = pcall(script.eventHandlers.MP_InviteAccepted, { cellKey = 'host cell', x = 5, y = 6, z = 7 })
+    check('an invite ahead of the Joined transition strips the queued record position (s154)',
+      okI and netm.playerRecord ~= nil and netm.playerRecord.position == nil and netm.playerRecord.inventory ~= nil, tostring(errI))
+    netm.playerRecord = nil
   end
 end
 
