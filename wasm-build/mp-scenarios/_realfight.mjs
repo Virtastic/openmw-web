@@ -98,7 +98,9 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     // WHAT THE PEER SAW (companion.lua logs every hit an actor takes on the peer): whether the
     // avatar's blows connected at all, or never reached the mark (#158: NPCs indoors outlived
     // 100+ swings from 51 u while every creature outdoors died).
-    const tail = (ctx.serverLogTail ? ctx.serverLogTail(20000) : '').split(String.fromCharCode(10));
+    // Both places a peer's lines land: the server log (a peer the server spawned) and the harness's
+    // own buffer (a peer the scenario started with ctx.startSimPeer).
+    const tail = [ctx.serverLogTail ? ctx.serverLogTail(20000) : '', ctx.peerLogTail ? ctx.peerLogTail(20000) : ''].join(String.fromCharCode(10)).split(String.fromCharCode(10));
     const hits = tail.filter((l) => /hit on peer:/.test(l)).map((l) => { try { return JSON.parse(l).text.replace(/^.*hit on peer: /, ''); } catch { return l.slice(0, 160); } });
     ctx.log(`  the fight did not end after ${swings} swing(s); hits the peer logged: ${hits.length}` + (hits.length ? ' -- last: ' + hits.slice(-4).join(' | ') : ''));
   }
