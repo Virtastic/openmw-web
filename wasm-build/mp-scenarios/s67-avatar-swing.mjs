@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { focus } from './_realfight.mjs';
+import { armMelee, focus } from './_realfight.mjs';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 export const bootTimeoutMs = 420_000;
@@ -62,6 +62,9 @@ export default async function run(ctx) {
   // Hold the attack for 4 s: at 30 Hz input and a 20 Hz peer, the flag has to appear.
   // THE MOUSE BUTTON, HELD 4 s (it used to be the attack: hook, a use bit with no button):
   // the pointer taken like a player takes it, then the press -- watched while it is held.
+  // THE WEAPON DRAWN FIRST, as a player readies one: with nothing in hand a click is not an
+  // attack, and the attack: hook this replaced set the use bit regardless (#158: no flag in 30 s).
+  await armMelee(a);
   await focus(a);
   const held = a.mouseHold(4000);
   ctx.log('holding attack; waiting for the avatar’s attacking flag to come back');
