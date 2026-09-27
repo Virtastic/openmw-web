@@ -54,12 +54,17 @@ export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000) 
   }
   const t = await getTarget();
   if (!t) return { ok: false, strides, snapped: false };
+  // A SHORT GAP IS NOT SNAPPED: under 256 u the jump is no teleport to the game (player.lua's
+  // jump detector), the avatar stays, and reconciliation walks the client back -- s128 snapped
+  // every 4 s for 3.5 minutes from 110-146 u short (#158). Within closeIn, swingUntil squares up.
+  if (best < 256) return { ok: false, strides, snapped: false };
   ctx.log(`  (the walk stalled ${Math.round(best)} u short after ${strides} strides: snapping beside the mark)`);
   await c.cmd(`snapto:${Math.round(t.x + 60)},${Math.round(t.y)},${Math.round(t.z + 8)}`);
   // SAY IT when the avatar stays behind: the client then swings from beside the mark while the
   // body that actually fights -- the peer's avatar -- is wherever the walk stalled (#158 s157:
   // snapped 2013 u, then 102 swings "from 51 u" and not one hit line on the peer).
-  const came = await c.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 15_000, 'the avatar came along').then(() => true, () => false);
+  await c.eval('window.omw.state.selfDivergence = null; 1'); // a fresh sample, not the pre-snap one
+  const came = await c.waitFor('window.omw.state.selfDivergence != null && Number(window.omw.state.selfDivergence) < 60', 15_000, 'the avatar came along').then(() => true, () => false);
   if (!came) ctx.log(`  (the avatar did NOT follow the snap: divergence ${await c.eval('window.omw.state.selfDivergence')} u)`);
   return { ok: true, strides, snapped: true, came };
 }
