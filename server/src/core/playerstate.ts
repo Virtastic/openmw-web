@@ -335,16 +335,28 @@ function baseSpeed(ctx: StateCtx, player: Player): number | undefined {
 }
 
 // Flat string->finite-number map (attributes, skills).
-function parseNumberMap(body: LTable): Record<string, number> | undefined {
-  if (body.size > MAX_STAT_ENTRIES) return undefined;
+function parseNumberMap(body: LTable, player: Player, name: string): Record<string, number> | undefined {
+  const refuse = (why: string, key?: unknown, value?: unknown) => {
+    log('warn', 'state.stat_refused', { from: player.name, name, why, key: String(key ?? ''), value: String(value ?? '') });
+    return undefined;
+  };
+  if (body.size > MAX_STAT_ENTRIES) return refuse('too_many', body.size);
   const out: Record<string, number> = {};
   for (const [k, v] of body) {
     const n = finite(v);
-    if (typeof k !== 'string' || k.length === 0 || k.length > MAX_STAT_KEY || n === undefined) return undefined;
+    if (typeof k !== 'string' || k.length === 0 || k.length > MAX_STAT_KEY || n === undefined) return refuse('shape', k, v);
+    if (n < 0) return refuse('negative', k, v);
     // An attribute or skill lives in [0, 100] in the game's own rules and fortifies past it
     // only through effects, which never travel here (base values do). A DoS bound, like the
     // inventory's: a modified client declaring Strength 999 was stored and pushed to the avatar.
-    if (n < 0 || n > MAX_STAT_VALUE) return undefined;
+    // CLAMPED, not refused: refusing threw the WHOLE map away, so one skill over the bound cost
+    // the player every other skill they trained from then on (s132 #157: a guest's Long Blade
+    // came home untrained, the doc holding no skills at all). The bound still holds.
+    if (n > MAX_STAT_VALUE) {
+      log('warn', 'state.stat_clamped', { from: player.name, name, key: k, value: n, to: MAX_STAT_VALUE });
+      out[k] = MAX_STAT_VALUE;
+      continue;
+    }
     out[k] = n;
   }
   return out;
@@ -365,7 +377,7 @@ function raiseWithin(player: Player, key: string, delta: number, limit: number):
 }
 
 function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'attributes' | 'skills'): boolean {
-  const map = parseNumberMap(body);
+  const map = parseNumberMap(body, player, field);
   if (!map) return false;
   // #369: refused, not counted -- the server's copy stands and the next declaration is
   // measured against it. The first declaration (no baseline) is accepted as chargen's.
