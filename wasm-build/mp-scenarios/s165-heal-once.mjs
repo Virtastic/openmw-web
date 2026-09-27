@@ -92,8 +92,11 @@ export default async function run(ctx) {
   ctx.log(`after the heal: peer says ${after.c}/${after.b}, the client's own bar says ${local},`
     + ` last hp claim ${await a.eval('window.omw.state.hpClaim || "none"')} (backlog 461: <bar>+<gain>)`);
   assert.ok(after.c > before.c + 30, `the heal never landed (${before.c} -> ${after.c}); did the cast fizzle?`);
-  // ONCE: +50. Twice is +100, which the base pins at +60.
-  assert.ok(after.c >= before.c + 45 && after.c <= before.c + 55,
+  // ONCE: +50. Twice is +100, which the base pins at +60 -- the UPPER bound is the test. The lower
+  // one only measures the peer's pace: a heal-over-time loses whatever a peer frame runs past its
+  // 0.25 s step cap (headlessMaxDt, backlog 115), and a loaded box landed +42 (#158). "It landed
+  // at all" is the +30 check above.
+  assert.ok(after.c <= before.c + 55,
     `a 50-point heal moved the ruled body ${before.c} -> ${after.c}: ${after.c > before.c + 55 ? 'it landed twice (the bar channel AND the effect mirror)' : 'off by more than the budget'}`);
   ctx.log(`PASS: the heal landed once (${before.c} -> ${after.c})`);
 }
