@@ -56,8 +56,12 @@ export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000) 
   if (!t) return { ok: false, strides, snapped: false };
   ctx.log(`  (the walk stalled ${Math.round(best)} u short after ${strides} strides: snapping beside the mark)`);
   await c.cmd(`snapto:${Math.round(t.x + 60)},${Math.round(t.y)},${Math.round(t.z + 8)}`);
-  await c.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 15_000, 'the avatar came along').catch(() => {});
-  return { ok: true, strides, snapped: true };
+  // SAY IT when the avatar stays behind: the client then swings from beside the mark while the
+  // body that actually fights -- the peer's avatar -- is wherever the walk stalled (#158 s157:
+  // snapped 2013 u, then 102 swings "from 51 u" and not one hit line on the peer).
+  const came = await c.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 15_000, 'the avatar came along').then(() => true, () => false);
+  if (!came) ctx.log(`  (the avatar did NOT follow the snap: divergence ${await c.eval('window.omw.state.selfDivergence')} u)`);
+  return { ok: true, strides, snapped: true, came };
 }
 
 // Swing for real until `done()` says so (the mark died, it fought back, the bar moved) or the
@@ -91,7 +95,7 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     swings++;
     // The mark's health beside the range: whether real blows LAND is the question when a fight
     // does not end (#158: NPCs outlived 171 swings from 60 u while every creature died).
-    if (swings === 1 || swings % 10 === 0) ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark, its hp ${t.hp ?? '?'}`);
+    if (swings === 1 || swings % 10 === 0) ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark, its hp ${t.hp ?? '?'}, own avatar ${await c.eval('window.omw.state.selfDivergence')} u off`);
     await ctx.sleep(400);
   }
   const ended = await done();
@@ -102,6 +106,8 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     // Both places a peer's lines land: the server log (a peer the server spawned) and the harness's
     // own buffer (a peer the scenario started with ctx.startSimPeer).
     const tail = [ctx.serverLogTail ? ctx.serverLogTail(20000) : '', ctx.peerLogTail ? ctx.peerLogTail(20000) : ''].join(String.fromCharCode(10)).split(String.fromCharCode(10));
+    const empty = tail.filter((l) => /avatar swing found nothing/.test(l));
+    if (empty.length) ctx.log(`  the peer's avatar swung at nothing ${empty.length} time(s) -- last: ${empty.slice(-2).map((l) => l.replace(/^.*found nothing: /, '').slice(0, 300)).join(' | ')}`);
     const hits = tail.filter((l) => /hit on peer:/.test(l)).map((l) => { try { return JSON.parse(l).text.replace(/^.*hit on peer: /, ''); } catch { return l.slice(0, 160); } });
     ctx.log(`  the fight did not end after ${swings} swing(s); hits the peer logged: ${hits.length}` + (hits.length ? ' -- last: ' + hits.slice(-4).join(' | ') : ''));
   }
