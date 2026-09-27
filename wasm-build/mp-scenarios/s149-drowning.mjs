@@ -58,18 +58,24 @@ export default async function run(ctx) {
   // B GETS THE SAME BIGGER POOL: it kills from the seabed (the only spot a snap lands on in
   // that cell), and a vertical teleport up dropped it back in with fall momentum, sinking with
   // no swim-up input until it drowned and respawned in the village (#134: B in another cell,
-  // 'B's puppet of A' gone). At 95 hp the seabed is survivable for the half minute the kills
+  // 'B's puppet of A' gone). A 300-point pool makes the seabed survivable for the moment the kills
   // take on a slow client; then straight back to land.
   { const b0 = await bars(b);
-    await b.cmd(`sethpbase:${b0.b + 60}`);
-    await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${b0.b + 58}`, STEP, "B's max rose");
-    await b.cmd(`sethp:${b0.b + 60}`);
-    await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${b0.b + 50}`, STEP, "B's pool filled"); }
+    await b.cmd(`sethpbase:${b0.b + 300}`);
+    await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${b0.b + 298}`, STEP, "B's max rose");
+    await b.cmd(`sethp:${b0.b + 300}`);
+    await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${b0.b + 290}`, STEP, "B's pool filled"); }
   await b.cmd(`snapto:${SEABED.x + 300},${SEABED.y},${SEABED.z}`);
   await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z < -250', STEP, 'B is at the sea spot');
-  for (let i = 0; i < 4; i++) { await b.cmd('killnpc:slaughterfish'); await b.cmd('killnpc:slaughterfish_small'); await ctx.sleep(500); }
+  // ONE FRAME UNDER, NOT EIGHT (#152): a command costs a frame, and at one frame every ~2 s eight
+  // separate kills held B down ~35 s -- out of breath and bitten, it died and respawned in
+  // another cell. Lua drains the whole queue in a frame, so send them together.
+  await b.evalAsync("Promise.all(['slaughterfish','slaughterfish_small','slaughterfish','slaughterfish_small','slaughterfish','slaughterfish_small'].map(function(n){ return window.omw.send('killnpc:' + n); }))");
+  await b.cmd('count:gold_001'); // a round trip: the kills above have been drained
   await b.cmd('snapto:-12288,-69632,87'); // back onto land (the retail start), as A does after the hold
   await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z > 0', STEP, 'B is back on land');
+  { const bp = await pose(b); // ON LAND AT THE START, not respawned somewhere dry after dying
+    assert.ok(Math.hypot(bp.x + 12288, bp.y + 69632) < 1024, `B is not back at the start (${bp.x.toFixed(0)},${bp.y.toFixed(0)}): it died at the sea spot`); }
   await ctx.sleep(4_000); // the deaths travel client -> server -> peer
   const start = await bars(a);
   await a.cmd(`snapto:${SEABED.x},${SEABED.y},${SEABED.z}`);

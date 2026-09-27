@@ -84,16 +84,23 @@ export default async function run(ctx) {
 
   // The mark: the nearest unique named creature (a rat or a forager comes at you on its own;
   // a scrib is provoked below).
-  const nets = JSON.parse(await a.eval('window.omw.state.netObjects||"{}"'));
-  const probe0 = JSON.parse(await a.eval('window.omw.state.actorProbe||"{}"'));
-  const me0 = JSON.parse(await a.eval('window.omw.state.pose||"{}"'));
   // The probe is keyed by RECORD and several net ids can share one (three scribs); the one
   // the probe describes is the net id whose received pose stands where the probe says.
-  const rx0 = JSON.parse(await a.eval('JSON.stringify((window.__omwActorTap||{}).last||{})'));
-  const cand = Object.entries(nets).filter(([, r]) => probe0[r] && !probe0[r].dead && probe0[r].n === 1)
+  // RE-PICKED UNTIL ONE HOLDS (#152): the wait above saw a unique creature, and by the one
+  // read here it had moved off its probe mark or died -- the cell's levelled roll varies.
+  let nets, probe0, me0, rx0, cand = [];
+  for (const until = Date.now() + 60_000; ;) {
+    ({ nets, probe0, me0, rx0 } = JSON.parse(await a.eval(`JSON.stringify({ nets: JSON.parse(window.omw.state.netObjects||"{}"),
+      probe0: JSON.parse(window.omw.state.actorProbe||"{}"), me0: JSON.parse(window.omw.state.pose||"{}"),
+      rx0: (window.__omwActorTap||{}).last||{} })`)));
+    cand = pick();
+    if (cand.length || Date.now() > until) break;
+    await ctx.sleep(2_000);
+  }
+  function pick() { return Object.entries(nets).filter(([, r]) => probe0[r] && !probe0[r].dead && probe0[r].n === 1)
     .map(([id, r]) => { const t = rx0['n' + id]; return { id, r, d: Math.hypot(probe0[r].x - me0.x, probe0[r].y - me0.y),
       m: t ? Math.hypot(t.x - probe0[r].x, t.y - probe0[r].y) : Infinity }; })
-    .filter((c) => c.m < 60).sort((x, y) => (x.r === 'scrib') - (y.r === 'scrib') || x.d - y.d || x.m - y.m); // a scrib will not come at you; a rat or a forager does
+    .filter((c) => c.m < 60).sort((x, y) => (x.r === 'scrib') - (y.r === 'scrib') || x.d - y.d || x.m - y.m); } // a scrib will not come at you; a rat or a forager does
   assert.ok(cand.length, `no unique living named creature: nets=${JSON.stringify(nets)} probe=${JSON.stringify(Object.keys(probe0))}`);
   const { id: netId, r: victim } = cand[0];
   ctx.log(`  (net ${netId}'s received pose is ${f0(cand[0].m)} u from the probe's ${victim})`);
@@ -111,7 +118,8 @@ export default async function run(ctx) {
   // One sting: a scrib will not start a fight on its own (s110's idiom). Relay-only, and
   // counted, so it is told apart from the real swings.
   await a.cmd(`hitn:${victim}:1`);
-  await ctx.sleep(2_000); // the sting's own forward lands before the baseline
+  // The sting's own forward lands before the baseline -- waited for, not slept on (s164, #152).
+  await a.waitFor('Number(window.omw.state.hitFwdCount || 0) >= 1', 30_000, 'the test sting was forwarded');
   const fwd0 = String(await a.eval('window.omw.state.hitFwdCount'));
   const fps = JSON.parse(await a.evalAsync('new Promise(function(r){var n=0,t0=performance.now();function f(){n++; if(performance.now()-t0<2000) requestAnimationFrame(f); else r(JSON.stringify({fps:n/((performance.now()-t0)/1000)}));} requestAnimationFrame(f);})'));
   ctx.log(`client rAF rate ${fps.fps.toFixed(1)}/s`);

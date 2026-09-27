@@ -81,7 +81,9 @@ export default async function run(ctx) {
   await a.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
   await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
   await a.cmd(`hitn:${victim}:1`);
-  await ctx.sleep(2_000);
+  // WAIT FOR THE STING'S OWN FORWARD, not a fixed 2 s (#152): a client drawing a frame every ~2 s
+  // counted it AFTER the snapshot below, and the scenario blamed the real swings for it.
+  await a.waitFor('Number(window.omw.state.hitFwdCount || 0) >= 1', 30_000, 'the test sting was forwarded');
   // The mirror cannot be cleared from the page (re-read from the engine each frame): count
   // forwards instead, and require the count not to move while the avatar does the killing.
   const fwdBefore = String(await a.eval('window.omw.state.hitFwdCount'));
