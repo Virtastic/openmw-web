@@ -343,25 +343,3 @@ test('stat values are bounded, a level steps once per window, a first open is pl
   assert.equal(doc.stats?.level, 3, 'the first declaration seeds; then one step per window (4 refused)');
 });
 
-// s132 (#157): ONE value over the bound threw the WHOLE skills map away, so a character with a
-// single skill past 100 lost every skill they trained from then on -- a guest's Long Blade came
-// home untrained, the doc holding no skills at all. The bound is kept by clamping that value.
-test('one stat over the bound is clamped; the rest of the map is kept, a negative is still refused', async (t) => {
-  const { startServer } = await import('../src/server');
-  const { TestClient, tmpDataDir, readPlayerDoc } = await import('./helpers');
-  const dataDir = tmpDataDir();
-  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
-  t.after(() => server.close());
-  const c = await TestClient.connect(server.port);
-  t.after(() => c.close());
-  const { welcome } = await c.joinAsNew('Trainee');
-  const charId = String(welcome['characterId']);
-  await c.waitEvent('PlayerList');
-  c.sendEvent('PlayerSkills', { longblade: 40, block: 35, handtohand: 105 });
-  c.sendEvent('PlayerSkills', { longblade: 42, block: -1, handtohand: 100 });
-  await new Promise((r) => setTimeout(r, 200));
-  await server.flush();
-  const doc = readPlayerDoc(dataDir, charId) as { stats?: { skills?: Record<string, number> } };
-  assert.deepEqual(doc.stats?.skills, { longblade: 40, block: 35, handtohand: 100 },
-    'the skills were stored with the one over the bound clamped; the negative declaration was refused whole');
-});

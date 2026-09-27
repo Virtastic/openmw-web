@@ -349,14 +349,10 @@ function parseNumberMap(body: LTable, player: Player, name: string): Record<stri
     // An attribute or skill lives in [0, 100] in the game's own rules and fortifies past it
     // only through effects, which never travel here (base values do). A DoS bound, like the
     // inventory's: a modified client declaring Strength 999 was stored and pushed to the avatar.
-    // CLAMPED, not refused: refusing threw the WHOLE map away, so one skill over the bound cost
-    // the player every other skill they trained from then on (s132 #157: a guest's Long Blade
-    // came home untrained, the doc holding no skills at all). The bound still holds.
-    if (n > MAX_STAT_VALUE) {
-      log('warn', 'state.stat_clamped', { from: player.name, name, key: k, value: n, to: MAX_STAT_VALUE });
-      out[k] = MAX_STAT_VALUE;
-      continue;
-    }
+    // REFUSED WHOLE, on purpose (#369/#422): a base over 100 is the engine TEMPLATE (the
+    // example suite's Acrobatics 125), not a player, and storing any of that map would write the
+    // template over the real character. The refusal now says which key (s132, #157).
+    if (n > MAX_STAT_VALUE) return refuse('over_bound', k, v);
     out[k] = n;
   }
   return out;
