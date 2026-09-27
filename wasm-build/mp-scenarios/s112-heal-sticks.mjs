@@ -40,8 +40,8 @@ export default async function run(ctx) {
   let hurt = null;
   const isHurt = async () => { hurt = await bars(a); return !!hurt && hurt.c <= start.c - 1; };
   // Provoked FOR REAL: up to three swings with the mouse button (_realfight.mjs).
-  // WEAKLY (longblade 5), swing then wait for the bite, again if needed (#157: one wound was not enough).
-  await focus(a); await armMelee(a, undefined, 5);
+  // WEAKLY (longblade 40), swing then wait for the bite, again if needed (#157: one wound was not enough).
+  await focus(a); await armMelee(a, undefined, 40);
   await provoke(ctx, a, () => probeRec(a, victim), isHurt);
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline && !(await isHurt())) await ctx.sleep(2_000);

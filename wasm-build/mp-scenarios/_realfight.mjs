@@ -25,7 +25,8 @@ export async function focus(c) {
 
 // The sword, the skill to land it (a fresh character misses most swings; the miss is not the
 // thing under test), the weapon drawn.
-// `skill` low (5) for a fight that must be STARTED, not ended: a provocation that kills the mark
+// `skill` middling (40) for a fight that must be STARTED, not ended: it sets the chance to HIT (at
+// 5 most swings miss, #158 s166), the weapon sets the damage; stop at the first wound. A kill
 // proves nothing about what it does next.
 export async function armMelee(c, weapon = WEAPON, skill = 100) {
   await c.cmd(`equip:${weapon}:16`);

@@ -44,10 +44,10 @@ export default async function run(ctx) {
   // Pick the fight: a light hit, so the creature turns on us rather than dying. The swing
   // goes to the peer, the peer's creature enters Combat with our avatar, companion.lua
   // reports it, and the puppet on THIS screen must gain the Combat package.
-  // FOR REAL, and weakly (longblade 5): a real swing that starts the fight without ending it.
+  // FOR REAL, and weakly (longblade 40): a real swing that starts the fight without ending it.
   let verdict = before;
   const inFight = async () => { verdict = await canRest(a); return (verdict & ENEMIES_NEARBY) !== 0; };
-  await focus(a); await armMelee(a, undefined, 5);
+  await focus(a); await armMelee(a, undefined, 40);
   const poke = await swingUntil(ctx, a, () => probeRec(a, victim), inFight, { maxSwings: 12, budgetMs: 90_000 });
   ctx.log(`provoked with ${poke.swings} real swing(s)`);
   const deadline = Date.now() + 30_000;

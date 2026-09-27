@@ -64,9 +64,9 @@ export default async function run(ctx) {
     return dropped;
   };
   // A scrib will not start a fight on its own: up to three real swings to start one.
-  // WEAKLY (longblade 5), swing then wait for it to fight back (_realfight provoke): three swings at 100 killed the scrib (#156),
+  // WEAKLY (longblade 40), swing then wait for it to fight back (_realfight provoke): three swings at 100 killed the scrib (#156),
   // and a dead creature bites nobody. Hurt, it turns on us.
-  await focus(a); await armMelee(a, undefined, 5);
+  await focus(a); await armMelee(a, undefined, 40);
   const poke = await provoke(ctx, a, () => probeRec(a, victim), bitten);
   ctx.log(`provoked with ${poke.swings} real swing(s)`);
   const deadline = Date.now() + 120_000;
