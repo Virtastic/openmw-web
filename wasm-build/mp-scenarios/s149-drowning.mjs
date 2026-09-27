@@ -67,11 +67,10 @@ export default async function run(ctx) {
     await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${b0.b + 50}`, STEP, "B's pool filled"); }
   await b.cmd(`snapto:${SEABED.x + 300},${SEABED.y},${SEABED.z}`);
   await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z < -250', STEP, 'B is at the sea spot');
-  // ONE FRAME UNDER, NOT EIGHT (#152): a command costs a frame, and at one frame every ~2 s eight
-  // separate kills held B down ~35 s -- out of breath and bitten, it died and respawned in
-  // another cell. Lua drains the whole queue in a frame, so send them together.
-  await b.evalAsync("Promise.all(['slaughterfish','slaughterfish_small','slaughterfish','slaughterfish_small','slaughterfish','slaughterfish_small'].map(function(n){ return window.omw.send('killnpc:' + n); }))");
-  await b.cmd('count:gold_001'); // a round trip: the kills above have been drained
+  // ONE KILL A FRAME: a kill lands at the END of the frame, so six in one frame all went to the
+  // same nearest fish and a live one bit A (#158). On a client drawing 50 fps the eight commands
+  // are well under a second at the seabed (it was the 2 fps box that made them slow, #152).
+  for (let i = 0; i < 4; i++) { await b.cmd('killnpc:slaughterfish'); await b.cmd('killnpc:slaughterfish_small'); }
   await b.cmd('snapto:-12288,-69632,87'); // back onto land (the retail start), as A does after the hold
   await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z > 0', STEP, 'B is back on land');
   { const bp = await pose(b); // ON LAND AT THE START, not respawned somewhere dry after dying
