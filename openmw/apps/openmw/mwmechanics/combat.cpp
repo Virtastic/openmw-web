@@ -3,6 +3,7 @@
 
 #include <array>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/rng.hpp>
 #include <components/settings/values.hpp>
 
@@ -734,6 +735,15 @@ namespace MWMechanics
             MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
                 actorPos, static_cast<float>(Settings::game().mActorsProcessingRange), targets);
 
+        // WHY A SWING FOUND NOTHING, on the sim peer (#158: avatars killed every creature and
+        // never touched an NPC -- 100+ swings from 51 u, not one hit line on the peer). Each
+        // actor near an avatar's empty swing is logged with the check that ruled it out.
+        const bool whyNot = actor != getPlayer() && MWMP::isAvatar(actor.getCellRef().getRefNum());
+        std::string rejected;
+        const auto reject = [&](const MWWorld::Ptr& t, const char* why, float d) {
+            if (whyNot && d < 400.f)
+                rejected += " " + t.getCellRef().getRefId().toDebugString() + "@" + std::to_string(static_cast<int>(d)) + ":" + why;
+        };
         for (MWWorld::Ptr& target : targets)
         {
             if (actor == target || target.getClass().getCreatureStats(target).isDead())
@@ -741,7 +751,10 @@ namespace MWMechanics
 
             const float dist = getDistanceToBounds(actor, target);
             if (dist >= minDist || !isInMeleeReach(actor, target, reach))
+            {
+                reject(target, dist >= minDist ? "farther" : "reach", dist);
                 continue;
+            }
 
             const osg::Vec3f targetPos(target.getRefData().getPosition().asVec3());
 
@@ -751,12 +764,18 @@ namespace MWMechanics
 
             // Use dot product to check if the target is behind first...
             if (actorToTargetXY.x() * actorDirXY.x() + actorToTargetXY.y() * actorDirXY.y() <= 0.f)
+            {
+                reject(target, "behind", dist);
                 continue;
+            }
 
             // And then perp dot product to calculate the hit angle sine.
             // This gives us a horizontal hit range of [-asin(fCombatAngleXY / 90); asin(fCombatAngleXY / 90)]
             if (std::abs(actorToTargetXY.x() * actorDirXY.y() - actorToTargetXY.y() * actorDirXY.x()) > fCombatAngleXY)
+            {
+                reject(target, "angleXY", dist);
                 continue;
+            }
 
             // Vertical angle checks. Nice cliff racer hack, Todd.
             if (!canMoveByZ)
@@ -771,16 +790,26 @@ namespace MWMechanics
 
                 if (actorVerticalAngle - actorToTargetHead.z() > fCombatAngleZ
                     || actorVerticalAngle - actorToTargetFeet.z() < -fCombatAngleZ)
+                {
+                    reject(target, "angleZ", dist);
                     continue;
+                }
             }
 
             // Gotta use physics somehow!
             if (!world->getLOS(actor, target))
+            {
+                reject(target, "los", dist);
                 continue;
+            }
 
             minDist = dist;
             result = target;
         }
+
+        if (whyNot && result.isEmpty())
+            Log(Debug::Info) << "[mp] avatar swing found nothing: " << targets.size() << " in range,"
+                             << (rejected.empty() ? " none within 400" : rejected);
 
         // This hit position is currently used for spawning the blood effect.
         // Morrowind does this elsewhere, but roughly at the same time
