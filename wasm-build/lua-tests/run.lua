@@ -2525,6 +2525,7 @@ do
   check('isTalkingTo honours a grace after release, inside the server\'s RECENT_LOCK_MS',
     grace ~= nil and server ~= nil and grace * 1000 < server and q:find('releasedId, releasedAt = obj.id, core.getRealTime()', 1, true) ~= nil,
     string.format('client %s s, server %s ms', tostring(grace), tostring(server)))
+end
 
 -- ============================================================ reconcile.lua against an engine-shaped frame
 -- Backlog 507 and the MP-READINESS-AUDIT same-frame class. frameworld.lua applies changes the way
