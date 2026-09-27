@@ -53,8 +53,15 @@ export default async function run(ctx) {
 
     // 1. Same room. 2. Beside the host. 3. The room is simulated for the guest too.
     await guest.client.waitFor(`String(window.omw.state.cell||"") === ${JSON.stringify(room)}`, 120_000, `the guest landed in "${room}" with the host`);
-    const [hp, gp] = [await poseOf(host.client), await poseOf(guest.client)];
-    const d = Math.hypot(hp.x - gp.x, hp.y - gp.y, hp.z - gp.z);
+    // THE POSE SETTLES AFTER THE CELL: the two are published separately, and a fast client read
+    // the pre-teleport exterior pose the moment the cell flipped (#158: 70655 u, while the peer
+    // had already put the body beside the host). Up to 15 s for it; a real misplacement stays off.
+    let d = Infinity;
+    for (const until = Date.now() + 15_000; Date.now() < until && d >= 600;) {
+      const [hp, gp] = [await poseOf(host.client), await poseOf(guest.client)];
+      d = Math.hypot(hp.x - gp.x, hp.y - gp.y, hp.z - gp.z);
+      if (d >= 600) await ctx.sleep(500);
+    }
     ctx.log(`guest landed in "${await cellOf(guest.client)}", ${Math.round(d)} units from the host`);
     assert.ok(d < 600, `the guest landed in the right room but ${Math.round(d)} units from the host`);
     await guest.client.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 120_000, 'the room has a holder from the guest\'s side');

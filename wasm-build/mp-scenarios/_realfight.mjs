@@ -88,7 +88,9 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     await c.eval(`window.omw.send('face:${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.z + 30)}'); 1`);
     await c.mouseHold(holdMs);
     swings++;
-    if (swings === 1 || swings % 10 === 0) ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark`);
+    // The mark's health beside the range: whether real blows LAND is the question when a fight
+    // does not end (#158: NPCs outlived 171 swings from 60 u while every creature died).
+    if (swings === 1 || swings % 10 === 0) ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark, its hp ${t.hp ?? '?'}`);
     await ctx.sleep(400);
   }
   return { done: await done(), swings, snaps };
