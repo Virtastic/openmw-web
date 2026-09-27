@@ -832,6 +832,31 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
     const states = parseItemStatesL(tbl(e.get('itemStates')));
     if (Object.keys(states).length > MAX_INVENTORY) continue;
     p.peerItemStatesAt = now;
+    // THE AVATAR'S STACKS ARE ONLY THE OWNER'S STACKS WHEN THEY HOLD THE SAME NUMBER (backlog
+    // 507). A bucket is POSITIONAL -- one entry per stack, with its size -- and the owner's
+    // client applies it by splitting its own stacks to match (applyItemStates). While the
+    // avatar is still catching up to the doc (a slow peer frame, a pack changing fast) its
+    // layout describes a different pack, and applying it moved the PLAYER'S real count:
+    // twelve cuirasses given one by one reached the peer as 5, 2, 5, 8, 7, 4, 10, 2..., the
+    // avatar chased each figure, and after a drop it was left holding ten, over-encumbered,
+    // pinning its player in place (s151; switching this forward off made the sequence
+    // 1..12 exactly). So a record whose bucket counts a different number of items than the
+    // doc holds is left out -- of the doc merge (its stored states stand) and of the forward
+    // -- until a report arrives in which the two agree. A bucket that does not size every
+    // stack, or a record the doc does not list, is taken as before: neither can re-split a
+    // pack the owner holds.
+    const held = new Map((ctx.store.getCached(p.charId)?.inventory ?? []).map((it) => [it.id, it.n]));
+    const mismatched = new Set<string>();
+    for (const [rid, bucket] of Object.entries(states)) {
+      const have = held.get(rid);
+      if (have === undefined || bucket.some((st) => st.n === undefined)) continue;
+      const counted = bucket.reduce((sum, st) => sum + (st.n as number), 0);
+      if (counted !== have) { mismatched.add(rid); delete states[rid]; }
+    }
+    if (mismatched.size > 0) {
+      metrics.avatarItemLayoutSkipped.inc({}, mismatched.size);
+      log('debug', 'state.avatar_layout_mismatch', { player: p.name, records: [...mismatched].slice(0, 8) });
+    }
     // PER FIELD, the mirror of the client->doc rule above. A wholesale replace refunded within
     // one report interval what only the client spends: a cast-when-used charge (the avatar
     // still held the pre-cast charge and reported it back), a repair likewise. Charge and
@@ -859,7 +884,12 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
           return out;
         });
       }
-      if (Object.keys(merged).length > 0) doc.itemStates = merged;
+      // A record left out above keeps what the doc already had (the merge below replaces the
+      // map wholesale).
+      const kept: Record<string, ItemStateDoc[]> = {};
+      for (const rid of mismatched) if (have[rid]) kept[rid] = have[rid];
+      const next = { ...kept, ...merged };
+      if (Object.keys(next).length > 0) doc.itemStates = next;
       else delete doc.itemStates;
     }, 'sweep');
     const wire: Record<string, JsLike[]> = {};

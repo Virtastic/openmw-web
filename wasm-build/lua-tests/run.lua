@@ -708,7 +708,7 @@ do
   local sco = o:match('function objects%.sendContainerOp%(obj, op, itemId, n%)(.-)\nend') or ''
   check('sendContainerOp maps the item id toNet before it is pended and sent', sco:find('itemId = worldmp.toNet(itemId)', 1, true) ~= nil)
   local scc = o:match('local function setContainerContents%(obj, items%)(.-)\nend') or ''
-  check('setContainerContents creates from worldmp.toLocal(entry.id)', scc:find('world.createObject(worldmp.toLocal(entry.id)', 1, true) ~= nil,
+  check('setContainerContents creates from worldmp.toLocal(entry.id)', scc:find('id = worldmp.toLocal(entry.id)', 1, true) ~= nil and scc:find('reconcile.reconcileInventory', 1, true) ~= nil,
     "a friend's potion is created under the author's local id")
   local acd = o:match('local function applyContainerDelta%(obj, itemId, dn%)(.-)\nend') or ''
   check('applyContainerDelta maps the wire id toLocal', acd:find('itemId = worldmp.toLocal(itemId)', 1, true) ~= nil)
@@ -1120,9 +1120,11 @@ do
   local applyChunk = src:match('(local function applyItemStates%(.-\nend\n)')
   local snapChunk = src:match('(local function snapAvatarItemStates%(.-\nend\n)')
   check('applyItemStates and snapAvatarItemStates were found', applyChunk ~= nil and snapChunk ~= nil)
-  -- A fake inventory with the two engine behaviours that matter: split() hands back a NEW
-  -- object carrying the same itemData and removes the count from the source only later in the
-  -- frame (mwlua objectbindings.cpp: DelayedRemovalFn), and moveInto appends.
+  -- A simple fake inventory: split() hands back a NEW object carrying the same itemData, and
+  -- moveInto appends. NOT the engine's timing (the engine lowers a split's source AT ONCE and
+  -- lands a moveInto at the END of the frame -- objectbindings.cpp): the engine-accurate model is
+  -- frameworld.lua, and the same-frame cases are tested against it under 'reconcile.lua'. This
+  -- block pins that global.lua's applyItemStates reaches reconcile.applyItemStates.
   local function fakeInventory(items)
     local inv = { items = items }
     function inv:getAll() return self.items end
@@ -1149,7 +1151,8 @@ do
   -- condition, charge or soul ever left a client (s160 nil/nil/nil in #105).
   local fakeTypes = { Item = { itemData = function(it) return it.itemData end }, Actor = { inventory = function(obj) return obj end } }
   local ok, applyItemStates = pcall(function()
-    return assert((loadstring or load)('local types = ...\n' .. applyChunk .. '\nreturn applyItemStates'))(fakeTypes)
+    package.loaded['scripts.mp.reconcile'] = nil
+    return assert((loadstring or load)('local types, reconcile = ...\n' .. applyChunk .. '\nreturn applyItemStates'))(fakeTypes, require('scripts.mp.reconcile'))
   end)
   check('applyItemStates loads', ok and type(applyItemStates) == 'function', tostring(applyItemStates))
   if type(applyItemStates) == 'function' then
@@ -1376,6 +1379,26 @@ do
     and av:find('if not SKILL_USE_FORWARDED[skillid] then return end', 1, true) ~= nil, tostring(fam))
   check('global.lua sends the use to the server as AvatarSkillUse with the owner id',
     g:find("mp.sendEvent('AvatarSkillUse', { id = id, skill = data.skill, useType = data.useType or 0 })", 1, true) ~= nil)
+  -- THE DELIVERY INVARIANT. Server events reach Lua ONLY as global events (netmanager.cpp:
+  -- addGlobalEvent("MP_" + name)), so an MP_ handler in player.lua fires only if some script
+  -- forwards it (global.lua's toPlayer, or an object's sendEvent). #307 shipped with the
+  -- server sending SelfSkillUse and player.lua counting it, both tested, and the forward
+  -- between them missing: armour and block never progressed. Asserted for every handler.
+  do
+    local all = {}
+    for _, name in ipairs({ 'global', 'actors', 'admin', 'avatar', 'combat', 'companion', 'identity', 'net', 'objects', 'puppet', 'quests', 'social', 'world' }) do
+      local f = io.open('./openmw/files/data/scripts/mp/' .. name .. '.lua')
+      if f then all[#all + 1] = f:read('*a'); f:close() end
+    end
+    local senders = table.concat(all, '\n')
+    local orphans = {}
+    for h in p:gmatch('\n%s+(MP_[%w_]+) = function') do
+      if not (senders:find("toPlayer('" .. h .. "'", 1, true) or senders:find("sendEvent('" .. h .. "'", 1, true)
+          or p:find("sendEvent('" .. h .. "'", 1, true)) then orphans[#orphans + 1] = h end
+    end
+    check('every MP_ handler in player.lua is forwarded by some script (server events arrive at global only)',
+      #orphans == 0, table.concat(orphans, ', '))
+  end
   check('player.lua counts MP_SelfSkillUse through I.SkillProgression',
     p:find('MP_SelfSkillUse = function(data)', 1, true) ~= nil
     and p:find('pcall(I.SkillProgression.skillUsed, data.skill, { useType = data.useType or 0 })', 1, true) ~= nil)
@@ -2502,6 +2525,374 @@ do
   check('isTalkingTo honours a grace after release, inside the server\'s RECENT_LOCK_MS',
     grace ~= nil and server ~= nil and grace * 1000 < server and q:find('releasedId, releasedAt = obj.id, core.getRealTime()', 1, true) ~= nil,
     string.format('client %s s, server %s ms', tostring(grace), tostring(server)))
+
+-- ============================================================ reconcile.lua against an engine-shaped frame
+-- Backlog 507 and the MP-READINESS-AUDIT same-frame class. frameworld.lua applies changes the way
+-- the engine does (removals at once, adds at the end of the frame); `frame()` is the tail of an
+-- engine frame: the global onUpdate ends (reconcile.nextFrame) and applyDelayedActions runs.
+print('reconcile.lua — inventories under the engine\'s end-of-frame rule')
+do
+  -- Its frame counter advances ONLY at the end of the global onUpdate; a player or object script
+  -- has its own copy of the module, whose in-flight adds would never expire.
+  local offenders = {}
+  for _, name in ipairs({ 'player', 'identity', 'social', 'puppet', 'avatar', 'companion', 'testkill', 'interp', 'menu' }) do
+    local f = io.open('./openmw/files/data/scripts/mp/' .. name .. '.lua')
+    if f then
+      local src = f:read('*a'); f:close()
+      if src:find("require('scripts.mp.reconcile')", 1, true) then offenders[#offenders + 1] = name end
+    end
+  end
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('reconcile.lua is required only in the global context, and the global onUpdate ends the frame',
+    #offenders == 0 and g:find('reconcile.nextFrame()', 1, true) ~= nil, table.concat(offenders, ', '))
+  -- The call sites the behavioural cases below stand for: revert any of them and this fails.
+  local ad = g:match('local function applyAvatarDoc%(id%)(.-)\nend\n') or ''
+  local pe = g:match('local function pushEquipmentToPuppet%(id%)(.-)\nend\n') or ''
+  local rt = g:match('local function restoreTick%(%)(.-)\nend\n') or ''
+  check('applyAvatarDoc reconciles through reconcile.reconcileInventory and reruns while anything is in flight',
+    ad:find('reconcile.reconcileInventory(', 1, true) ~= nil and ad:find('avatarDocDirty[id] = true', 1, true) ~= nil)
+  check('MP_AvatarState only marks the avatar; avatarDocTick applies once per frame',
+    g:find('avatarDocDirty[data.id] = true', 1, true) ~= nil and g:find('avatarDocTick()', 1, true) ~= nil)
+  check('pushEquipmentToPuppet counts what is in flight (reconcile.held), so a spawn grants an equipped item once',
+    pe:find('reconcile.held(inventory, key, grantId) == 0', 1, true) ~= nil and pe:find('countOf', 1, true) == nil)
+  check('the rejoin restore applies item states in a later frame (selfStatesTick), not in the grant frame',
+    rt:find('pendingSelfStates = {', 1, true) ~= nil and rt:find('applyItemStates', 1, true) == nil)
+  check('world-given spells wait for a doc applied in an earlier frame',
+    g:find('reconcile.worldGivenSpells(present, docSpells', 1, true) ~= nil)
+end
+do
+  package.loaded['scripts.mp.reconcile'] = nil
+  local R = require('scripts.mp.reconcile')
+  local FW = require('frameworld')
+  local function world()
+    local W = FW.new()
+    return W, function() R.nextFrame(); W.endFrame() end
+  end
+  local function recon(W, inv, items, extra)
+    local o = { inventory = inv, items = items, createObject = W.createObject, key = 'av', shed = true }
+    for k, v in pairs(extra or {}) do o[k] = v end
+    return R.reconcileInventory(o)
+  end
+
+  -- The stub itself must behave like objectbindings.cpp, or nothing below means anything.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('gem', 3)
+    local piece = inv:getAll()[1]:split(1)
+    local afterSplit = inv:countOf('gem')
+    piece:moveInto(inv)
+    local beforeFrame, pieceCount = inv:countOf('gem'), piece.count
+    frame()
+    check('frameworld: split lowers the stack at once, a moved piece reads 0, and it lands only at the end of the frame',
+      afterSplit == 2 and pieceCount == 0 and beforeFrame == 2 and inv:countOf('gem') == 3)
+    local threw = not pcall(function() piece:moveInto(inv) end)
+    check("frameworld: moving an object that already says 0 throws, as the engine's removeFn does", threw)
+  end
+
+  -- #1 SOUL GEMS. A stack of three walked as {n=2},{n=1,soul}: exactly one gem gets the soul.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('misc_soulgem_common', 3)
+    local n = R.applyItemStates(inv, 'misc_soulgem_common', { { n = 2 }, { n = 1, soul = 'mudcrab' } }, W.itemData, 'self')
+    frame()
+    check('item states: a soul for one gem fills ONE gem, not the whole stack of three',
+      n == 1 and inv:countWhere('misc_soulgem_common', 'soul', 'mudcrab') == 1 and inv:countOf('misc_soulgem_common') == 3,
+      string.format('applied=%d souled=%d total=%d', n, inv:countWhere('misc_soulgem_common', 'soul', 'mudcrab'), inv:countOf('misc_soulgem_common')))
+  end
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('iron_cuirass', 4)
+    R.applyItemStates(inv, 'iron_cuirass', { { n = 1 }, { n = 2, condition = 50 }, { n = 1 } }, W.itemData, 'self')
+    frame()
+    check('item states: a worn pair in the middle of a stack of four wears two, and the pack still holds four',
+      inv:countWhere('iron_cuirass', 'condition', 50) == 2 and inv:countOf('iron_cuirass') == 4)
+  end
+
+  -- #2 TWO DOCS IN ONE FRAME. The avatar must hold what the doc says once the frame is over.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    recon(W, inv, { { id = 'iron_cuirass', n = 3 } })
+    recon(W, inv, { { id = 'iron_cuirass', n = 3 } })
+    frame()
+    check('avatar: the same doc twice in one frame grants the shortfall once (not 6 cuirasses)',
+      inv:countOf('iron_cuirass') == 3, 'got ' .. inv:countOf('iron_cuirass'))
+    recon(W, inv, { { id = 'iron_cuirass', n = 5 } })
+    recon(W, inv, { { id = 'iron_cuirass', n = 7 } })
+    frame()
+    check('avatar: a rising count seen twice in one frame lands at the latest figure',
+      inv:countOf('iron_cuirass') == 7, 'got ' .. inv:countOf('iron_cuirass'))
+  end
+
+  -- #3 A DROP WHILE ADDS ARE IN FLIGHT. Doc says 5 (queued), then 0, in one frame: the pass says
+  -- it is not done, and the next frame's pass finishes it.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    recon(W, inv, { { id = 'iron_cuirass', n = 5 } })
+    local r = recon(W, inv, {})
+    frame()
+    local between = inv:countOf('iron_cuirass')
+    local r2 = recon(W, inv, {})
+    frame()
+    check('avatar: a drop landing while the grant is in flight is finished on the next frame, not left behind',
+      r.pending == true and between == 5 and inv:countOf('iron_cuirass') == 0 and r2.pending == false,
+      string.format('pending=%s between=%d after=%d', tostring(r.pending), between, inv:countOf('iron_cuirass')))
+  end
+
+  -- #4 SPAWN: the doc grant and the equipment grant in one frame hand over ONE item.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    recon(W, inv, { { id = 'dwemer_cuirass', n = 1 } }, { keep = { dwemer_cuirass = true } })
+    for _ = 1, 2 do -- pushEquipmentToPuppet runs twice at spawn
+      if R.held(inv, 'av', 'dwemer_cuirass') == 0 then R.moveInto(W.createObject('dwemer_cuirass', 1), inv, 'av', 'dwemer_cuirass') end
+    end
+    frame()
+    check('avatar spawn: the equipped cuirass is granted once, not three times',
+      inv:countOf('dwemer_cuirass') == 1, 'got ' .. inv:countOf('dwemer_cuirass'))
+  end
+
+  -- #5 ITEM STATES THEN A SECOND DOC IN THE SAME FRAME: the split pieces are in flight, not missing.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('iron_longsword', 3)
+    R.applyItemStates(inv, 'iron_longsword', { { n = 1, condition = 10 }, { n = 2 } }, W.itemData, 'av')
+    recon(W, inv, { { id = 'iron_longsword', n = 3 } })
+    frame()
+    check('avatar: a doc read in the frame an item state was split does not re-grant the split piece',
+      inv:countOf('iron_longsword') == 3 and inv:countWhere('iron_longsword', 'condition', 10) == 1,
+      'got ' .. inv:countOf('iron_longsword'))
+  end
+
+  -- #6 RELOG: states applied in the grant's own frame hit nothing; applied the next frame they land.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    local r = R.reconcileInventory({ inventory = inv, items = { { id = 'misc_soulgem_grand', n = 2 } },
+      createObject = W.createObject, key = 'self', shed = false })
+    local tooSoon = R.applyItemStates(inv, 'misc_soulgem_grand', { { n = 1, soul = 'golden saint' }, { n = 1 } }, W.itemData, 'self')
+    frame()
+    local later = R.applyItemStates(inv, 'misc_soulgem_grand', { { n = 1, soul = 'golden saint' }, { n = 1 } }, W.itemData, 'self')
+    frame()
+    check('restore: item states wait for the grant to land (0 applied in its frame, 1 the next), and the soul survives the relog',
+      r.pending == true and tooSoon == 0 and later == 1 and inv:countWhere('misc_soulgem_grand', 'soul', 'golden saint') == 1)
+  end
+
+  -- #7 A PLAYER'S OWN RESTORE never takes away what the debounced doc does not list.
+  do
+    local W, frame = world()
+    local inv = W.inventory()
+    inv:put('gold_001', 300)
+    inv:put('ingred_marshmerrow_01', 2)
+    R.reconcileInventory({ inventory = inv, items = { { id = 'gold_001', n = 261 } }, createObject = W.createObject, key = 'self', shed = false })
+    frame()
+    check('restore (shed=false): a surplus and an unlisted item stay -- picked up since the last flush',
+      inv:countOf('gold_001') == 300 and inv:countOf('ingred_marshmerrow_01') == 2)
+  end
+
+  -- #9 A CONTAINER'S CANONICAL STATE TWICE IN ONE FRAME (ContainerState + WorldCellState on
+  -- entry): it must hold the list, not twice the list.
+  do
+    local W, frame = world()
+    local chest = W.inventory()
+    chest:put('gold_001', 50)
+    chest:put('iron_dagger', 1)
+    local list = { { id = 'gold_001', n = 50 }, { id = 'misc_lockpick', n = 2 } }
+    local function apply() return R.reconcileInventory({ inventory = chest, items = list, createObject = W.createObject, key = 'c:chest', shed = true }) end
+    apply(); apply()
+    frame()
+    check('container: two canonical states in one frame hold the list once (no doubled loot)',
+      chest:countOf('gold_001') == 50 and chest:countOf('misc_lockpick') == 2 and chest:countOf('iron_dagger') == 0,
+      string.format('gold=%d picks=%d dagger=%d', chest:countOf('gold_001'), chest:countOf('misc_lockpick'), chest:countOf('iron_dagger')))
+  end
+
+  -- #8 PHANTOM SPELLS. The template NPC's spells on a fresh body are not the player's.
+  do
+    local tmpl = { present = { ['ancestor guardian'] = true, ['fireball'] = true, ['common disease'] = true },
+      doc = { ['fireball'] = true } }
+    local notYet = R.worldGivenSpells(tmpl.present, tmpl.doc, {}, nil)
+    local g = R.generation()
+    local sameFrame = R.worldGivenSpells(tmpl.present, tmpl.doc, {}, g)
+    R.nextFrame()
+    local later = R.worldGivenSpells({ fireball = true, ['common disease'] = true }, tmpl.doc, {}, g)
+    check('world-given spells: none before the doc is applied, none in its frame, then only what the doc lacks',
+      #notYet == 0 and #sameFrame == 0 and #later == 1 and later[1] == 'common disease',
+      string.format('notYet=%d sameFrame=%d later=%s', #notYet, #sameFrame, table.concat(later, ',')))
+  end
+end
+
+-- ============================================================ every MP_ handler, exercised
+-- MP-READINESS-AUDIT item 3: of ~127 MP_ handlers 3 were executed by any test. A handler that
+-- throws takes its whole subsystem down SILENTLY (the engine logs it and carries on), so the
+-- floor every one of them must meet is: a malformed server event -- an empty body, or none --
+-- does not throw. global.lua is loaded WHOLE here (its merged modules included), with engine
+-- calls the stubs do not model answered by a permissive stand-in: this exercises the handlers'
+-- own logic against bad input, not the engine.
+print('global.lua -- every MP_ handler in the global context survives an empty and a nil body')
+do
+  for _, m in ipairs({ 'scripts.mp.net', 'scripts.mp.identity', 'scripts.mp.json', 'scripts.mp.objects', 'scripts.mp.actors',
+      'scripts.mp.combat', 'scripts.mp.quests', 'scripts.mp.world', 'scripts.mp.admin', 'scripts.mp.reconcile' }) do
+    package.loaded[m] = nil
+  end
+  local env = stubs.install({ system = true })
+  -- ANYTHING: an engine value the stubs do not model. Indexing, calling and arithmetic answer
+  -- with another stand-in (arithmetic with 0), so a handler's own logic runs to its end.
+  local anything
+  local mt = {}
+  mt.__index = function() return anything end
+  mt.__call = function() return anything end
+  mt.__add = function() return 0 end; mt.__sub = mt.__add; mt.__mul = mt.__add; mt.__div = mt.__add
+  mt.__unm = function() return 0 end
+  mt.__concat = function(a, b) return tostring(type(a) == 'table' and '' or a) .. tostring(type(b) == 'table' and '' or b) end
+  mt.__len = function() return 0 end
+  mt.__tostring = function() return '<anything>' end
+  anything = setmetatable({}, mt)
+  local function permissive(t)
+    local old = getmetatable(t)
+    local oldIndex = old and old.__index
+    return setmetatable(t, { __index = function(tbl, k)
+      if oldIndex then
+        local v = type(oldIndex) == 'function' and oldIndex(tbl, k) or oldIndex[k]
+        if v ~= nil then return v end
+      end
+      return anything
+    end })
+  end
+  for _, name in ipairs({ 'openmw.world', 'openmw.core', 'openmw.types', 'openmw.util', 'openmw.interfaces', 'openmw.mp' }) do
+    permissive(package.loaded[name])
+  end
+  for _, sub in ipairs({ 'Actor', 'NPC', 'Item', 'Player' }) do permissive(env.types[sub]) end
+  permissive(env.core.magic); permissive(env.world.mwscript)
+
+  local okLoad, script = pcall(function() return assert(loadfile('./openmw/files/data/scripts/mp/global.lua'))() end)
+  check('global.lua loads whole under the stubs (merged modules included)', okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table',
+    tostring(script))
+  if okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table' then
+    -- What the engine does first: onInit runs start(), which hands every module its deps.
+    local okInit, errInit = pcall(script.engineHandlers.onInit)
+    check('global.lua onInit runs under the stubs (every module initialised)', okInit, tostring(errInit))
+    local names = {}
+    for name in pairs(script.eventHandlers) do if name:match('^MP_') then names[#names + 1] = name end end
+    table.sort(names)
+    local failures = {}
+    for _, name in ipairs(names) do
+      for _, body in ipairs({ 'empty', 'nil' }) do
+        local ok, err = pcall(script.eventHandlers[name], body == 'empty' and {} or nil)
+        if not ok then failures[#failures + 1] = name .. '(' .. body .. '): ' .. tostring(err):gsub('^.-:%d+: ', ''):sub(1, 90) end
+      end
+    end
+    check(string.format('every MP_ handler survives an empty and a nil body (%d handlers, %d calls)', #names, #names * 2),
+      #failures == 0, #failures .. ' threw:\n        ' .. table.concat(failures, '\n        '))
+  end
+end
+
+
+print('player.lua -- every MP_ handler in the player script survives an empty and a nil body')
+do
+  for _, m in ipairs({ 'scripts.mp.net', 'scripts.mp.identity', 'scripts.mp.json' }) do package.loaded[m] = nil end
+  local env = stubs.install({})
+  local anything
+  local mt = {}
+  mt.__index = function() return anything end
+  mt.__call = function() return anything end
+  mt.__add = function() return 0 end; mt.__sub = mt.__add; mt.__mul = mt.__add; mt.__div = mt.__add
+  mt.__unm = function() return 0 end
+  mt.__concat = function(a, b) return tostring(type(a) == 'table' and '' or a) .. tostring(type(b) == 'table' and '' or b) end
+  mt.__len = function() return 0 end
+  anything = setmetatable({}, mt)
+  local function permissive(t)
+    local old = getmetatable(t)
+    local oldIndex = old and old.__index
+    return setmetatable(t, { __index = function(tbl, k)
+      if oldIndex then
+        local v = type(oldIndex) == 'function' and oldIndex(tbl, k) or oldIndex[k]
+        if v ~= nil then return v end
+      end
+      return anything
+    end })
+  end
+  for _, name in ipairs({ 'openmw.core', 'openmw.types', 'openmw.util', 'openmw.interfaces', 'openmw.mp', 'openmw.self' }) do
+    permissive(package.loaded[name])
+  end
+  for _, name in ipairs({ 'openmw.ui', 'openmw.async', 'openmw.input', 'openmw.nearby' }) do
+    package.loaded[name] = permissive({})
+  end
+  for _, sub in ipairs({ 'Actor', 'NPC', 'Item', 'Player' }) do permissive(env.types[sub]) end
+  local okLoad, script = pcall(function() return assert(loadfile('./openmw/files/data/scripts/mp/player.lua'))() end)
+  check('player.lua loads whole under the stubs', okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table', tostring(script))
+  if okLoad and type(script) == 'table' and type(script.eventHandlers) == 'table' then
+    pcall(script.engineHandlers.onInit)
+    local names, failures = {}, {}
+    for name in pairs(script.eventHandlers) do if name:match('^MP_') then names[#names + 1] = name end end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      for _, body in ipairs({ 'empty', 'nil' }) do
+        local ok, err = pcall(script.eventHandlers[name], body == 'empty' and {} or nil)
+        if not ok then failures[#failures + 1] = name .. '(' .. body .. '): ' .. tostring(err):gsub('^.-:%d+: ', ''):sub(1, 90) end
+      end
+    end
+    check(string.format('every MP_ handler in player.lua survives an empty and a nil body (%d handlers)', #names),
+      #failures == 0 and #names >= 10, #failures .. ' threw:\n        ' .. table.concat(failures, '\n        '))
+  end
+end
+
+
+-- ============================================================ net.lua: the ladder after a crash
+-- s178: a player who got in through LOGIN (register refused: the account exists) lost the
+-- server to a crash. The crash took the resume token with it, so the redial fell to register --
+-- refused again -- and login, the rung that works, was never tried: triedLogin was still set
+-- from the first join, and the client sat in Failed. A welcome now starts a fresh ladder.
+print('net.lua -- a crash after a login join climbs the ladder again')
+do
+  fresh()
+  local env = stubs.install({ password = 'pw' })
+  local net = require('scripts.mp.net')
+  local json = require('scripts.mp.json')
+  local function authSent()
+    net.onOpen()
+    net.onJson(json.encode({ t = 'SessionHelloOk', serverName = 'test' }))
+    local last = env.calls.json[#env.calls.json]
+    return last and json.decode(last).t
+  end
+  local function refused(detail)
+    net.onJson(json.encode({ t = 'SessionDisconnect', code = 'AUTH_FAILED', detail = detail }))
+    net.onClose()
+  end
+  local function welcome(tok)
+    net.onJson(json.encode({ t = 'SessionWelcome', playerId = 7, sessionToken = tok, motd = '', characters = {} }))
+  end
+  net.start()
+  local first = authSent()
+  refused('account already exists')
+  local second = authSent()
+  welcome('tok1')
+  check('the first join is register, then login', first == 'SessionRegister' and second == 'SessionLoginRequest',
+    tostring(first) .. ' then ' .. tostring(second))
+
+  -- The crash: the socket drops, the redial presents the resume token, the new process never
+  -- heard of it.
+  net.state = 'Joined'
+  net.resumeToken = 'tok1' -- the engine parks it (the stub's setResumeToken keeps nothing)
+  net.onClose()
+  env.advance(120); net.tick()
+  local r = authSent()
+  refused('resume token expired or unknown')
+  local steps, rung = { r }, nil
+  for _ = 1, 3 do
+    if net.state == 'Failed' then break end
+    rung = authSent()
+    steps[#steps + 1] = rung
+    if rung == 'SessionLoginRequest' then break end
+    refused('account already exists')
+  end
+  check('after a crash the ladder reaches login instead of Failed',
+    rung == 'SessionLoginRequest' and net.state ~= 'Failed',
+    table.concat(steps, ' -> ') .. ' / state=' .. tostring(net.state))
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

@@ -244,3 +244,50 @@ test("an `own` tag on a weapon is ignored: the peer's wear still lands (backlog 
   assert.equal((worn.value as { itemStates: Record<string, { condition?: number }[]> }).itemStates.daedric_dai_katana?.[0]?.condition, 900,
     'the katana is not wear-proof');
 });
+
+// Backlog 507: a bucket is the AVATAR's stack layout, and the owner's client applies it by
+// splitting its own stacks. While the avatar holds a different number of a record than the
+// owner (it is still catching up), that layout describes a different pack -- applying it moved
+// the player's real count, and the thrashing counts left an avatar over-encumbered after a drop
+// (s151). Such a record is held back from the owner AND from the doc until the counts agree; a
+// record whose counts agree still flows in the same report.
+test('a report whose stacks count a different number than the owner holds does not reach the owner or the doc (backlog 507)', async (t) => {
+  const { peer, a } = await world(t);
+  drive(t, a);
+  a.sendEvent('PlayerInventory', {
+    items: [{ id: 'iron_cuirass', n: 5 }, { id: 'iron_longsword', n: 1 }],
+    itemStates: { iron_cuirass: [{ n: 5, condition: 400 }] },
+  });
+  await new Promise((r) => setTimeout(r, 150));
+  // The avatar holds NINE cuirasses in three stacks while the owner holds five; its sword agrees.
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: {
+      iron_cuirass: [{ n: 3, condition: 100 }, { n: 4 }, { n: 2, condition: 50 }],
+      iron_longsword: [{ n: 1, condition: 37 }],
+    } }],
+  });
+  const got = await a.waitEvent('SelfItemStates',
+    (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.iron_longsword));
+  const states = (got.value as { itemStates: Record<string, { n?: number; condition?: number }[]> }).itemStates;
+  assert.equal(states.iron_longsword?.[0]?.condition, 37, 'a record whose counts agree still reaches the owner');
+  assert.equal(states.iron_cuirass, undefined,
+    "the avatar's nine-cuirass layout must not be applied to an owner holding five");
+
+  // The doc keeps the owner's own layout for the held-back record: the next AvatarState carries it.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerInventory', { items: [{ id: 'iron_cuirass', n: 5 }, { id: 'iron_longsword', n: 1 }, { id: 'gold_001', n: 3 }] });
+  const st = await peer.waitEvent('AvatarState',
+    (v) => (v as { id?: number })?.id === a.playerId
+      && Boolean((v as { inventory?: { id: string }[] }).inventory?.some((i) => i.id === 'gold_001')));
+  const doc = (st.value as { itemStates?: Record<string, { n?: number; condition?: number }[]> }).itemStates;
+  assert.deepEqual(doc?.iron_cuirass, [{ n: 5, condition: 400 }], "the avatar's layout must not overwrite the doc's");
+
+  // Once the avatar holds the same five, its layout is the owner's and it lands.
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { iron_cuirass: [{ n: 4 }, { n: 1, condition: 90 }] } }],
+  });
+  const agreed = await a.waitEvent('SelfItemStates',
+    (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.iron_cuirass));
+  const cu = (agreed.value as { itemStates: Record<string, { n?: number; condition?: number }[]> }).itemStates.iron_cuirass;
+  assert.equal(cu?.[1]?.condition, 90, 'a layout that counts the same five reaches the owner');
+});

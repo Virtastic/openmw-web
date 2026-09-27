@@ -10,13 +10,23 @@ import { startServer, type RunningServer } from '../src/server';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
 const PEER_PASS = 'peer-secret-1';
+const TOKEN = 'redteam-dash';
+
+// What moderation recorded against an account (the dashboard overview's anomaly counts). The
+// refusals below are what a cheat meets; this is what the operator is told -- asserted too
+// (MP-READINESS-AUDIT: 9 of 13 signals were never checked).
+async function anomaliesOf(port: number, token: string, account: string): Promise<Record<string, number>> {
+  const r = await fetch(`http://127.0.0.1:${port}/admin/api/overview`, { headers: { authorization: `Bearer ${token}` } });
+  const o = await r.json() as { players: { account: string; anomalies: Record<string, number> }[] };
+  return o.players.find((p) => p.account === account)?.anomalies ?? {};
+}
 const NPC_REF = { __refnum: { index: 300, contentFile: 0 } };
 const NPC2_REF = { __refnum: { index: 301, contentFile: 0 } };
 
 async function boot(t: { after(fn: () => unknown): void }, extra: Record<string, unknown> = {}, override: Record<string, unknown> = {}) {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    configOverride: { limits: { maxConnsPerIp: 16 }, server: { password: PEER_PASS }, ...override }, ...extra });
+    configOverride: { limits: { maxConnsPerIp: 16 }, server: { password: PEER_PASS }, admin: { dashboardToken: TOKEN }, ...override }, ...extra });
   t.after(() => server.close());
   return { server, dataDir };
 }
@@ -121,6 +131,7 @@ test('#361 (past the join grace) the jump is refused unless a cast, door or conv
   await fence(a, b);
   assert.equal(b.inbox.events.filter((e) => e.name === 'PlayerCellChange' && (e.value as { id?: number }).id === a.playerId).length, 0,
     'a declared teleport with no cause was relayed');
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'jumper')).cell_jump, 1, 'the refused jump is recorded for moderation');
   a.sendEvent('CombatCast', { spellId: 'recall', casterId: a.playerId, kind: 'spell' }); // Recall
   a.sendCellChange('0,0', 3000, 0, 0);
   await b.waitEvent('PlayerCellChange', (v) => (v as { id?: number; x?: number }).id === a.playerId && (v as { x?: number }).x === 3000);
@@ -191,6 +202,7 @@ test('#364 a loose object must be within reach; a streamed actor is not an objec
   c.sendEvent('ObjectTakeRequest', { opId: 1, net: farId, cellKey: '5,6' });
   const far = (await c.waitEvent('ObjectTakeResult', (v) => (v as { opId: number }).opId === 1)).value as { ok: boolean; reason?: string };
   assert.equal(far.ok, false); assert.equal(far.reason, 'unreachable');
+  assert.ok(((await anomaliesOf(server.port, TOKEN, 'reacher')).object_reach ?? 0) >= 1, 'an out-of-reach take is recorded for moderation');
   c.sendEvent('ObjectMove', { net: nearId, cellKey: '5,6', x: 4000, y: 0, z: 0, rotZ: 0 }); // across the cell: refused
   c.sendEvent('ObjectTakeRequest', { opId: 2, net: nearId, cellKey: '5,6' });
   assert.equal(((await c.waitEvent('ObjectTakeResult', (v) => (v as { opId: number }).opId === 2)).value as { ok: boolean }).ok, true, 'a reachable object was refused (or the far move landed)');
@@ -201,6 +213,7 @@ test('#364 a loose object must be within reach; a streamed actor is not an objec
   c.sendEvent('ObjectTakeRequest', { opId: 3, ref: NPC_REF, cellKey: '5,5' });
   const actor = (await c.waitEvent('ObjectTakeResult', (v) => (v as { opId: number }).opId === 3)).value as { ok: boolean; reason?: string };
   assert.equal(actor.ok, false, 'a streamed actor was taken as loot');
+  assert.ok(((await anomaliesOf(server.port, TOKEN, 'reacher')).actor_ref ?? 0) >= 1, 'taking a streamed actor is recorded for moderation');
   c.sendEvent('ResyncRequest', { cellKey: '5,5' });
   const state = (await c.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '5,5')).value as { deleted: string[] };
   assert.equal(state.deleted.length, 0, 'a streamed actor was tombstoned');
@@ -220,6 +233,7 @@ test('#365 a first-open stack past 100 of anything but gold is clamped, the cont
   assert.deepEqual(Object.keys(state.containers).sort(), ['c:300:0', 'c:301:0'].sort(), 'both containers became canonical');
   const helms = state.containers['c:300:0']?.items.find((i) => i.id === 'daedric_helm');
   assert.equal(helms?.n, 100, 'the implausible stack was clamped, not trusted');
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'opener')).container_first_open, 1, 'the clamp is recorded once, for the helms only');
 });
 
 test('#366 a human lowers the party bounty only out of a conversation', async (t) => {
@@ -234,6 +248,7 @@ test('#366 a human lowers the party bounty only out of a conversation', async (t
   // does not keep 0 while the peer keeps hunting.
   const echo = (await a.waitEvent('CrimeUpdate')).value as { bounty: number; shared: boolean };
   assert.deepEqual(echo, { bounty: 40, shared: true }, 'the refused drop was not corrected on the sender');
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'thief')).crime_drop, 1, 'the refused pardon is recorded for moderation');
   await fence(a, b);
   assert.equal(b.inbox.events.filter((e) => e.name === 'CrimeUpdate').length, 0, "a bare drop cleared the party's record");
   a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true }); // the guard
@@ -424,4 +439,26 @@ test('#146 crime combat claims are rate-bounded; ActorSay is the peer\'s alone',
   const says = w.inbox.events.filter((e) => e.name === 'ActorSay').map((e) => e.value as { text: string });
   assert.equal(says.length, 1, "a human's ActorSay was relayed");
   assert.equal(says[0]!.text.length, 256, 'the subtitle was not bounded');
+});
+
+// A human may make an NPC follow them only out of a conversation with it (#363): a recruit is a
+// dialogue choice. A bare claim is dropped -- the NPC stays -- and recorded for moderation.
+test('a follow claim with no conversation is dropped and recorded; one inside the conversation stands', async (t) => {
+  const { server } = await boot(t);
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+  const { c } = await join(t, server, 'Recruiter');
+  peer.inbox.events.length = 0;
+  c.sendEvent('ActorAI', { cellKey: '0,0', ref: NPC_REF, follow: c.playerId });
+  await fence(c, peer);
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorAI' && (e.value as { follow?: number }).follow === c.playerId).length, 0,
+    'a follow claim with no conversation reached the peer');
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'recruiter')).follow_claim, 1, 'the bare claim is recorded for moderation');
+  c.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
+  assert.equal(((await c.waitEvent('DialogueLockResult')).value as { granted?: boolean }).granted, true);
+  c.sendEvent('ActorAI', { cellKey: '0,0', ref: NPC_REF, follow: c.playerId });
+  await peer.waitEvent('ActorAI', (v) => (v as { follow?: number }).follow === c.playerId);
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'recruiter')).follow_claim, 1, 'a recruit inside the conversation is not a flag');
 });

@@ -37,6 +37,15 @@
   try { hasClient = (await fetch('/index.html', { method: 'HEAD' })).ok; } catch { /* stays false */ }
   $('#noclient').hidden = hasClient;
 
+  // A FRIEND ON THE LAN OVER PLAIN HTTP cannot run the game: the engine needs cross-origin
+  // isolation, which browsers grant only to https:// (or this computer's own localhost). Say it
+  // here, before they sign in, rather than on the game page after (backlog 508, s179).
+  if (!self.isSecureContext) {
+    note('This page is plain <b>http://</b>, and the game only runs on a secure page. Use this '
+      + "server's <b>https://</b> address, or play on the server machine itself at "
+      + '<b>http://localhost</b>.', 'err');
+  }
+
   // WHICH KIND OF SERVER THIS IS. The wizard's answer decides which of the two boot modes the
   // player lands in, and it must be read before anybody signs in, because the mode is baked
   // into the fragment handed over at that moment.

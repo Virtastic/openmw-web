@@ -1,14 +1,14 @@
-// Diagnostic: boot ONE client and report the MP session state as it progresses, instead of
-// silently waiting for 'Joined'. Exists because a retail client rendered fine (smoke PASS)
-// yet never joined — proving the boot was healthy and the failure was in the session
-// handshake, which a boot-only check cannot distinguish.
+// s98: a RETAIL client joins, and says so. Boots ONE client waiting only for the engine to report a
+// session state (not for Joined), then traces the session as it progresses and asserts where it
+// ends. Exists because a retail client rendered fine (smoke PASS) yet never joined -- the boot
+// was healthy and the failure was in the session handshake, which a boot-only check cannot
+// distinguish. The trace is kept: when this fails, it is the first thing to read.
+import assert from 'node:assert/strict';
+
 export const bootTimeoutMs = 420_000;
 
-export const diagnostic = true; // asserts nothing: reported as DIAG, not counted as a PASS
 export default async function run(ctx) {
-  // Wait only for the engine to be up (it has reported a session state), NOT for Joined — the whole point
-  // is to observe how far the session actually gets.
-  // retail:true — must match s40/s41's boot, since the failure is retail-specific (the demo
+  // retail:true -- must match s40/s41's boot, since the failure was retail-specific (the demo
   // path joins fine in ~37s).
   const c = await ctx.launchClient('diag', '', {
     retail: true,
@@ -18,18 +18,18 @@ export default async function run(ctx) {
   });
   const deadline = Date.now() + 180_000;
   let last = null;
+  let s = {};
   while (Date.now() < deadline) {
-    const [state, err, serverName, playerId] = await Promise.all([
-      c.eval('window.omw.state.state'),
-      c.eval('window.omw.state.lastError'),
-      c.eval('window.omw.state.serverName'),
-      c.eval('window.omw.state.playerId'),
-    ]);
-    const line = `state=${state} err=${err} server=${serverName} id=${playerId}`;
+    s = await c.eval(`(() => { const o = window.omw.state; return { state: o.state, err: o.lastError,
+      server: o.serverName, id: o.playerId }; })()`);
+    const line = `state=${s.state} err=${s.err} server=${s.server} id=${s.id}`;
     if (line !== last) { ctx.log(line); last = line; }
-    if (state === 'Joined' || state === 'Failed') break;
+    if (s.state === 'Joined' || s.state === 'Failed') break;
     await ctx.sleep(2000);
   }
-  ctx.log('--- console tail ---');
-  ctx.log(c.logTail(40));
+  if (s.state !== 'Joined') { ctx.log('--- console tail ---'); ctx.log(c.logTail(40)); }
+  assert.equal(s.state, 'Joined', `the retail client never joined (last: ${last})`);
+  assert.ok(!s.err, `joined, but with an error on record: ${s.err}`);
+  assert.ok(String(s.server ?? '').length > 0, 'the welcome named the server');
+  assert.ok(Number(s.id) > 0, 'the welcome gave the client a player id');
 }

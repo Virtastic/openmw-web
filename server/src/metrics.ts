@@ -231,6 +231,7 @@ export const metrics = {
   // budget: msgs | bytes | login (these disconnect) | move_shed | actor_shed (these drop the
   // frame and keep the session — see Connection.onMessage).
   rateLimited: reg(new Counter('omwmp_rate_limited_total', 'Rate-limit trips, by which budget ran out.', ['budget'])),
+  avatarItemLayoutSkipped: reg(new Counter('omwmp_avatar_item_layout_skipped_total', 'Peer item-state buckets left out because the avatar held a different count than the doc (backlog 507).', [])),
 
   // Actor batches dropped on arrival. 'not_holder' is the anti-cheat surface: a client
   // authoring NPC state for a cell it does not hold. A steady non-zero rate from one

@@ -71,6 +71,9 @@ local openRetries = {} -- obj.id -> attempts so far
 -- just rewritten by a canonical ContainerState. Retried rather than applied once, because the
 -- recreated items do not exist until a later frame.
 local equipPending = {}
+-- Containers whose rewrite is not finished (adds in flight): rerun next frame (backlog R5).
+local containerRedo = {}
+local reconcile = require('scripts.mp.reconcile') -- global context only (see run.lua)
 local EQUIP_RESTORE_WINDOW = 3.0 -- give up after this; a permanent retry would leak the entry
 local lockWatch = {} -- obj.id -> {obj=, locked=, level=, until_=}
 -- Phase 4: obj.id -> last seen `enabled`. Unlike locks, an enable/disable is not tied to
@@ -294,14 +297,23 @@ local function setContainerContents(obj, items)
             end
         end
     end
+    -- RECONCILE, NOT REWRITE. This used to remove everything and create the list afresh --
+    -- and a second canonical state in the same frame (a ContainerState and a WorldCellState on
+    -- cell entry, a resync) found the store empty, since the first rewrite's creates land at the
+    -- end of the frame, removed nothing and created the whole list again: the container
+    -- doubled. reconcile.lua brings the store to the list counting what is in flight, and a
+    -- pass that is not finished runs again next frame (objects.tick).
     pcall(function()
-        for _, item in ipairs(content:getAll()) do
-            item:remove()
-        end
+        local list = {}
         for _, entry in ipairs(items or {}) do
-            local okc, created = pcall(function() return world.createObject(worldmp.toLocal(entry.id), entry.n) end)
-            if okc then created:moveInto(content) end
+            list[#list + 1] = { id = worldmp.toLocal(entry.id), n = entry.n or 1 }
         end
+        local r = reconcile.reconcileInventory({
+            inventory = content, items = list, key = 'c:' .. tostring(obj.id), shed = true,
+            createObject = function(rid, n) return world.createObject(rid, n) end,
+        })
+        if r.pending then containerRedo[obj.id] = { obj = obj, items = items, gen = reconcile.generation() }
+        else containerRedo[obj.id] = nil end
     end)
     -- DEFERRED, not inline. createObject+moveInto lands a frame or more later, so calling
     -- setEquipment here finds an empty store and fails silently -- identity.lua hit exactly
@@ -750,6 +762,7 @@ end
 local handlers = {}
 
 handlers.MP_ObjectSpawnAck = function(data)
+    if data.tempId == nil then return end -- no key, nothing to clear: t[nil] = nil throws, and a throwing handler goes silent
     local obj = pendingSpawns[data.tempId]
     pendingSpawns[data.tempId] = nil
     if not (obj and obj:isValid() and data.netId) then return end
@@ -1231,6 +1244,13 @@ end
 
 function objects.tick(now)
     frameNo = frameNo + 1
+    -- Finish container rewrites whose adds have landed since (setContainerContents).
+    for id, redo in pairs(containerRedo) do
+        if redo.gen < reconcile.generation() then
+            containerRedo[id] = nil
+            if redo.obj:isValid() then setContainerContents(redo.obj, redo.items) end
+        end
+    end
     -- Phase 4: watch the player's cell for scripted enable/disable. Cheap (a boolean read
     -- per object at 1 Hz) and only for the cell we are standing in. The fallback behind
     -- onScriptNote above, for an engine baked before the choke-point hook existed.
