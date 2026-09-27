@@ -127,7 +127,11 @@ export default async function run(ctx) {
   // judges what the crowd ADDS (<= CROWD_COST) and the absolute bar is proven from a real
   // browser's live telemetry instead. On a machine whose empty baseline meets the bar, the
   // absolute bar applies as written.
-  const CROWD_COST = Number(process.env.S177_CROWD_COST ?? 1.25);
+  // ADDED MILLISECONDS, NOT A RATIO. A crowd's cost adds to every frame; a ratio failed harder
+  // the faster the empty baseline was (#152 at 1 fps passed, #158 on the GPU failed, same code).
+  // The budget is config.default.toml's own (lodNearMaxAvatars 12 x ~1.2 ms + the rest x ~0.06)
+  // with 1.5x for the peer and the bots sharing this CPU; all 20 fully simulated still fails.
+  const CROWD_MS = Number(process.env.S177_CROWD_MS ?? 1.5 * (12 * 1.2 + Math.max(0, BOTS - 12) * 0.06));
   for (const [i, c] of crowded.entries()) {
     const b = base[i];
     const baseMeets = b.fpsMedian >= MIN_FPS && b.worstGapMs <= MAX_GAP_MS;
@@ -139,8 +143,10 @@ export default async function run(ctx) {
       // THROUGHPUT, not the single worst frame: at ~1 fps one GC or cell load is a 3 s outlier
       // on its own (#150: 1283 -> 3383 ms while the frame count went 58 -> 53, 9% slower). The
       // same measurement window rendered this many frames empty and crowded.
-      if (b.frames > 0 && c.frames * CROWD_COST < b.frames) {
-        fails.push(`${c.name}: the crowd cut the frames rendered ${b.frames} -> ${c.frames} (> x${CROWD_COST} slower)`);
+      const addedMs = WINDOW_MS / Math.max(1, c.frames) - WINDOW_MS / Math.max(1, b.frames);
+      ctx.log(`${c.name}: the crowd added ${addedMs.toFixed(1)} ms a frame (${b.frames} -> ${c.frames} frames; budget ${CROWD_MS.toFixed(1)})`);
+      if (b.frames > 0 && addedMs > CROWD_MS) {
+        fails.push(`${c.name}: the crowd added ${addedMs.toFixed(1)} ms a frame (${b.frames} -> ${c.frames}) > ${CROWD_MS.toFixed(1)}`);
       }
     }
   }

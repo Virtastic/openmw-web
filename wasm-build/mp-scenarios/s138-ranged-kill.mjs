@@ -95,6 +95,14 @@ export default async function run(ctx) {
   // arrow would cause. The KILL still has to be the avatar's arrows.
   // PROVOKED BY A REAL SHOT: the pointer taken like a player takes it, then the bow drawn and
   // released with the mouse button (it used to be a relay sting).
+  // Real shots are never forwarded under our name: the count must not move (COUNT, not a
+  // cleared mirror: the mirror is re-read from the engine, #137; s164's lesson). Taken before
+  // the provoking arrow, which is a real shot too.
+  const fwdBefore = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
+  // DEAD BY THE SERVER'S TALLY TOO. The provoking arrow can kill (#158: 18.4 damage, the world
+  // kill 87 ms later), and the probe is keyed by record: with two scribs about, it went on
+  // reading the live one, and the scenario shot at a mark it had already killed.
+  const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true) || /^${victim}=[1-9]/.test(window.omw.state.killCountOf||"")`;
   await focus(a);
   await a.cmd(`face:${Math.round(p0.x)},${Math.round(p0.y)},${Math.round(p0.z + 40)}`);
   await a.mouseHold(1500);
@@ -102,6 +110,7 @@ export default async function run(ctx) {
     const by = Date.now() + 60_000;
     let range = Infinity;
     while (Date.now() < by) {
+      if (await a.eval(deadExpr)) break;
       const q = (await probeOf(a, victim)) || p0;
       const meNow = JSON.parse(await a.eval('window.omw.state.pose||"{}"'));
       range = Math.hypot(q.x - meNow.x, q.y - meNow.y);
@@ -110,12 +119,9 @@ export default async function run(ctx) {
     }
     ctx.log(`the stung ${victim} is ${range.toFixed(0)} units off`);
   }
-  // Real shots are never forwarded under our name: the count must not move (COUNT, not a
-  // cleared mirror: the mirror is re-read from the engine, #137; s164's lesson).
-  const fwdBefore = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
-  const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   const deadline = Date.now() + 180_000;
-  let shots = 0, died = false;
+  let shots = 0, died = (await a.eval(deadExpr)) === true;
+  if (died) ctx.log(`the provoking arrow killed the ${victim}`);
   let skipped = 0;
   while (Date.now() < deadline && !died && shots < 24) {
     // The mark wanders. Aim at where it is NOW, and hold fire while it is out of a fair

@@ -301,12 +301,22 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
       player[field] = (player[field] ?? 0) + gained;
     }
     if (!r.hp && !r.mp && !r.ft) return true; // consumed, not applied
+    // Measured BEFORE the write: `cur` is the live doc the update below changes.
+    const gains = { hp: r.hp && r.hp.c - (cur?.hp?.c ?? r.hp.c), mp: r.mp && r.mp.c - (cur?.mp?.c ?? r.mp.c), ft: r.ft && r.ft.c - (cur?.ft?.c ?? r.ft.c) };
     ctx.store.update(player.charId, (doc) => {
       const d = doc.stats?.dynamic; if (!d) return;
       if (r.hp) d.hp = r.hp; if (r.mp) d.mp = r.mp; if (r.ft) d.ft = r.ft;
     }, 'sweep');
     const worldPeer = ctx.worldPeer();
-    if (worldPeer) worldPeer.peer.sendEvent('AvatarRestore', { id: player.id, ...(r.hp ? { hp: r.hp } : {}), ...(r.mp ? { mp: r.mp } : {}), ...(r.ft ? { ft: r.ft } : {}) });
+    // THE CHANGE RIDES ALONG AS `g`, and the avatar ADDS it. An absolute `c` raced the peer's
+    // report already in flight: that report (taken before this restore landed) overwrote the
+    // doc, the next claim's gain was added to the stale value, and a gain was lost per overlap
+    // -- a 50-point heal reached the avatar as +42 (s165 #158). `c` stays for the doc's sake.
+    const withG = (k: 'hp' | 'mp' | 'ft') => {
+      const v = r[k]; if (!v) return {};
+      return { [k]: { ...v, g: gains[k] } };
+    };
+    if (worldPeer) worldPeer.peer.sendEvent('AvatarRestore', { id: player.id, ...withG('hp'), ...withG('mp'), ...withG('ft') });
     return true;
   }
   // DEATH IS A FLUSH POINT. Everything else here rides the sweep, but hp reaching 0 must hit

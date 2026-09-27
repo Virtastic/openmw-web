@@ -1822,6 +1822,48 @@ do
   package.loaded['scripts.mp.actors'] = nil
 end
 
+print('s149 the harness kill takes a LIVE fish, never the corpse or one already dying')
+do
+  -- The dead stay in the cell's actor list and a kill lands at the END of the frame: the first
+  -- match was always the same fish, so four kills killed one and three bit on (#158).
+  fresh()
+  package.loaded['scripts.mp.actors'] = nil
+  local env = stubs.install({})
+  local cell = { isExterior = true, gridX = -3, gridY = -9 }
+  local function fish(name, hp, dead)
+    local scripts = {}
+    return { name = name, recordId = 'slaughterfish_small', cell = cell, hp = hp, dead = dead,
+      isValid = function() return true end,
+      hasScript = function(_, s) return scripts[s] == true end,
+      addScript = function(_, s) scripts[s] = true end }
+  end
+  local corpse, live1, live2 = fish('corpse', 0, true), fish('live1', 9, false), fish('live2', 9, false)
+  env.world.activeActors = { corpse, live1, live2 }
+  env.types.Player.objectIsInstance = function() return false end
+  env.types.Actor.isDead = function(o) return o.dead end
+  env.types.Actor.stats.dynamic.health = function(o) return { current = o.hp } end
+  local actors = require('scripts.mp.actors')
+  actors.init({ ownIdFn = function() return 7 end, ownCellKeyFn = function() return '-3,-9' end,
+    isMpPuppetFn = function() return false end })
+  local a1 = actors.killActorByRecord('slaughterfish_small')
+  local a2 = actors.killActorByRecord('slaughterfish_small')
+  local a3 = actors.killActorByRecord('slaughterfish_small')
+  check('two kills in one frame take two different live fish',
+    a1 and a2 and live1:hasScript('scripts/mp/testkill.lua') and live2:hasScript('scripts/mp/testkill.lua'))
+  check('the corpse is never picked', not corpse:hasScript('scripts/mp/testkill.lua'))
+  check('with every live fish already dying, a third kill finds nothing', a3 == false)
+  package.loaded['scripts.mp.actors'] = nil
+end
+
+print('s172 the avatar drops standing time from a backlog instead of lagging for good')
+do
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  check('a standing segment is skipped while the queue is beyond SEGS_LAG_S',
+    av:find("while #segs > 1 and backlog > SEGS_LAG_S and (segs[1].d.move or 0) == 0 and (segs[1].d.side or 0) == 0 do", 1, true) ~= nil)
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('the avatar stream gate sits under the 50 ms peer frame', gl:find('local AVATAR_STREAM_EVERY = 0.04', 1, true) ~= nil)
+end
+
 print('#431 a fresh holder streams no bars for a cell until the world record has answered')
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')

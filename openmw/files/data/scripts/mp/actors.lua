@@ -1081,7 +1081,14 @@ end
 function actors.killActorByRecord(recordId)
     watchKillRecord = recordId
     for _, obj in ipairs(cellActors(deps.ownCellKeyFn())) do
-        if obj.recordId == recordId then
+        -- NOT A CORPSE, NOT ONE ALREADY DYING: the first match was always the same fish (the
+        -- dead stay in the cell's list, and a kill lands at the END of the frame), so four
+        -- kills killed one and the rest bit on (#158 s149).
+        local okL, alive = pcall(function()
+            return not types.Actor.isDead(obj) and types.Actor.stats.dynamic.health(obj).current > 0
+                and not obj:hasScript('scripts/mp/testkill.lua')
+        end)
+        if obj.recordId == recordId and okL and alive then
             -- Dynamic-stat writes are Self-gated: setting health from here silently fails
             -- (a pcall around it just hides the error). Attach a one-shot CUSTOM script to
             -- reach the actor's own Self context instead.

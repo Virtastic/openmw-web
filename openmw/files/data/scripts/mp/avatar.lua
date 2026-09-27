@@ -45,6 +45,7 @@ local FRAME_STEP_MAX = 200 -- a per-frame move beyond this is a teleport, not a 
 local timed = false
 local segs = {} -- {t = seconds left, d = the controls for them}, played in order
 local SEGS_MAX_S = 0.5 -- a 200 ms hitch plus a burst behind it; beyond that the correction absorbs it
+local SEGS_LAG_S = 0.1 -- queued beyond this, a standing segment is skipped rather than waited out
 local lastDone = nil -- seq of the newest input whose time has been played in full
 local prevTimed = nil -- the controls the NEXT input's time was spent under (see mpAvatarInput)
 local sinceDone = util.vector3(0, 0, 0)
@@ -240,6 +241,16 @@ return {
             local doneAtRead = lastDone
             if timed then
                 local left, mSum, sSum, tail, done = frameDt, 0, 0, 0, false
+                -- THE QUEUE ONLY EVER GREW. Each frame spends its own dt, so one peer hitch or a
+                -- late burst of input was lag for every observer for good (s172 #158: the pose
+                -- 1.15 s behind, the owner corrected 117 u). Time the owner spent STANDING moves
+                -- nothing, so it is the lag that can be dropped: skipped, the body catches up.
+                local backlog = 0
+                for _, sg in ipairs(segs) do backlog = backlog + sg.t end
+                while #segs > 1 and backlog > SEGS_LAG_S and (segs[1].d.move or 0) == 0 and (segs[1].d.side or 0) == 0 do
+                    local s = table.remove(segs, 1)
+                    backlog, ctl, lastDone, done = backlog - s.t, s.d, s.d.seq, true
+                end
                 while left > 0 and #segs > 0 do
                     local s = segs[1]
                     local use = math.min(s.t, left)
@@ -348,7 +359,10 @@ return {
                     if d then
                         local stat = types.Actor.stats.dynamic[statName](self)
                         if d.b then stat.base = d.b end
-                        if d.c then stat.current = d.c end
+                        -- A restore carries its change (`g`, playerstate.ts): added to what the
+                        -- body holds NOW, so a bite or a report in between is not undone (s165).
+                        if d.g then stat.current = math.max(0, math.min(stat.base, stat.current + d.g))
+                        elseif d.c then stat.current = d.c end
                     end
                 end
             end)

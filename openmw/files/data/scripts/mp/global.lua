@@ -573,7 +573,9 @@ local avatarUsing = {} -- id -> the use bit of the newest routed input (mirrors 
 local lastInputFlags = {} -- id -> flags of the newest routed input
 local jumpPending = {} -- id -> true until the next avatar stream entry has carried the edge
 local avatarStreamAt = 0
-local AVATAR_STREAM_EVERY = 0.05 -- 20 Hz, matching the peer's own frame pacing
+-- Under the peer's 50 ms frame, not equal to it: at 0.05 a 49.9 ms frame missed the gate and
+-- every other frame went unsent (s172 #158: 83 ms median between poses, not 50).
+local AVATAR_STREAM_EVERY = 0.04
 
 -- Phase 2b: full character docs for PEER-side avatars, keyed by connection id. A cosmetic
 -- puppet only needs a look; the peer's copy must FIGHT and TRADE correctly, so the server

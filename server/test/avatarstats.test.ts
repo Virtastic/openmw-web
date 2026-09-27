@@ -255,7 +255,17 @@ test('a claim carrying its gain as `d` lands on top of the doc, not on the stale
   a.sendEvent('PlayerStatsDynamic', { hp: { c: 25, b: 100, d: 5 } });
   await restore(35);
   a.sendEvent('PlayerStatsDynamic', { hp: { c: 22, b: 100, d: 2.5 } });
-  await restore(37.5);
+  const r3 = await restore(37.5);
+  // THE CHANGE TRAVELS, NOT ONLY THE BAR (s165 #158: a 50-point heal reached the avatar as +42).
+  // A peer report taken before the last restore landed puts the doc back to 20; the next
+  // claim's absolute `c` is then 25 -- set on a body already at 37.5, it would undo two
+  // restores. `g` is what the avatar adds to what it holds.
+  assert.equal((r3.value as { hp?: { g?: number } }).hp?.g, 2.5, 'a restore carries its change');
+  peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(20) }] });
+  await new Promise((r) => setTimeout(r, 250)); // the stale report lands in the doc first
+  const r4 = restore(25);
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 25, b: 100, d: 5 } });
+  assert.equal(((await r4).value as { hp?: { g?: number } }).hp?.g, 5, 'the gain after a stale report is the claim, not the stale difference');
   // Gains only for health: a negative `d` is the peer's business and changes nothing.
   peer.inbox.events.length = 0;
   a.sendEvent('PlayerStatsDynamic', { hp: { c: 5, b: 100, d: -20 } });
