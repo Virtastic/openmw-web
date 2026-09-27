@@ -11,6 +11,7 @@
 // here) and retreats 450 units; the creature must
 // close to melee reach within 15 s.
 import assert from 'node:assert/strict';
+import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 
 export const managedPeer = true;
 const STEP = 30_000;
@@ -55,13 +56,14 @@ export default async function run(ctx) {
   await b.cmd(`snapto:${Math.round(p0.x + 60)},${Math.round(p0.y)},${Math.round(p0.z + 8)}`);
   await b.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
   await b.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
+  // Provoked FOR REAL and weakly (longblade 5): hurt, not killed, so it has a reason to chase.
   let hurt = false;
-  for (let stings = 0; stings < 4 && !hurt; stings++) {
-    await b.cmd(`hitn:${victim}:1`);
-    await ctx.sleep(2_000);
+  await focus(b); await armMelee(b, undefined, 5);
+  await swingUntil(ctx, b, () => probeRec(b, victim), async () => {
     const q = await probeOf(b, victim);
     hurt = !!q && Number(q.hp) < Number(p0.hp);
-  }
+    return hurt;
+  }, { maxSwings: 8, budgetMs: 90_000 });
   const stung = await probeOf(b, victim);
   ctx.log(`the mark: the peer's "${victim}" hp ${p0.hp} -> ${(stung || {}).hp} (hurt=${hurt}); B retreats ${RETREAT} u`);
   assert.ok(hurt, `the ${victim} was never hurt by the sting; nothing to provoke a chase with`);

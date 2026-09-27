@@ -14,6 +14,7 @@
 // and hold the use bit long enough to draw and release. The creature must die on our screen,
 // and no hit may have gone out under our own name (hitFwd stays unset: the peer did it).
 import assert from 'node:assert/strict';
+import { focus } from './_realfight.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 const docInventory = (ctx) => {
@@ -92,7 +93,11 @@ export default async function run(ctx) {
   // straight at the archer, and an arrow into a charging creature at 100-300 units lands.
   // The sting is the relay test hit (1 point) -- the same aggro a real player's first
   // arrow would cause. The KILL still has to be the avatar's arrows.
-  await a.cmd(`hitn:${victim}:1`);
+  // PROVOKED BY A REAL SHOT: the pointer taken like a player takes it, then the bow drawn and
+  // released with the mouse button (it used to be a relay sting).
+  await focus(a);
+  await a.cmd(`face:${Math.round(p0.x)},${Math.round(p0.y)},${Math.round(p0.z + 40)}`);
+  await a.mouseHold(1500);
   {
     const by = Date.now() + 60_000;
     let range = Infinity;
@@ -105,10 +110,9 @@ export default async function run(ctx) {
     }
     ctx.log(`the stung ${victim} is ${range.toFixed(0)} units off`);
   }
-  // The sting itself went out under our name (it is the relay hook); the KILL must not.
-  // COUNT, not clear: the mirror is re-read from the engine, so a page-side clear does not
-  // stick and the sting's own 'net:1.0' read as a forwarded kill (#137; s164's lesson).
-  const fwdBefore = String(await a.eval('window.omw.state.hitFwdCount'));
+  // Real shots are never forwarded under our name: the count must not move (COUNT, not a
+  // cleared mirror: the mirror is re-read from the engine, #137; s164's lesson).
+  const fwdBefore = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   const deadline = Date.now() + 180_000;
   let shots = 0, died = false;
@@ -128,7 +132,7 @@ export default async function run(ctx) {
     await a.cmd('stance:weapon'); // the avatar mirrors OUR stance bit
     await ctx.sleep(300);
     if (shots === 0) ctx.log(`after facing: pose=${await a.eval('window.omw.state.pose')} div=${await a.eval('window.omw.state.selfDivergence')}`);
-    await a.cmd('attack:1500'); // draw for 1.5 s, then the release is the shot
+    await a.mouseHold(1500); // the mouse button held 1.5 s: the draw, and the release is the shot
     shots++;
     // TRACK THE MARK THROUGH THE DRAW, as an archer does: a scrib walks 100 units a second
     // and an aim taken before a 1.5 s draw is a shot at where it was.
@@ -155,7 +159,7 @@ export default async function run(ctx) {
       ctx.log(`shot ${shots}: me=${await a.eval('window.omw.state.pose')} mark=(${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) dead=${q.dead} div=${await a.eval('window.omw.state.selfDivergence')} flags=${await a.eval('window.omw.state.selfFlags')} batchesIn=${await a.eval('window.omw.state.actorBatchesIn')} hp=${await a.eval('window.omw.state.hp')}`);
     }
   }
-  const fwd = String(await a.eval('window.omw.state.hitFwdCount'));
+  const fwd = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
   ctx.log(`${shots} shot(s) loosed by the avatar; dead=${died}; forwards ${fwdBefore} -> ${fwd}; selfFlags=${await a.eval('window.omw.state.selfFlags')}`);
   assert.ok(died, `the ${victim} never died after ${shots} shots: the avatar did not draw, did not release, missed every time, or its hits are not applied by the peer`);
   assert.equal(fwd, fwdBefore, `a real ranged hit went out under the OWNER's name (forwards ${fwdBefore} -> ${fwd}); the peer's avatar must be the one shooting`);

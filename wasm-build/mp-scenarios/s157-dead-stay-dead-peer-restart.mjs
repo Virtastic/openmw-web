@@ -10,6 +10,7 @@
 // the wire key first. Kill an NPC (s109), restart the peer, and expect the corpse to
 // stay a corpse on both screens.
 import assert from 'node:assert/strict';
+import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 import { pickUntil } from './_probe.mjs';
 
 const STEP = 30_000;
@@ -34,13 +35,11 @@ export default async function run(ctx) {
   assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   // 180 s: at #116's frame rate the test hits landed 8 s apart and 90 s was eleven of them.
-  const deadline = Date.now() + 180_000;
-  let died = false;
-  while (Date.now() < deadline && !died) {
-    await a.cmd(`hitn:${victim}:40`);
-    await ctx.sleep(600);
-    died = (await a.eval(deadExpr)) === true;
-  }
+  // Killed FOR REAL: W to walk up, the mouse button to swing (_realfight.mjs).
+  await focus(a); await armMelee(a);
+  const fight = await swingUntil(ctx, a, () => probeRec(a, victim), async () => (await a.eval(deadExpr)) === true, { budgetMs: 240_000 });
+  const died = fight.done;
+  ctx.log(`${fight.swings} real swing(s)`);
   assert.ok(died, `"${victim}" never died (s118 covers the fight)`);
   await b.waitFor(deadExpr, STEP, 'B sees it dead');
   ctx.log(`"${victim}" is dead in "${inside}" on both screens; restarting the peer`);

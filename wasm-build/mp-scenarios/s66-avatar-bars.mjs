@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { focus, armMelee, swingUntil } from './_realfight.mjs';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 export const bootTimeoutMs = 420_000;
@@ -82,14 +83,18 @@ export default async function run(ctx) {
   const parse = (s) => { const m = /^(\d+)\/(\d+)$/.exec(String(s ?? '')); return m ? Number(m[1]) : null; };
   await victim.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', STEP_TIMEOUT, 'the peer reports the victim\'s bars');
   const before = parse(await victim.eval('window.omw.state.selfStats'));
-  const hitUntil = Date.now() + 45_000;
+  // PvP FOR REAL: the attacker walks up to the victim's body on its own screen (W) and swings
+  // the mouse button at it. It used to be the hitp: relay hook, which put a blow on the wire
+  // with no swing at all.
   let dropped = false;
-  while (Date.now() < hitUntil && !dropped) {
-    await attacker.cmd(`hitp:${victimId}:15`);
-    await ctx.sleep(1500);
+  const victimOnAttacker = async () => JSON.parse(await attacker.eval('window.omw.state.puppets||"{}"'))[String(victimId)] || null;
+  await focus(attacker); await armMelee(attacker);
+  const fight = await swingUntil(ctx, attacker, victimOnAttacker, async () => {
     const cur = parse(await victim.eval('window.omw.state.selfStats'));
     if (cur !== null && cur <= before - 1) dropped = true;
-  }
+    return dropped;
+  }, { maxSwings: 20, budgetMs: 120_000 });
+  ctx.log(`${fight.swings} real swing(s) at the victim`);
   const marker = await victim.eval('window.omw.state.selfStats');
   ctx.log(`selfStats before=${before} after=${marker}`);
   assert.ok(dropped,

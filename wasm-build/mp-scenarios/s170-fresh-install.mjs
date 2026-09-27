@@ -23,6 +23,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { adminApi } from './_gateway.mjs';
 import { drown } from './_death.mjs';
+import { focus } from './_realfight.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GW_PORT = 18700; // below the 18860..19150 band the other gateway scenarios use
@@ -561,9 +562,10 @@ export default async function run(ctx) {
   // The sting (a relay hit, refused by a production-shaped server: combat_hit_refused) is the
   // only hit this client ever forwards; it goes out when the engine reaches it, which can be
   // after a page-side clear of the mirror (fresh62). Count forwards instead, like s164.
-  await host.cmd(`hitn:${victim}:1`);
-  await host.waitFor('Number(window.omw.state.hitFwdCount||0) > 0', 20_000, 'the sting went out').catch(() => {});
-  const fwdBefore = String(await host.eval('window.omw.state.hitFwdCount'));
+  // NO STING (a production-shaped server refuses the relay anyway): the fight is REAL swings --
+  // the pointer taken like a player takes it, the mouse button held -- and none is forwarded.
+  await focus(host);
+  const fwdBefore = String(await host.eval('String(window.omw.state.hitFwdCount||0)'));
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   // WHERE THE AVATAR IS, not where the local body is: at a frame every few seconds the body
   // lags its avatar by hundreds of units (445; fresh29: divergence 314, zero swings in 180 s
@@ -621,7 +623,8 @@ export default async function run(ctx) {
       else await ctx.sleep(1_000);
       continue;
     }
-    await host.evalAsync(`Promise.all([window.omw.send('face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}', 120000), window.omw.send('stance:weapon', 120000), window.omw.send('attack:1500', 120000)]).then(function(r){ if (!r.every(function(x){ return x.ok; })) throw new Error('swing cmd failed: ' + JSON.stringify(r)); return 'ok'; })`);
+    await host.evalAsync(`Promise.all([window.omw.send('face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}', 120000), window.omw.send('stance:weapon', 120000)]).then(function(r){ if (!r.every(function(x){ return x.ok; })) throw new Error('swing cmd failed: ' + JSON.stringify(r)); return 'ok'; })`);
+    await host.mouseHold(1500); // the swing: the mouse button, held
     swings++; dry++;
     const tSwing = Date.now() - t0;
     if (swings % 5 === 1) { const av = await avatarPos(); const q = (await probeOf(host, victim)) || {}; ctx.log(`  swing ${swings}: avatar (${Math.round(av.x)},${Math.round(av.y)},${Math.round(av.z)}) mark (${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) range ${Math.hypot(q.x - av.x, q.y - av.y).toFixed(0)} hp=${q.hp} dead=${q.dead} div=${st.div} flags=${await host.eval('window.omw.state.selfFlags')}`); }
@@ -637,7 +640,7 @@ export default async function run(ctx) {
     await ctx.sleep(2_000);
   }
   assert.ok(died, `the ${victim} never died after ${swings} swings`);
-  assert.equal(String(await host.eval('window.omw.state.hitFwdCount')), fwdBefore, 'the owner sent no hit of its own during the fight');
+  assert.equal(String(await host.eval('String(window.omw.state.hitFwdCount||0)')), fwdBefore, 'the owner sent no hit of its own during the fight');
   await guest.waitFor(deadExpr, STEP, "the creature is dead on the friend's screen too");
   ctx.log(`ok: the peer's ${victim} killed with ${swings} real swing(s)`);
 

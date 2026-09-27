@@ -8,6 +8,7 @@
 // it proved the test hook's gate, not the game's (backlog 238). B's peer-reported bars must
 // be untouched over ten seconds of swinging, and no relay hit may go out under A's name.
 import assert from 'node:assert/strict';
+import { focus } from './_realfight.mjs';
 
 export const managedPeer = true; // the avatar swings on the server's own peer
 const STEP = 30_000;
@@ -43,12 +44,13 @@ export default async function run(ctx) {
   const hpBefore = Number(await b.eval('window.omw.state.hp||"0"'));
   ctx.log(`pvp off: A swings at B's puppet from 60 units; B at ${before.c}/${before.b} (own bar ${hpBefore})`);
 
+  await focus(a); // the pointer taken like a player takes it: the swings below are the mouse button
   const until = Date.now() + SWING_MS;
   let swings = 0, lowest = before.c;
   while (Date.now() < until) {
     const q = JSON.parse(await a.eval(`JSON.stringify(${puppetOfB})`));
     await a.cmd(`face:${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z + 40)}`);
-    await a.cmd('attack:1200'); swings++;
+    await a.mouseHold(1200); swings++;
     await ctx.sleep(1_500);
     const cur = parseBars(await b.eval('window.omw.state.selfStats')) || before;
     lowest = Math.min(lowest, cur.c);

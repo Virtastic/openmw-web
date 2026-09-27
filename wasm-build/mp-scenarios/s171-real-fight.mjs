@@ -115,12 +115,9 @@ export default async function run(ctx) {
     await a.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'x'");
     await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar is beside us').catch((e) => ctx.log('  (avatar settle: ' + e.message + ')'));
   }
-  // One sting: a scrib will not start a fight on its own (s110's idiom). Relay-only, and
-  // counted, so it is told apart from the real swings.
-  await a.cmd(`hitn:${victim}:1`);
-  // The sting's own forward lands before the baseline -- waited for, not slept on (s164, #152).
-  await a.waitFor('Number(window.omw.state.hitFwdCount || 0) >= 1', 30_000, 'the test sting was forwarded');
-  const fwd0 = String(await a.eval('window.omw.state.hitFwdCount'));
+  // NO STING: the fight below starts it with a real swing (a scrib will not come on its own, so the
+  // loop walks up to it). Real swings are never forwarded, so the count must not move at all.
+  const fwd0 = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
   const fps = JSON.parse(await a.evalAsync('new Promise(function(r){var n=0,t0=performance.now();function f(){n++; if(performance.now()-t0<2000) requestAnimationFrame(f); else r(JSON.stringify({fps:n/((performance.now()-t0)/1000)}));} requestAnimationFrame(f);})'));
   ctx.log(`client rAF rate ${fps.fps.toFixed(1)}/s`);
 
@@ -255,7 +252,7 @@ export default async function run(ctx) {
   });
   ctx.log(`SWINGS: ${swings.length} real in-range swings; selfFlags use-bit samples=${selfSwing}; avatar swing windows on the peer=${avSwings.length} (engine attacking in ${avSwings.filter((w) => w.atk).length}); peer hp drops=${hpDrops.length} [${hpDrops.map((h) => h.from.toFixed(0) + '->' + h.to.toFixed(0)).join(' ')}]; bars reach the browser after ${lat.map(f0).join(',')} ms`);
   for (const l of perSwing) ctx.log('  swing ' + l);
-  const fwd1 = String(await a.eval('window.omw.state.hitFwdCount'));
+  const fwd1 = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
   ctx.log(`hitFwdCount ${fwd0} -> ${fwd1} (real swings must not forward); client probe hp ${samples[0]?.pr?.hp} -> ${samples.at(-1)?.pr?.hp}`);
 
   // ---------------------------------------------------------------- 4. claims

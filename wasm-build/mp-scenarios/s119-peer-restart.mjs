@@ -7,6 +7,7 @@
 // certainly see; if the restart does not put the NPCs back under authority, the fight a
 // player was in freezes forever and every swing after it says nothing.
 import assert from 'node:assert/strict';
+import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 import { execSync } from 'node:child_process';
 
 export const managedPeer = true;
@@ -28,14 +29,12 @@ async function waitHolder(ctx, c, pred, ms, what) {
 
 async function killAndProve(ctx, a, b, victim) {
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  const deadline = Date.now() + 90_000;
-  let died = false;
-  while (Date.now() < deadline && !died) {
-    await a.cmd(`hitn:${victim}:40`);
-    await b.cmd(`hitn:${victim}:40`);
-    await ctx.sleep(600);
-    died = (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
-  }
+  // FOR REAL, both players at once: W to walk up, the mouse button to swing (_realfight.mjs).
+  for (const c of [a, b]) { await focus(c); await armMelee(c); }
+  const isDead = async () => (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
+  const fights = await Promise.all([a, b].map((c) => swingUntil(ctx, c, () => probeRec(c, victim), isDead, { budgetMs: 240_000 })));
+  ctx.log(`real swings: A ${fights[0].swings}, B ${fights[1].swings}`);
+  const died = await isDead();
   return died;
 }
 

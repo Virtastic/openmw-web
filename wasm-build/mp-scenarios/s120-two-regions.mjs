@@ -6,6 +6,7 @@
 // north must BOTH see their NPC die. Before the anchor design a peer simulated the one cell
 // it stood in and everyone else fought statues.
 import assert from 'node:assert/strict';
+import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 import { pickUntil } from './_probe.mjs';
 
 export const managedPeer = true;
@@ -17,13 +18,11 @@ const holderOf = async (c) => String(await c.eval('window.omw.state.authorityHol
 
 async function killOne(ctx, c, victim, label) {
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  const deadline = Date.now() + 90_000;
-  let died = false;
-  while (Date.now() < deadline && !died) {
-    await c.cmd(`hitn:${victim}:60`);
-    await ctx.sleep(600);
-    died = (await c.eval(deadExpr)) === true;
-  }
+  // FOR REAL: W to walk up, the mouse button to swing (_realfight.mjs).
+  await focus(c); await armMelee(c);
+  const fight = await swingUntil(ctx, c, () => probeRec(c, victim), async () => (await c.eval(deadExpr)) === true, { budgetMs: 240_000 });
+  const died = fight.done;
+  ctx.log(`${label}: ${fight.swings} real swing(s)`);
   ctx.log(`${label}: "${victim}" ${died ? 'died' : 'NEVER died'} (holder=${await holderOf(c)}, hitFwd=${await c.eval('window.omw.state.hitFwd')})`);
   return died;
 }

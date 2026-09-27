@@ -9,6 +9,7 @@
 // wild creature and holding the use bit until the probe says it is dead -- with hitFwd
 // never set (the owner's copy sent nothing; the peer did it), and the death on B's screen.
 import assert from 'node:assert/strict';
+import { focus, swingUntil } from './_realfight.mjs';
 
 export const managedPeer = true; // the avatar swings on the server's own peer, anchored on us
 const STEP = 30_000;
@@ -55,86 +56,20 @@ export default async function run(ctx) {
   await a.cmd('stance:weapon');
   await a.waitFor('window.omw.state.stance === "weapon"', 10_000, 'the sword is drawn');
 
-  // Beside it, and provoked with ONE relay sting (s138's idiom: a stung creature comes at
-  // you, a wandering one walks out of reach mid-swing). The sting goes out under our name;
-  // the mirror is cleared after it, and the KILL must not.
-  const p0 = await probeOf(a, victim);
-  // A SNAP UNDER 256 u IS NEVER ANNOUNCED (player.lua sends PlayerCellChange for a same-cell
-  // jump past SNAP_DIST only), so the avatar stays put and reconciliation drags the body back
-  // before it ever "arrives" (#120: the mark 246 u away, 60 s without a settled divergence).
-  // From closer than 300 u, step 300 u away first so the approach is a jump the server sees.
-  {
-    const me0 = await poseOf(a);
-    const d0 = Math.hypot(p0.x - me0.x, p0.y - me0.y);
-    if (d0 < 300) {
-      const bx = Math.round(me0.x - ((p0.x - me0.x) / d0) * 300), by = Math.round(me0.y - ((p0.y - me0.y) / d0) * 300);
-      ctx.log(`  the mark is ${d0.toFixed(0)} u away: stepping back 300 first so the approach is announced`);
-      await a.cmd(`snapto:${bx},${by},${Math.round(me0.z + 8)}`);
-      await a.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
-      await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar followed the step back');
-    }
-  }
-  await a.cmd(`snapto:${Math.round(p0.x + 60)},${Math.round(p0.y)},${Math.round(p0.z + 8)}`);
-  // THE AVATAR MUST RULE before a swing means anything (s138): after a teleport the server
-  // ignores the peer's poses until the avatar has followed; selfDivergence is written only
-  // from an accepted peer pose.
-  await a.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
-  await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
-  await a.cmd(`hitn:${victim}:1`);
-  // WAIT FOR THE STING'S OWN FORWARD, not a fixed 2 s (#152): a client drawing a frame every ~2 s
-  // counted it AFTER the snapshot below, and the scenario blamed the real swings for it.
-  await a.waitFor('Number(window.omw.state.hitFwdCount || 0) >= 1', 30_000, 'the test sting was forwarded');
-  // The mirror cannot be cleared from the page (re-read from the engine each frame): count
-  // forwards instead, and require the count not to move while the avatar does the killing.
-  const fwdBefore = String(await a.eval('window.omw.state.hitFwdCount'));
-
+  // THE FIGHT, FOR REAL: the pointer taken, W held to walk up, the mouse button held to swing
+  // (_realfight.mjs). This used to be the attack: hook -- the use bit on the stream with no
+  // button pressed -- and a relay sting to start it.
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  // 90 s bought 27 swings in #114 and the forager sat at 3 hp (31 -> 3: the hits land, a
-  // level-1 swing just misses often). Three minutes is the budget a kill needs, not a hit.
-  const deadline = Date.now() + 300_000; // five minutes: a scrib on the move costs a snap a cycle
-  let swings = 0, died = false, resnaps = 0;
-  // ONE FRAME PER READ, ONE PER SWING (s170 fresh44-46): every eval and cmd waits for the
-  // client's current frame, and a body of a dozen per swing managed eight swings in three
-  // minutes (#119, #120: 8 and 4). Read in one eval; queue face, stance and attack together
-  // (Lua drains the whole queue in a frame). A mark that is closing in is waited for, not
-  // snapped after: a rat in combat runs at us, and chasing it read 'far' at every landing.
-  while (Date.now() < deadline && !died) {
-    const st = JSON.parse(await a.eval(`JSON.stringify({ p: (JSON.parse(window.omw.state.actorProbe||"{}"))[${JSON.stringify(victim)}] || null, me: JSON.parse(window.omw.state.pose||"{}"), div: Number(window.omw.state.selfDivergence||999) })`));
-    const p = st.p || p0;
-    died = st.p?.dead === true; if (died) break;
-    let range = Math.hypot(p.x - st.me.x, p.y - st.me.y);
-    if (range > REACH) {
-      // One look, then act: a mark still closing in gets another look; a wanderer gets a snap
-      // at once (this server waves snaps through). Ten looks a cycle left four swings in three
-      // minutes at a scrib on the move (#132).
-      await ctx.sleep(3_000);
-      const q = (await probeOf(a, victim)) || p; const me2 = await poseOf(a);
-      const range2 = Math.hypot(q.x - me2.x, q.y - me2.y);
-      if (range2 <= REACH) continue;
-      if (range2 < range - 40) continue;
-      // It walked off (or fled): step back beside it, at most a few times, and wait for the
-      // AVATAR to get there too: it is the body that swings, and #119 had it 197 u behind a
-      // client that had re-snapped after a walking scrib -- eight swings, all into air.
-      if (resnaps++ < 6) {
-        await a.cmd(`snapto:${Math.round(q.x + 60)},${Math.round(q.y)},${Math.round(q.z + 8)}`);
-        await a.waitFor("Number(window.omw.state.selfDivergence||999) < 60", 15_000, 'the avatar came along').catch(() => {});
-      }
-      else { await ctx.sleep(1_000); }
-      continue;
-    }
-    await a.evalAsync(`Promise.all([window.omw.send('face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 20)}', 120000), window.omw.send('stance:weapon', 120000), window.omw.send('attack:1500', 120000)]).then(function(r){ if (!r.every(function(x){ return x.ok; })) throw new Error('swing cmd failed: ' + JSON.stringify(r)); return 'ok'; })`);
-    swings++;
-    if (swings === 1) {
-      // The first swing must come back on the authoritative stream (s67's proof).
-      await a.waitFor('(Number(window.omw.state.selfFlags||0) & 8) === 8', 10_000, 'the avatar reports swinging (use bit on the state stream)');
-    }
-    await ctx.sleep(2_000); // swing + the peer's report back
-    if (swings % 4 === 1) {
-      const q = (await probeOf(a, victim)) || {};
-      ctx.log(`swing ${swings}: range ${range.toFixed(0)} mark=(${Math.round(q.x)},${Math.round(q.y)}) dead=${q.dead} div=${st.div} flags=${await a.eval('window.omw.state.selfFlags')} hp=${await a.eval('window.omw.state.hp')}`);
-    }
+  const fwdBefore = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
+  await focus(a);
+  const fight = await swingUntil(ctx, a, () => probeOf(a, victim), async () => (await a.eval(deadExpr)) === true,
+    { reach: REACH + 40, budgetMs: 300_000 });
+  const swings = fight.swings, died = fight.done;
+  if (swings > 0) {
+    // The swing must come back on the authoritative stream (s67's proof): the avatar swung.
+    ctx.log(`${swings} real swing(s), ${fight.snaps} snap(s) to catch a mark that walked off`);
   }
-  const fwd = String(await a.eval('window.omw.state.hitFwdCount'));
+  const fwd = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
   ctx.log(`${swings} swing(s) by the avatar; dead=${died}; forwards ${fwdBefore} -> ${fwd}`);
   assert.ok(died, `the ${victim} never died after ${swings} swings: the avatar did not swing, missed every time, or its hits are not applied by the peer`);
   assert.equal(fwd, fwdBefore, `a real melee hit went out under the OWNER's name (forwards ${fwdBefore} -> ${fwd}); the peer's avatar must be the one killing`);

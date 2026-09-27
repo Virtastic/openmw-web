@@ -798,6 +798,14 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       await bsend('Input.dispatchKeyEvent', { type: 'keyDown', text: def.text ?? def.key, ...base }, sessionId);
       await bsend('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, sessionId);
     };
+    // A REAL key HELD (W to walk, a strafe, sneak): keyDown, the hold, keyUp -- what a player's
+    // finger does. key(def) is a tap; walking needs the key down for the whole stride.
+    handle.keyHold = async (def, ms) => {
+      const base = { key: def.key, code: def.code, windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode };
+      await bsend('Input.dispatchKeyEvent', { type: 'keyDown', text: def.text ?? def.key, ...base }, sessionId);
+      await new Promise((r) => setTimeout(r, ms));
+      await bsend('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, sessionId);
+    };
     // A RAW MOUSE BUTTON on the game canvas, which is how you attack.
     //
     // `handle.click(selector)` is for DOM elements — it hit-tests a CSS selector. The engine

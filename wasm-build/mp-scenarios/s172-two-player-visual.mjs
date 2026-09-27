@@ -357,7 +357,13 @@ export default async function run(ctx) {
   await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', STEP, 'A\'s avatar is beside the creature').catch((e) => ctx.log('d settle: ' + e.message.split('\n')[0]));
   await b.cmd(`snapto:${Math.round(c0.x + dir.y * 300)},${Math.round(c0.y - dir.x * 300)},${Math.round(c0.z + 8)}`);
   await ctx.sleep(1500);
-  await a.cmd(`hitn:${victim}:1`);
+  // Provoked with ONE REAL SWING, weak (longblade 5) so it starts the fight without ending it;
+  // the skill goes back up for A's own swings below.
+  await a.cmd('setskill:longblade:5');
+  try { await a.mouseHold(60); } catch {}
+  await a.cmd(`face:${Math.round(c0.x)},${Math.round(c0.y)},${Math.round(c0.z + 30)}`);
+  await a.mouseHold(700);
+  await a.cmd('setskill:longblade:100');
   ctx.log(`d: puppets on B: ${await b.eval('window.omw.state.puppets')}`);
   await Promise.all([drain(a), drain(b)]);
 

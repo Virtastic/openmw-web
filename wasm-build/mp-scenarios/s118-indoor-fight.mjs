@@ -6,6 +6,7 @@
 // without the peer's own body inside -- and every relay addresses it by name. Two players walk
 // through the same door, both hit the same NPC, and it dies once, for both.
 import assert from 'node:assert/strict';
+import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 import { pickUntil } from './_probe.mjs';
 
 // THE SERVER'S OWN PEER. A hand-spawned peer stands in one exterior cell and never anchors a
@@ -44,14 +45,12 @@ export default async function run(ctx) {
   ctx.log(`both attacking "${victim}" indoors (holder=${await a.eval('window.omw.state.authorityHolder')})`);
 
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  const deadline = Date.now() + 90_000;
-  let died = false;
-  while (Date.now() < deadline && !died) {
-    await a.cmd(`hitn:${victim}:40`);
-    await b.cmd(`hitn:${victim}:40`);
-    await ctx.sleep(600);
-    died = (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
-  }
+  // FOR REAL, both players at once: W to walk up, the mouse button to swing (_realfight.mjs).
+  for (const c of [a, b]) { await focus(c); await armMelee(c); }
+  const isDead = async () => (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
+  const fights = await Promise.all([a, b].map((c) => swingUntil(ctx, c, () => probeRec(c, victim), isDead, { budgetMs: 240_000 })));
+  ctx.log(`real swings: A ${fights[0].swings}, B ${fights[1].swings}`);
+  const died = await isDead();
   ctx.log(`hitFwd A=${await a.eval('window.omw.state.hitFwd')} B=${await b.eval('window.omw.state.hitFwd')}`);
   assert.ok(died, `"${victim}" never died indoors: hits are not reaching the room's holder, or the peer does not simulate the room`);
   await a.waitFor(deadExpr, STEP, 'A sees it dead');

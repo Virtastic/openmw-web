@@ -4,10 +4,13 @@
 // levelled-list creature -- and since s107 those are NAMED runtime actors (the peer's, addressed
 // by net id), not content refs like the NPCs s51 hits. s51 picks its victim from the probe and
 // happened to pick a mudcrab once, and the mudcrab never died. This targets a net actor BY
-// CONSTRUCTION: both clients snap into open country, wait for the peer to name a creature, hit
-// the one both can see, and it must die -- once, for both -- through the hit chain that
-// addresses it by net id at every hop (client puppet -> server -> peer -> the creature).
+// CONSTRUCTION: both clients snap into open country, wait for the peer to name a creature, and
+// both players fight it FOR REAL -- W to walk up, the mouse button to swing (_realfight.mjs).
+// The peer's avatars swing and resolve every blow against the creature they simulate; each
+// client only cancels its local copy. It must die once, for both, and neither client may have
+// forwarded a hit of its own (a real swing is never relayed: that would land it twice).
 import assert from 'node:assert/strict';
+import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
@@ -38,31 +41,19 @@ export default async function run(ctx) {
   }
 
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  const deadline = Date.now() + 90_000;
-  let died = false;
-  while (Date.now() < deadline && !died) {
-    await a.cmd(`hitn:${victim}:40`);
-    await b.cmd(`hitn:${victim}:40`);
-    await ctx.sleep(600);
-    died = (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
-  }
-  ctx.log(`hitFwd A=${await a.eval('window.omw.state.hitFwd')} B=${await b.eval('window.omw.state.hitFwd')}`);
-  ctx.log('A luaErrors: ' + a.luaErrors().slice(-5).join(' || '));
-  // Which body the hook swung at. A "content=nil net=nil puppeted=false" line here is a
-  // LOCAL GHOST: a creature this screen rolled itself (levelled list before the spawn gate
-  // was down), standing beside the peer's real one and unhittable by anyone.
-  const hitTail = (a.logTail ? a.logTail(2000) : '').split(String.fromCharCode(10)).filter((l) => /mpTestHit|puppet intercept/.test(l)).slice(-4);
-  ctx.log('A hit tail: ' + hitTail.join(' || '));
-  ctx.log(`localSpawns A=${await a.eval('window.omw.state.localSpawns')} dbg=${await a.eval('window.omw.state.localSpawnsDbg')} bind=${await a.eval('window.omw.state.localSpawnsBind')}`);
-  ctx.log(`A census=${await a.eval('window.omw.state.actorCensus')}`);
-  ctx.log(`A puppetedActors=${await a.eval('window.omw.state.puppetedActors')} actorCount=${await a.eval('window.omw.state.actorCount')}`);
-  ctx.log(`A netObjects=${await a.eval('window.omw.state.netObjects')} netActors=${await a.eval('window.omw.state.netActors')}`);
-  const mpLines = (a.logTail ? a.logTail(400) : '').split(String.fromCharCode(10)).filter((l) => /\[mp\]/.test(l) && !/session state|journal|Local map/.test(l)).slice(-30);
-  ctx.log('A [mp] tail: ' + mpLines.join(' || '));
-  const fwdA = String(await a.eval('window.omw.state.hitFwd'));
-  assert.ok(fwdA.startsWith('net:'), `A's swing did not go out under a net id (hitFwd=${fwdA}): it hit a local ghost or nothing`);
-  assert.ok(died, `the ${victim} never died: hits on a NAMED runtime creature are not reaching the peer, `
-    + 'or the peer cannot resolve the net id to its own creature -- see the peer tail below');
+  const fwd0 = await Promise.all([a, b].map((c) => c.eval('String(window.omw.state.hitFwdCount||0)')));
+  for (const c of [a, b]) { await focus(c); await armMelee(c); }
+  const dead = async () => (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
+  // Both fight at once, each on its own screen.
+  const [ra, rb] = await Promise.all([a, b].map((c) =>
+    swingUntil(ctx, c, () => probeRec(c, victim), dead, { budgetMs: 240_000 })));
+  ctx.log(`A swung ${ra.swings} (${ra.snaps} snap(s)), B swung ${rb.swings} (${rb.snaps}); dead=${ra.done || rb.done}`);
+  const died = await dead();
+  assert.ok(ra.swings + rb.swings > 0, 'nobody swung: the creature was never in reach');
+  assert.ok(died, `the ${victim} never died from ${ra.swings + rb.swings} real swings: the avatars' blows on a NAMED runtime creature `
+    + 'are not landing on the peer, or the peer cannot resolve its own net actor');
+  const fwd1 = await Promise.all([a, b].map((c) => c.eval('String(window.omw.state.hitFwdCount||0)')));
+  assert.deepEqual(fwd1, fwd0, `a real swing was forwarded by a client (${fwd0} -> ${fwd1}): the blow would land twice`);
   await a.waitFor(deadExpr, STEP, 'A sees it dead');
   await b.waitFor(deadExpr, STEP, 'B sees it dead');
   const pa = await probeOf(a), pb = await probeOf(b);

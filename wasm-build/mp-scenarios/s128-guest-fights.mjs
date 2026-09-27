@@ -7,6 +7,7 @@
 // both players hit the same NPC in the host's world, which must die once for both. The
 // gateway world spawns its own peer from the shared config (managedPeer).
 import assert from 'node:assert/strict';
+import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
 import { pickUntil } from './_probe.mjs';
 
@@ -56,14 +57,13 @@ export default async function run(ctx) {
     ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(host.client), probeOf(guest.client)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r))));
     assert.ok(victim, `need a living NPC both see: host=${JSON.stringify(Object.keys(pa))} guest=${JSON.stringify(Object.keys(pb))}`);
     const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-    const deadline = Date.now() + 90_000;
-    let died = false;
-    while (Date.now() < deadline && !died) {
-      await host.client.cmd(`hitn:${victim}:40`);
-      await guest.client.cmd(`hitn:${victim}:40`);
-      await ctx.sleep(600);
-      died = (await host.client.eval(deadExpr)) === true || (await guest.client.eval(deadExpr)) === true;
-    }
+    // FOR REAL, host and guest at once: W to walk up, the mouse button to swing (_realfight.mjs).
+    const pair = [host.client, guest.client];
+    for (const c of pair) { await focus(c); await armMelee(c); }
+    const isDead = async () => (await host.client.eval(deadExpr)) === true || (await guest.client.eval(deadExpr)) === true;
+    const fights = await Promise.all(pair.map((c) => swingUntil(ctx, c, () => probeRec(c, victim), isDead, { budgetMs: 240_000 })));
+    ctx.log(`real swings: host ${fights[0].swings}, guest ${fights[1].swings}`);
+    const died = await isDead();
     ctx.log(`hitFwd host=${await host.client.eval('window.omw.state.hitFwd')} guest=${await guest.client.eval('window.omw.state.hitFwd')}`);
     assert.ok(died, `"${victim}" never died in the host's world: the guest's (or host's) hits are not reaching the world's peer`);
     await host.client.waitFor(deadExpr, STEP, 'the host sees it dead');

@@ -8,7 +8,7 @@
 // in the loop. The client's real swing is cancel-only while the peer simulates (combat.lua
 // onPuppetHit); only the degraded relay and the test hooks still forward.
 //
-// What this proves is the WIRING, end to end: attack:<ms> holds the use bit -> input frames
+// What this proves is the WIRING, end to end: the held mouse button sets the use bit -> input frames
 // carry bit 3 -> the peer's avatar consumes them (global.lua stamps `avatarUsing`) -> the
 // authoritative pose stream sets flags bit 3 -> the owner's state batch (0x0103) carries it
 // -> player.lua mirrors it as `selfFlags`. The swing itself is stock OpenMW: an actor whose
@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { focus } from './_realfight.mjs';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 export const bootTimeoutMs = 420_000;
@@ -59,11 +60,15 @@ export default async function run(ctx) {
   assert.equal(idle & 8, 0, `the avatar must not be attacking before the input says so (flags=${idle})`);
 
   // Hold the attack for 4 s: at 30 Hz input and a 20 Hz peer, the flag has to appear.
-  await a.eval("window.omw.send('attack:4000')");
+  // THE MOUSE BUTTON, HELD 4 s (it used to be the attack: hook, a use bit with no button):
+  // the pointer taken like a player takes it, then the press -- watched while it is held.
+  await focus(a);
+  const held = a.mouseHold(4000);
   ctx.log('holding attack; waiting for the avatar’s attacking flag to come back');
   await a.waitFor('(Number(window.omw.state.selfFlags||0) & 8) === 8', STEP_TIMEOUT,
     'the peer avatar reports attacking (input use bit -> avatar -> state stream)');
   ctx.log('ok: the attack reached the avatar and came back on the authoritative stream');
+  await held;
 
   // And it RELEASES: a held bit that never clears would be a permanently swinging avatar.
   await a.waitFor('(Number(window.omw.state.selfFlags||0) & 8) === 0', STEP_TIMEOUT,

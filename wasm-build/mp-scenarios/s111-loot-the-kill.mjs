@@ -9,6 +9,7 @@
 // The creature is addressed by NET ID at every hop (it has no content ref), which is the new
 // thing here over s31's chest.
 import assert from 'node:assert/strict';
+import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
@@ -35,14 +36,11 @@ export default async function run(ctx) {
 
   // Kill it (the s109 chain).
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  const deadline = Date.now() + 90_000;
-  let died = false;
-  while (Date.now() < deadline && !died) {
-    await a.cmd(`hitn:${victim}:40`);
-    await ctx.sleep(600);
-    died = (await a.eval(deadExpr)) === true;
-  }
-  assert.ok(died, `the ${victim} never died (s109 covers this)`);
+  // Killed FOR REAL: W to walk up, the mouse button to swing (_realfight.mjs).
+  await focus(a); await armMelee(a);
+  const fight = await swingUntil(ctx, a, () => probeRec(a, victim), async () => (await a.eval(deadExpr)) === true, { budgetMs: 240_000 });
+  const died = fight.done;
+  assert.ok(died, `the ${victim} never died from ${fight.swings} real swings (s109 covers this)`);
   await b.waitFor(deadExpr, STEP, 'B sees it dead');
   ctx.log(`the peer's "${victim}" (net ${netId}) is dead on both screens; looting`);
 
