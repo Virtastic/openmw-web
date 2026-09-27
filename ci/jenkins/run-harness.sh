@@ -59,12 +59,12 @@ if [ "${HARNESS_GPU:-1}" != "0" ] && docker info 2>/dev/null | grep -q 'Runtimes
   GPU_ARGS="--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -v $HOST_SRC/ci/jenkins/nvidia:/nvjson:ro -e __EGL_VENDOR_LIBRARY_FILENAMES=/nvjson/10_nvidia.json -e SMOKE_GL=angle-gpu"
   echo "==> GPU: the harness renders on the box's NVIDIA GPU (HARNESS_GPU=0 to turn off)"
 fi
-# PARALLEL LANES (HARNESS_LANES, default 2). One container ran the suite a scenario at a time
-# while the box idled: the M40 at 17% and 1.6 of 23 GB, most of 16 cores waiting (#156). Each
-# lane is its own container -- its own network namespace, play server, game servers and ports --
-# running every Nth scenario of the list, so a full sweep takes about half the time. RAM is
-# the limit (24 GB; a retail client is ~1.5 GB): two lanes are safe, three need a look first.
-HARNESS_LANES="${HARNESS_LANES:-2}"
+# PARALLEL LANES (HARNESS_LANES, default 1). Each lane is its own container -- its own network
+# namespace, play server, game servers and ports -- running every Nth scenario of the list.
+# DEFAULT 1 ON THE BUILDER: the M40 only draws; the engine, the sim peer and the browsers
+# simulate on the CPU, and two lanes drove a 16-core box to a load of 57 (#157) -- the slow-box
+# timing failures all over again (s131 missed a death). A box with the cores takes 2+.
+HARNESS_LANES="${HARNESS_LANES:-1}"
 # The list, expanded here so it can be dealt out: the named prefixes, or the whole suite minus
 # the standalone scenarios (s170 runs through run-fresh-install.sh), as mp-harness.mjs does.
 ALL=()
