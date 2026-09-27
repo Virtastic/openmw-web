@@ -59,16 +59,70 @@ if [ "${HARNESS_GPU:-1}" != "0" ] && docker info 2>/dev/null | grep -q 'Runtimes
   GPU_ARGS="--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -v $HOST_SRC/ci/jenkins/nvidia:/nvjson:ro -e __EGL_VENDOR_LIBRARY_FILENAMES=/nvjson/10_nvidia.json -e SMOKE_GL=angle-gpu"
   echo "==> GPU: the harness renders on the box's NVIDIA GPU (HARNESS_GPU=0 to turn off)"
 fi
+# PARALLEL LANES (HARNESS_LANES, default 2). One container ran the suite a scenario at a time
+# while the box idled: the M40 at 17% and 1.6 of 23 GB, most of 16 cores waiting (#156). Each
+# lane is its own container -- its own network namespace, play server, game servers and ports --
+# running every Nth scenario of the list, so a full sweep takes about half the time. RAM is
+# the limit (24 GB; a retail client is ~1.5 GB): two lanes are safe, three need a look first.
+HARNESS_LANES="${HARNESS_LANES:-2}"
+# The list, expanded here so it can be dealt out: the named prefixes, or the whole suite minus
+# the standalone scenarios (s170 runs through run-fresh-install.sh), as mp-harness.mjs does.
+ALL=()
+if [ -n "${SCENARIOS:-}" ]; then
+  for w in $SCENARIOS; do
+    for f in wasm-build/mp-scenarios/"$w"*.mjs; do [ -e "$f" ] && ALL+=("$(basename "$f" .mjs)"); done
+  done
+else
+  for f in wasm-build/mp-scenarios/s*.mjs; do
+    grep -q 'export const standalone = true' "$f" || ALL+=("$(basename "$f" .mjs)")
+  done
+fi
+mapfile -t ALL < <(printf '%s\n' "${ALL[@]}" | awk 'NF && !seen[$0]++')
+[ "${#ALL[@]}" -gt 0 ] || { echo "FATAL: no scenarios matched: ${SCENARIOS:-<full suite>}"; exit 2; }
+[ "${#ALL[@]}" -lt "$HARNESS_LANES" ] && HARNESS_LANES=${#ALL[@]}
+
+run_lane() { # the scenario names; output on stdout
+  # shellcheck disable=SC2086
+  # --init: a real PID 1 that REAPS. Without it every Chrome and sim peer the harness kills
+  # becomes a zombie under the container's `sh`, and a full sweep ended with 2422 of them and a
+  # load average of 39 on a 32-core box (#107) -- every timing assertion in the back half of the
+  # run failed for reasons that had nothing to do with the code under test.
+  docker run --rm --init --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${GPU_ARGS} ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo"   -v "$HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro"   -v "$HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
+    -- "$@" 2>&1
+}
+
 set +e
-# shellcheck disable=SC2086
-# --init: a real PID 1 that REAPS. Without it every Chrome and sim peer the harness kills
-# becomes a zombie under the container's `sh`, and a full sweep ended with 2422 of them and a
-# load average of 39 on a 32-core box (#107) -- every timing assertion in the back half of the
-# run failed for reasons that had nothing to do with the code under test.
-docker run --rm --init --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${GPU_ARGS} ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo"   -v "$HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro"   -v "$HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
-  -- ${SCENARIOS:-} 2>&1 | tee "$LOG"
-rc=${PIPESTATUS[0]}
+if [ "$HARNESS_LANES" -le 1 ]; then
+  run_lane "${ALL[@]}" | tee "$LOG"
+  rc=${PIPESTATUS[0]}
+else
+  # BUILD THE SERVER ONCE, before the lanes: mp-harness.mjs rebuilds server/dist when it is
+  # stale, and two lanes compiling the one shared checkout at once would race on the files.
+  docker run --rm --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$HOST_SRC:/repo" openmw-harness-peer:local \
+    -c 'cd server && { [ -x node_modules/.bin/tsc ] || npm ci; } && npm run build' > "$OUT/build-${BUILD_NUMBER:-local}.log" 2>&1 \
+    || { echo "FATAL: the server build failed"; cat "$OUT/build-${BUILD_NUMBER:-local}.log"; exit 1; }
+  echo "==> ${#ALL[@]} scenarios over $HARNESS_LANES lanes"
+  pids=(); logs=()
+  for ((k = 0; k < HARNESS_LANES; k++)); do
+    lane=(); for ((i = k; i < ${#ALL[@]}; i += HARNESS_LANES)); do lane+=("${ALL[$i]}"); done
+    lane_log="${LOG%.log}-lane$((k + 1)).log"
+    logs+=("$lane_log")
+    : > "$lane_log"
+    echo "==> lane $((k + 1)): ${#lane[@]} scenarios (log: $lane_log)"
+    run_lane "${lane[@]}" > "$lane_log" 2>&1 &
+    pids+=($!)
+  done
+  # Live progress in the stage log: every lane's lines as they come (verdicts, failures).
+  # --pid=$$: the tail ends with this script (a kill would reach only the grep after it).
+  tail -n +1 -F --pid=$$ "${logs[@]}" 2>/dev/null | grep --line-buffered -vE '^==> .* <==$' &
+  rc=0
+  for pid in "${pids[@]}"; do wait "$pid" || rc=1; done
+  sleep 2 # the last lines reach the stage log
+  cat "${logs[@]}" > "$LOG"
+fi
 set -e
 # Verdict lines print twice in the raw log (see harness-log-and-build-context); dedupe here.
 echo "==> verdicts:"; grep -E '^(PASS|FAIL|SKIP) s' "$LOG" | sort -u || true
+pass=$(grep -E '^PASS s' "$LOG" | sort -u | wc -l); fail=$(grep -E '^FAIL s' "$LOG" | sort -u | wc -l)
+echo "==> ${pass} passed, ${fail} failed over ${HARNESS_LANES} lane(s)"
 exit "$rc"
