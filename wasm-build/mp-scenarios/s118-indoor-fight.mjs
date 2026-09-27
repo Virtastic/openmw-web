@@ -44,7 +44,11 @@ export default async function run(ctx) {
   }
 
   let pa, pb, victim;
-  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !BEHIND_COUNTER.test(r))));
+  // ON THE SAME FLOOR: an NPC upstairs is a walk up a staircase the fight helper does not path
+  // (#158: Hrisskar, 440 u short of him at every approach).
+  const floorZ = JSON.parse(await a.eval('window.omw.state.pose||"{}"')).z;
+  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !BEHIND_COUNTER.test(r)
+    && !(Number.isFinite(floorZ) && Math.abs(pa[r].z - floorZ) > 150))));
   assert.ok(victim, `need a living NPC inside visible to both: A=${JSON.stringify(Object.keys(pa))} B=${JSON.stringify(Object.keys(pb))}`);
   ctx.log(`both attacking "${victim}" indoors (holder=${await a.eval('window.omw.state.authorityHolder')})`);
 

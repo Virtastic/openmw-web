@@ -64,14 +64,23 @@ export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000) 
 // REACH 110, centre to centre: a longsword lands inside ~fCombatDistance (128). 170 swung at a
 // standing NPC 150 u off for four minutes without one hit (#156 s118); a creature that comes
 // at you closes the gap itself, which is why the outdoor fights passed anyway.
-export async function swingUntil(ctx, c, getTarget, done, { reach = 110, holdMs = 1500, budgetMs = 180_000, maxSwings = Infinity } = {}) {
+// CLOSE IN, DO NOT CHASE: a mark within closeIn is faced and met with a short step, the way a
+// player squares up; only a far one gets the walk (and, blocked, the snap). Walking and snapping
+// every time a fighting NPC stepped past reach cost s118 four minutes for ten swings (#158).
+export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn = 300, holdMs = 1500, budgetMs = 180_000, maxSwings = Infinity } = {}) {
   const until = Date.now() + budgetMs;
-  let swings = 0, snaps = 0;
+  let swings = 0, snaps = 0, near = 0;
   while (Date.now() < until && swings < maxSwings) {
     if (await done()) return { done: true, swings, snaps };
     const [t, me] = [await getTarget(), await poseOf(c)];
     if (!t || !me) { await ctx.sleep(500); continue; }
-    if (flat(t, me) > reach) {
+    const d = flat(t, me);
+    if (d > reach) {
+      if (d <= closeIn) {
+        await c.eval(`window.omw.send('face:${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.z + 30)}'); 1`);
+        if (++near % 3 === 0) await c.keyHold(W, 300); else await ctx.sleep(400);
+        continue;
+      }
       const w = await walkTo(ctx, c, getTarget, reach - 30);
       if (w.snapped) snaps++;
       continue;
