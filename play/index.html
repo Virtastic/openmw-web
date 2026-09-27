@@ -5272,6 +5272,9 @@ window.omw = (function(){
     if (!mc) { carriedClosedShown = true; return; }
     carriedClosedShown = true;
     var byM = /(^|&)mpclosedby=([^&]+)/.exec(frag);
+    // What the scenarios read (s102, s141): a fast client is home and rebooted before the
+    // old page's worldClosed mirror can be read, and this is the notice it was told there.
+    window.__omwWorldClosedShown = { why: decodeURIComponent(mc[2]), by: byM ? decodeURIComponent(byM[2]) : '' };
     showNotice('Back in your own world', worldClosedCopy(decodeURIComponent(mc[2]), byM ? decodeURIComponent(byM[2]) : ''), GLYPH_WORLD);
     // Do not carry it a second time.
     window.__omwBootFrag = frag.split('&').filter(function(kv){ return !/^mpclosed(by)?=/.test(kv); }).join('&');

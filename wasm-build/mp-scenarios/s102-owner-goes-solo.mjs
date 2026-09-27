@@ -69,10 +69,12 @@ export default async function run(ctx) {
 
     // 1. The guest is TOLD, rather than just dropped. Without this their client cannot tell a
     // closed world from a broken network, and retries into a door that will not open.
-    await guest.client.waitFor(`(window.omw.state.worldClosed||'') !== ''`, STEP,
-      'the guest is told the world closed, not merely disconnected');
-    const why = await guest.client.eval("window.omw.state.worldClosed||''");
-    const by = await guest.client.eval("window.omw.state.worldClosedBy||''");
+    // Told on the old page (the worldClosed mirror) or, when the client was home and rebooted
+    // first (a fast one is), by the notice the new page shows (index.html __omwWorldClosedShown).
+    const told = `(function(){ var s = window.omw && window.omw.state; if (s && (s.worldClosed||'') !== '') return JSON.stringify({ why: s.worldClosed, by: s.worldClosedBy||'' });
+      return window.__omwWorldClosedShown ? JSON.stringify(window.__omwWorldClosedShown) : ''; })()`;
+    await guest.client.waitFor(`!!${told}`, 60_000, 'the guest is told the world closed, not merely disconnected');
+    const { why, by } = JSON.parse(await guest.client.eval(told));
     ctx.log(`ok: the guest was told: ${why} (by ${by || 'the host'})`);
     assert.ok(!by.includes('@'),
       `the notice must name the host's CHARACTER, never an account address: ${by}`);
