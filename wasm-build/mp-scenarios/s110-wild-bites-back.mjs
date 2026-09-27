@@ -13,7 +13,7 @@
 // reach of it. Provoked FOR REAL: up to three swings with the mouse button (_realfight.mjs).
 import assert from 'node:assert/strict';
 import { pickUntil } from './_probe.mjs';
-import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
+import { focus, armMelee, provoke, probeOf as probeRec } from './_realfight.mjs';
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const SPOT = '-12500,-53100,512'; // inside -2,-7 (see s109)
@@ -64,12 +64,10 @@ export default async function run(ctx) {
     return dropped;
   };
   // A scrib will not start a fight on its own: up to three real swings to start one.
-  // WEAKLY (longblade 5), and only until it is HURT: three swings at 100 killed the scrib (#156),
+  // WEAKLY (longblade 5), swing then wait for it to fight back (_realfight provoke): three swings at 100 killed the scrib (#156),
   // and a dead creature bites nobody. Hurt, it turns on us.
   await focus(a); await armMelee(a, undefined, 5);
-  const hp0 = Number((await probeRec(a, victim))?.hp);
-  const hurtOrBitten = async () => (await bitten()) || Number((await probeRec(a, victim))?.hp) < hp0;
-  const poke = await swingUntil(ctx, a, () => probeRec(a, victim), hurtOrBitten, { maxSwings: 8, budgetMs: 60_000 });
+  const poke = await provoke(ctx, a, () => probeRec(a, victim), bitten);
   ctx.log(`provoked with ${poke.swings} real swing(s)`);
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline && !(await bitten())) await ctx.sleep(2_000);

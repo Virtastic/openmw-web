@@ -9,7 +9,7 @@
 // get bitten, heal to full on the client, and the PEER-reported bars must follow up.
 import assert from 'node:assert/strict';
 import { pickUntil } from './_probe.mjs';
-import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
+import { focus, armMelee, provoke, probeOf as probeRec } from './_realfight.mjs';
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const SPOT = '-12500,-53100,512';
@@ -40,10 +40,9 @@ export default async function run(ctx) {
   let hurt = null;
   const isHurt = async () => { hurt = await bars(a); return !!hurt && hurt.c <= start.c - 1; };
   // Provoked FOR REAL: up to three swings with the mouse button (_realfight.mjs).
-  // WEAKLY (longblade 5), and only until it is hurt: a strong swing kills it (#156, s110).
+  // WEAKLY (longblade 5), swing then wait for the bite, again if needed (#157: one wound was not enough).
   await focus(a); await armMelee(a, undefined, 5);
-  const hp0 = Number((await probeRec(a, victim))?.hp);
-  await swingUntil(ctx, a, () => probeRec(a, victim), async () => (await isHurt()) || Number((await probeRec(a, victim))?.hp) < hp0, { maxSwings: 8, budgetMs: 60_000 });
+  await provoke(ctx, a, () => probeRec(a, victim), isHurt);
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline && !(await isHurt())) await ctx.sleep(2_000);
   assert.ok(hurt && hurt.c <= start.c - 1, `never got hurt (selfStats ${start.c}/${start.b} -> ${JSON.stringify(hurt)}); s110 covers this`);

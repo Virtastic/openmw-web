@@ -84,3 +84,20 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, holdMs 
   }
   return { done: await done(), swings, snaps };
 }
+
+// START A FIGHT THE WAY A PLAYER DOES: one weak swing, then wait for it to fight back; not yet,
+// swing again. One wound is not always enough -- s112 hurt a creature with its first swing,
+// stopped, and waited two minutes for a bite that never came (#157). Arm weakly first
+// (armMelee skill 5) so the provocation does not kill the mark.
+export async function provoke(ctx, c, getTarget, foughtBack, { rounds = 5, waitMs = 20_000 } = {}) {
+  let swings = 0;
+  for (let r = 0; r < rounds; r++) {
+    const t = await getTarget();
+    if (!t || t.dead) break;
+    const hit = await swingUntil(ctx, c, getTarget, foughtBack, { maxSwings: 1, budgetMs: 45_000 });
+    swings += hit.swings;
+    const until = Date.now() + waitMs;
+    while (Date.now() < until) { if (await foughtBack()) return { ok: true, swings }; await ctx.sleep(1_000); }
+  }
+  return { ok: await foughtBack(), swings };
+}
