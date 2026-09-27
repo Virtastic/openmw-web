@@ -28,6 +28,7 @@ export const serverRules = `
 enforce = "off"
 [rules]
 pvp = true
+respawnCellKey = ""
 `;
 
 const STEP_TIMEOUT = 30_000;

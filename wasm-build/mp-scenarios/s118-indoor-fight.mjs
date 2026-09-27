@@ -9,6 +9,11 @@ import assert from 'node:assert/strict';
 import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 import { pickUntil } from './_probe.mjs';
 
+// WHERE YOU FELL, not the harness's Example Suite village (26,25): that point is open sea in
+// retail, and a player the mark killed respawned among slaughterfish and swung at nothing for
+// the rest of the fight (#159 s118: the mark 52 -> 32, then 'none within 400').
+export const serverRules = 'respawnCellKey = ""';
+
 // A shopkeeper behind his counter cannot be walked up to: the real fight stalled at the counter
 // and swung from where the snap landed (#157, Arrille). A customer on the shop floor is the mark.
 const BEHIND_COUNTER = /^arrille$/;

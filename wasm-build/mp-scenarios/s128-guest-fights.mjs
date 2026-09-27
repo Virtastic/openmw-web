@@ -11,6 +11,11 @@ import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.m
 import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
 import { pickUntil } from './_probe.mjs';
 
+// WHERE YOU FELL, not the harness's Example Suite village (26,25): that point is open sea in
+// retail, and a player the mark killed respawned among slaughterfish and swung at nothing for
+// the rest of the fight (#159 s118: the mark 52 -> 32, then 'none within 400').
+export const serverRules = 'respawnCellKey = ""';
+
 export const managedPeer = true;
 const STEP = 30_000;
 const GW_PORT = 18980; // ten apart from its neighbours (see s102)
