@@ -63,7 +63,7 @@ export default async function run(ctx) {
   const fwdBefore = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
   await focus(a);
   const fight = await swingUntil(ctx, a, () => probeOf(a, victim), async () => (await a.eval(deadExpr)) === true,
-    { reach: REACH + 40, budgetMs: 300_000 });
+    { reach: REACH, budgetMs: 300_000 });
   const swings = fight.swings, died = fight.done;
   if (swings > 0) {
     // The swing must come back on the authoritative stream (s67's proof): the avatar swung.

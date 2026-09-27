@@ -61,7 +61,10 @@ export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000) 
 
 // Swing for real until `done()` says so (the mark died, it fought back, the bar moved) or the
 // budget runs out: walk up when out of reach, face it, hold the mouse button.
-export async function swingUntil(ctx, c, getTarget, done, { reach = 170, holdMs = 1500, budgetMs = 180_000, maxSwings = Infinity } = {}) {
+// REACH 110, centre to centre: a longsword lands inside ~fCombatDistance (128). 170 swung at a
+// standing NPC 150 u off for four minutes without one hit (#156 s118); a creature that comes
+// at you closes the gap itself, which is why the outdoor fights passed anyway.
+export async function swingUntil(ctx, c, getTarget, done, { reach = 110, holdMs = 1500, budgetMs = 180_000, maxSwings = Infinity } = {}) {
   const until = Date.now() + budgetMs;
   let swings = 0, snaps = 0;
   while (Date.now() < until && swings < maxSwings) {
@@ -69,13 +72,14 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 170, holdMs 
     const [t, me] = [await getTarget(), await poseOf(c)];
     if (!t || !me) { await ctx.sleep(500); continue; }
     if (flat(t, me) > reach) {
-      const w = await walkTo(ctx, c, getTarget, reach - 20);
+      const w = await walkTo(ctx, c, getTarget, reach - 30);
       if (w.snapped) snaps++;
       continue;
     }
     await c.eval(`window.omw.send('face:${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.z + 30)}'); 1`);
     await c.mouseHold(holdMs);
     swings++;
+    if (swings === 1 || swings % 10 === 0) ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark`);
     await ctx.sleep(400);
   }
   return { done: await done(), swings, snaps };
