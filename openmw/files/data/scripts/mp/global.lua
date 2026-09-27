@@ -1402,6 +1402,10 @@ local function revivePuppet(id, cellArg, pose)
         if pose then spawnPuppet(id, pose) end
         return
     end
+    -- FALLS, LATCHED (s20): the owner's respawn follows its death within a frame or two, so
+    -- the 0.5 s mirror below can miss the whole time this body lay dead. Count it here.
+    local okD, wasDead = pcall(types.Actor.isDead, p.obj)
+    if okD and wasDead then p.falls = (p.falls or 0) + 1 end
     pcall(mp.resurrect, p.obj)
     if pose then tryTeleport(p.obj, cellArg, util.vector3(pose.x, pose.y, pose.z)) end
     pcall(function() p.obj:sendEvent('MP_Revive', {}) end)
@@ -1452,7 +1456,7 @@ local function mirrorPuppets()
             table.sort(actives)
             local okD, dead = pcall(types.Actor.isDead, p.obj)
             m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z,
-                name = rec and rec.name or p.name, eq = eq, actives = actives, dead = okD and dead or false,
+                name = rec and rec.name or p.name, eq = eq, actives = actives, dead = okD and dead or false, falls = p.falls or 0,
                 flags = lastFlags[id] or 0, jumps = jumpEdges[id] or 0, stance = okS and st or -1 }
         end
     end

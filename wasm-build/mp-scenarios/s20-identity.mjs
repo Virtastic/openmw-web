@@ -38,7 +38,9 @@ export default async function run(ctx) {
   // puppets mirror carries `dead`, so death is the one dynamic-stat edge B can be asked about
   // without a Lua change. (A respawns; s22 owns the respawn itself.)
   await a.eval(`window.omw.send('sethp:0')`);
-  await b.waitFor(`(${puppetOnB}||{}).dead === true`, EQUIP_TIMEOUT, "B's puppet of A is dead (PlayerStatsDynamic reached B)");
+  // DEAD OR FALLEN: the respawn follows the death within a frame or two, and at 50 fps the
+  // whole corpse can fit between two 0.5 s mirrors (#158); `falls` counts bodies revived dead.
+  await b.waitFor(`(${puppetOnB}||{}).dead === true || ((${puppetOnB}||{}).falls||0) > 0`, EQUIP_TIMEOUT, "B's puppet of A is dead (PlayerStatsDynamic reached B)");
   ctx.log('ok: dynamic stats reached B\'s puppet (it fell)');
   await b.waitFor(`(${puppetOnB}||{}).dead === false`, 30_000, "B's puppet of A is up again after the respawn");
   ctx.log('ok: the revive reached B too');
