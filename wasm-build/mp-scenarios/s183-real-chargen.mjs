@@ -124,7 +124,10 @@ export default async function run(ctx) {
   ctx.log(`after relog: ${JSON.stringify(back)} chargenDone=${await a2.eval('window.omw.state.chargenDone')}`);
   assert.deepEqual({ name: back.name, race: back.race, class: back.class, sign: back.sign },
     { name: made.name, race: made.race, class: made.class, sign: made.sign }, 'the relog brought back a different character');
-  assert.notEqual(String(await a2.eval('window.omw.state.cell||""')).toLowerCase(), 'imperial prison ship', 'the relog put the character back on the ship');
+  // OUT OF CHARACTER CREATION, wherever they stood: this character was made on the ship and is
+  // restored there (#154 -- where the player was is where they come back), so the cell is not
+  // the test. Chargen starting over would be: the ship's scripts, the name prompt again.
+  assert.equal(String(await a2.eval('window.omw.state.chargenDone||""')), '1', 'the relog put the character back into character creation');
   assert.deepEqual(a2.luaErrors(), [], 'no Lua error along the way');
   ctx.log('ok: a real new character was named, given a race, class and sign, and came back as themselves');
 }

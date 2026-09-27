@@ -71,7 +71,7 @@ print('identity.lua — PlayerItemAcquired')
 local function acquiredEvents(calls)
   local out = {}
   for _, c in ipairs(calls.events) do
-    if c.name == 'PlayerItemAcquired' then out[#out + 1] = c.body end
+    if c.name == 'PlayerItemAcquired' or c.name == 'mpItemAcquiredOut' then out[#out + 1] = c.body end
   end
   return out
 end
@@ -102,6 +102,13 @@ identity.tick(1.0) -- past ACQUIRE_INTERVAL
 local got = acquiredEvents(env.calls)
 check('a gain is reported', #got == 1 and got[1].id == 'gold_001' and got[1].n == 25,
   '#got=' .. #got)
+-- s153 (#154): through global's record registry, never raw on the wire -- a just-made item's
+-- LOCAL id in the server's credit ledger was folded into the doc beside its net id, and the
+-- relog granted it twice.
+local direct = 0
+for _, c in ipairs(env.calls.events) do if c.name == 'PlayerItemAcquired' then direct = direct + 1 end end
+check('a gain goes through global for its net id (mpItemAcquiredOut), never raw', direct == 0 and got[1] ~= nil,
+  direct .. ' raw PlayerItemAcquired sent')
 
 -- Only increases. A decrease is a drop, a sale or a use, and the server learns those from the
 -- snapshot — reporting them here would credit the player for losing things.
@@ -2789,6 +2796,21 @@ do
     end
     check(string.format('every MP_ handler survives an empty and a nil body (%d handlers, %d calls)', #names, #names * 2),
       #failures == 0, #failures .. ' threw:\n        ' .. table.concat(failures, '\n        '))
+
+    -- s153 (#154): a pickup is said by its net id; a just-made record not registered yet is not
+    -- reported at all (its declaration carries it once it has a net id).
+    local from = #env.calls.events
+    local okA, errA = pcall(function()
+      script.eventHandlers.mpItemAcquiredOut({ id = 'Generated:0x7', n = 1 })
+      script.eventHandlers.mpItemAcquiredOut({ id = 'iron_cuirass', n = 2 })
+    end)
+    local sent = {}
+    for i = from + 1, #env.calls.events do
+      local c = env.calls.events[i]
+      if c.name == 'PlayerItemAcquired' then sent[#sent + 1] = tostring(c.body.id) .. 'x' .. tostring(c.body.n) end
+    end
+    check('an unregistered made record is not reported; an ordinary pickup is, by its id',
+      okA and #sent == 1 and sent[1] == 'iron_cuirassx2', tostring(errA) .. ' sent: ' .. table.concat(sent, ','))
   end
 end
 

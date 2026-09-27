@@ -58,13 +58,13 @@ export default async function run(ctx) {
   // B GETS THE SAME BIGGER POOL: it kills from the seabed (the only spot a snap lands on in
   // that cell), and a vertical teleport up dropped it back in with fall momentum, sinking with
   // no swim-up input until it drowned and respawned in the village (#134: B in another cell,
-  // 'B's puppet of A' gone). A 300-point pool makes the seabed survivable for the moment the kills
+  // 'B's puppet of A' gone). +60 (the server refuses a bigger raise, #154) is plenty now that the kills
   // take on a slow client; then straight back to land.
   { const b0 = await bars(b);
-    await b.cmd(`sethpbase:${b0.b + 300}`);
-    await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${b0.b + 298}`, STEP, "B's max rose");
-    await b.cmd(`sethp:${b0.b + 300}`);
-    await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${b0.b + 290}`, STEP, "B's pool filled"); }
+    await b.cmd(`sethpbase:${b0.b + 60}`);
+    await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${b0.b + 58}`, STEP, "B's max rose");
+    await b.cmd(`sethp:${b0.b + 60}`);
+    await b.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${b0.b + 50}`, STEP, "B's pool filled"); }
   await b.cmd(`snapto:${SEABED.x + 300},${SEABED.y},${SEABED.z}`);
   await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z < -250', STEP, 'B is at the sea spot');
   // ONE FRAME UNDER, NOT EIGHT (#152): a command costs a frame, and at one frame every ~2 s eight

@@ -687,7 +687,11 @@ function identity.tick(now)
             for id, n in pairs(counts) do
                 local before = last.acquired[id] or 0
                 if n > before then
-                    mp.sendEvent('PlayerItemAcquired', { id = id, n = n - before })
+                    -- Through global for the record registry, like the inventory itself: sent
+                    -- raw, a just-made item's LOCAL id sat in the server's credit ledger beside the
+                    -- declaration's net id, was folded into the doc at logout, and the relog
+                    -- granted it twice (s153 #148/#154).
+                    core.sendGlobalEvent('mpItemAcquiredOut', { id = id, n = n - before })
                 end
             end
         end

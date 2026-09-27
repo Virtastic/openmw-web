@@ -3531,6 +3531,15 @@ local eventHandlers = {
     -- Inventory out, mapped (see identity.lua). A player-made record that is still
     -- registering maps to itself this tick; the declaration goes out (counts must not wait)
     -- and the kind is forgotten so the next tick says it again with the net id.
+    -- A pickup, said by its NET id. A just-made record not registered yet is not reported at
+    -- all: the ledger covers a take the 2 s declaration has not caught up with, and the
+    -- declaration carries a made item itself once it has a net id.
+    mpItemAcquiredOut = function(data)
+        if type(data.id) ~= 'string' then return end
+        local netId = worldmp.toNet(data.id)
+        if netId == data.id and worldmp.isDynamicId and worldmp.isDynamicId(data.id) then return end
+        mp.sendEvent('PlayerItemAcquired', { id = netId, n = data.n })
+    end,
     mpInventoryOut = function(data)
         local pending = false
         local items = {}
