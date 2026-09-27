@@ -79,7 +79,7 @@ export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000) 
 // every time a fighting NPC stepped past reach cost s118 four minutes for ten swings (#158).
 export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn = 300, holdMs = 1500, budgetMs = 180_000, maxSwings = Infinity } = {}) {
   const until = Date.now() + budgetMs;
-  let swings = 0, snaps = 0, near = 0;
+  let swings = 0, snaps = 0, near = 0, lastMark = null;
   while (Date.now() < until && swings < maxSwings) {
     if (await done()) return { done: true, swings, snaps };
     const [t, me] = [await getTarget(), await poseOf(c)];
@@ -100,7 +100,14 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     swings++;
     // The mark's health beside the range: whether real blows LAND is the question when a fight
     // does not end (#158: NPCs outlived 171 swings from 60 u while every creature died).
-    if (swings === 1 || swings % 10 === 0) ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark, its hp ${t.hp ?? '?'}, own avatar ${await c.eval('window.omw.state.selfDivergence')} u off`);
+    // Whether the mark MOVES between samples (a fleeing NPC seen a second late is swung at
+    // where it was) and the swinger's own fatigue (the peer's bar: at 0 a body collapses and
+    // cannot swing) -- #159 s128: Fargoth 41 -> 22 in ten swings, then 22 for ninety more.
+    if (swings === 1 || swings % 10 === 0) {
+      const moved = lastMark ? Math.round(flat(t, lastMark)) : 0;
+      lastMark = { x: t.x, y: t.y };
+      ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark (moved ${moved} u), its hp ${t.hp ?? '?'}, own avatar ${await c.eval('window.omw.state.selfDivergence')} u off, own fatigue ${await c.eval('window.omw.state.selfFt')}`);
+    }
     await ctx.sleep(400);
   }
   const ended = await done();
@@ -110,7 +117,9 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     // 100+ swings from 51 u while every creature outdoors died).
     // Both places a peer's lines land: the server log (a peer the server spawned) and the harness's
     // own buffer (a peer the scenario started with ctx.startSimPeer).
-    const tail = [ctx.serverLogTail ? ctx.serverLogTail(20000) : '', ctx.peerLogTail ? ctx.peerLogTail(20000) : ''].join(String.fromCharCode(10)).split(String.fromCharCode(10));
+    // ...and a gateway's (s128: the host world's managed peer narrates through the gateway).
+    const tail = [ctx.serverLogTail ? ctx.serverLogTail(20000) : '', ctx.peerLogTail ? ctx.peerLogTail(20000) : '',
+      ctx.childLogTail ? ctx.childLogTail('gateway', 20000) : ''].join(String.fromCharCode(10)).split(String.fromCharCode(10));
     const empty = tail.filter((l) => /avatar swing found nothing/.test(l));
     if (empty.length) ctx.log(`  the peer's avatar swung at nothing ${empty.length} time(s) -- last: ${empty.slice(-2).map((l) => l.replace(/^.*found nothing: /, '').slice(0, 300)).join(' | ')}`);
     const hits = tail.filter((l) => /hit on peer:/.test(l)).map((l) => { try { return JSON.parse(l).text.replace(/^.*hit on peer: /, ''); } catch { return l.slice(0, 160); } });

@@ -1435,6 +1435,7 @@ local script = {
             -- Scenario mirror: proves the PEER-authoritative bars actually flowed (a local
             -- fall would drop hp too; only this marker distinguishes the sources).
             mp.set('selfStats', string.format('%.0f/%.0f', data.hp.c, data.hp.b))
+            if data.ft then mp.set('selfFt', string.format('%.0f/%.0f', data.ft.c or 0, data.ft.b or 0)) end
             if data.mp then mp.set('selfMagicka', string.format('%.0f/%.0f', data.mp.c, data.mp.b)) end
             identity.notePeerBars(data.hp.c, data.mp and data.mp.c, data.ft and data.ft.c)
             -- Backlog 73: reports come at 4 Hz; hold a little past the next one.
