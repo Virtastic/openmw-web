@@ -49,13 +49,23 @@ echo "==> scenarios: ${SCENARIOS:-<full suite>} (log: $LOG)"
 # HARNESS_DOCKER_ARGS: extra `docker run` flags for a wrapper that needs more environment in
 # the container (run-fresh-install.sh points the play server at its own gateway).
 PEER_RES=/usr/local/share/openmw/resources/vfs
+# THE BOX'S GPU, when it has one (the builder LXC carries a Tesla M40 since 2026-09-24). Without
+# it every client rendered on SwiftShader at a frame every ~2 s, and scenarios failed on the
+# box's pace rather than the game's (#152: s59, s175's weather, s10). The container gets the
+# device through the nvidia runtime, but not NVIDIA's EGL vendor file -- ci/jenkins/nvidia
+# supplies it, or glvnd picks Mesa's llvmpipe. HARNESS_GPU=0 forces software GL.
+GPU_ARGS=""
+if [ "${HARNESS_GPU:-1}" != "0" ] && docker info 2>/dev/null | grep -q 'Runtimes:.*nvidia'; then
+  GPU_ARGS="--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -v $HOST_SRC/ci/jenkins/nvidia:/nvjson:ro -e __EGL_VENDOR_LIBRARY_FILENAMES=/nvjson/10_nvidia.json -e SMOKE_GL=angle-gpu"
+  echo "==> GPU: the harness renders on the box's NVIDIA GPU (HARNESS_GPU=0 to turn off)"
+fi
 set +e
 # shellcheck disable=SC2086
 # --init: a real PID 1 that REAPS. Without it every Chrome and sim peer the harness kills
 # becomes a zombie under the container's `sh`, and a full sweep ended with 2422 of them and a
 # load average of 39 on a 32-core box (#107) -- every timing assertion in the back half of the
 # run failed for reasons that had nothing to do with the code under test.
-docker run --rm --init --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo"   -v "$HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro"   -v "$HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
+docker run --rm --init --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${GPU_ARGS} ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo"   -v "$HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro"   -v "$HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
   -- ${SCENARIOS:-} 2>&1 | tee "$LOG"
 rc=${PIPESTATUS[0]}
 set -e

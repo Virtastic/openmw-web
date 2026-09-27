@@ -418,8 +418,11 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   // it is a bare `RuntimeError: null function` in the middle of render setup. `angle-swiftshader`
   // runs ANGLE — the same translator the engine targets in a real browser — over SwiftShader's
   // Vulkan, so the GL surface is ANGLE's rather than SwiftShader's. On a GPU-less Linux box that
-  // is the one to reach for.
-  const glArgs = process.env.SMOKE_GL === 'swiftshader'
+  // is the one to reach for. `angle-gpu` is ANGLE on the box's real GPU through EGL (the
+  // builder's Tesla M40; ci/jenkins/run-harness.sh sets it when Docker has the nvidia runtime).
+  const glArgs = process.env.SMOKE_GL === 'angle-gpu'
+    ? ['--use-gl=angle', '--use-angle=gl-egl', '--ignore-gpu-blocklist']
+    : process.env.SMOKE_GL === 'swiftshader'
     ? ['--use-gl=swiftshader', '--enable-unsafe-swiftshader']
     : process.env.SMOKE_GL === 'angle-swiftshader'
     ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
