@@ -8,6 +8,7 @@
 // everything the player's HANDS do is real. Library, not a scenario (leading underscore).
 
 export const W = { key: 'w', code: 'KeyW', keyCode: 87 };
+export const S = { key: 's', code: 'KeyS', keyCode: 83 };
 export const WEAPON = 'iron longsword';
 
 export const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
@@ -85,6 +86,14 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     const [t, me] = [await getTarget(), await poseOf(c)];
     if (!t || !me) { await ctx.sleep(500); continue; }
     const d = flat(t, me);
+    // TOO CLOSE TO HIT: two bodies overlapping put the mark's centre off to the side, and the
+    // engine's own arc check refuses it (#159 s66: both players spawned on one spot, the swing
+    // reached the hit test nine times, 'angleXY' every time). A player steps back.
+    if (d < 40) {
+      await c.eval(`window.omw.send('face:${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.z + 30)}'); 1`);
+      await c.keyHold(S, 250);
+      continue;
+    }
     if (d > reach) {
       if (d <= closeIn) {
         await c.eval(`window.omw.send('face:${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.z + 30)}'); 1`);
