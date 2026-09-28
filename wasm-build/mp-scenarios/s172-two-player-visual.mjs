@@ -19,7 +19,7 @@
 //      see), A's hp on A's screen, and a REAL mouse swing from A registering on the peer and on B.
 // Every mirror involved is 2 Hz; the page-side recorder below timestamps each write, and a
 // WebSocket hook installed before the page's own scripts timestamps every pose frame, so the
-// numbers are wall-clock exact up to that 500 ms mirror period.
+// numbers are wall-clock exact up to that 100 ms mirror period (500 ms before #168).
 // The pass bars (coordinator, 2026-09-23): own correction p95 <= 8 u and never > 48 u, <= 1
 // hard snap per 5 min; the friend's puppet at most 400 ms behind the owner while moving; the same NPC
 // within 64 u across A, B and the peer while moving; creature attacks visible to both; a real
@@ -267,7 +267,7 @@ export default async function run(ctx) {
   }
   ctx.log(`b: A selfDivergence ${stats(div)}; per-frame correction ${stats(corr)}; >48 u: ${div.filter((d) => d > 48).length}; hard snaps ${selfSnaps} (${(hA.selfSnap || []).map(([, v]) => v).join(' | ')})`);
   const period = (tr) => { const g = []; for (let i = 1; i < tr.length; i++) g.push(tr[i].t - tr[i - 1].t); return g; };
-  ctx.log(`b: client frame time (ms, engine avg) A ${stats(fpsA)} B ${stats(fpsB)}; pose-mirror period on A (500 ms at >= 2 fps) ${stats(period(trackA))} ms`);
+  ctx.log(`b: client frame time (ms, engine avg) A ${stats(fpsA)} B ${stats(fpsB)}; pose-mirror period on A (100 ms at >= 10 fps) ${stats(period(trackA))} ms`);
   tbar(div.length > 0 && q(div, 0.95) <= 8 && Math.max(...div) <= 48, `b: own correction p95 <= 8 u, max <= 48 (p95 ${q(div, 0.95).toFixed(1)}, max ${Math.max(...div).toFixed(1)})`);
   bar(selfSnaps <= 1, `b: <= 1 hard snap (${selfSnaps})`);
 
@@ -360,7 +360,10 @@ export default async function run(ctx) {
   const probe = JSON.parse(await a.eval('window.omw.state.actorProbe||"{}"'));
   const netRecs = new Set(Object.values(JSON.parse(await a.eval('window.omw.state.netObjects||"{}"'))));
   // The nearest living non-guard actor: it is the one that will be biting A.
-  const victim = Object.keys(probe).filter((r) => !probe[r].dead && !probe[r].guard && d2(probe[r], me) < 3000 && !(probe[r].hp >= 0 && probe[r].hp < 20)) // a mark the provoking swing cannot kill (#167: an 8 hp scrib died to it, and there was no fight left to watch).sort((x, y) => d2(probe[x], me) - d2(probe[y], me))[0];
+  const nearby = Object.keys(probe).filter((r) => !probe[r].dead && !probe[r].guard && d2(probe[r], me) < 3000).sort((x, y) => d2(probe[x], me) - d2(probe[y], me));
+  // A mark the provoking swing cannot kill (#167: an 8 hp scrib died to it and there was no fight
+  // left to watch) -- and if every creature here is that small, the nearest one anyway (#168: none).
+  const victim = nearby.find((r) => !(probe[r].hp >= 0 && probe[r].hp < 20)) ?? nearby[0];
 
   ctx.log(`d: net creatures ${[...netRecs].join(",")}; probe ${Object.keys(probe).join(",")}`);
   assert.ok(victim, 'no living unique creature to fight');

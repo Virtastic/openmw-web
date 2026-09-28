@@ -67,7 +67,10 @@ end
 -- ~15 Hz real-time while moving, plus edge-triggered sends on jump and on stop. Kept well
 -- under the server's 40 msg/s movement budget.
 local SEND_INTERVAL = 1 / 15
-local POSE_MIRROR_INTERVAL = 0.5 -- 2 Hz test-surface mirror
+-- 10 Hz test-surface mirror. At 2 Hz a scenario's "truth" was a straight line between samples half
+-- a second apart: it cut every corner and start and read a friend's puppet up to ~40 u and
+-- several hundred ms further behind than it was (s172 #168). One page call per 100 ms is nothing.
+local POSE_MIRROR_INTERVAL = 0.1
 
 local lastSend = 0
 local lastSentPos = nil
