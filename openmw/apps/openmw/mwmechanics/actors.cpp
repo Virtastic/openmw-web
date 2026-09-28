@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <optional>
 
 #include <osg/Vec3f>
@@ -1827,6 +1828,14 @@ namespace MWMechanics
                 if (isPlayer)
                 {
                     playerCharacter = &ctrl;
+                    // THE SIM PEER'S OWN PLAYER IS A DUMMY that follows players to keep their cells
+                    // loaded -- so it stands where they are, solid, and nobody can see it. It blocked
+                    // an avatar for a whole run leg while the owner's client ran on (s172 #170:
+                    // axis 1, run, 0-9 u/s on the peer; the owner corrected by 64 u throughout).
+                    // Its body collides with nothing; it still stands on the ground.
+                    static const bool sHeadlessPeer = std::getenv("OPENMW_HEADLESS") != nullptr;
+                    if (sHeadlessPeer)
+                        world->setActorCollisionBody(actor.getPtr(), false);
                     continue;
                 }
 

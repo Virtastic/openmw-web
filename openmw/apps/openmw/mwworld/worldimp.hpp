@@ -412,6 +412,8 @@ namespace MWWorld
             std::span<const MWWorld::Ptr> ignoreList) override;
 
         void setActorCollisionMode(const Ptr& ptr, bool internal, bool external) override;
+
+        void setActorCollisionBody(const Ptr& ptr, bool external) override;
         bool isActorCollisionEnabled(const Ptr& ptr) override;
 
         bool toggleCollisionMode() override;

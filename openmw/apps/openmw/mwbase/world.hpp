@@ -321,6 +321,8 @@ namespace MWBase
             = 0;
 
         virtual void setActorCollisionMode(const MWWorld::Ptr& ptr, bool internal, bool external) = 0;
+        /// Whether other actors collide with this one's body (it still walks on the world).
+        virtual void setActorCollisionBody(const MWWorld::Ptr& ptr, bool external) = 0;
         virtual bool isActorCollisionEnabled(const MWWorld::Ptr& ptr) = 0;
 
         virtual bool toggleCollisionMode() = 0;

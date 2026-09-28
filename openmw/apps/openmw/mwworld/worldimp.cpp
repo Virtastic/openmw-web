@@ -1594,6 +1594,12 @@ namespace MWWorld
         }
     }
 
+    void World::setActorCollisionBody(const MWWorld::Ptr& ptr, bool external)
+    {
+        if (MWPhysics::Actor* physicActor = mPhysics->getActor(ptr))
+            physicActor->enableCollisionBody(external); // a no-op when unchanged
+    }
+
     bool World::isActorCollisionEnabled(const MWWorld::Ptr& ptr)
     {
         MWPhysics::Actor* physicActor = mPhysics->getActor(ptr);

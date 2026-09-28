@@ -1914,6 +1914,16 @@ do
     ac:find('if probe[rec] and puppeted and not probe[rec].puppet then', 1, true) ~= nil)
 end
 
+print('s172 the sim peer dummy player blocks nobody')
+do
+  local ac = io.open('./openmw/apps/openmw/mwmechanics/actors.cpp'):read('*a')
+  local wi = io.open('./openmw/apps/openmw/mwworld/worldimp.cpp'):read('*a')
+  check('actors.cpp turns off the headless peer player collision body',
+    ac:find('world->setActorCollisionBody(actor.getPtr(), false);', 1, true) ~= nil)
+  check('World::setActorCollisionBody only toggles the body (the actor still walks on the world)',
+    wi:find('physicActor->enableCollisionBody(external); // a no-op when unchanged', 1, true) ~= nil)
+end
+
 print('#431 a fresh holder streams no bars for a cell until the world record has answered')
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
