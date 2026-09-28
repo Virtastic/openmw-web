@@ -41,11 +41,17 @@ export default async function run(ctx) {
     }
     // The host befriends both.
     for (const [handle, g] of [[A, ga], [B, gb]]) {
+      // Stored first (a refusal shows as itself), then carried to the other world by its 10 s
+      // social heartbeat: 60 s covers several beats on a loaded box (#175 s136).
+      await host.client.eval("window.omw.state.socialResult = ''; 'cleared'");
       await host.client.cmd(`social:FriendRequest:${handle}`);
-      await g.client.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, `the request reaches ${handle}`);
+      await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'FriendRequest'`, STEP, `the server answered the request to ${handle}`);
+      const res = JSON.parse(await host.client.eval('window.omw.state.socialResult'));
+      assert.ok(res.ok, `the request to ${handle} was refused: ${res.detail}`);
+      await g.client.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, 60_000, `the request reaches ${handle}`);
       await g.client.cmd(`social:FriendAccept:${H}`);
     }
-    await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 2`, STEP, 'the host has two friends');
+    await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 2`, 60_000, 'the host has two friends');
     await host.client.cmd('worldmode:party');
     await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
     // Both friends come over.

@@ -2003,11 +2003,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // process.exit(1) — so one contended write ejected every player in this world. Presence is
     // a heartbeat: missing a beat is survivable, and the next one is 10 seconds away.
     try {
-      publishPresence();
-      broadcastServerRoster();
       // The friend and party panels are pushed on RELATIONSHIP changes, which never fire when a
       // member simply walks into another world — so they kept saying "Offline" about someone
-      // standing in plain sight. Presence moves on this heartbeat; the views follow it.
+      // standing in plain sight. Presence moves on this heartbeat; the views follow it. Its own
+      // try: it is also how a friend request reaches a player in another world, and a contended
+      // presence write must not skip it (s136 #175).
+      try { publishPresence(); broadcastServerRoster(); } catch (err) { log('warn', 'presence.publish_failed', { error: String(err) }); }
       social.refreshPresenceViews();
       // Expired friend requests and invites. Swept here rather than on their own timer:
       // this is already the once-per-10s social heartbeat, and sweepExpired had NO production
