@@ -165,7 +165,9 @@ export default async function run(ctx) {
   // B 400 u to A's +X side (a same-cell hop under 256 u is never announced, so the avatar stays
   // put and drags B back: run 4 had B standing inside A); A walks a square around B's side of the field (one leg of a square
   // always runs into the open whatever the rocks do), B turning to keep A in view for each shot.
-  await b.cmd(`snapto:${Math.round(pA.x + 400)},${Math.round(pA.y)},${Math.round(pA.z + 30)}`);
+  // DIAGONAL, OFF EVERY LEG: at +400 X, B stood in A's run +X leg and A ran into B's avatar on
+  // the peer (#172: 0-9 u/s at full run input). The legs are -Y, +X, +Y, +X from A's start.
+  await b.cmd(`snapto:${Math.round(pA.x + 400)},${Math.round(pA.y + 400)},${Math.round(pA.z + 30)}`);
   await b.waitFor('Number(window.omw.state.selfDivergence||999) < 96', STEP, 'B\'s avatar followed B').catch((e) => ctx.log('B settle: ' + e.message.split('\n')[0]));
   const lookAtA = async () => { const p = JSON.parse(await a.eval('window.omw.state.pose')); await b.cmd(`face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 60)}`); };
   const headA = async (dx, dy) => { const p = JSON.parse(await a.eval('window.omw.state.pose')); await a.cmd(`face:${Math.round(p.x + dx * 3000)},${Math.round(p.y + dy * 3000)},${Math.round(p.z + 100)}`); };
