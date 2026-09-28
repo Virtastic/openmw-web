@@ -27,7 +27,7 @@ export default async function run(ctx) {
   await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'A built a named creature');
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 30_000, 'A puppeted the cell actors');
   let names, probe, victim;
-  ({ found: victim, probes: [names, probe] } = await pickUntil(ctx, async () => [Object.values(await netObjs(a)), await probeOf(a)], (names, probe) => names.find((r) => probe[r] && !probe[r].dead)));
+  ({ found: victim, probes: [names, probe] } = await pickUntil(ctx, async () => [Object.values(await netObjs(a)), await probeOf(a)], (names, probe) => names.find((r) => probe[r] && !probe[r].dead && !(probe[r].hp >= 0 && probe[r].hp < 20)) ?? names.find((r) => probe[r] && !probe[r].dead))); // one a provoking swing cannot kill before it bites (#172: a 8 hp scrib died to the second swing, and A was never hurt)
   assert.ok(victim, 'no living named creature');
   const p = probe[victim];
   await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`);

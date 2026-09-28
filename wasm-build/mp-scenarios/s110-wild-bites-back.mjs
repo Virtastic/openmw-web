@@ -43,7 +43,7 @@ export default async function run(ctx) {
 
   // Stand next to the creature: a bite has a reach, and the avatar follow-teleports with us.
   let names, probe, victim;
-  ({ found: victim, probes: [names, probe] } = await pickUntil(ctx, async () => [Object.values(await netObjs(a)), await probeOf(a)], (names, probe) => names.find((r) => probe[r] && !probe[r].dead)));
+  ({ found: victim, probes: [names, probe] } = await pickUntil(ctx, async () => [Object.values(await netObjs(a)), await probeOf(a)], (names, probe) => names.find((r) => probe[r] && !probe[r].dead && !(probe[r].hp >= 0 && probe[r].hp < 20)) ?? names.find((r) => probe[r] && !probe[r].dead))); // one a provoking swing cannot kill before it bites back (s112 #172)
   assert.ok(victim, `no living named creature in the probe: net=${JSON.stringify(names)} probe=${JSON.stringify(Object.keys(probe))}`);
   const p = probe[victim];
   await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`);
