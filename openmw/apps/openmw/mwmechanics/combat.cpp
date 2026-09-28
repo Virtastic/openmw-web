@@ -2,6 +2,7 @@
 #include "combat.hpp"
 
 #include <array>
+#include <cstdlib>
 
 #include <components/debug/debuglog.hpp>
 #include <components/misc/rng.hpp>

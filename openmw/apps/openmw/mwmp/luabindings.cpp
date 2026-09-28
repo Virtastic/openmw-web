@@ -374,7 +374,7 @@ namespace MWMP
             const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
             if (ptr.isEmpty() || !ptr.getClass().isActor())
                 return "none";
-            auto* mm = MWBase::Environment::get().getMechanicsManager();
+            const auto mm = MWBase::Environment::get().getMechanicsManager();
             if (mm->isAttackPreparing(ptr))
                 return "windup";
             if (mm->isAttackingOrSpell(ptr))
