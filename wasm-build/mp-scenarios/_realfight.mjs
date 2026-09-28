@@ -58,19 +58,34 @@ export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000, 
   }
   const t = await getTarget();
   if (!t) return { ok: false, strides, snapped: false };
-  // A SHORT GAP IS NOT SNAPPED: under 256 u the jump is no teleport to the game (player.lua's
-  // jump detector), the avatar stays, and reconciliation walks the client back -- s128 snapped
-  // every 4 s for 3.5 minutes from 110-146 u short (#158). Within closeIn, swingUntil squares up.
-  if (best < 256) return { ok: false, strides, snapped: false };
   ctx.log(`  (the walk stalled ${Math.round(best)} u short after ${strides} strides: snapping beside the mark)`);
-  await c.cmd(`snapto:${Math.round(t.x + 60 * Math.cos(side))},${Math.round(t.y + 60 * Math.sin(side))},${Math.round(t.z + 8)}`);
+  const came = await snapBeside(ctx, c, t, side);
+  return { ok: true, strides, snapped: true, came };
+}
+
+// Put the player 60 u from the mark (on `side`) with jumps the peer's avatar FOLLOWS. A
+// same-cell hop under 256 u is walking to the game (player.lua SNAP_DIST, global.lua's
+// follow-teleport): the avatar stayed and the client was reconciled back (s128 #158: a snap every
+// 4 s from 110-146 u short). Refusing short snaps instead left a fight blocked by the room stuck
+// for good (#172 s157: 0 swings). From close by, hop 400 u straight away from the mark first,
+// let the avatar follow, then in: two real jumps.
+export async function snapBeside(ctx, c, t, side = 0) {
+  const spot = { x: Math.round(t.x + 60 * Math.cos(side)), y: Math.round(t.y + 60 * Math.sin(side)), z: Math.round(t.z + 8) };
+  const me = await poseOf(c);
+  if (me && flat(spot, me) < 300) {
+    const away = Math.atan2(me.y - t.y, me.x - t.x);
+    const out = { x: Math.round(me.x + 400 * Math.cos(away)), y: Math.round(me.y + 400 * Math.sin(away)), z: Math.round(me.z + 40) };
+    await c.cmd(`snapto:${out.x},${out.y},${out.z}`);
+    await c.eval('window.omw.state.selfDivergence = null; 1');
+    await c.waitFor('window.omw.state.selfDivergence != null && Number(window.omw.state.selfDivergence) < 60', 15_000, 'the avatar followed the hop out').catch(() => {});
+  }
+  await c.cmd(`snapto:${spot.x},${spot.y},${spot.z}`);
   // SAY IT when the avatar stays behind: the client then swings from beside the mark while the
-  // body that actually fights -- the peer's avatar -- is wherever the walk stalled (#158 s157:
-  // snapped 2013 u, then 102 swings "from 51 u" and not one hit line on the peer).
+  // body that actually fights -- the peer's avatar -- is wherever the walk stalled (#158 s157).
   await c.eval('window.omw.state.selfDivergence = null; 1'); // a fresh sample, not the pre-snap one
   const came = await c.waitFor('window.omw.state.selfDivergence != null && Number(window.omw.state.selfDivergence) < 60', 15_000, 'the avatar came along').then(() => true, () => false);
   if (!came) ctx.log(`  (the avatar did NOT follow the snap: divergence ${await c.eval('window.omw.state.selfDivergence')} u)`);
-  return { ok: true, strides, snapped: true, came };
+  return came;
 }
 
 // Swing for real until `done()` says so (the mark died, it fought back, the bar moved) or the
@@ -107,6 +122,8 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
       if (d <= closeIn) {
         await c.eval(`window.omw.send('face:${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.z + 30)}'); 1`);
         if (++near % 3 === 0) await c.keyHold(W, 300); else await ctx.sleep(400);
+        // Squaring up that never gets there is a wall or a counter between: snap in (#172 s157).
+        if (near % 30 === 0) { ctx.log(`  (${Math.round(d)} u off after ${near} close-in steps: snapping beside the mark)`); await snapBeside(ctx, c, t, side); snaps++; }
         continue;
       }
       const w = await walkTo(ctx, c, getTarget, reach - 30, 20_000, side);
