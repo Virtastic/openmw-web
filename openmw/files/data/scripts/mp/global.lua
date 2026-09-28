@@ -3024,7 +3024,10 @@ local eventHandlers = {
             local me = world.players[1]
             local best, bestD, bestPuppet = nil, math.huge, false
             for _, obj in ipairs(world.activeActors) do
-                if obj:isValid() and obj.recordId == data.record then
+                -- ...and a LIVE one: corpses stay in activeActors, so a hook repeated to clear a
+                -- cell struck the same dead fish every time (s149 #161).
+                local okD, dead = pcall(types.Actor.isDead, obj)
+                if obj:isValid() and obj.recordId == data.record and not (okD and dead) then
                     local puppet = actors.isPuppetedActor(obj)
                     local d = me and (obj.position - me.position):length() or 0
                     if (puppet and not bestPuppet) or (puppet == bestPuppet and d < bestD) then

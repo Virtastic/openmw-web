@@ -85,8 +85,11 @@ export default async function run(ctx) {
     await ctx.sleep(500);
   }
   ctx.log(`fish B sees at the sea spot: ${seen.map(([r, n]) => `${r} x${n}`).join(', ')}`);
+  // THROUGH THE HOLDER: killnpc kills B's own copy only -- the peer holds these fish, and the
+  // six B killed in #161 went on biting A. hitn: strikes B's copy, whose intercept relays the
+  // blow to the peer (the testhost allows it: limits.harness); one kill a frame, live ones only.
   for (const [rec, n] of seen) {
-    for (let i = 0; i < n; i++) { await b.cmd(`killnpc:${rec}`); await ctx.sleep(150); }
+    for (let i = 0; i <= n; i++) { await b.cmd(`hitn:${rec}:500`); await ctx.sleep(700); } // a death takes a round trip to show on B
   }
   await b.cmd('snapto:-12288,-69632,87'); // back onto land (the retail start), as A does after the hold
   await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z > 0', STEP, 'B is back on land');
