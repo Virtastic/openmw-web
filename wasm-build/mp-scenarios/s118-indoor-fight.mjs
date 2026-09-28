@@ -48,6 +48,16 @@ export default async function run(ctx) {
     await c.waitFor('window.omw.state.isHolder === "false"', STEP, `${c.name} does not hold it (the peer does)`);
   }
 
+  // A BIGGER POOL, as s149 does: a level-1 character does not outlast a summoner (#172: Tolvise
+  // and her skeleton killed both players mid-fight). +60 is the largest raise the server allows.
+  for (const c of [a, b]) {
+    const b0 = String(await c.eval('window.omw.state.selfStats') || '0/0').split('/').map(Number);
+    await c.cmd(`sethpbase:${b0[1] + 60}`);
+    await c.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${b0[1] + 58}`, STEP, `${c.name}'s max rose`);
+    await c.cmd(`sethp:${b0[1] + 60}`);
+    await c.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${b0[1] + 50}`, STEP, `${c.name}'s pool filled`);
+  }
+
   let pa, pb, victim;
   // ON THE SAME FLOOR: an NPC upstairs is a walk up a staircase the fight helper does not path
   // (#158: Hrisskar, 440 u short of him at every approach).

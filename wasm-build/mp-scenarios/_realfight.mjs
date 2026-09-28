@@ -86,6 +86,12 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
   let swings = 0, snaps = 0, near = 0, lastMark = null;
   while (Date.now() < until && swings < maxSwings) {
     if (await done()) return { done: true, swings, snaps };
+    // A DEAD SWINGER SWINGS AT NOTHING: say so and stop (#172 s118: both players died to the mark
+    // and its summon, and B went on "swinging" 110 times with its bars frozen).
+    if (Number(String(await c.eval('window.omw.state.selfStats') || '1/1').split('/')[0]) <= 0) {
+      ctx.log(`  the swinger died after ${swings} swing(s)`);
+      return { done: false, swings, snaps, died: true };
+    }
     const [t, me] = [await getTarget(), await poseOf(c)];
     if (!t || !me) { await ctx.sleep(500); continue; }
     const d = flat(t, me);
