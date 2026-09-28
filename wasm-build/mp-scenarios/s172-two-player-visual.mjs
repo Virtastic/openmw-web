@@ -223,7 +223,11 @@ export default async function run(ctx) {
     // Judged where A actually MOVES (>= 80 u/s over the last 500 ms): at a crawl against a wall a
     // 15 u offset reads as 500+ ms (#172). 450 ms, decided 2026-09-28: the pipeline floor at a
     // walk is ~430 ms (wire ~310, B's render delay and frames ~120).
-    if (before && d2(before, truth) >= 40) movingLagT.push(best < 40 ? bestTau : Infinity);
+    // AND STILL MOVING at the sample (>= 12 u in the last 150 ms = 80 u/s): the 500 ms window alone
+    // kept samples up to half a second AFTER A stopped, when the puppet is legitimately slowing
+    // into its stop and reads far behind (#178 p95 525 ms, n=21, four such samples).
+    const recent = at(trackA, s.t - 150);
+    if (before && d2(before, truth) >= 40 && recent && d2(recent, truth) >= 12) movingLagT.push(best < 40 ? bestTau : Infinity);
   }
   // Wire: gaps between A's poses arriving at B (a jerky stream shows as a steering puppet
   // that stops and starts) and the wire pose vs A's truth (network + peer lag, before steering).
