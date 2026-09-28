@@ -11,6 +11,7 @@
 // here) and retreats 450 units; the creature must
 // close to melee reach within 15 s.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 
 export const managedPeer = true;
@@ -41,10 +42,12 @@ export default async function run(ctx) {
 
   // The nearest living named creature (keyed by record, s164).
   const me = await poseOf(b);
-  const probe = JSON.parse(await b.eval('window.omw.state.actorProbe||"{}"'));
-  const dist = (r) => { const p = probe[r]; return p && !p.dead ? Math.hypot(p.x - me.x, p.y - me.y) : Infinity; };
-  const victim = Object.values(await netObjs(b)).sort((x, y) => dist(x) - dist(y))[0];
-  assert.ok(victim && Number.isFinite(dist(victim)), `no living named creature in the probe: ${JSON.stringify(Object.keys(probe))}`);
+  let probe = {};
+  // One a provoking blow cannot kill and that is alone under its record (#178: the 8 hp scrib
+  // died to the sting, and 'n' was 2 -- the probe's one position for 'scrib' could be either).
+  const { found: victim } = await pickUntil(ctx, async () => [Object.values(await netObjs(b)), JSON.parse(await b.eval('window.omw.state.actorProbe||"{}"'))],
+    (names, pr) => { probe = pr; const ok = (r) => pr[r] && !pr[r].dead && (pr[r].n ?? 1) === 1; return names.filter((r) => ok(r) && !(pr[r].hp >= 0 && pr[r].hp < 20)).sort((x, y) => Math.hypot(pr[x].x - me.x, pr[x].y - me.y) - Math.hypot(pr[y].x - me.x, pr[y].y - me.y))[0] ?? names.filter(ok)[0]; });
+  assert.ok(victim, `no living named creature alone under its record in the probe: ${JSON.stringify(Object.keys(probe))}`);
 
   // Provoke it with ONE STING, not a spell that kills it. A Fire Bite is 15-30 damage and the
   // mark the peer rolls here is a scrib with 8 health: #106 killed it with the provocation
