@@ -9,6 +9,7 @@
 // open the rest dialog mid-bite. MP-COVERAGE-MAP listed this as unproven. This asks the
 // engine's own verdict (mp.canRest, bit 4) before and after picking the fight.
 import assert from 'node:assert/strict';
+import { pickUntil } from './_probe.mjs';
 import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 
 const STEP = 30_000;
@@ -31,9 +32,12 @@ export default async function run(ctx) {
   await a.cmd('snapto:' + SPOT);
   await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'the peer named a creature');
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP, 'the cell is puppeted (the peer holds it)');
-  const oa = await netObjs(a);
-  const [netId, victim] = Object.entries(oa)[0];
-  ctx.log(`the peer's "${victim}" (net ${netId}) is here`);
+  // One a provoking swing cannot kill before its fight registers (#175: an 8 hp scrib died to
+  // the first blow that landed, and there was no fight left to see).
+  const probeAll = async (c) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
+  const { found: victim } = await pickUntil(ctx, async () => [Object.values(await netObjs(a)), await probeAll(a)],
+    (names, probe) => names.find((r) => probe[r] && !probe[r].dead && !(probe[r].hp >= 0 && probe[r].hp < 20)) ?? names.find((r) => probe[r] && !probe[r].dead));
+  ctx.log(`the peer's "${victim}" is here (hp ${(await probeRec(a, victim))?.hp})`);
 
   const before = await canRest(a);
   assert.ok(before >= 0, `mp.canRest is not bound on this engine (${before})`);
