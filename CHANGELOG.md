@@ -15,6 +15,22 @@ timing. The avatar's item layout no longer loops back onto your pack when the tw
 
 **What you make comes back once.** A potion you brewed or an item you enchanted could come back twice after a relog: the moment it appeared was reported under a name only your own game knew, and the server counted it again beside the real one.
 
+**A heal heals in full.** A potion or a rest could reach the body the server simulates for you
+short -- a 50-point heal as 42 -- when it crossed that body's own report on the wire.
+
+**Friends move smoothly.** Your body on the server fell further behind the longer you ran, and you
+were pulled back to meet it; a friend's figure trailed them and froze whenever a message came
+late. Both now keep up: your own corrections dropped from up to 117 units to 12, and a friend's
+figure carries on through a late message and can catch up with them.
+
+**A crowd costs less.** Twenty players on screen now cost each frame less work.
+
+**Players at the start point can fight.** An unseen placeholder the server keeps at the starting
+spot took every blow aimed at a player standing there.
+
+**A returning friend lands beside you.** A guest who came back straight to their host could be put
+back where they last logged out when their connection was quick.
+
 **Skills you use on the peer's body count.** A skill raised by the body the server simulates for
 you -- blocking, armour, the weapon you swing -- now reaches your character sheet.
 
