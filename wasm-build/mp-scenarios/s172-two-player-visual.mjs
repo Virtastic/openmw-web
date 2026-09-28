@@ -177,18 +177,20 @@ export default async function run(ctx) {
   const snapA0 = snapLines(a, /SELF SNAP/), pupSnapB0 = snapLines(b, new RegExp(`puppet snap #${idA}\\b`)); // \\b: a bare \b in a template is a backspace, so this baseline never matched and the attach snap counted (#159)
   const tWalk0 = Date.now();
   // walk -Y 5 s; turn, run -X 5 s; turn, run +Y 5 s; stop 4 s; turn, walk +X 4 s; stop (away from the bay first).
+  const legs = [['walk -Y', Date.now()]];
   await a.cmd('walk:0,1,5000');
   await ctx.sleep(2500); await lookAtA(); await shot(b, 'a1-b-sees-A-walking.png');
   await ctx.sleep(2500);
-  await headA(-1, 0); await a.cmd('walk:0,1,5000:run');
+  await headA(-1, 0); legs.push(['run -X', Date.now()]); await a.cmd('walk:0,1,5000:run');
   await ctx.sleep(2500); await lookAtA(); await shot(b, 'a2-b-sees-A-running.png');
   await ctx.sleep(2500);
-  await headA(0, 1); await a.cmd('walk:0,1,5000:run');
+  await headA(0, 1); legs.push(['run +Y', Date.now()]); await a.cmd('walk:0,1,5000:run');
   await ctx.sleep(2500); await lookAtA(); await shot(b, 'a3-b-sees-A-turned-running.png');
   await ctx.sleep(6500); // the rest of the run, then 4 s stopped
   await lookAtA(); await shot(b, 'a4-b-sees-A-stopped.png');
-  await headA(1, 0); await a.cmd('walk:0,1,4000');
+  await headA(1, 0); legs.push(['walk +X', Date.now()]); await a.cmd('walk:0,1,4000');
   await ctx.sleep(7000);
+  legs.push(['end', Date.now()]);
   const tWalk1 = Date.now();
   const [hA, hB] = await Promise.all([drain(a), drain(b)]);
   const wB = await wire(b);
@@ -249,6 +251,20 @@ export default async function run(ctx) {
   const div = (hA.selfDivergence || []).map(([, v]) => Number(v)).filter(Number.isFinite);
   const corr = div.map((d) => Math.min(48, d * 0.25)); // player.lua CORRECT_GAIN / CORRECT_CAP
   const selfSnaps = snapLines(a, /SELF SNAP/) - snapA0;
+  // WHICH LEG the correction comes from (#167: 53 samples over 48 u, p95 66 -- one leg with the
+  // avatar nearly a run speed short, not a start/stop blip).
+  const divAt = (hA.selfDivergence || []).map(([t, v]) => [t, Number(v)]).filter(([, v]) => Number.isFinite(v));
+  ctx.log('b: A selfDivergence by leg -- ' + legs.slice(0, -1).map(([name, t0], i) => {
+    const t1 = legs[i + 1][1];
+    return `${name}: ${stats(divAt.filter(([t]) => t >= t0 && t < t1).map(([, v]) => v))}`;
+  }).join(' | '));
+  { // The peer's side of the walk: avatar.lua's once-a-second motion line (both avatars).
+    const NL = String.fromCharCode(10);
+    const motion = [ctx.serverLogTail ? ctx.serverLogTail(20000) : '', ctx.peerLogTail ? ctx.peerLogTail(20000) : ''].join(NL).split(NL)
+      .filter((l) => /avatar motion:/.test(l)).map((l) => { try { return JSON.parse(l).text; } catch { return l; } })
+      .map((l) => l.replace(/^.*avatar motion: /, ''));
+    ctx.log(`b: avatar motion on the peer (${motion.length} lines): ${motion.slice(-40).join(' | ')}`);
+  }
   ctx.log(`b: A selfDivergence ${stats(div)}; per-frame correction ${stats(corr)}; >48 u: ${div.filter((d) => d > 48).length}; hard snaps ${selfSnaps} (${(hA.selfSnap || []).map(([, v]) => v).join(' | ')})`);
   const period = (tr) => { const g = []; for (let i = 1; i < tr.length; i++) g.push(tr[i].t - tr[i - 1].t); return g; };
   ctx.log(`b: client frame time (ms, engine avg) A ${stats(fpsA)} B ${stats(fpsB)}; pose-mirror period on A (500 ms at >= 2 fps) ${stats(period(trackA))} ms`);
@@ -344,7 +360,7 @@ export default async function run(ctx) {
   const probe = JSON.parse(await a.eval('window.omw.state.actorProbe||"{}"'));
   const netRecs = new Set(Object.values(JSON.parse(await a.eval('window.omw.state.netObjects||"{}"'))));
   // The nearest living non-guard actor: it is the one that will be biting A.
-  const victim = Object.keys(probe).filter((r) => !probe[r].dead && !probe[r].guard && d2(probe[r], me) < 3000).sort((x, y) => d2(probe[x], me) - d2(probe[y], me))[0];
+  const victim = Object.keys(probe).filter((r) => !probe[r].dead && !probe[r].guard && d2(probe[r], me) < 3000 && !(probe[r].hp >= 0 && probe[r].hp < 20)) // a mark the provoking swing cannot kill (#167: an 8 hp scrib died to it, and there was no fight left to watch).sort((x, y) => d2(probe[x], me) - d2(probe[y], me))[0];
 
   ctx.log(`d: net creatures ${[...netRecs].join(",")}; probe ${Object.keys(probe).join(",")}`);
   assert.ok(victim, 'no living unique creature to fight');

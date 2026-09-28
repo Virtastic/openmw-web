@@ -58,6 +58,7 @@ local frameDt, spendPrev, tailPrev, doneInPrev = 0, 0, 0, false
 -- 20 u in the replay; 0.15 keeps every pose within 8 u of the owner's ring and still cuts the
 -- bursty-link lag from 0.44 s to 0.29 s).
 local owed, OWED_MAX_S, owedDonePrev = 0, 0.15, 0
+local motionSaidAt = nil -- the once-a-second motion line
 -- 1.0, not 0.35: a TCP retransmit stall (300 ms RTO, seconds on a Wi-Fi roam) must not stop
 -- the avatar while the owner keeps running -- the burst collapses to the newest input and the
 -- owner is snapped back by v x stall (#205).
@@ -297,6 +298,21 @@ return {
                 moveAxis = frameDt > 0 and mSum / frameDt or 0
                 sideAxis = frameDt > 0 and sSum / frameDt or 0
                 spendPrev, tailPrev, doneInPrev, owedDonePrev = frameDt - left, tail, done, owedDone
+            end
+            -- ONCE A SECOND while the owner moves: what this body did with it (#167 s172: one leg
+            -- with the avatar nearly a run speed short of its owner). Speed, run flag, backlog,
+            -- owed: blocked, walking, or queued.
+            if (input.move or 0) ~= 0 or (input.side or 0) ~= 0 then
+                local nowS = core.getRealTime()
+                if nowS - (motionSaidAt or 0) >= 1 then
+                    motionSaidAt = nowS
+                    local q = 0
+                    for _, sg in ipairs(segs) do q = q + sg.t end
+                    pcall(function()
+                        print(string.format('[mp] avatar motion: speed=%.0f axis=%.2f run=%s backlog=%.2f owed=%.2f seq=%s',
+                            stepVel and frameDt > 0 and stepVel:length() / frameDt or -1, moveAxis, tostring(bit(ctl.flags, 0)), q, owed, tostring(input.seq)))
+                    end)
+                end
             end
             self.controls.movement = moveAxis
             self.controls.sideMovement = sideAxis
