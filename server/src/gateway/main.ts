@@ -137,7 +137,11 @@ const worlds = new WorldSupervisor({
     // #381e: the flag wins, then [worlds] idleReapSec (the dashboard's door), then 120 s.
     idleReapMs: positiveInt(values['idle-reap-ms'], config.worlds.idleReapSec > 0 ? config.worlds.idleReapSec * 1000 : 120_000, 'idle-reap-ms'),
     loadCap: config.worlds.loadCap,
-    startTimeoutMs: 120_000,
+    // 300 s, not 120: on the shared builder LXC a neighbour's load starves a world's boot for
+    // tens of seconds at a time (mp-harness.mjs's own /healthz wait, #175 s117), and a rolling
+    // restart used this same number to decide a world was gone (#175 s175: 120630 ms, one world
+    // short of ready when the 120 s clock ran out).
+    startTimeoutMs: 300_000,
     restartBackoffMs: 15_000,
     sharedDir,
   },

@@ -162,7 +162,9 @@ export default async function run(ctx) {
     const drops = new Map([[H, 0], [G, 0]]);
     process.kill(host.proc.pid, 'SIGHUP');
     const t0 = Date.now();
-    for (const by = Date.now() + 240_000; Date.now() < by && (gwLog().match(/rolling_restart_done/g) ?? []).length === rolls0;) {
+    // Past the gateway's own startTimeoutMs (300 s, #175 s175: 120630 ms tripped the old 120 s
+    // limit on this shared, loaded builder), plus margin for the stop-then-start either side of it.
+    for (const by = Date.now() + 340_000; Date.now() < by && (gwLog().match(/rolling_restart_done/g) ?? []).length === rolls0;) {
       for (const c of [H, G]) if (await c.eval('window.omw.state.state').catch(() => 'x') !== 'Joined') drops.set(c, drops.get(c) + 1);
       await ctx.sleep(500);
     }

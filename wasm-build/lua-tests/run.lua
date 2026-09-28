@@ -1907,14 +1907,14 @@ do
   for i = 0, 5 do it:push({ t = i * 0.066, x = 0, y = i * 0.066 * 250, z = 0, yaw = 0, pitch = 0, flags = 1 }) end
   local newest = 5 * 0.066
   -- 40 ms past the newest sample in render time (now = newest + RENDER_DELAY + 0.04).
-  local tg = it:target(newest + 0.075 + 0.04)
+  local tg = it:target(newest + 0.04 + 0.04)
   check('a query past the newest pose carries on along the last step (was clamped to it)',
     tg ~= nil and tg.y > newest * 250 + 5, string.format('y %.1f, newest %.1f', tg and tg.y or -1, newest * 250))
-  local far = it:target(newest + 0.075 + 1.0)
-  check('...by at most 50 ms of it (a real stop overshoots <= 12 u at a run)',
-    far ~= nil and far.y <= newest * 250 + 0.05 * 250 + 0.5, string.format('y %.1f', far and far.y or -1))
+  local far = it:target(newest + 0.04 + 1.0)
+  check('...by at most EXTRAP_S of it (a real stop overshoots <= ~22 u at a run, s172 #175)',
+    far ~= nil and far.y <= newest * 250 + 0.09 * 250 + 0.5, string.format('y %.1f', far and far.y or -1))
   check('the speed feed-forward keeps reading the run through a late pose',
-    it:speed(newest + 0.075 + 0.04) > 200, string.format('speed %.0f', it:speed(newest + 0.075 + 0.04)))
+    it:speed(newest + 0.04 + 0.04) > 200, string.format('speed %.0f', it:speed(newest + 0.04 + 0.04)))
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   local cc = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('puppet steering may exceed top speed to close a gap',
@@ -1922,6 +1922,13 @@ do
   check('the engine honours it for puppets only',
     cc:find('MWMP::isPuppet(mPtr.getCellRef().getRefNum()) ? 1.25f : 1.f', 1, true) ~= nil)
   package.loaded['scripts.mp.interp'] = nil
+end
+
+print('s172 the render-delay buffer was cut below one batch interval (#175: the 450 ms time-lag bar)')
+do
+  local it = io.open('./openmw/files/data/scripts/mp/interp.lua'):read('*a')
+  check('RENDER_DELAY is 40 ms, not the old 75', it:find('local RENDER_DELAY = 0.04', 1, true) ~= nil)
+  check('EXTRAP_S was raised to cover it', it:find('local EXTRAP_S = 0.09', 1, true) ~= nil)
 end
 
 print('s66 the sim peer dummy player never takes a blow meant for a player beside it')

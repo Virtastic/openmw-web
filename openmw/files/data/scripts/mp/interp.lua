@@ -6,18 +6,20 @@ local Interp = {}
 Interp.__index = Interp
 
 -- Seconds behind the newest snapshot. THE LARGEST SINGLE LATENCY ITEM in the system: unlike
--- every rate upstream of it, this is unconditionally additive to what the player sees. 75 ms
--- is safe only because actor frames now arrive on a stable ~50 ms cadence (the peer broadcasts
--- every frame at its framerate cap, with no aliasing gate). The floor is one packet interval
--- plus the delivery hop plus jitter; go lower only with evidence that arrivals are steadier,
--- or puppets clamp to the newest sample and stall on a laggy link instead of interpolating.
-local RENDER_DELAY = 0.075
+-- every rate upstream of it, this is unconditionally additive to what the player sees. BELOW
+-- one batch interval (66 ms) on purpose (s172 #175: the 450 ms time-lag bar was missed at a
+-- 75 ms delay, p50 525-600 ms on a loaded box) -- most samples now render before their pair
+-- has arrived and lean on EXTRAP_S below rather than on a buffered snapshot. That trades the
+-- steadier-arrivals margin the old 75 ms kept for ~35 ms less lag; if arrivals get jerkier,
+-- raise this before raising EXTRAP_S.
+local RENDER_DELAY = 0.04
 local MAX_SNAPSHOTS = 16 -- ~1s of history at 15 Hz
--- A LATE POSE IS NOT A STOP. A third of arrival gaps ran past RENDER_DELAY (s172 #161: p95
--- 114 ms), and the target froze on the newest sample: the speed feed-forward read 0 and the
--- puppet slowed toward a point that had stopped. Carry on along the last step for at most
--- this long; a real stop overshoots by <= 12 u at a run, under puppet.lua's STEER_START.
-local EXTRAP_S = 0.05
+-- A LATE POSE IS NOT A STOP. A third of arrival gaps ran past the old RENDER_DELAY (s172 #161:
+-- p95 114 ms), and the target froze on the newest sample: the speed feed-forward read 0 and
+-- the puppet slowed toward a point that had stopped. Carry on along the last step for at most
+-- this long. Raised alongside RENDER_DELAY's cut (s172 #175): a real stop now overshoots by
+-- <= ~22 u at a run, still comfortably under puppet.lua's STEER_START (24 u).
+local EXTRAP_S = 0.09
 
 function Interp.new()
     return setmetatable({ buf = {} }, Interp)
