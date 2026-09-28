@@ -58,7 +58,10 @@ export default async function run(ctx) {
   let pa, pb, va, vb;
   await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (qa, qb) => {
     pa = qa; pb = qb;
-    va = pick(pa, ma, (r) => !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
+    // Dockside NPCs excluded too: vodunius nuccius stands over Seyda Neen's water, and a real
+    // chase/swing loop can walk A off the pier into it (#178) -- what killed A there was a
+    // slaughterfish plus drowning, not the fight itself, 35 real swings into an unrelated target.
+    va = pick(pa, ma, (r) => !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|vodunius nuccius/.test(r));
     vb = pick(pb, mb, () => true);
     return va && vb;
   });
