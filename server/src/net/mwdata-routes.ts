@@ -71,6 +71,8 @@ export interface MwDataDeps {
   deliveryModel(): string;
   /** Installed mods, in order. Read per request so a change lands without a restart. */
   modDoc?(): ModDoc;
+  /** `[content] allowStockSwap`. Read per request. Absent = off. */
+  allowStockSwap?(): boolean;
 }
 
 export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
@@ -135,7 +137,8 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
       // changes the answer without moving a single file on disk.
       let modsAt = '';
       try { modsAt = String((await stat(join(deps.gameDataDir, MODS_SUBDIR))).mtimeMs); } catch { /* none */ }
-      const key = `${modsAt}|${disabled.join(',')}|${doc.mods.map((m) => `${m.slug}:${m.enabled ? 1 : 0}`
+      const allowSwap = deps.allowStockSwap?.() === true;
+      const key = `${allowSwap ? 1 : 0}|${modsAt}|${disabled.join(',')}|${doc.mods.map((m) => (m.replaces ?? []).join('+')).join(',')}|${doc.mods.map((m) => `${m.slug}:${m.enabled ? 1 : 0}`
         + `:${m.plugins.filter((p) => p.enabled).map((p) => p.file).join(',')}`).join('|')}`;
       if (modCache && modCache.at === key) {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
@@ -143,8 +146,12 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
         return true;
       }
 
-      const stack = resolveMods(doc);
-      const enabled = doc.mods.filter((m) => m.enabled);
+      const stack = resolveMods(doc, { allowStockSwap: allowSwap });
+      // A mod refused for shadowing a stock file is not mounted at all: its folder would still
+      // be a data= root, and the engine would resolve the stock name to it.
+      const refused = new Set(stack.refused.map((r) => r.slug));
+      const swapped = new Set(stack.swaps.map((s) => s.file.toLowerCase()));
+      const enabled = doc.mods.filter((m) => m.enabled && !refused.has(m.slug));
       const mods = [];
       for (const m of enabled) {
         // Files are listed per mod so the client can mount each into its own data= root. Only
@@ -154,18 +161,19 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
         mods.push({
           slug: m.slug,
           name: m.name,
-          plugins: m.plugins.filter((p) => p.enabled).map((p) => p.file),
+          plugins: m.plugins.filter((p) => p.enabled && !swapped.has(p.file.toLowerCase())).map((p) => p.file),
           // What each plugin declares it needs. The client cannot ask the files themselves —
           // they are lazily mounted, not read — and a plugin whose master is absent aborts the
           // engine, so it has to be told in order to drop one rather than emit it.
           masters: m.plugins
             .filter((p) => p.enabled && (p.masters?.length ?? 0) > 0)
             .map((p) => ({ file: p.file, needs: p.masters })),
-          archives: m.archives,
+          archives: m.archives.filter((a) => !swapped.has(a.toLowerCase())),
           files,
         });
       }
-      const body = JSON.stringify({ v: 2, mods, content: stack.content, groundcover: stack.groundcover, archives: stack.archives, disabled });
+      const body = JSON.stringify({ v: 2, mods, content: stack.content, groundcover: stack.groundcover, archives: stack.archives, disabled,
+        swaps: stack.swaps });
       modCache = { at: key, body };
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : body);

@@ -28,7 +28,7 @@ import { writeBsa } from '../../core/bsa-pack';
 import { identifyRelease, looksLikeTamrielRebuilt } from '../../core/tr-releases';
 import { MOD_META as MODS_META_DIR } from '../../core/mod-conflicts';
 import {
-  MODS_SUBDIR, readModDoc, writeModDoc, type InstalledMod, type ModDoc, type ModPlugin,
+  MODS_SUBDIR, isStockFile, readModDoc, shadowedStock, writeModDoc, type InstalledMod, type ModDoc, type ModPlugin,
 } from '../../core/mods';
 
 /** Where a staged upload waits between the two steps. Swept on a TTL, so NOTHING that must
@@ -582,7 +582,8 @@ async function uninstallModLocked(
 /** Apply the operator's ordering and switches. Order of the incoming array is the load order. */
 export function saveModOrder(
   dataDir: string,
-  incoming: { slug?: unknown; enabled?: unknown; plugins?: unknown }[],
+  incoming: { slug?: unknown; enabled?: unknown; plugins?: unknown; replaces?: unknown }[],
+  allowStockSwap = false,
 ): InstallResult<{ count: number }> {
   const doc = readModDoc(dataDir);
   const known = new Map(doc.mods.map((m) => [m.slug, m]));
@@ -606,8 +607,32 @@ export function saveModOrder(
         .map((p) => [(p.file as string).toLowerCase(),
           { enabled: p.enabled !== false, groundcover: typeof p.groundcover === 'boolean' ? p.groundcover : undefined }]))
       : null;
+    // STOCK SWAPS: `replaces` names the stock files this mod's copy stands in for. Refused, not
+    // trimmed, when the feature is off or the mod does not ship the file -- a tick that could not
+    // take effect would read as a swap the world is not running.
+    // Absent = a page that predates the field: keep what is saved. An empty array clears it.
+    let replaces: string[] | undefined = mod.replaces;
+    if (Array.isArray(row.replaces) && row.replaces.length === 0) replaces = undefined;
+    else if (Array.isArray(row.replaces)) {
+      if (!allowStockSwap) {
+        return fail(400, 'Replacing a stock file is switched off on this server. Set allowStockSwap '
+          + 'to true under [content] in the settings, restart, and save again.');
+      }
+      const shipped = shadowedStock(mod).map((f) => f.toLowerCase());
+      const picked: string[] = [];
+      for (const f of row.replaces as unknown[]) {
+        const name = typeof f === 'string' ? f : '';
+        if (!isStockFile(name) || !shipped.includes(name.toLowerCase())) {
+          return fail(400, `${mod.name} does not ship ${name || 'that file'}, so it cannot replace it.`);
+        }
+        picked.push(shadowedStock(mod).find((x) => x.toLowerCase() === name.toLowerCase())!);
+      }
+      replaces = picked;
+    }
+    const { replaces: _was, ...modRest } = mod;
     next.push({
-      ...mod,
+      ...modRest,
+      ...(replaces ? { replaces } : {}),
       enabled: row.enabled !== false,
       plugins: mod.plugins.map((p) => {
         const w = wanted?.get(p.file.toLowerCase());

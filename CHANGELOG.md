@@ -53,6 +53,18 @@ the Travel window, jail, a real new character through the creation windows, and 
 LAN. The visual checks assert what the frame holds instead of only saving a screenshot, and the
 peer's gates (internal errors, keeping occupied cells, clearing named creatures) have unit tests.
 
+**Community data files can replace the stock ones.** The mod manager can now use a community-made
+Morrowind.esm, Tribunal.esm, Bloodmoon.esm (or their .bsa archives) in place of the stock file.
+It is opt-in twice: the server admin sets `allowStockSwap = true` under `[content]`, then ticks
+"Use instead of the stock file" on the mod that ships it. Everyone on that world runs the
+replacement; a player whose own copy reports a different checksum is refused with a message naming
+the file and the mod, instead of playing a different world. With it off (the default) nothing
+changes, except that a mod shipping a stock-named file is now left out of the load order whole
+(before, it silently shadowed the stock file and was listed twice). Owner's call, safe default
+taken: a replacement that changes record ids can break saves made on stock data, and the dashboard
+says so where the tick is; a single player who picks their own Data Files folder already chooses
+their own files and needs nothing new.
+
 ## 1.4.1
 
 **Nobody can hide the world from everybody.** A client may toggle refs in cells it is nowhere

@@ -45,6 +45,9 @@ export interface InstalledMod {
   source: string;
   installedAt: string;
   enabled: boolean;
+  /** Stock files (Morrowind.esm, Tribunal.bsa ...) this mod's copy REPLACES, chosen by the
+   *  operator in the mod manager. Only honoured while `[content] allowStockSwap` is on. */
+  replaces?: string[];
   plugins: ModPlugin[];
   archives: string[];
   files: number;
@@ -63,6 +66,18 @@ export interface ModDoc {
 export const MODLIST_FILE = 'modlist.json';
 /** Reserved: a mod called "mods" would nest inside its own parent. */
 export const MODS_SUBDIR = 'mods';
+
+/** The stock files a community copy can stand in for: Morrowind's masters and their archives.
+ *  Content NAMES stay fixed (every other plugin names its masters), only the bytes change. */
+export const STOCK_FILES = ['morrowind.esm', 'tribunal.esm', 'bloodmoon.esm',
+  'morrowind.bsa', 'tribunal.bsa', 'bloodmoon.bsa'];
+export const isStockFile = (f: string): boolean => STOCK_FILES.includes(f.toLowerCase());
+
+/** The stock-named plugins and archives a mod ships, as it spells them. Plugins count even when
+ *  switched off: the folder is still a data= root, and the engine resolves a content name to
+ *  the LAST root holding it, so the file shadows the stock one whether or not it is ticked. */
+export const shadowedStock = (m: InstalledMod): string[] =>
+  [...m.plugins.map((p) => p.file), ...m.archives].filter(isStockFile);
 
 export const emptyDoc = (): ModDoc => ({ version: 2, entries: [], mods: [] });
 
@@ -115,6 +130,8 @@ export function readModDoc(dataDir: string): ModDoc {
         source: str(m.source),
         installedAt: str(m.installedAt),
         enabled: bool(m.enabled, true),
+        ...(Array.isArray(m.replaces) && m.replaces.length
+          ? { replaces: (m.replaces as unknown[]).map(str).filter((f) => isStockFile(f)) } : {}),
         plugins: Array.isArray(m.plugins)
           ? (m.plugins as Record<string, unknown>[])
             .filter((p) => p !== null && typeof p === 'object' && typeof p.file === 'string')
@@ -189,6 +206,16 @@ export interface ModStack {
   bsaCollisions: { name: string; owners: string[] }[];
   /** Same plugin filename from more than one mod. */
   contentCollisions: { file: string; owners: string[] }[];
+  /** Stock files replaced by an approved community copy (the slot's content=/archive line
+   *  stays the stock one; the engine resolves the name to the mod's folder, which is later). */
+  swaps: { file: string; slug: string; name: string }[];
+  /** Mods left out WHOLE because they ship a stock-named file without an approved swap. */
+  refused: { slug: string; name: string; files: string[] }[];
+}
+
+export interface ResolveOpts {
+  /** `[content] allowStockSwap`. Off (the default): a mod shadowing a stock file is refused. */
+  allowStockSwap?: boolean;
 }
 
 const OFFICIAL_MASTERS = ['morrowind.esm', 'tribunal.esm', 'bloodmoon.esm'];
@@ -226,7 +253,7 @@ function orderByMasters(files: string[], declared: Map<string, string[]>): strin
   return [...out, ...remaining];
 }
 
-export function resolveMods(doc: ModDoc): ModStack {
+export function resolveMods(doc: ModDoc, opts: ResolveOpts = {}): ModStack {
   const dataDirs: string[] = [];
   const declaredMasters = new Map<string, string[]>();
   const masters: string[] = [];
@@ -235,11 +262,29 @@ export function resolveMods(doc: ModDoc): ModStack {
   const archives: string[] = [];
   const bsaSeen = new Map<string, string[]>();
   const contentSeen = new Map<string, string[]>();
+  const swaps: ModStack['swaps'] = [];
+  const refused: ModStack['refused'] = [];
 
   for (const m of doc.mods) {
     if (!m.enabled) continue;
+    // A STOCK-NAMED FILE IS A SWAP, AND A SWAP IS OPT-IN TWICE: the operator switched the
+    // feature on ([content] allowStockSwap) AND ticked this file on this mod. Anything else is
+    // refused whole -- dropping just the plugin line would leave the folder as a data= root, and
+    // the engine would still hand the stock name to this copy behind everyone's back.
+    const shadows = shadowedStock(m);
+    if (shadows.length) {
+      const said = new Set((m.replaces ?? []).map((f) => f.toLowerCase()));
+      if (!opts.allowStockSwap || !shadows.every((f) => said.has(f.toLowerCase()))) {
+        log('warn', 'mods.shadows_stock', { slug: m.slug, files: shadows.join(',') });
+        refused.push({ slug: m.slug, name: m.name, files: shadows });
+        continue;
+      }
+      for (const f of shadows) swaps.push({ file: f, slug: m.slug, name: m.name });
+    }
+    const isSwapped = (f: string): boolean => shadows.some((x) => x.toLowerCase() === f.toLowerCase());
     dataDirs.push(`${MODS_SUBDIR}/${m.slug}`);
     for (const a of m.archives) {
+      if (isSwapped(a)) continue; // the stock archive line already names it
       const key = a.toLowerCase();
       const owners = bsaSeen.get(key) ?? [];
       owners.push(m.slug);
@@ -247,7 +292,7 @@ export function resolveMods(doc: ModDoc): ModStack {
       if (owners.length === 1) archives.push(a);
     }
     for (const p of m.plugins) {
-      if (!p.enabled) continue;
+      if (!p.enabled || isSwapped(p.file)) continue; // a swapped master keeps the stock content= line
       const key = p.file.toLowerCase();
       const owners = contentSeen.get(key) ?? [];
       owners.push(m.slug);
@@ -293,5 +338,7 @@ export function resolveMods(doc: ModDoc): ModStack {
     archives,
     bsaCollisions: [...bsaSeen].filter(([, o]) => o.length > 1).map(([name, owners]) => ({ name, owners })),
     contentCollisions: [...contentSeen].filter(([, o]) => o.length > 1).map(([file, owners]) => ({ file, owners })),
+    swaps,
+    refused,
   };
 }

@@ -29,6 +29,13 @@ export class ContentGate {
    *  Read lazily, at pin time, so the suite's hundreds of servers never hash anything. */
   hashes?: () => Map<string, string>;
 
+  /** Stock content files this world REPLACES with a community copy: lowercased name -> the
+   *  mod's name. Read per check so a dashboard change lands without a restart. A swap keeps the
+   *  file's name and position, so names/size/order cannot see it -- a client that reports a
+   *  hash for one is compared against the world's copy in every mode but 'off' (a client that
+   *  reports none is served the swap by the server's own data, or is what 'strict' is for). */
+  swapped?: () => Map<string, string>;
+
   // NOTE: MOP + Project Atlas ship as the streamed asset-pack BSA (play/index.html
   // mountAssetPack), a fallback-archive present in BOTH single-player and multiplayer via
   // the data source — NOT as content plugins. So they never appear in this manifest
@@ -61,6 +68,8 @@ export class ContentGate {
       this.holders++;
       return { ok: true };
     }
+    const swapMismatch = this.diffSwapped(manifest);
+    if (swapMismatch) return { ok: false, detail: swapMismatch };
     // 'strict' additionally compares per-file sha256. Names-and-order alone catches a player
     // ADDING SuperSword.esp or REMOVING Tribunal.esm, but not one who edits Morrowind.esm in
     // place to buff an item — same name, same index. Hashes close that.
@@ -86,6 +95,22 @@ export class ContentGate {
     // An authoritative list belongs to the WORLD, not to whoever happens to be connected, so
     // an empty server must not forget it. Tier 1 still re-canonicalizes on the next player.
     if (this.holders === 0 && !this.authoritative) this.canonical = null;
+  }
+
+  private diffSwapped(got: ManifestEntry[]): string | null {
+    const swaps = this.swapped?.();
+    if (!swaps || swaps.size === 0 || this.canonical === null) return null;
+    const byName = new Map(got.map((e) => [ContentGate.key(e.name), e]));
+    const bad: string[] = [];
+    for (const w of this.canonical) {
+      const mod = swaps.get(ContentGate.key(w.name));
+      const g = byName.get(ContentGate.key(w.name));
+      if (mod === undefined || !w.sha256 || !g?.sha256 || g.sha256 === w.sha256) continue;
+      bad.push(`${w.name} (this world runs the community copy from ${mod})`);
+    }
+    return bad.length
+      ? `${bad.join('; ')} — your copy differs; play on the server's own game data, or ask the operator for the file`
+      : null;
   }
 
   // Per-file integrity, only under 'strict'. Runs AFTER diff() has established that the two

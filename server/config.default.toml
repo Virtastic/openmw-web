@@ -44,6 +44,14 @@ attioBaseUrl = "https://api.attio.com"
 # "strict" - M1+: adds per-file sha256 (stubbed in M0, behaves like "names")
 # "off"    - no manifest check
 enforce = "names"
+# Let an installed mod REPLACE a stock file (Morrowind/Tribunal/Bloodmoon .esm or .bsa) with a
+# community copy of the same name -- a total-conversion base, a patched master. The mod manager
+# shows a "use instead of the stock file" tick on a mod that ships one; the tick only takes
+# effect while this is true. Off (default): a mod that ships a stock-named file is left out of
+# the load order whole, so nothing can shadow the stock game unannounced. With a swap active the
+# world's content hashes are the swap's, and a client reporting a different hash for that file
+# is refused with a message naming it (any `enforce` but "off").
+allowStockSwap = false
 
 [engine]
 # engineHash check: "warn" logs mismatches, "refuse" disconnects with BAD_ENGINE, "off" skips.

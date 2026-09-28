@@ -96,7 +96,7 @@ export interface Config {
   };
   // Onboarding CRM capture (plan 2.1a). Empty apiKey = feature off, completely inert.
   integrations: { attioApiKey: string; attioBaseUrl: string };
-  content: { enforce: 'strict' | 'names' | 'off' };
+  content: { enforce: 'strict' | 'names' | 'off'; allowStockSwap: boolean };
   sharing: {
     journal: boolean;
     questVars: boolean;
@@ -548,7 +548,10 @@ function validate(t: Tree): Config {
       attioApiKey: reqStr(t, 'integrations', 'attioApiKey'),
       attioBaseUrl: reqStr(t, 'integrations', 'attioBaseUrl'),
     },
-    content: { enforce: reqEnum(t, 'content', 'enforce', ENUM_OPTIONS['content.enforce']) },
+    content: {
+      enforce: reqEnum(t, 'content', 'enforce', ENUM_OPTIONS['content.enforce']),
+      allowStockSwap: reqBool(t, 'content', 'allowStockSwap'),
+    },
     sharing: {
       journal: reqBool(t, 'sharing', 'journal'),
       questVars: reqBool(t, 'sharing', 'questVars'),

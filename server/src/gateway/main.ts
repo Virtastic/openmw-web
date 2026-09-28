@@ -256,6 +256,7 @@ const directory = await startDirectory({
     gameDataDir: gameDataDir(sharedDir),
     deliveryModel: () => config.setup.deliveryModel,
     modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
+    allowStockSwap: () => config.content.allowStockSwap,
   }),
   resolveAccount: frontDoor.resolveAccount,
   // Constant-time-ish compare on a fixed-length secret, and an empty token NEVER matches --

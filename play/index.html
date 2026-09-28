@@ -2450,6 +2450,9 @@ window.omw = (function(){
          // Read before the no-mods return: a switched-off expansion is an answer on its own.
          window.__mwDisabled = Array.isArray(doc.disabled) ? doc.disabled : [];
          if (window.__mwDisabled.length) append('[data] disabled by the server: ' + window.__mwDisabled.join(', '));
+         // A stock file replaced by a community copy needs nothing else here: the mod's folder is a
+         // later data= root than /mwdata, so the engine resolves the stock name to the copy.
+         (doc.swaps || []).forEach(function(s){ append('[data] ' + s.file + ' replaced by ' + s.name); });
          if (!Array.isArray(doc.mods) || !doc.mods.length) return out;
 
          try { StreamFS.init(); } catch (e) { append('[mods] streamfs unavailable: '+e,'err'); return out; }

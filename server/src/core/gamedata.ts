@@ -333,12 +333,17 @@ export function gameDataDir(dataDir: string): string {
 export function hashContentFiles(
   data: GameData,
   mods: { slug: string; enabled: boolean; plugins: { file: string; enabled: boolean }[] }[] = [],
+  stack?: Pick<ModStack, 'refused'>,
 ): Map<string, string> {
   const out = new Map<string, string>();
   if (!data.ok) return out;
   const paths = data.contentFiles.map((name) => [name, join(data.dir, name)] as const);
+  // A mod refused for shadowing a stock file is not loaded by anything, so its copy must not
+  // hash over the stock one; an APPROVED swap is hashed here, later in `paths`, and so wins the
+  // map entry -- the manifest then names the bytes the world actually runs.
+  const refused = new Set((stack?.refused ?? []).map((r) => r.slug));
   for (const m of mods) {
-    if (!m.enabled) continue;
+    if (!m.enabled || refused.has(m.slug)) continue;
     for (const p of m.plugins) {
       if (p.enabled) paths.push([p.file, join(data.dir, MODS_SUBDIR, m.slug, p.file)]);
     }

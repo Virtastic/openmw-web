@@ -1326,6 +1326,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // Re-read per request, like the delivery answer above: enabling a mod in the dashboard
       // should reach the next player to load the page, not the next restart.
       modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
+      allowStockSwap: () => config.content.allowStockSwap,
     }),
     saveRoutes({
       storage: lockerStorage, sessions: lockerSessions, dataDir: sharedDir,
@@ -1358,8 +1359,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
   // Backlog 299: the peer's manifest is pinned with the server's own plugin hashes, so
   // 'strict' can tell a same-named, different-version plugin from the world's copy.
+  // Read per call, so a dashboard change to a swap lands without a restart.
+  const modStack = () => resolveMods(presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
+    { allowStockSwap: config.content.allowStockSwap });
   contentGate.hashes = () =>
-    hashContentFiles(gameData, presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)).mods);
+    hashContentFiles(gameData, presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)).mods, modStack());
+  contentGate.swapped = () => new Map(modStack().swaps.map((s) => [s.file.toLowerCase(), s.name]));
 
   // THE SIM PEER IS NOT OPTIONAL. There is exactly one mode: the server runs its own headless
   // engine, and that engine is the only thing allowed to simulate NPCs. What used to be "tier
@@ -1494,7 +1499,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // dashboard last saved.
     writeFileSync(join(cfgDir, 'openmw.cfg'),
       buildPeerCfg(gameData, resources,
-        resolveMods(presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)))));
+        resolveMods(presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
+          { allowStockSwap: config.content.allowStockSwap })));
     // Pace the peer. Headless means nothing else will.
     writeFileSync(join(cfgDir, 'settings.cfg'), buildPeerSettings());
     config.simPeer.configDir = cfgDir;

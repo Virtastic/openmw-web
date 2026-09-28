@@ -93,6 +93,9 @@ export const HELP: Record<string, FieldHelp> = {
   'content.enforce': {
     text: 'Do all players have to be running the same game files? "names" (default) compares file names, sizes and load order. "strict" also compares checksums, catching a file that was edited in place, but refuses anyone whose client cannot report hashes. "off" disables the check entirely. This is a consistency check so everyone sees the same world, not an anti-cheat measure, and it is unrelated to content-table.json.',
   },
+  'content.allowStockSwap': {
+    text: 'Allow a mod from the mod manager to replace Morrowind.esm, Tribunal.esm, Bloodmoon.esm or their .bsa archives with a community-made copy. Off (default): a mod that ships a file with a stock name is left out of the load order entirely. On: tick "use instead of the stock file" on that mod. Everyone on this world then runs the replacement; players whose own copy differs are refused with a message naming the file. Saves made on stock data may not match a replacement that changes record ids.',
+  },
 
   // --- rules / economy ------------------------------------------------------------------
   'economy.noDrop': { text: 'Named and unique NPCs drop nothing when killed. Intended for public worlds, where otherwise the first player to reach a unique item takes it from everyone forever.' },

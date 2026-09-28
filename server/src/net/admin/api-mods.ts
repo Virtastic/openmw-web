@@ -191,7 +191,7 @@ export function reconcile(gameDataDir: string, dataDir: string): {
   return { entries, missing, archives };
 }
 
-export function modsView(gameDataDir: string, dataDir: string, profile?: string): unknown {
+export function modsView(gameDataDir: string, dataDir: string, profile?: string, allowStockSwap = false): unknown {
   const { entries, missing, archives } = reconcile(gameDataDir, dataDir);
   const spec = profile ? CONTENT_PROFILES[profile] : undefined;
   const doc = readModDoc(dataDir);
@@ -212,8 +212,11 @@ export function modsView(gameDataDir: string, dataDir: string, profile?: string)
       present: existsSync(join(gameDataDir, MODS_SUBDIR, m.slug)),
     })),
     ...(() => {
-      const s = resolveMods(doc);
+      const s = resolveMods(doc, { allowStockSwap });
       return {
+        // Stock files a mod replaces, and mods left out because they ship one unapproved: the
+        // page states both instead of leaving "I installed it and nothing happened".
+        allowStockSwap, swaps: s.swaps, refused: s.refused,
         bsaCollisions: s.bsaCollisions,
         contentCollisions: s.contentCollisions,
         // Which mods overwrite which, and which plugins are about to lose a master. The first

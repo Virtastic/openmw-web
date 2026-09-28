@@ -781,7 +781,8 @@ export function adminRoutes(deps: AdminDeps) {
     if (method === 'GET' && path === '/admin/api/mods') {
       if (!await gate(req, res, auth, 'viewer')) return true;
       json(res, 200, {
-        ...(modsView(deps.gameDataDir, deps.dataDir, url.searchParams.get('profile') ?? undefined) as object),
+        ...(modsView(deps.gameDataDir, deps.dataDir, url.searchParams.get('profile') ?? undefined,
+          (deps.config() as { content?: { allowStockSwap?: boolean } }).content?.allowStockSwap === true) as object),
         writable: gameDataWritable(deps.gameDataDir),
       });
       return true;
@@ -806,7 +807,7 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       const body = await readJson<{
         entries?: { file?: string; enabled?: boolean }[];
-        mods?: { slug?: unknown; enabled?: unknown; plugins?: unknown }[];
+        mods?: { slug?: unknown; enabled?: unknown; plugins?: unknown; replaces?: unknown }[];
       }>(req, res);
       if (body === undefined) return true;
       // Both halves of the same document, and either may be absent: the base-game table and the
@@ -816,7 +817,8 @@ export function adminRoutes(deps: AdminDeps) {
         if (!result.ok) { json(res, 400, { error: result.error }); return true; }
       }
       if (body.mods) {
-        const result = saveModOrder(deps.dataDir, body.mods);
+        const result = saveModOrder(deps.dataDir, body.mods,
+          (deps.config() as { content?: { allowStockSwap?: boolean } }).content?.allowStockSwap === true);
         if (!result.ok) { json(res, result.status, { error: result.error }); return true; }
       }
       log('info', 'admin.mods_changed', {

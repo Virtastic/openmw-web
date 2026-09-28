@@ -95,6 +95,13 @@ Each mod gets its own folder and a card in the load-order list:
 - **Details** shows what came from where, overlap explanations, and a checkbox per plugin.
 - **Remove** deletes the mod's folder. Saves are untouched.
 
+**Replacing a stock file.** A mod that ships `Morrowind.esm`, `Tribunal.esm`, `Bloodmoon.esm` or
+one of their `.bsa` archives (a community base, a patched master) is left out of the game unless
+you allow it: set `allowStockSwap = true` under `[content]` in Settings, restart, then tick "Use
+instead of the stock file" in that mod's Details. The stock files must still be in the game data
+folder. Everyone on the world then runs your copy; a player whose own copy differs is refused with
+a message naming the file. A copy that renumbers records can break saves made on stock data.
+
 A plugin whose master is not loaded is flagged in red - that one aborts the game at startup,
 so fix it before playing. Restart the server after changing mods; the dashboard offers to.
 
