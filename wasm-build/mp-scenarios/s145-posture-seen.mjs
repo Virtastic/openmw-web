@@ -61,8 +61,14 @@ export default async function run(ctx) {
 
   // Spell ready. The engine refuses the spell stance with nothing selected to cast, so give
   // the character a spell first (as any real character has).
+  // Re-asked until A's own engine holds it: on a loaded box the switch can land while the
+  // weapon draw still plays, and the engine drops it (#175; passed in #140 and #172).
   await a.cmd('learnspell:levitate');
-  await a.cmd('stance:spell');
+  for (let i = 0; i < 10 && (await a.eval("window.omw.state.stance||''")) !== 'spell'; i++) {
+    await a.cmd('stance:spell');
+    await ctx.sleep(3_000);
+  }
+  assert.equal(await a.eval("window.omw.state.stance||''"), 'spell', "A's own engine never took the spell stance");
   await waitFlag(SPELL, 'with a spell ready');
   await b.waitFor(`Number(${rowOf}.stance) === ${STANCE_SPELL}`, STEP, "B's puppet of A holds the spell stance");
   assert.ok(!bit((await seen()).flags, WEAPON), 'weapon and spell stance are exclusive');
