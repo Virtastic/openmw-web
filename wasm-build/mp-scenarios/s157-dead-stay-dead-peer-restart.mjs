@@ -35,8 +35,11 @@ export default async function run(ctx) {
     await c.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 120_000, `${c.name}: the cell has a holder`);
   }
 
+  // Not indrele rathryon (#175, #178: 92 real swings, hp stuck at 23 after the first two, while she
+  // landed 105 fatigue-only blows -- a hand-to-hand NPC the swing loop cannot beat; the avatar's
+  // attack state, stagger and input path were each ruled out from the log and character.cpp).
   let pa, pb, victim;
-  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && (pa[r].n ?? 1) === 1 && (pb[r].n ?? 1) === 1))); // UNIQUE in the cell: the probe is keyed by record, first wins, and after the restart 'mudcrab' was a different, living mudcrab on both screens (#139)
+  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && r !== 'indrele rathryon' && (pa[r].n ?? 1) === 1 && (pb[r].n ?? 1) === 1))); // UNIQUE in the cell: the probe is keyed by record, first wins, and after the restart 'mudcrab' was a different, living mudcrab on both screens (#139)
   assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   // 180 s: at #116's frame rate the test hits landed 8 s apart and 90 s was eleven of them.
