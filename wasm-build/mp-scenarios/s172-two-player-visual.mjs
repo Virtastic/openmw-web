@@ -176,12 +176,16 @@ export default async function run(ctx) {
   await Promise.all([drain(a), drain(b)]);
   const snapA0 = snapLines(a, /SELF SNAP/), pupSnapB0 = snapLines(b, new RegExp(`puppet snap #${idA}\\b`)); // \\b: a bare \b in a template is a backspace, so this baseline never matched and the attach snap counted (#159)
   const tWalk0 = Date.now();
-  // walk -Y 5 s; turn, run -X 5 s; turn, run +Y 5 s; stop 4 s; turn, walk +X 4 s; stop (away from the bay first).
+  // walk -Y 5 s; turn, run +X 5 s; turn, run +Y 5 s; stop 4 s; turn, walk +X 4 s; stop (away from the bay first).
+  // RUN +X, NOT -X: -X ran A into Seyda Neen's buildings, where the client and the peer stop at
+  // slightly different points (#170/#171: avatar 0-9 u/s at full input, the owner held ~63 u off
+  // for the whole leg, every other leg p95 <= 15). This bar is the netcode in open ground; the
+  // wall is backlog 519.
   const legs = [['walk -Y', Date.now()]];
   await a.cmd('walk:0,1,5000');
   await ctx.sleep(2500); await lookAtA(); await shot(b, 'a1-b-sees-A-walking.png');
   await ctx.sleep(2500);
-  await headA(-1, 0); legs.push(['run -X', Date.now()]); await a.cmd('walk:0,1,5000:run');
+  await headA(1, 0); legs.push(['run +X', Date.now()]); await a.cmd('walk:0,1,5000:run');
   await ctx.sleep(2500); await lookAtA(); await shot(b, 'a2-b-sees-A-running.png');
   await ctx.sleep(2500);
   await headA(0, 1); legs.push(['run +Y', Date.now()]); await a.cmd('walk:0,1,5000:run');
