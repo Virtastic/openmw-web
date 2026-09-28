@@ -1266,6 +1266,17 @@ for (const file of files) {
     }
     harnessLive = live;
   } catch { /* pgrep is not everywhere; the count is a diagnostic, never a verdict */ }
+  // ...AND REAPED. Counting named the leak; it did not stop it: the gateway scenarios left their
+  // world servers running (s100 onward, ~20 testhosts and two peers by s130 in #174, some blocked
+  // on I/O), and s130's guest never finished booting -- the sweep hung for 35 minutes. Every
+  // scenario starts its own servers, peers and browsers, so none may outlive it. The play server
+  // (server.py) is the harness's own and stays.
+  try {
+    for (const pat of ['dist/testhost.mjs', 'dist/gateway.mjs', 'dist/server.mjs', '/usr/local/bin/openmw', 'chrome']) {
+      execSync(`pkill -9 -f ${JSON.stringify(pat)} || true`, { stdio: 'ignore' });
+    }
+    harnessLive = { chrome: 0, peers: 0 };
+  } catch { /* nothing to reap */ }
   if (err) {
     console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
     const srv = server?.logTail?.();
