@@ -365,6 +365,24 @@ namespace MWMP
                 return false;
             return ptr.getClass().getCreatureStats(ptr).getAttackingOrSpell();
         };
+        // WHERE AN ATTACK IS in the body's own state machine (#161 s118: the avatar swung once --
+        // fatigue 200 -> 191 -- and every later press did nothing while the use bit flowed).
+        // "windup" | "busy" (release / follow / casting) | "ready" (weapon drawn, idle) | "none".
+        api["upperBody"] = [](const sol::object& obj) -> std::string {
+            if (!obj.is<MWLua::Object>())
+                return "none";
+            const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return "none";
+            auto* mm = MWBase::Environment::get().getMechanicsManager();
+            if (mm->isAttackPreparing(ptr))
+                return "windup";
+            if (mm->isAttackingOrSpell(ptr))
+                return "busy";
+            if (mm->isReadyToBlock(ptr))
+                return "ready";
+            return "none";
+        };
         // Backlog 230: TalkedToPc lives on CreatureStats, per engine, and no save carries it in
         // multiplayer -- every NPC greeted a returning player as a stranger. The player script
         // reads it off the NPCs around it, persists the set, and re-applies it on relog.

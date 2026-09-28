@@ -74,8 +74,8 @@ local function pressProbe(when)
     pcall(function()
         local ft = types.Actor.stats.dynamic.fatigue(self)
         local w = types.Actor.getEquipment(self, types.Actor.EQUIPMENT_SLOT.CarriedRight)
-        print(string.format('[mp] avatar use %s: attacking=%s staggered=%s stance=%s fatigue=%.0f/%.0f weapon=%s',
-            when, tostring(mp.isAttacking and mp.isAttacking(self.object)), tostring(mp.isKnockedDown and mp.isKnockedDown(self.object)),
+        print(string.format('[mp] avatar use %s: body=%s staggered=%s stance=%s fatigue=%.0f/%.0f weapon=%s',
+            when, tostring(mp.upperBody and mp.upperBody(self.object)), tostring(mp.isKnockedDown and mp.isKnockedDown(self.object)),
             tostring(types.Actor.getStance(self)), ft.current, ft.base, w and w.recordId or 'none'))
     end)
 end
