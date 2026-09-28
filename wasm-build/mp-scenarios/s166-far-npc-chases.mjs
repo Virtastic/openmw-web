@@ -71,16 +71,27 @@ export default async function run(ctx) {
 
   // Retreat: 450 u east of the creature, and the chase must close the gap.
   const p1 = (await probeOf(b, victim)) || p0;
-  await b.cmd(`snapto:${Math.round(p1.x + RETREAT)},${Math.round(p1.y)},${Math.round(p1.z + 8)}`);
+  // INSIDE THE CELL: the actor probe covers B's own cell only, and a retreat over the border
+  // left the mark out of it -- "gone" (#172: -1 u). East unless that crosses the line, then west.
+  const cellX = Math.floor(p1.x / 8192);
+  const dir = Math.floor((p1.x + RETREAT) / 8192) === cellX ? 1 : -1;
+  const backX = Math.round(p1.x + dir * RETREAT);
+  await b.cmd(`snapto:${backX},${Math.round(p1.y)},${Math.round(p1.z + 8)}`);
   // READ THE GAP THE MOMENT THE SNAP LANDS. The mark is already provoked and a rat covers
   // 200+ u in the 2.5 s this used to sleep (#107 104 u, #111 227 u: "the retreat did not open
   // the gap" -- it had, and the chase under test had already eaten it). The pose mirror is
   // 2 Hz; poll it until the snap shows, then measure.
-  await b.waitFor(`Math.abs((JSON.parse(window.omw.state.pose||"{}").x||0) - ${Math.round(p1.x + RETREAT)}) < 64`, 10_000, 'the pose mirror shows the retreat');
+  await b.waitFor(`Math.abs((JSON.parse(window.omw.state.pose||"{}").x||0) - ${backX}) < 64`, 10_000, 'the pose mirror shows the retreat');
   // -1, NOT Infinity: the eval crosses as JSON, where Infinity is not a value -- a dead or
   // absent mark came back as NaN and every message about it read "NaN u" (#106).
   const gapExpr = `(function(){const p=JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}];const m=JSON.parse(window.omw.state.pose||"{}");return p&&!p.dead&&m.x!==undefined?Math.hypot(p.x-m.x,p.y-m.y):-1;})()`;
-  const gap0 = Number(await b.eval(gapExpr));
+  // ...and give the actor probe its refresh: the pose mirror is 10 Hz now, the probe is not,
+  // so the first read after the snap can land before the mark is listed again.
+  let gap0 = -1;
+  for (const until = Date.now() + 3_000; Date.now() < until && gap0 < 0;) {
+    gap0 = Number(await b.eval(gapExpr));
+    if (gap0 < 0) await ctx.sleep(250);
+  }
   ctx.log(`gap after the retreat: ${gap0.toFixed(0)} u`);
   // The retreat is the setup: it must leave the mark OUTSIDE reach (else the close below is
   // vacuous); how much of the 450 u the chase has already closed is the chase's business.
