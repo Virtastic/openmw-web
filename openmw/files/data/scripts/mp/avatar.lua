@@ -74,8 +74,14 @@ local function pressProbe(when)
     pcall(function()
         local ft = types.Actor.stats.dynamic.fatigue(self)
         local w = types.Actor.getEquipment(self, types.Actor.EQUIPMENT_SLOT.CarriedRight)
-        print(string.format('[mp] avatar use %s: body=%s staggered=%s stance=%s fatigue=%.0f/%.0f weapon=%s',
-            when, tostring(mp.upperBody and mp.upperBody(self.object)), tostring(mp.isKnockedDown and mp.isKnockedDown(self.object)),
+        -- attacking (the engine's copy of controls.use) must read FALSE at a press on a live body:
+        -- the press is logged after a frame whose use was 0. TRUE at every press means the engine
+        -- stopped applying this body's controls (#161 s118). body=none with a weapon drawn means
+        -- the actor is not in the engine's actor list at all.
+        local hp = types.Actor.stats.dynamic.health(self)
+        print(string.format('[mp] avatar use %s: attacking=%s body=%s dead=%s hp=%.0f staggered=%s stance=%s fatigue=%.0f/%.0f weapon=%s',
+            when, tostring(mp.isAttacking and mp.isAttacking(self.object)), tostring(mp.upperBody and mp.upperBody(self.object)),
+            tostring(types.Actor.isDead(self)), hp.current, tostring(mp.isKnockedDown and mp.isKnockedDown(self.object)),
             tostring(types.Actor.getStance(self)), ft.current, ft.base, w and w.recordId or 'none'))
     end)
 end

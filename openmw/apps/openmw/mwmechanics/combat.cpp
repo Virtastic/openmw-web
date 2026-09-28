@@ -744,9 +744,16 @@ namespace MWMechanics
             if (whyNot && d < 400.f)
                 rejected += " " + t.getCellRef().getRefId().toDebugString() + "@" + std::to_string(static_cast<int>(d)) + ":" + why;
         };
+        // THE SIM PEER'S OWN PLAYER IS A DUMMY: a god-mode body parked at the start that nobody
+        // sees. As the nearest actor in the arc it took every blow aimed at a player standing
+        // there (#159 s66: '"player"@-55' beside the victim's avatar; 20 swings, no damage).
+        static const bool sHeadlessPeer = std::getenv("OPENMW_HEADLESS") != nullptr;
+        const MWWorld::Ptr peerDummy = sHeadlessPeer ? getPlayer() : MWWorld::Ptr();
         for (MWWorld::Ptr& target : targets)
         {
             if (actor == target || target.getClass().getCreatureStats(target).isDead())
+                continue;
+            if (sHeadlessPeer && target == peerDummy)
                 continue;
 
             const float dist = getDistanceToBounds(actor, target);

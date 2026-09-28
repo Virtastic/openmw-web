@@ -1900,6 +1900,13 @@ do
   package.loaded['scripts.mp.interp'] = nil
 end
 
+print('s66 the sim peer dummy player never takes a blow meant for a player beside it')
+do
+  local cb = io.open('./openmw/apps/openmw/mwmechanics/combat.cpp'):read('*a')
+  check('getHitContact skips the headless peer own player',
+    cb:find('if (sHeadlessPeer && target == peerDummy)', 1, true) ~= nil)
+end
+
 print('#431 a fresh holder streams no bars for a cell until the world record has answered')
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
