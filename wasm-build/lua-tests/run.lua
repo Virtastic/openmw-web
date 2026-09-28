@@ -1918,7 +1918,7 @@ do
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   local cc = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('puppet steering may exceed top speed to close a gap',
-    pp:find('math.min(PUPPET_MAX_SPEED, (interp:speed(now)', 1, true) ~= nil and pp:find('local PUPPET_MAX_SPEED = 1.25', 1, true) ~= nil)
+    pp:find('math.min(PUPPET_MAX_SPEED, (tgtV + dist2d', 1, true) ~= nil and pp:find('local PUPPET_MAX_SPEED = 1.25', 1, true) ~= nil)
   check('the engine honours it for puppets only',
     cc:find('MWMP::isPuppet(mPtr.getCellRef().getRefNum()) ? 1.25f : 1.f', 1, true) ~= nil)
   package.loaded['scripts.mp.interp'] = nil
@@ -1929,6 +1929,18 @@ do
   local it = io.open('./openmw/files/data/scripts/mp/interp.lua'):read('*a')
   check('RENDER_DELAY is 40 ms, not the old 75', it:find('local RENDER_DELAY = 0.04', 1, true) ~= nil)
   check('EXTRAP_S was raised to cover it', it:find('local EXTRAP_S = 0.09', 1, true) ~= nil)
+end
+
+print('s177 a near-tier puppet reads interp:speed once a frame, not twice (#175: 20 puppets missed the frame budget)')
+do
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  local body = pp:match('local function steerMovement%b()(.-)\nend')
+  check('steerMovement takes the caller\'s tgtV instead of reading interp:speed itself',
+    body ~= nil and not body:find('interp:speed', 1, true) and body:find('tgtV', 1, true) ~= nil,
+    body and 'still calls interp:speed' or 'steerMovement not found')
+  local code = pp:gsub('%-%-[^\n]*', '') -- strip comments, so mentioning the call in prose does not count
+  check('onUpdate reads tgtV once and both call sites reuse it',
+    (select(2, code:gsub('interp:speed%(now%)', ''))) == 1, 'expected exactly one interp:speed(now) call in the code')
 end
 
 print('s66 the sim peer dummy player never takes a blow meant for a player beside it')

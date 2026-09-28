@@ -367,10 +367,14 @@ local PUPPET_MAX_SPEED = 1.25
 -- The catch-up never covers more than the gap in one frame (s117): at CATCHUP_S alone a 200 ms
 -- frame (a hitch; every frame on a slow client) stepped 1.3x the gap, overshot, turned, and a
 -- companion's copy circled its stopped target for a minute instead of settling.
-local function steerMovement(dist2d, now, running, dt)
+-- tgtV: the caller's own interp:speed(now), passed in rather than read again here. s177 #175:
+-- onUpdate below already computes it once a frame per near-tier puppet for the steer/pace
+-- hysteresis; a second read here doubled that (each is two Interp:target() scans + table
+-- allocs) and, times 20 puppets in a crowd, cost enough to miss the frame budget.
+local function steerMovement(dist2d, tgtV, running, dt)
     local ok, top = pcall(running and types.Actor.getRunSpeed or types.Actor.getWalkSpeed, self)
     if not ok or type(top) ~= 'number' or top <= 0 then return math.max(0.25, math.min(1, dist2d / 96)) end
-    return math.max(0.25, math.min(PUPPET_MAX_SPEED, (interp:speed(now) + dist2d / math.max(CATCHUP_S, dt or 0)) / top))
+    return math.max(0.25, math.min(PUPPET_MAX_SPEED, (tgtV + dist2d / math.max(CATCHUP_S, dt or 0)) / top))
 end
 
 local function onUpdate(dt)
@@ -513,10 +517,10 @@ local function onUpdate(dt)
         -- target for a minute. Scaled by the cosine and zero past 60 degrees: turn first. A
         -- chase is already facing its target, so it costs a charge nothing.
         local facing = math.cos(headingErr)
-        self.controls.movement = facing > 0.5 and steerMovement(dist2d, now, self.controls.run, dt) * facing or 0
+        self.controls.movement = facing > 0.5 and steerMovement(dist2d, tgtV, self.controls.run, dt) * facing or 0
     else
         -- Close enough: face the remote player's actual heading, and keep their pace if they move.
-        self.controls.movement = tgtV >= 20 and steerMovement(0, now, self.controls.run, dt) or 0
+        self.controls.movement = tgtV >= 20 and steerMovement(0, tgtV, self.controls.run, dt) or 0
         self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)
     end
     -- Look up and down too (avatar.lua applies the input's pitch the same way).
