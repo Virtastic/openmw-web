@@ -124,6 +124,30 @@ identity.tick(3.0)
 check('reset re-seeds rather than reporting the restored inventory',
   #acquiredEvents(env.calls) == 1, '#got=' .. #acquiredEvents(env.calls))
 
+-- s153 #175: the server clears its credit ledger on each declaration and folds what is left
+-- into the doc at logout. A gain credited AFTER the declaration that already counted it was
+-- granted twice on relog. The credit must precede the declaration that first carries the item,
+-- even when the acquire pass is not due in that frame.
+print('identity.lua — a gain is credited before the declaration that carries it')
+local function creditBeforeDeclaration(id)
+  local credit, decl
+  for i, c in ipairs(env.calls.events) do
+    if c.name == 'mpItemAcquiredOut' and c.body.id == id and not credit then credit = i end
+    if c.name == 'mpInventoryOut' and not decl then
+      for _, e in ipairs(c.body.items or {}) do if e.id == id then decl = i end end
+    end
+  end
+  return credit ~= nil and decl ~= nil and credit < decl, tostring(credit) .. ' vs ' .. tostring(decl)
+end
+identity.markBaselineReady() -- the reset above shut the gate
+identity.tick(9.0)   -- seeds the acquire baseline; declares (inventory next due 11.0)
+identity.tick(10.9)  -- acquire pass only (next due 11.15)
+env.setInventory({ { recordId = 'ebony_shield', count = 1 }, { recordId = 'Generated:0x0', count = 1 } })
+identity.tick(11.0)  -- declaration due, acquire not
+identity.tick(11.2)
+local okOrder, why = creditBeforeDeclaration('Generated:0x0')
+check('the credit precedes the declaration (else the logout fold doubles it)', okOrder, why)
+
 -- ------------------------------------------------------------ identity.lua: a heal sticks
 -- While the peer reports our bars, a potion raises the local bar between two reports and the
 -- next report puts it back; the 4 Hz diff seldom saw it. The per-frame gain is claimed on

@@ -648,6 +648,39 @@ function identity.tick(now)
         last.spells = spells
     end
 
+    -- Report COUNT INCREASES as they happen. Only increases: a decrease is a drop, a sale or a
+    -- use, and the server learns about those from the snapshot — this exists solely to stop the
+    -- server's picture being stale in the direction that matters for conservation.
+    -- BEFORE the declaration, and whenever it is due. The server clears its credit ledger on
+    -- each declaration (playerstate.ts handleInventory) and folds what is left into the doc at
+    -- logout. A credit sent AFTER a declaration that already counted the item survived that
+    -- clear and was granted a second time on relog: under load both passes land in one frame
+    -- and this one ran second (s153 #175: 2 of mp_armor_1); unloaded, the 2 s declaration
+    -- could see a gain the 0.25 s pass had not reported yet.
+    if baselineReady and (now >= nextAt.acquire or now >= nextAt.inventory) then
+        nextAt.acquire = now + ACQUIRE_INTERVAL
+        local counts = {}
+        for _, item in ipairs(Actor.inventory(self):getAll()) do
+            counts[item.recordId] = (counts[item.recordId] or 0) + item.count
+        end
+        -- The FIRST pass only seeds the baseline. Reporting everything a character already owns
+        -- as freshly acquired would credit their whole inventory twice over — once here and
+        -- again in the snapshot — and on a rejoin-restore that is the entire restored doc.
+        if last.acquired ~= nil then
+            for id, n in pairs(counts) do
+                local before = last.acquired[id] or 0
+                if n > before then
+                    -- Through global for the record registry, like the inventory itself: sent
+                    -- raw, a just-made item's LOCAL id sat in the server's credit ledger beside the
+                    -- declaration's net id, was folded into the doc at logout, and the relog
+                    -- granted it twice (s153 #148/#154).
+                    core.sendGlobalEvent('mpItemAcquiredOut', { id = id, n = n - before })
+                end
+            end
+        end
+        last.acquired = counts
+    end
+
     -- Through global for the record registry, like equipment and the spellbook: a brewed
     -- potion or a self-enchanted ring is a `Generated:` id that means nothing to the next
     -- engine, so an inventory sent raw came back on relog as nothing -- or as whatever
@@ -680,32 +713,6 @@ function identity.tick(now)
         end
     end
 
-    -- Report COUNT INCREASES as they happen. Only increases: a decrease is a drop, a sale or a
-    -- use, and the server learns about those from the snapshot — this exists solely to stop the
-    -- server's picture being stale in the direction that matters for conservation.
-    if baselineReady and not restoring and now >= nextAt.acquire then
-        nextAt.acquire = now + ACQUIRE_INTERVAL
-        local counts = {}
-        for _, item in ipairs(Actor.inventory(self):getAll()) do
-            counts[item.recordId] = (counts[item.recordId] or 0) + item.count
-        end
-        -- The FIRST pass only seeds the baseline. Reporting everything a character already owns
-        -- as freshly acquired would credit their whole inventory twice over — once here and
-        -- again in the snapshot — and on a rejoin-restore that is the entire restored doc.
-        if last.acquired ~= nil then
-            for id, n in pairs(counts) do
-                local before = last.acquired[id] or 0
-                if n > before then
-                    -- Through global for the record registry, like the inventory itself: sent
-                    -- raw, a just-made item's LOCAL id sat in the server's credit ledger beside the
-                    -- declaration's net id, was folded into the doc at logout, and the relog
-                    -- granted it twice (s153 #148/#154).
-                    core.sendGlobalEvent('mpItemAcquiredOut', { id = id, n = n - before })
-                end
-            end
-        end
-        last.acquired = counts
-    end
 end
 
 -- Rejoin: session ended -> everything must be re-sent on the next join (unless restored).
