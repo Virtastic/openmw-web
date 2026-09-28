@@ -73,7 +73,12 @@ export default async function run(ctx) {
       if (i === 11) ctx.log(`distance to the host's spot over 12 s: ${samples.join(' ')}; host row seen=${h.id !== undefined}`);
     }
     const last = Number(samples[samples.length - 1]);
-    assert.ok(last < 400, `the returning guest ended ${last} units from the host: the rejoin position hold pulled them back to where they logged out`);
+    // The RETURNING client's own narration: the restore, the invite and the hold, in the order
+    // they ran. The failure tail prints the first two clients only (#159: this was missing).
+    const said = (back.logTail ? back.logTail(400) : '').split(String.fromCharCode(10))
+      .filter((l) => /\[mp\] (rejoin|restore|invite|session state|follow|snap)/.test(l)).slice(-20).join(String.fromCharCode(10));
+    assert.ok(last < 400, `the returning guest ended ${last} units from the host: the rejoin position hold pulled them back to where they logged out
+${said}`);
     assert.equal(await host.client.eval(`${guestRow}.id !== undefined`), true, 'the host must see the returning guest');
     ctx.log('PASS: a returning guest joined straight to the host and stayed beside them');
   } finally {
