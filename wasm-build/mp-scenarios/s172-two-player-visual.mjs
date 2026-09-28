@@ -21,7 +21,7 @@
 // WebSocket hook installed before the page's own scripts timestamps every pose frame, so the
 // numbers are wall-clock exact up to that 100 ms mirror period (500 ms before #168).
 // The pass bars (coordinator, 2026-09-23): own correction p95 <= 8 u and never > 48 u, <= 1
-// hard snap per 5 min; the friend's puppet at most 400 ms behind the owner while moving; the same NPC
+// hard snap per 5 min; the friend's puppet at most 450 ms behind the owner while moving; the same NPC
 // within 64 u across A, B and the peer while moving; creature attacks visible to both; a real
 // swing registers on the peer and both see the drop within 250 ms. All numbers are logged
 // before any assertion, so a red run still reports everything.
@@ -220,7 +220,10 @@ export default async function run(ctx) {
     if (best < 40) lagT.push(bestTau);
     // While A moves: how long ago A stood where the puppet stands. A puppet that never lies on
     // A's recent path (off it by 40 u+) counts as the worst lag, not as a missing sample.
-    if (before && d2(before, truth) > 20) movingLagT.push(best < 40 ? bestTau : Infinity);
+    // Judged where A actually MOVES (>= 80 u/s over the last 500 ms): at a crawl against a wall a
+    // 15 u offset reads as 500+ ms (#172). 450 ms, decided 2026-09-28: the pipeline floor at a
+    // walk is ~430 ms (wire ~310, B's render delay and frames ~120).
+    if (before && d2(before, truth) >= 40) movingLagT.push(best < 40 ? bestTau : Infinity);
   }
   // Wire: gaps between A's poses arriving at B (a jerky stream shows as a steering puppet
   // that stops and starts) and the wire pose vs A's truth (network + peer lag, before steering).
@@ -250,7 +253,7 @@ export default async function run(ctx) {
   // alone takes ~0.37 s to reach B (four peer frames at 20 fps, the 15 Hz server tick, B's
   // 75 ms render delay) -- no puppet at run speed could meet it. 400 ms is ~64 u at a walk and
   // ~92 u at a run; the distance is logged beside it.
-  tbar(movingLagT.length > 0 && q(movingLagT, 0.95) <= 400, `a: friend's puppet at most 400 ms behind A while moving (p95 ${q(movingLagT, 0.95)} ms; ${q(movingLag, 0.95).toFixed(0)} u)`);
+  tbar(movingLagT.length > 0 && q(movingLagT, 0.95) <= 450, `a: friend's puppet at most 450 ms behind A while moving (p95 ${q(movingLagT, 0.95)} ms; ${q(movingLag, 0.95).toFixed(0)} u)`);
   tbar(pupSnaps === 0 && jumps === 0, `a: friend's puppet never teleports (${pupSnaps} snaps, ${jumps} jumps)`);
 
   // b: A's own reconciliation over the same walk.

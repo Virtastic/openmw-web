@@ -460,8 +460,14 @@ local function onUpdate(dt)
     -- so the puppet shot PAST its target, the bearing flipped ~180 degrees, and it sprinted
     -- back — then past again. That is the walk-forward-spin-around-walk-backward players see,
     -- and it never settles because the target keeps advancing into the same overshoot.
-    if steering and dist2d <= STEER_STOP then steering = false end
-    if not steering and dist2d >= STEER_START then steering = true end
+    -- ...BUT A MOVING TARGET IS KEPT PACE WITH, not caught and dropped: with a speed margin the
+    -- copy reached STEER_STOP, stopped, and waited for the owner to open STEER_START again --
+    -- a stop-start every ~170 ms at a walk, 14 u behind on average, and a visible stutter (s172
+    -- #172: a friend 75 u behind at p50 while the wire was 27). Standing targets keep the
+    -- hysteresis, so the overshoot-and-spin it cured stays cured.
+    local tgtV = interp:speed(now)
+    if steering and dist2d <= STEER_STOP and tgtV < 20 then steering = false end
+    if not steering and (dist2d >= STEER_START or (tgtV >= 20 and dist2d > STEER_STOP)) then steering = true end
 
     -- Stuck: steering toward a moving target without progressing (wedged on geometry). Only
     -- meaningful while we are actually STEERING — with hysteresis a puppet legitimately holds
@@ -487,7 +493,7 @@ local function onUpdate(dt)
     -- Mirror the remote actor's run flag while steering. The speed below is a fraction of the
     -- top speed this picks, so a run no longer overshoots a small correction (it used to be
     -- withheld inside STEER_START, which left a charging creature's puppet walking).
-    local run = bit(target.flags, 0) and steering
+    local run = bit(target.flags, 0) and (steering or tgtV >= 20)
     if run then runUntil = now + RUN_HOLD_S end
     self.controls.run = run or now < runUntil
     if steering then
@@ -503,8 +509,8 @@ local function onUpdate(dt)
         local facing = math.cos(headingErr)
         self.controls.movement = facing > 0.5 and steerMovement(dist2d, now, self.controls.run, dt) * facing or 0
     else
-        -- Close enough: hold position, face the remote player's actual heading.
-        self.controls.movement = 0
+        -- Close enough: face the remote player's actual heading, and keep their pace if they move.
+        self.controls.movement = tgtV >= 20 and steerMovement(0, now, self.controls.run, dt) or 0
         self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)
     end
     -- Look up and down too (avatar.lua applies the input's pitch the same way).

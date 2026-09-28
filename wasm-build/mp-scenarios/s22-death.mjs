@@ -42,6 +42,16 @@ export default async function run(ctx) {
     await ctx.sleep(500);
   }
   ctx.log(`respawn teleport error ${err.toFixed(1)} units`);
+  if (err >= RESPAWN_EPS) {
+    // WHERE THE DEATH STOPPED (#172: hp 0 on both sides for five minutes, never resurrected, and
+    // nothing in the captured tail said whether the death reached the server).
+    const NL = String.fromCharCode(10);
+    const srv = ctx.serverLogTail(20000).split(NL).filter((l) => /player\.death|respawn|resurrect|PlayerDeath|dropped|refused|invalid_body|stat_refused/i.test(l)).slice(-12);
+    ctx.log('server said: ' + (srv.length ? srv.join(' || ') : '(nothing about the death)'));
+    const cli = (a.logTail ? a.logTail(800) : '').split(NL).filter((l) => /\[mp\].*(death|dead|Death|Resurrect|resurrect|SelfStats|respawn)/.test(l)).slice(-12);
+    ctx.log('client said: ' + (cli.length ? cli.join(' || ') : '(nothing about the death)'));
+    ctx.log(`client dead flag ${await a.eval('window.omw.state.dead')} state ${await a.eval('window.omw.state.state')}`);
+  }
   assert.ok(err < RESPAWN_EPS, `not respawned at the configured point within ${DROWN_TIMEOUT / 1000} s: ${err.toFixed(1)} units off (never drowned, or never resurrected)`);
   assert.ok(/respawn\.sent/.test(ctx.serverLogTail(2000)), 'the server never logged respawn.sent: the teleport did not come from a death');
 
