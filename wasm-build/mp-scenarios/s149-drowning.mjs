@@ -120,28 +120,46 @@ export default async function run(ctx) {
   // Hold the depth: sneak is swim-down.
   await a.cmd(`walk:0,0,${HOLD_S * 1000}:sneak`);
 
+  // BITES ARE NOT DROWNING, AND THE SEA IS NOT EMPTY. The spot can be cleared, but a fish from
+  // further out swims in within the hold (#167: six killed, a seventh bit A at t+11s). The peer
+  // logs every blow the avatar takes with its damage, so what drowning cost is what the bars
+  // lost MINUS what the fish did -- and a loss no bite explains is the water.
+  const diveTs = new Date().toISOString();
+  const bitten = () => {
+    let sum = 0;
+    for (const l of (ctx.serverLogTail ? ctx.serverLogTail(8000) : '').split(String.fromCharCode(10))) {
+      if (!/hit on peer: .* by slaughterfish\S* ok=true health=/.test(l)) continue;
+      let ts = '', text = l;
+      try { const j = JSON.parse(l); ts = j.ts || ''; text = j.text || l; } catch { /* a bare line */ }
+      if (ts && ts < diveTs) continue;
+      const m = text.match(/health=([\d.]+)/);
+      if (m) sum += Number(m[1]);
+    }
+    return sum;
+  };
   // Hold there. Sample the peer's bars and the client's own bar every 5 s.
-  let cur = start, local = start.c, firstHurtAt = 0;
+  let cur = start, local = start.c, firstHurtAt = 0, bites = 0;
   while (Date.now() - t0 < HOLD_S * 1000) {
     await ctx.sleep(2_000);
     cur = (await bars(a)) || cur;
     local = Number(await a.eval('window.omw.state.hp'));
-    if (!firstHurtAt && cur.c < start.c - 1) firstHurtAt = Date.now() - t0;
+    bites = bitten();
+    if (!firstHurtAt && start.c - cur.c - bites > 1) firstHurtAt = Date.now() - t0;
     if (true) {
       const z = (await pose(a)).z, az = Number(JSON.parse(await b.eval(`JSON.stringify(${rowOf})`)).z);
       await a.eval("if (window.omw.state) window.omw.state.body = null; 'cleared';"); await a.cmd('body');
       await a.waitFor("typeof window.omw.state.body === 'string'", 5_000, 'body answered');
-      ctx.log(`t+${Math.round((Date.now() - t0) / 1000)}s peer ${cur.c}/${cur.b} client ${local}; A at z=${z.toFixed(0)}, avatar (as B sees it) z=${az.toFixed(0)}; engine says ${await a.eval('window.omw.state.body')}`);
+      ctx.log(`t+${Math.round((Date.now() - t0) / 1000)}s peer ${cur.c}/${cur.b} client ${local} (bites ${bites.toFixed(1)}); A at z=${z.toFixed(0)}, avatar (as B sees it) z=${az.toFixed(0)}; engine says ${await a.eval('window.omw.state.body')}`);
     }
     if (cur.c <= 25 || local <= 25) break; // never let the bot die; that is s22/s77's business
-    if (firstHurtAt) { await ctx.sleep(4_000); cur = (await bars(a)) || cur; local = Number(await a.eval('window.omw.state.hp')); break; }
+    if (firstHurtAt) { await ctx.sleep(4_000); cur = (await bars(a)) || cur; local = Number(await a.eval('window.omw.state.hp')); bites = bitten(); break; }
   }
-  assert.ok(cur.c < start.c - 1, `${HOLD_S} s under water cost nothing (${start.c} -> ${cur.c}): drowning never reached the ruling body`);
+  assert.ok(start.c - cur.c - bites > 1, `${HOLD_S} s under water cost nothing past the bites (${start.c} -> ${cur.c}, bites ${bites.toFixed(1)}): drowning never reached the ruling body`);
   assert.ok(cur.c > 0, 'the bot must not die here');
   // ONLY DROWNING COUNTS: fHoldBreathTime is 20 s, so a loss inside the first 15 s is a
   // slaughterfish, a fall on the snap, anything but the water (the s999 control's check).
   assert.ok(firstHurtAt >= 15_000, `hurt at t+${Math.round(firstHurtAt / 1000)}s, before the breath ran out -- that was not drowning`);
-  const lost = start.c - cur.c;
+  const lost = start.c - cur.c; // bites included: both sides took them
   assert.ok(Math.abs(local - cur.c) <= Math.max(3, lost * 0.5),
     `client ${local} vs peer ${cur.c} (lost ${lost}): one side drowned twice`);
 
