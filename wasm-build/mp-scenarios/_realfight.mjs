@@ -40,7 +40,10 @@ export async function armMelee(c, weapon = WEAPON, skill = 100) {
 // Walk up to a target with W held, re-aiming each stride. A target across water or a wall does
 // not get closer: after a few strides without progress the approach snaps beside it and SAYS so
 // (counted in the result), so a blocked path cannot pass for a walk.
-export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000) {
+// `side` (radians): where around the mark a snap lands. Two fighters snapped to one spot put
+// each other's avatar first in the swing's arc, and that player took the blow (#159 s128: the
+// guest's avatar struck the host's, PvP off, wasted) -- give each its own side.
+export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000, side = 0) {
   const until = Date.now() + budgetMs;
   let best = Infinity, stuck = 0, strides = 0;
   while (Date.now() < until) {
@@ -60,7 +63,7 @@ export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000) 
   // every 4 s for 3.5 minutes from 110-146 u short (#158). Within closeIn, swingUntil squares up.
   if (best < 256) return { ok: false, strides, snapped: false };
   ctx.log(`  (the walk stalled ${Math.round(best)} u short after ${strides} strides: snapping beside the mark)`);
-  await c.cmd(`snapto:${Math.round(t.x + 60)},${Math.round(t.y)},${Math.round(t.z + 8)}`);
+  await c.cmd(`snapto:${Math.round(t.x + 60 * Math.cos(side))},${Math.round(t.y + 60 * Math.sin(side))},${Math.round(t.z + 8)}`);
   // SAY IT when the avatar stays behind: the client then swings from beside the mark while the
   // body that actually fights -- the peer's avatar -- is wherever the walk stalled (#158 s157:
   // snapped 2013 u, then 102 swings "from 51 u" and not one hit line on the peer).
@@ -78,7 +81,7 @@ export async function walkTo(ctx, c, getTarget, reach = 150, budgetMs = 20_000) 
 // CLOSE IN, DO NOT CHASE: a mark within closeIn is faced and met with a short step, the way a
 // player squares up; only a far one gets the walk (and, blocked, the snap). Walking and snapping
 // every time a fighting NPC stepped past reach cost s118 four minutes for ten swings (#158).
-export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn = 300, holdMs = 1500, budgetMs = 180_000, maxSwings = Infinity } = {}) {
+export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn = 300, holdMs = 1500, budgetMs = 180_000, maxSwings = Infinity, side = 0 } = {}) {
   const until = Date.now() + budgetMs;
   let swings = 0, snaps = 0, near = 0, lastMark = null;
   while (Date.now() < until && swings < maxSwings) {
@@ -100,7 +103,7 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
         if (++near % 3 === 0) await c.keyHold(W, 300); else await ctx.sleep(400);
         continue;
       }
-      const w = await walkTo(ctx, c, getTarget, reach - 30);
+      const w = await walkTo(ctx, c, getTarget, reach - 30, 20_000, side);
       if (w.snapped) snaps++;
       continue;
     }
@@ -131,6 +134,8 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
       ctx.childLogTail ? ctx.childLogTail('gateway', 20000) : ''].join(String.fromCharCode(10)).split(String.fromCharCode(10));
     const empty = tail.filter((l) => /avatar swing found nothing/.test(l));
     if (empty.length) ctx.log(`  the peer's avatar swung at nothing ${empty.length} time(s) -- last: ${empty.slice(-2).map((l) => l.replace(/^.*found nothing: /, '').slice(0, 300)).join(' | ')}`);
+    const presses = tail.filter((l) => /avatar use (press|\+0\.3s):/.test(l));
+    if (presses.length) ctx.log(`  the avatar's state at the presses (${presses.length} lines) -- last: ${presses.slice(-4).map((l) => l.replace(/^.*avatar use /, '').replace(/"}?$/, '').slice(0, 200)).join(' | ')}`);
     const hits = tail.filter((l) => /hit on peer:/.test(l)).map((l) => { try { return JSON.parse(l).text.replace(/^.*hit on peer: /, ''); } catch { return l.slice(0, 160); } });
     ctx.log(`  the fight did not end after ${swings} swing(s); hits the peer logged: ${hits.length}` + (hits.length ? ' -- last: ' + hits.slice(-4).join(' | ') : ''));
   }

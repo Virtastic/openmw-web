@@ -174,7 +174,7 @@ export default async function run(ctx) {
   await shot(b, 'a0-b-before-walk.png');
   ctx.log(`puppets on B: ${await b.eval('window.omw.state.puppets')} | on A: ${await a.eval('window.omw.state.puppets')}`);
   await Promise.all([drain(a), drain(b)]);
-  const snapA0 = snapLines(a, /SELF SNAP/), pupSnapB0 = snapLines(b, new RegExp(`puppet snap #${idA}\b`));
+  const snapA0 = snapLines(a, /SELF SNAP/), pupSnapB0 = snapLines(b, new RegExp(`puppet snap #${idA}\\b`)); // \\b: a bare \b in a template is a backspace, so this baseline never matched and the attach snap counted (#159)
   const tWalk0 = Date.now();
   // walk -Y 5 s; turn, run -X 5 s; turn, run +Y 5 s; stop 4 s; turn, walk +X 4 s; stop (away from the bay first).
   await a.cmd('walk:0,1,5000');

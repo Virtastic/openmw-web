@@ -50,6 +50,14 @@ local lastDone = nil -- seq of the newest input whose time has been played in fu
 local prevTimed = nil -- the controls the NEXT input's time was spent under (see mpAvatarInput)
 local sinceDone = util.vector3(0, 0, 0)
 local frameDt, spendPrev, tailPrev, doneInPrev = 0, 0, 0, false
+-- OWED: time this body kept moving under the newest input while the queue was dry, paid back
+-- out of the next segments. A dry queue used to LOSE the rest of the frame, the time came in
+-- later anyway, and during a continuous run the queue only grew until the cap dropped real
+-- movement (s172 #159: the pose ~0.6 s behind, the owner corrected up to 100 u). Bounded: a
+-- stop that arrives late overshoots by at most OWED_MAX_S of movement (0.25 overshot a stop by
+-- 20 u in the replay; 0.15 keeps every pose within 8 u of the owner's ring and still cuts the
+-- bursty-link lag from 0.44 s to 0.29 s).
+local owed, OWED_MAX_S, owedDonePrev = 0, 0.15, 0
 -- 1.0, not 0.35: a TCP retransmit stall (300 ms RTO, seconds on a Wi-Fi roam) must not stop
 -- the avatar while the owner keeps running -- the burst collapses to the newest input and the
 -- owner is snapped back by v x stall (#205).
@@ -61,6 +69,16 @@ local prevJump = false
 -- second input of a tick overwrote the first and one jump in three (or a short use click)
 -- never reached the avatar while observers, who latch, saw it (#198).
 local jumpLatch, useLatch = false, false
+local useWasOn, useProbeAt = false, nil
+local function pressProbe(when)
+    pcall(function()
+        local ft = types.Actor.stats.dynamic.fatigue(self)
+        local w = types.Actor.getEquipment(self, types.Actor.EQUIPMENT_SLOT.CarriedRight)
+        print(string.format('[mp] avatar use %s: attacking=%s staggered=%s stance=%s fatigue=%.0f/%.0f weapon=%s',
+            when, tostring(mp.isAttacking and mp.isAttacking(self.object)), tostring(mp.isKnockedDown and mp.isKnockedDown(self.object)),
+            tostring(types.Actor.getStance(self)), ft.current, ft.base, w and w.recordId or 'none'))
+    end)
+end
 local hitHandlerRegistered = false
 
 -- Veto player-on-player damage while pvp is off: the peer resolves avatar-vs-avatar melee
@@ -202,7 +220,7 @@ return {
                 if not stepVel then
                     sinceDone = util.vector3(0, 0, 0) -- a teleport: the ring restarts there too
                 elseif doneInPrev and spendPrev > 0 then
-                    sinceDone = stepVel * (tailPrev / spendPrev)
+                    sinceDone = stepVel * ((tailPrev + owedDonePrev) / spendPrev)
                 else
                     sinceDone = sinceDone + stepVel
                 end
@@ -223,7 +241,7 @@ return {
                 -- owner held the button (measured 1.6 per arrow from a long bow). A bow held
                 -- a moment longer harms nothing; keep it for a bounded while.
                 local keepUse = input and bit(input.flags, 3) and now - inputAt <= USE_HOLD_S
-                segs, spendPrev, doneInPrev = {}, 0, false
+                segs, spendPrev, doneInPrev, owed = {}, 0, false, 0
                 stop()
                 if keepUse then self.controls.use = 1 end
                 return
@@ -240,7 +258,7 @@ return {
             -- finished by then, not with whatever this frame's spend finishes.
             local doneAtRead = lastDone
             if timed then
-                local left, mSum, sSum, tail, done = frameDt, 0, 0, 0, false
+                local left, mSum, sSum, tail, done, owedDone = frameDt, 0, 0, 0, false, 0
                 -- THE QUEUE ONLY EVER GREW. Each frame spends its own dt, so one peer hitch or a
                 -- late burst of input was lag for every observer for good (s172 #158: the pose
                 -- 1.15 s behind, the owner corrected 117 u). Time the owner spent STANDING moves
@@ -258,14 +276,21 @@ return {
                     left, s.t, ctl = left - use, s.t - use, s.d
                     if s.t <= 1e-6 then
                         table.remove(segs, 1)
-                        lastDone, done, tail = s.d.seq, true, 0
+                        lastDone, done, tail, owedDone = s.d.seq, true, 0, owed
                     else
                         tail = tail + use
                     end
                 end
+                -- Dry before the frame is spent: keep going under the newest input's controls (they
+                -- are the next segment's) and owe the time.
+                if left > 0 and owed < OWED_MAX_S and ((input.move or 0) ~= 0 or (input.side or 0) ~= 0) then
+                    local e = math.min(left, OWED_MAX_S - owed)
+                    mSum, sSum = mSum + (input.move or 0) * e, sSum + (input.side or 0) * e
+                    left, owed, tail = left - e, owed + e, tail + e
+                end
                 moveAxis = frameDt > 0 and mSum / frameDt or 0
                 sideAxis = frameDt > 0 and sSum / frameDt or 0
-                spendPrev, tailPrev, doneInPrev = frameDt - left, tail, done
+                spendPrev, tailPrev, doneInPrev, owedDonePrev = frameDt - left, tail, done, owedDone
             end
             self.controls.movement = moveAxis
             self.controls.sideMovement = sideAxis
@@ -318,6 +343,13 @@ return {
             -- now because combat.lua no longer forwards a real swing while the peer holds
             -- the cell -- so a blow lands exactly once, here.
             self.controls.use = (useLatch or bit(input.flags, 3)) and 1 or 0
+            -- WHAT THE BODY WAS DOING WHEN THE PRESS CAME, and a moment later (#159 s157: every
+            -- press reached the controls, 1 of 113 swings reached the hit test). On each rising
+            -- edge of use, and once ~0.3 s after it: attacking, staggered, stance, fatigue, weapon.
+            local useNow = self.controls.use == 1
+            if useNow and not useWasOn then useProbeAt = core.getRealTime() + 0.3; pressProbe('press') end
+            if useProbeAt and core.getRealTime() >= useProbeAt then useProbeAt = nil; pressProbe('+0.3s') end
+            useWasOn = useNow
             -- ...BUT NOT WHILE STAGGERED (backlog 309). A body in hit recovery or on the floor
             -- cannot start a swing, so a latch consumed there was a tap lost for good. Hold it
             -- until the body can act; mp.isKnockedDown covers hit recovery too.
@@ -393,6 +425,10 @@ return {
                 segs[#segs + 1] = { t = data.simMs / 1000, d = { seq = data.seq, move = ctl.move, side = ctl.side,
                     yaw = ctl.yaw, pitch = ctl.pitch, flags = ctl.flags } }
                 prevTimed = data
+                -- Time already moved ahead of the queue pays this segment down first.
+                local sg = segs[#segs]
+                local pay = math.min(owed, sg.t)
+                sg.t, owed = sg.t - pay, owed - pay
                 local total = 0
                 for _, sg in ipairs(segs) do total = total + sg.t end
                 while total > SEGS_MAX_S and #segs > 1 do

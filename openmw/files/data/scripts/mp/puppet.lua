@@ -7,6 +7,7 @@
 -- puppets walk/run/jump like real actors instead of gliding between set positions. On
 -- divergence it asks global.lua for a teleport via mpSnapRequest.
 local core = require('openmw.core')
+local rxMirrorAt = 0 -- the puppetRx debug mirror, rate-limited
 local self = require('openmw.self')
 local types = require('openmw.types')
 local I = require('openmw.interfaces')
@@ -311,7 +312,7 @@ ensureHitHandler()
 local function forwardMagicHits()
     if not (playerId or actorKey) then return end
     if not mp.takeMagicHits then return end
-    local ok, hits = pcall(function() return mp.takeMagicHits(self.object) end)
+    local ok, hits = pcall(mp.takeMagicHits, self.object) -- no closure a frame (#159 s177)
     if not ok then
         if mp.set then mp.set('magicFwd', 'take-failed:' .. tostring(hits)) end
         return
@@ -574,7 +575,13 @@ return {
             -- moveRx this pins a movement fault to ONE hop -- never routed, routed but not
             -- pushed, or pushed and not steered -- which is exactly the distinction that took
             -- an engine rebuild to make the first time.
-            mp.set('puppetRx', string.format('%.0f@t%d', e.y or 0, tier))
+            -- Twice a second, not per pose: a call out to the page on every pose of every
+            -- puppet was ~18 a frame with a crowd of 20 (#159 s177), for one debug key.
+            local nowRx = core.getRealTime()
+            if nowRx - rxMirrorAt >= 0.5 then
+                rxMirrorAt = nowRx
+                mp.set('puppetRx', string.format('%.0f@t%d', e.y or 0, tier))
+            end
         end,
         -- M2: full slot->recordId snapshot (items already granted by global.lua).
         MP_Equip = function(data)

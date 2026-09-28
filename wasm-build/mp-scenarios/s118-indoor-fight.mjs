@@ -61,7 +61,7 @@ export default async function run(ctx) {
   // FOR REAL, both players at once: W to walk up, the mouse button to swing (_realfight.mjs).
   for (const c of [a, b]) { await focus(c); await armMelee(c); }
   const isDead = async () => (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
-  const fights = await Promise.all([a, b].map((c) => swingUntil(ctx, c, () => probeRec(c, victim), isDead, { budgetMs: 240_000 })));
+  const fights = await Promise.all([a, b].map((c, i) => swingUntil(ctx, c, () => probeRec(c, victim), isDead, { budgetMs: 240_000, side: i * Math.PI })));
   ctx.log(`real swings: A ${fights[0].swings}, B ${fights[1].swings}`);
   const died = await isDead();
   ctx.log(`hitFwd A=${await a.eval('window.omw.state.hitFwd')} B=${await b.eval('window.omw.state.hitFwd')}`);

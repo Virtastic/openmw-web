@@ -344,6 +344,10 @@ end
 local PUPPET_TEMPLATE_ID = 'villager_00' -- demo NPC record (race "Imperial"), neutral kit
 
 local puppets = {} -- id -> {obj=GameObject, name=string}
+-- body object id -> player id: "is this actor a puppet?" is asked for every active actor
+-- several times a second (actors.lua actorsByCell), and a scan of every puppet per actor was
+-- ~1000 binding calls a pass with a crowd of 20 (#159 s177).
+local puppetBodies = {}
 local remoteCell = {} -- id -> last cellKey (from PlayerCellChange relays)
 local moveRx = 0 -- DIAGNOSTIC: total MoveBatch pose entries routed to puppets
 local lastPose = {} -- id -> last known {x=, y=, z=}
@@ -1317,6 +1321,7 @@ local function spawnPuppet(id, pose)
         obj:addScript('scripts/mp/puppet.lua', { playerId = id })
     end
     puppets[id] = { obj = obj, name = name }
+    puppetBodies[obj.id] = id
     -- THE WOLF. The appearance relay carries isWerewolf and a change rebuilds the body -- and
     -- the body was always built a man: nothing set the form on it. A transformed player looked
     -- human on every other screen, and the avatar fought with human hands on the peer.
@@ -1343,6 +1348,7 @@ local function despawnPuppet(id)
     local p = puppets[id]
     if not p then return end
     puppets[id] = nil
+    pcall(function() puppetBodies[p.obj.id] = nil end)
     avatarStatsLast[id] = nil
     appliedPose[id] = nil -- a rejoin must not stream the last body's place
     pushAvatarPolicyQueued = true
@@ -1804,10 +1810,8 @@ local function start()
         toNet = worldmp.toNet, -- #296: visible NPC magic travels in wire record ids
         toLocal = worldmp.toLocal,
         isMpPuppetFn = function(obj)
-            for _, p in pairs(puppets) do
-                if p.obj:isValid() and p.obj.id == obj.id then return true end
-            end
-            return false
+            local p = puppets[puppetBodies[obj.id] or false]
+            return p ~= nil and p.obj.id == obj.id and p.obj:isValid()
         end,
         -- COMPANIONS, both directions. A follow target is a PLAYER on the client that
         -- recruited them and a PUPPET everywhere else, so the wire carries the player ID and
@@ -1869,10 +1873,8 @@ local function start()
         noticeFn = notice,
         rosterNameFn = rosterName,
         isMpPuppetFn = function(obj)
-            for _, p in pairs(puppets) do
-                if p.obj:isValid() and p.obj.id == obj.id then return true end
-            end
-            return false
+            local p = puppets[puppetBodies[obj.id] or false]
+            return p ~= nil and p.obj.id == obj.id and p.obj:isValid()
         end,
         -- The body that embodies a given player HERE. On the sim peer that is their avatar,
         -- which is what a bounty has to be attached to for the world to react to them.
@@ -2677,6 +2679,7 @@ local eventHandlers = {
                     -- player after this one in the same batch stopped being routed poses at
                     -- all. Drop the stale entry instead: the next batch respawns the puppet.
                     if not pcall(function() p.obj:sendEvent('MP_Pose', e) end) then
+                        pcall(function() puppetBodies[p.obj.id] = nil end)
                         puppets[e.id] = nil
                     end
                 end

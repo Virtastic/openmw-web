@@ -66,7 +66,7 @@ export default async function run(ctx) {
     const pair = [host.client, guest.client];
     for (const c of pair) { await focus(c); await armMelee(c); }
     const isDead = async () => (await host.client.eval(deadExpr)) === true || (await guest.client.eval(deadExpr)) === true;
-    const fights = await Promise.all(pair.map((c) => swingUntil(ctx, c, () => probeRec(c, victim), isDead, { budgetMs: 240_000 })));
+    const fights = await Promise.all(pair.map((c, i) => swingUntil(ctx, c, () => probeRec(c, victim), isDead, { budgetMs: 240_000, side: i * Math.PI })));
     ctx.log(`real swings: host ${fights[0].swings}, guest ${fights[1].swings}`);
     const died = await isDead();
     ctx.log(`hitFwd host=${await host.client.eval('window.omw.state.hitFwd')} guest=${await guest.client.eval('window.omw.state.hitFwd')}`);

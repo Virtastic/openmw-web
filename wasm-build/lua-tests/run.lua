@@ -1864,6 +1864,16 @@ do
   check('the avatar stream gate sits under the 50 ms peer frame', gl:find('local AVATAR_STREAM_EVERY = 0.04', 1, true) ~= nil)
 end
 
+print('s177 a crowd costs no per-actor scan and no per-pose page call')
+do
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  check('isMpPuppetFn is a lookup by body id, not a scan of every puppet',
+    gl:find('local p = puppets[puppetBodies[obj.id] or false]', 1, true) ~= nil
+    and gl:find('if p.obj:isValid() and p.obj.id == obj.id then return true end', 1, true) == nil)
+  check('puppet.lua mirrors puppetRx at most twice a second', pp:find('if nowRx - rxMirrorAt >= 0.5 then', 1, true) ~= nil)
+end
+
 print('#431 a fresh holder streams no bars for a cell until the world record has answered')
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
@@ -2353,52 +2363,70 @@ do
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = {}
   package.loaded['openmw.util'] = { vector3 = v3 }
-  local av = dofile('./openmw/files/data/scripts/mp/avatar.lua')
-  -- The owner: 60 fps, an input every other frame carrying the ms simulated since the last.
-  local owner, ring, seq, acc, simT = 0, {}, 0, 0, 0
-  local inflight = {} -- {arriveAt, data}
-  local LAT = 0.04
-  local t, frame = 0, 0
-  local ownerNext, peerNext = 0, 0
-  while t < 3 do
-    if t >= ownerNext then
-      local dt = 1 / 60
-      if t >= 1 and t < 1 + 1 / 60 then ownerNext = t + 1; dt = 0.2 else ownerNext = t + 1 / 60 end -- the hitch
-      local mv = (t >= 0.2 and t < 2.5) and 1 or 0 -- starts at rest (as a join does); stops at 2.5 s
-      frame = frame + 1
-      -- As player.lua: the ring entry and the input go out BEFORE this frame's physics, carrying
-      -- the time simulated since the last one; this frame's time belongs to the next input.
-      if frame % 2 == 0 or dt > 0.1 then
-        seq = seq + 1
-        ring[seq] = owner
-        inflight[#inflight + 1] = { at = t + LAT, d = { id = 1, seq = seq, move = mv, side = 0, yaw = 0, pitch = 0, flags = 1, simMs = math.floor(acc * 1000 + 0.5) } }
-        acc = 0
+  -- One replay: the owner runs 0.2-2.5 s at 60 fps (a 1 s hitch at t=1 simulating 200 ms);
+  -- `jitter` holds every input sent in the first 200 ms of each half second back to its end,
+  -- the late bursts a loaded link delivers. Returns the avatar's lag behind the owner at 2.4 s.
+  local function replay(jitter)
+    for i = #applied, 1, -1 do applied[i] = nil end
+    me.position = v3(0, 0, 0); me.controls = {}
+    local av = dofile('./openmw/files/data/scripts/mp/avatar.lua')
+    local owner, ring, seq, acc = 0, {}, 0, 0
+    local inflight = {} -- {arriveAt, data}
+    local LAT = 0.04
+    local t, frame = 0, 0
+    local ownerNext, peerNext, lagAt24 = 0, 0, nil
+    while t < 3 do
+      if t >= ownerNext then
+        local dt = 1 / 60
+        if t >= 1 and t < 1 + 1 / 60 then ownerNext = t + 1; dt = 0.2 else ownerNext = t + 1 / 60 end -- the hitch
+        local mv = (t >= 0.2 and t < 2.5) and 1 or 0 -- starts at rest (as a join does); stops at 2.5 s
+        frame = frame + 1
+        -- As player.lua: the ring entry and the input go out BEFORE this frame's physics, carrying
+        -- the time simulated since the last one; this frame's time belongs to the next input.
+        if frame % 2 == 0 or dt > 0.1 then
+          seq = seq + 1
+          ring[seq] = owner
+          local at = t + LAT
+          if jitter and (t % 0.5) < 0.2 then at = t - (t % 0.5) + 0.2 + LAT end
+          inflight[#inflight + 1] = { at = at, d = { id = 1, seq = seq, move = mv, side = 0, yaw = 0, pitch = 0, flags = 1, simMs = math.floor(acc * 1000 + 0.5) } }
+          acc = 0
+        end
+        owner = owner + RUN * mv * dt; acc = acc + dt
       end
-      owner = owner + RUN * mv * dt; acc = acc + dt; simT = simT + dt
+      if t >= peerNext then
+        now = t
+        local keep = {}
+        for _, m in ipairs(inflight) do if m.at <= t then av.eventHandlers.mpAvatarInput(m.d) else keep[#keep + 1] = m end end
+        inflight = keep
+        av.engineHandlers.onUpdate(0.05)
+        local c = me.controls
+        me.position = v3(0, me.position.y + (c.movement or 0) * RUN * 0.05, 0)
+        peerNext = t + 0.05
+        if not lagAt24 and t >= 2.4 then lagAt24 = owner - me.position.y end
+      end
+      t = t + 0.001
     end
-    if t >= peerNext then
-      now = t
-      local keep = {}
-      for _, m in ipairs(inflight) do if m.at <= t then av.eventHandlers.mpAvatarInput(m.d) else keep[#keep + 1] = m end end
-      inflight = keep
-      av.engineHandlers.onUpdate(0.05)
-      local c = me.controls
-      me.position = v3(0, me.position.y + (c.movement or 0) * RUN * 0.05, 0)
-      peerNext = t + 0.05
+    local worst, worstSeq = 0, 0
+    for i = 10, #applied do
+      local a = applied[i]
+      if ring[a.seq] and math.abs(a.y - ring[a.seq]) > worst then worst, worstSeq = math.abs(a.y - ring[a.seq]), a.seq end
     end
-    t = t + 0.001
+    return { final = me.position.y - owner, worst = worst, worstSeq = worstSeq, seq = seq, lag = lagAt24 }
   end
+  local r = replay(false)
   check('after the hitch the avatar stands where its owner does (was ~200 u ahead)',
-    math.abs(me.position.y - owner) < 10, string.format('avatar %.0f owner %.0f', me.position.y, owner))
-  local worst, at = 0, 0
-  for i = 10, #applied do
-    local a = applied[i]
-    if ring[a.seq] and math.abs(a.y - ring[a.seq]) > worst then worst, at = math.abs(a.y - ring[a.seq]), a.seq end
-  end
+    math.abs(r.final) < 10, string.format('avatar-owner %.0f', r.final))
   -- Exact while the controls hold; at a start or stop the owner's 60 fps controls change between
   -- two 30 Hz inputs, which is one frame of movement (4-8 u at a run) for that one sample.
-  check('every pose matches the owner\'s ring entry for its seq to < 8 u', worst < 8,
-    string.format('worst %.1f u at seq %d of %d', worst, at, seq))
+  check('every pose matches the owner\'s ring entry for its seq to < 8 u', r.worst < 8,
+    string.format('worst %.1f u at seq %d of %d', r.worst, r.worstSeq, r.seq))
+  -- LATE BURSTS DO NOT PILE UP (s172 #159). A dry queue lost the rest of each frame, the time
+  -- came in later anyway, and a continuous run only fell further behind until the cap dropped
+  -- real movement. The body keeps moving and owes the time.
+  local j = replay(true)
+  check('with late input bursts the avatar trails a running owner by < 0.35 s of running (0.44 before)',
+    j.lag ~= nil and j.lag < 0.35 * RUN, string.format('lag %.0f u (%.2f s)', j.lag or -1, (j.lag or 0) / RUN))
+  check('...and stops where the owner stopped', math.abs(j.final) < 10, string.format('avatar-owner %.0f', j.final))
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
