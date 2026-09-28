@@ -43,11 +43,16 @@ export default async function run(ctx) {
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP, 'the cell is puppeted (the peer holds it)');
   const named = Object.entries(await netObjs(a));
   // The NEAREST mark: an arrow is a physical projectile and a wandering creature walks out
-  // of a long shot's flight time. Probe positions are keyed by record, so pick by record.
+  // of a long shot's flight time. Probe positions are keyed by record, so pick by record --
+  // and ONLY when alone under it (probe[r].n === 1, #178): two scribs share the record
+  // "scrib", the probe can only report one position for it, and which of the two that is can
+  // swap frame to frame as their relative distances trade places. 24 shots at a mark that
+  // silently relocates never converge; the archer's own aim was fine.
   const me = JSON.parse(await a.eval('window.omw.state.pose||"{}"'));
   const probe = JSON.parse(await a.eval('window.omw.state.actorProbe||"{}"'));
-  const dist = (r) => { const p = probe[r]; return p ? Math.hypot(p.x - me.x, p.y - me.y) : Infinity; };
+  const dist = (r) => { const p = probe[r]; return p && (p.n ?? 1) === 1 ? Math.hypot(p.x - me.x, p.y - me.y) : Infinity; };
   const [netId, victim] = [...named].sort((x, y) => dist(x[1]) - dist(y[1]))[0];
+  assert.notEqual(dist(victim), Infinity, `every candidate shares its record id with another: ${named.map(([, r]) => r).join(', ')}`);
   ctx.log(`the archer's mark: the peer's "${victim}" (net ${netId}) at ${dist(victim).toFixed(0)} units, of ${named.map(([, r]) => `${r}@${dist(r).toFixed(0)}`).join(', ')}`);
 
   // Kit: a real bow, a quiver, and the skill to use them; the avatar gets all three. One
