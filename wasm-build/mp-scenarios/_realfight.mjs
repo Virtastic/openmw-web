@@ -130,6 +130,19 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
       if (w.snapped) snaps++;
       continue;
     }
+    // CATCH BREATH, as a player does: every swing costs fatigue, and nonstop swinging drained it
+    // to 0 -- the body staggered and every blow after whiffed (#174 s120: 200 -> 0 over 91 swings,
+    // the mark stuck at 47 hp). Below 30% of the bar, wait (up to 20 s) for it to reach 60%.
+    const ftOf = async () => String(await c.eval('window.omw.state.selfFt') || '').split('/').map(Number);
+    const [ft, ftMax] = await ftOf();
+    if (ftMax > 0 && ft < 0.3 * ftMax) {
+      ctx.log(`  (fatigue ${Math.round(ft)}/${ftMax}: catching breath)`);
+      for (const until = Date.now() + 20_000; Date.now() < until;) {
+        const [f] = await ftOf();
+        if (f >= 0.6 * ftMax || (await done())) break;
+        await ctx.sleep(1_000);
+      }
+    }
     await c.eval(`window.omw.send('face:${Math.round(t.x)},${Math.round(t.y)},${Math.round(t.z + 30)}'); 1`);
     await c.mouseHold(holdMs);
     swings++;
