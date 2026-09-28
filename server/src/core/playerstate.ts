@@ -249,6 +249,11 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
       // `{c: 99999, b: 99999}` and be stored at ten times its real maximum -- then forwarded
       // to the avatar as a restore.
       const have = cur?.[k]; if (have === undefined) return undefined;
+      // A CORPSE IS NOT HEALED. The peer says this body is dead; a raise claimed now (a regen
+      // tick, a restore racing the death) was added to the corpse's 0, the doc went above 0, and
+      // the one PlayerDeath the client sends was then refused as unconfirmed -- dead for good
+      // (s22 #172, backlog 520). The respawn clears avatarDead (server.ts) and the refill flows.
+      if (k === 'hp' && player.avatarDead === true) return undefined;
       if (restRefused) {
         // Only the RAISE is the refused rest's healing; a base step in the window is a
         // level-up, and dropping it lost the health gain for the session (backlog 256).
@@ -1119,7 +1124,8 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
     // used to be taken on faith, and a respawn is a free full heal and a teleport.
     if (player.peerStatsAt !== undefined && Date.now() - player.peerStatsAt <= PEER_STATS_FRESH_MS) {
       const hp = ctx.store.getCached(player.charId)?.stats?.dynamic?.hp?.c;
-      if (hp !== undefined && hp > 0) {
+      // The peer's own verdict is the confirmation: its last report said dead (s22 #172).
+      if (hp !== undefined && hp > 0 && player.avatarDead !== true) {
         log('warn', 'state.death_unconfirmed', { from: player.name, hp });
         ctx.noteAnomaly?.(player.accountKey, 'death_unconfirmed');
         return true;

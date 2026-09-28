@@ -469,6 +469,30 @@ test("a client's PlayerDeath is ignored while the peer reports it alive, honoure
   await a.waitEvent('PlayerResurrect', () => true, 3000);
 });
 
+// A CORPSE IS NOT HEALED, AND ITS DEATH IS NOT REFUSED (s22 #172, backlog 520). A raise claimed
+// between the peer's last report (dead) and the client's PlayerDeath -- a regen tick, a restore
+// racing the death -- used to land on the doc, lift it above 0, and get the one death the client
+// sends refused as unconfirmed: dead for good.
+test('a heal claimed onto a dead avatar neither lifts the doc nor blocks the respawn', async (t) => {
+  const { peer, a } = await world(t);
+  let seq = 0;
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(0) }] }), 100);
+  t.after(() => clearInterval(reporter));
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 0);
+  clearInterval(reporter); // the next report is still in flight: the window the heal lands in
+  await new Promise((r) => setTimeout(r, 200));
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 5, b: 100, d: 5 } });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'AvatarRestore' && (e.value as { hp?: unknown }).hp !== undefined).length, 0,
+    'a heal went onto a corpse');
+  a.inbox.events.length = 0;
+  a.sendEvent('PlayerDeath', {});
+  await a.waitEvent('PlayerResurrect', () => true, 3000);
+});
+
 // A REST THAT WAS REFUSED HEALED NOBODY. A guest's wait dialog restores their local body for
 // the hours it asked for; the server refuses the hours (timeSkip=owner) and the clock never
 // moves -- but the raise that followed was claimed like a potion: a full heal in zero world

@@ -52,6 +52,7 @@ local nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, in
 -- gain every 0.25 s until the snapshot caught up.
 -- Acquisition baseline (count per record id) lives in `last.acquired` so a StateRefused can forget it (#400).
 local wasDead = false
+local deathSentAt = nil -- the last PlayerDeath sent (resent while still dead)
 local restoring = false -- suppress broadcasts while the rejoin record is being applied
 -- BASELINE GATE. Until this is true we do not know what this character IS yet, so the
 -- persistent halves of the sync stay silent.
@@ -528,6 +529,14 @@ function identity.tick(now)
         -- PlayerDeath too, so a corpse never keeps an NPC refused to everyone else.
         pcall(function() I.UI.removeMode('Dialogue') end)
     end
+    -- ...AND AGAIN EVERY 5 s WHILE DEAD. The edge fired once; a death the server refused or lost
+    -- (a heal racing it, a reconnect) left the player a corpse for good (s22 #172: hp 0 for five
+    -- minutes, never respawned). The respawn answers either message; alive, nothing is resent.
+    if dead and wasDead and now - (deathSentAt or 0) >= 5 then
+        mp.sendEvent('PlayerDeath', {})
+        deathSentAt = now
+    end
+    if dead and not wasDead then deathSentAt = now end
     wasDead = dead
 
     trackLocalChange()

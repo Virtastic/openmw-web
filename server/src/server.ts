@@ -363,6 +363,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         const victim = roster.get(target);
         if (victim) {
           victim.resurrectedAt = Date.now();
+          victim.avatarDead = false; // the respawn's refill must flow (a corpse is not healed)
           victim.peerStatsAt = undefined;
           worldPeerImpl()?.peer.sendEvent('AvatarResurrect', { id: target, ...(body as object) });
         }
