@@ -51,18 +51,20 @@ export default async function run(ctx) {
   // guide get ahead and then jogs after them. B watches from the spawn.
   const deadline = Date.now() + 150_000;
   let dB = Infinity, dA = Infinity;
-  let stood = { x: start.x + 80, y: start.y };
+  let stood = { x: start.x + 80, y: start.y, z: start.z + 8 };
   while (Date.now() < deadline) {
     const qa = await probeOf(a);
     if (qa[rec]) {
       dA = dist2(qa[rec], DEST);
-      // The guide has walked its ~450 and is waiting: stride after it. A stride is at least
-      // 512 units (the avatar follows only a jump that big) and lands just short of the guide.
-      const gap = dist2(qa[rec], stood);
+      // The guide has walked its ~450 and is waiting: stride after it, landing just short of it.
+      // IN 3D, as aiescort.cpp measures: downhill the guide stopped 529 u away in 3D while the
+      // flat gap read ~455, under the stride threshold, and it waited for good (#172, a guide
+      // starting on a hill). A stride stays over 512 so the avatar always follows the jump.
+      const gap = Math.hypot(qa[rec].x - stood.x, qa[rec].y - stood.y, qa[rec].z - stood.z);
       if (gap >= 460) {
-        const step = Math.max(540, gap - 40); // the jump detector wants MORE than 512
-        stood = { x: stood.x + (qa[rec].x - stood.x) * step / gap, y: stood.y + (qa[rec].y - stood.y) * step / gap };
-        await a.cmd(`snapto:${Math.round(stood.x)},${Math.round(stood.y)},${Math.round(qa[rec].z + 8)}`);
+        const step = Math.max(540, gap - 40);
+        stood = { x: stood.x + (qa[rec].x - stood.x) * step / gap, y: stood.y + (qa[rec].y - stood.y) * step / gap, z: qa[rec].z + 8 };
+        await a.cmd(`snapto:${Math.round(stood.x)},${Math.round(stood.y)},${Math.round(stood.z)}`);
       }
     }
     const qb = await probeOf(b);
