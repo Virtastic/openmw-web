@@ -56,6 +56,11 @@ export default async function run(ctx) {
     assert.ok(dist2(far, hostAt) > 400, 'the guest must be well away from the host before leaving (walk hook / terrain)');
     guest.client.close(); // logout flushes the doc with that far spot
     await host.client.waitFor(`${guestRow}.id === undefined`, 120_000, 'the host sees the guest leave');
+    // A RETURN, NOT A RECONNECT. The server keeps the position of a guest back within
+    // GUEST_REBOOT_MS (60 s, server.ts guestSpawn: the auth rescue re-dials a crashed client and
+    // must not yank it to the host). A 50 fps client came back inside that window, so every run
+    // measured the crash path and the invite never came (#161: no invite line on the return).
+    await ctx.sleep(65_000);
 
     // Back, straight to the friend. The stored position is 'far'; the invite is the host.
     const ownUrl = `ws://127.0.0.1:${GW_PORT}/w/${guest.ownId}`;
