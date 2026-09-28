@@ -200,7 +200,10 @@ async function startGameServer(extraRules = '', extraEnv = {}, opts = {}) {
     proc.stdout.on('data', (d) => out.push(String(d)));
     proc.stderr.on('data', (d) => out.push(String(d)));
     try {
-      await waitHttp(`http://127.0.0.1:${port}/healthz`, 45_000, 'omw-mp /healthz');
+      // 120 s: on the shared LXC a neighbour's load starves the boot for tens of seconds at a time
+      // (#160 at load 112, #169 at 42: the log stopped after the locker migration and resumed
+      // too late). A server that truly hangs still fails here, with its output.
+      await waitHttp(`http://127.0.0.1:${port}/healthz`, 120_000, 'omw-mp /healthz');
     } catch (e) {
       try { proc.kill('SIGKILL'); } catch {}
       throw new Error(e.message + '\nserver output:\n' + out.join(''));
