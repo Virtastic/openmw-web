@@ -2267,7 +2267,7 @@ do
   }
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
-  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4 }, hasGroup = function(_, g) return g == 'attack1' or g == 'hit1' end,
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function(_, g) return g == 'attack1' or g == 'hit1' end,
     playBlended = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
@@ -2317,7 +2317,7 @@ do
     Creature = { objectIsInstance = function() return true end } }
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
-  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlended = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return false end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ actorKey = 'o:rat' })
@@ -2346,6 +2346,70 @@ do
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
+print('s120 an NPC puppet keeps walking with its owner while it shows the owner\'s swings')
+do
+  -- The peer's NPC strafes +/-150 u at walk speed and swings every 1.3 s (the use bit up 0.6 s):
+  -- OpenMW's AI moves while it attacks. The stub engine moves an actor only while no clip holds
+  -- its legs at Movement or above (an NPC's movement comes from its legs' animation) and sways
+  -- it 1.5 u a frame instead. Before s120 the swing took every bone group at Weapon: the puppet
+  -- stood through most of each cycle and the fight happened 150-250 u from where players saw it.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.animation', 'scripts.mp.interp' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local a1 = math.atan
+  math.atan = function(y, x) if x then return math.atan2(y, x) end return a1(y) end
+  local RUN, WALK, now = 250, 150, 0
+  local function v3(x, y, z) return setmetatable({ x = x, y = y, z = z }, { __sub = function(p, q) return v3(p.x - q.x, p.y - q.y, p.z - q.z) end,
+    __index = { length = function(p) return math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) end } }) end
+  local me = { controls = {}, position = v3(0, 0, 0), yaw = 0, object = {}, enableAI = function() end }
+  me.rotation = { getYaw = function() return me.yaw end, getPitch = function() return 0 end }
+  package.loaded['openmw.core'] = { getRealTime = function() return now end, sound = { playSound3d = function() end },
+    sendGlobalEvent = function(name, d) if name == 'mpSnapRequest' then me.snap = d end end }
+  package.loaded['openmw.self'] = me
+  package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 1 end,
+    setStance = function() end, getRunSpeed = function() return RUN end, getWalkSpeed = function() return WALK end,
+    EQUIPMENT_SLOT = { CarriedRight = 16 }, getEquipment = function() return nil end },
+    Creature = { objectIsInstance = function() return false end }, Weapon = { objectIsInstance = function() return false end, TYPE = {} } }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = { set = function() end }
+  local P = { Movement = 3, Hit = 4, Weapon = 5, WeaponLowerBody = 1 }
+  local legs, clipUntil = 0, -1
+  package.loaded['openmw.animation'] = { PRIORITY = P, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 },
+    hasGroup = function() return true end,
+    playBlended = function(_, _, o) local p = o.priority
+      legs = type(p) == 'table' and (p[0] or 0) or p
+      clipUntil = o.autoDisable == false and math.huge or now + 0.6 end }
+  package.loaded['scripts.mp.interp'] = nil
+  local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+  pup.engineHandlers.onInit({ actorKey = 'o:eldafire' })
+  -- a triangle wave 0 -> +150 -> -150 -> +150 ... at 150 u/s
+  local function truth(t) local ph = (t * WALK + 150) % 600; return ph < 300 and ph - 150 or 450 - ph end
+  local function yawAt(t) local ph = (t * WALK + 150) % 600; return ph < 300 and math.pi / 2 or -math.pi / 2 end
+  local nextPose, dt, worst, sway = 0, 1 / 30, 0, 1.5
+  while now < 12 do
+    while nextPose <= now - 0.05 do
+      local use = (nextPose % 1.3) < 0.6 and 8 or 0
+      pup.eventHandlers.MP_Pose({ x = truth(nextPose), y = 0, z = 0, yaw = yawAt(nextPose), pitch = 0, flags = 16 + use, t = now })
+      nextPose = nextPose + 0.05
+    end
+    pup.engineHandlers.onUpdate(dt)
+    if me.snap then me.position = v3(me.snap.x, me.snap.y, me.snap.z); me.snap = nil end
+    local c = me.controls
+    me.yaw = me.yaw + (c.yawChange or 0)
+    if now < clipUntil and legs >= P.Movement then
+      sway = -sway; me.position = v3(me.position.x + sway, me.position.y, 0)
+    else
+      local step = (c.movement or 0) * (c.run and RUN or WALK) * dt
+      me.position = v3(me.position.x + math.sin(me.yaw) * step, me.position.y + math.cos(me.yaw) * step, 0)
+    end
+    now = now + dt
+    if now > 1 then worst = math.max(worst, math.abs(me.position.x - truth(now - 0.125))) end
+  end
+  check('an NPC puppet keeps within 80 u of its owner while the owner swings (was frozen)', worst < 80, string.format('worst %.0f u', worst))
+  math.atan = a1
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+end
+
 print('s172 a friend\'s or an NPC\'s blow plays keys that exist; a puppet\'s speed is not ramped twice')
 do
   -- Every key a puppet plays must exist in the retail animations: Animation::reset refuses a
@@ -2367,7 +2431,7 @@ do
   }
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
-  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4 }, hasGroup = function() return true end,
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return true end,
     playBlended = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
@@ -2527,7 +2591,7 @@ do
     Creature = { objectIsInstance = function() return false end } }
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
-  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlended = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return false end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ playerId = 7 })
@@ -2584,7 +2648,7 @@ do
     Creature = { objectIsInstance = function() return true end } }
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
-  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5 }, hasGroup = function() return false end, playBlended = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return false end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ actorKey = 'o:rat' })

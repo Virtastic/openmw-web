@@ -147,10 +147,16 @@ local SWING_GROUP_OF_TYPE = {
 local function showSwing(release, full)
     pcall(function()
         local anim = require('openmw.animation')
+        -- THE LEGS STAY THE WALK'S (s120). An all-groups Weapon clip owns the lower body, and an
+        -- NPC's movement comes from its legs' animation: a puppet showing its owner's swings stood
+        -- still ~90% of a fight while the real NPC strafed on, 150-250 u away. The engine plays
+        -- a biped's attack at WeaponLowerBody on the legs (character.cpp); so do we.
+        local P, G = anim.PRIORITY, anim.BONE_GROUP
+        local pri = { [G.LowerBody] = P.WeaponLowerBody, [G.Torso] = P.Weapon, [G.LeftArm] = P.Weapon, [G.RightArm] = P.Weapon }
         if types.Actor.getStance(self) == types.Actor.STANCE.Spell then
             if not release or full then
                 anim.playBlended(self, 'spellcast', {
-                    priority = anim.PRIORITY.Weapon, startKey = 'self start', stopKey = 'self stop' })
+                    priority = pri, startKey = 'self start', stopKey = 'self stop' })
             end
             return
         end
@@ -183,7 +189,7 @@ local function showSwing(release, full)
         local kind = ranged and 'shoot' or 'chop'
         if release then
             anim.playBlended(self, group, {
-                priority = anim.PRIORITY.Weapon,
+                priority = pri,
                 startKey = kind .. (full and ' start' or ' max attack'),
                 -- SMALL follow stop: the follow sections exist as small/medium/large only
                 -- (character.cpp picks one by attack strength); a size-less one is not a key in
@@ -194,7 +200,7 @@ local function showSwing(release, full)
             core.sound.playSound3d('Weapon Swish', self)
         else
             anim.playBlended(self, group, {
-                priority = anim.PRIORITY.Weapon,
+                priority = pri,
                 startKey = kind .. ' start',
                 stopKey = kind .. ' min attack',
                 autoDisable = false, -- hold the wind-up until the release plays the blow
