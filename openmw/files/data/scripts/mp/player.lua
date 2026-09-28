@@ -1450,6 +1450,12 @@ local script = {
                 -- The blow landed on the peer, so this engine never ran its hit chain: the
                 -- drop in the bar is the only sign, and it was silent (backlog 130).
                 if data.hp.c < d.health(self).current then core.sound.playSound3d('Health Damage', self) end
+                -- HARNESS DIAGNOSTIC (s22 #178): the engine holds this body dead while the peer's
+                -- bar is above zero -- the latch the write below cannot clear.
+                local okd, isDead = pcall(types.Actor.isDead, self)
+                if okd and isDead == true and data.hp.c >= 1 then
+                    print(string.format('[mp] self is dead-latched while the peer reports hp=%.1f/%.1f', data.hp.c, data.hp.b))
+                end
                 d.health(self).current = data.hp.c
                 d.magicka(self).current = data.mp.c
                 d.fatigue(self).current = data.ft.c

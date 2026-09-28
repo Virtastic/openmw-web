@@ -835,6 +835,7 @@ end
 -- on the peer (NPC swings, falls, spells) is what everyone -- including the owner -- sees.
 local avatarStatsAt = 0
 local AVATAR_STATS_EVERY = 0.25
+local deadMismatchAt = {} -- id -> last time the isDead/hp mismatch was said
 local avatarStatsLast = {} -- id -> serialized last report (diff suppression)
 local avatarStatsSentAt = {} -- id -> last SEND time: dropped is not the same as unchanged
 local avatarStatsAnnounced = false
@@ -850,6 +851,14 @@ local function avatarStatsTick(now)
             local ok, entry = pcall(function()
                 local d = types.Actor.stats.dynamic
                 local hp, m, ft = d.health(p.obj), d.magicka(p.obj), d.fatigue(p.obj)
+                -- HARNESS DIAGNOSTIC (s22 #178): a body the engine holds DEAD while its bar reads
+                -- above zero floats to the surface and never drowns on; the server then refuses
+                -- its PlayerDeath (hp > 0). Say so once a second, with what wrote the bar.
+                local okd, isDead = pcall(types.Actor.isDead, p.obj)
+                if okd and (isDead == true) ~= (hp.current < 1) and now - (deadMismatchAt[id] or 0) >= 1 then
+                    deadMismatchAt[id] = now
+                    print(string.format('[mp] avatar #%s dead-latch mismatch: isDead=%s hp=%.1f/%.1f', tostring(id), tostring(isDead), hp.current, hp.base))
+                end
                 return { id = id,
                     hp = { c = hp.current, b = hp.base },
                     mp = { c = m.current, b = m.base },

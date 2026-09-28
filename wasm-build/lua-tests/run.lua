@@ -1943,6 +1943,14 @@ do
     (select(2, code:gsub('interp:speed%(now%)', ''))) == 1, 'expected exactly one interp:speed(now) call in the code')
 end
 
+print('s22 a body the engine holds dead above zero hp is said out loud (#178)')
+do
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local pl = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  check('the peer says an avatar whose isDead disagrees with its bar', gl:find('dead-latch mismatch: isDead=%s', 1, true) ~= nil)
+  check('the owner says it is dead-latched while the peer reports hp', pl:find('self is dead-latched while the peer reports hp', 1, true) ~= nil)
+end
+
 print('s66 the sim peer dummy player never takes a blow meant for a player beside it')
 do
   local cb = io.open('./openmw/apps/openmw/mwmechanics/combat.cpp'):read('*a')
