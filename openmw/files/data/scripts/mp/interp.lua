@@ -13,6 +13,11 @@ Interp.__index = Interp
 -- or puppets clamp to the newest sample and stall on a laggy link instead of interpolating.
 local RENDER_DELAY = 0.075
 local MAX_SNAPSHOTS = 16 -- ~1s of history at 15 Hz
+-- A LATE POSE IS NOT A STOP. A third of arrival gaps ran past RENDER_DELAY (s172 #161: p95
+-- 114 ms), and the target froze on the newest sample: the speed feed-forward read 0 and the
+-- puppet slowed toward a point that had stopped. Carry on along the last step for at most
+-- this long; a real stop overshoots by <= 12 u at a run, under puppet.lua's STEER_START.
+local EXTRAP_S = 0.05
 
 function Interp.new()
     return setmetatable({ buf = {} }, Interp)
@@ -42,7 +47,13 @@ function Interp:target(now)
     for i = n, 1, -1 do
         if buf[i].t <= rt then
             local a, b = buf[i], buf[i + 1]
-            if not b then return a end
+            if not b then
+                local p, h = buf[i - 1], math.min(rt - a.t, EXTRAP_S)
+                if not p or h <= 0 or a.t - p.t < 1e-3 then return a end
+                local k = h / (a.t - p.t)
+                return { t = rt, x = a.x + (a.x - p.x) * k, y = a.y + (a.y - p.y) * k, z = a.z + (a.z - p.z) * k,
+                    yaw = a.yaw, pitch = a.pitch, flags = a.flags, animVel = a.animVel }
+            end
             local k = (rt - a.t) / math.max(b.t - a.t, 1e-6)
             return {
                 t = rt,

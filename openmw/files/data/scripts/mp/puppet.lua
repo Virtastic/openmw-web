@@ -353,13 +353,18 @@ end
 -- move slowly towards me". Feed the target's speed forward and close what is left in CATCHUP_S.
 -- Floored so it always closes the gap rather than creeping forever.
 local CATCHUP_S = 0.15
+-- A PUPPET MAY RUN A LITTLE FASTER THAN ITS OWNER, or a gap on a running target is never closed:
+-- capped at 1 x run speed it kept every stall, start and turn it lost until the owner stopped
+-- (s172 #161: 91 u behind at p50 while the wire was 14). The engine honours up to this factor
+-- for puppets only (character.cpp).
+local PUPPET_MAX_SPEED = 1.25
 -- The catch-up never covers more than the gap in one frame (s117): at CATCHUP_S alone a 200 ms
 -- frame (a hitch; every frame on a slow client) stepped 1.3x the gap, overshot, turned, and a
 -- companion's copy circled its stopped target for a minute instead of settling.
 local function steerMovement(dist2d, now, running, dt)
     local ok, top = pcall(running and types.Actor.getRunSpeed or types.Actor.getWalkSpeed, self)
     if not ok or type(top) ~= 'number' or top <= 0 then return math.max(0.25, math.min(1, dist2d / 96)) end
-    return math.max(0.25, math.min(1, (interp:speed(now) + dist2d / math.max(CATCHUP_S, dt or 0)) / top))
+    return math.max(0.25, math.min(PUPPET_MAX_SPEED, (interp:speed(now) + dist2d / math.max(CATCHUP_S, dt or 0)) / top))
 end
 
 local function onUpdate(dt)
