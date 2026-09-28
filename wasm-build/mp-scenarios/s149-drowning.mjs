@@ -88,9 +88,22 @@ export default async function run(ctx) {
   // THROUGH THE HOLDER: killnpc kills B's own copy only -- the peer holds these fish, and the
   // six B killed in #161 went on biting A. hitn: strikes B's copy, whose intercept relays the
   // blow to the peer (the testhost allows it: limits.harness); one kill a frame, live ones only.
+  const fwd0 = Number(await b.eval('window.omw.state.hitFwdCount||0'));
   for (const [rec, n] of seen) {
     for (let i = 0; i <= n; i++) { await b.cmd(`hitn:${rec}:500`); await ctx.sleep(700); } // a death takes a round trip to show on B
   }
+  // WHAT THE HITS DID (#166: 5 fish seen, no hit on any of them at the peer, A bitten). The relay
+  // count and route on B, B's own narration of the hook, the server's drops, and which fish are
+  // still standing -- all before A dives, so a bite can no longer pass for drowning unexplained.
+  await ctx.sleep(2_000);
+  const fwd1 = Number(await b.eval('window.omw.state.hitFwdCount||0'));
+  const bSaid = (b.logTail ? b.logTail(600) : '').split(String.fromCharCode(10)).filter((l) => /mpTestHit|combat:/.test(l)).slice(-6);
+  const srvSaid = (ctx.serverLogTail ? ctx.serverLogTail(4000) : '').split(String.fromCharCode(10)).filter((l) => /combat\.(drop|held)|CombatHit/.test(l)).slice(-4);
+  const pr = JSON.parse(await b.eval('window.omw.state.actorProbe||"{}"'));
+  ctx.log(`the clearing: ${fwd1 - fwd0} hit(s) relayed (last route ${await b.eval('window.omw.state.hitFwd')}); probe now ${FISH.map((r) => `${r} ${pr[r] ? (pr[r].dead ? 'dead' : 'ALIVE') + ' x' + (pr[r].n || 1) : 'gone'}`).join(', ')}`);
+  if (bSaid.length) ctx.log('B said: ' + bSaid.join(' || '));
+  if (srvSaid.length) ctx.log('server said: ' + srvSaid.join(' || '));
+
   await b.cmd('snapto:-12288,-69632,87'); // back onto land (the retail start), as A does after the hold
   await b.waitFor('JSON.parse(window.omw.state.pose||"{}").z > 0', STEP, 'B is back on land');
   { const bp = await pose(b); // ON LAND AT THE START, not respawned somewhere dry after dying
