@@ -140,19 +140,16 @@ export default async function run(ctx) {
     await a.cmd('stance:weapon'); // the avatar mirrors OUR stance bit
     await ctx.sleep(300);
     if (shots === 0) ctx.log(`after facing: pose=${await a.eval('window.omw.state.pose')} div=${await a.eval('window.omw.state.selfDivergence')}`);
-    await a.mouseHold(1500); // the mouse button held 1.5 s: the draw, and the release is the shot
-    shots++;
-    // TRACK THE MARK THROUGH THE DRAW, as an archer does: a scrib walks 100 units a second
-    // and an aim taken before a 1.5 s draw is a shot at where it was.
-    await ctx.sleep(900);
-    const p2 = (await probeOf(a, victim)) || p;
-    await a.cmd(`face:${Math.round(p2.x)},${Math.round(p2.y)},${Math.round(p2.z + aimZ)}`);
-    if (shots === 1) {
-      // The first draw must come back on the authoritative stream (s67's proof), or every
-      // later "miss" is really an avatar that never raised the bow.
+    // The mouse button held 1.5 s: the draw, and the release is the shot. The FIRST draw must
+    // come back on the authoritative stream (s67's proof), or every later "miss" is really an
+    // avatar that never raised the bow -- WATCHED WHILE HELD, as s67 does: the use bit is up only
+    // during the draw, and a check after the release waited for a bit already gone (#172, 50 fps).
+    const held = a.mouseHold(1500);
+    if (shots === 0) {
       try {
         await a.waitFor('(Number(window.omw.state.selfFlags||0) & 8) === 8', 10_000, 'the avatar reports drawing the bow (use bit on the state stream)');
       } catch (e) {
+        await held;
         ctx.log(`no draw seen: pose=${await a.eval('window.omw.state.pose')} selfFlags=${await a.eval('window.omw.state.selfFlags')} stance=${await a.eval('window.omw.state.stance')} divergence=${await a.eval('window.omw.state.selfDivergence')} equipped=${await a.eval('window.omw.state.equippedIds')}`);
         const t = (a.logTail ? a.logTail(400) : '').split(String.fromCharCode(10)).filter((l) => /\[mp\]/.test(l) && !/Local map|RigGeometry/.test(l)).slice(-8);
         ctx.log('A [mp] tail: ' + t.join(' || '));
@@ -160,6 +157,13 @@ export default async function run(ctx) {
       }
       ctx.log(`ok: the avatar is drawing (selfFlags=${await a.eval('window.omw.state.selfFlags')})`);
     }
+    await held;
+    shots++;
+    // TRACK THE MARK THROUGH THE DRAW, as an archer does: a scrib walks 100 units a second
+    // and an aim taken before a 1.5 s draw is a shot at where it was.
+    await ctx.sleep(900);
+    const p2 = (await probeOf(a, victim)) || p;
+    await a.cmd(`face:${Math.round(p2.x)},${Math.round(p2.y)},${Math.round(p2.z + aimZ)}`);
     await ctx.sleep(3_000); // draw + flight + the peer's report back
     died = (await a.eval(deadExpr)) === true;
     if (shots % 3 === 1) {
