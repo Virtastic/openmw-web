@@ -1907,6 +1907,13 @@ do
     cb:find('if (sHeadlessPeer && target == peerDummy)', 1, true) ~= nil)
 end
 
+print('s157 the actor probe reports the body the holder drives, not a local twin')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('a puppeted body replaces a local-only twin in the probe',
+    ac:find('if probe[rec] and puppeted and not probe[rec].puppet then', 1, true) ~= nil)
+end
+
 print('#431 a fresh holder streams no bars for a cell until the world record has answered')
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')

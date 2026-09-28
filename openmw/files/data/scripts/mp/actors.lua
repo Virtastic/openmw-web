@@ -1238,13 +1238,22 @@ function actors.tick(now)
         -- Deterministic cross-client actor probe: world.activeActors is in engine-internal
         -- order, which differs per client, so key by recordId and sort. Scenarios compare
         -- the SAME record on both clients.
-        local probe = {}
+        local probe, probeN = {}, {}
         for _, obj in ipairs(cellActors(ownCell)) do
             local rec = obj.recordId
             -- n: how many of this record stand in the cell. First-wins by record means two
             -- clients can be looking at DIFFERENT fish (s42 #117: slaughterfish_small 4859 u
             -- apart); a scenario compares records with n == 1 only.
             if probe[rec] then probe[rec].n = probe[rec].n + 1 end
+            -- THE BODY THE HOLDER DRIVES, over a local-only twin of the same record: a twin
+            -- stands still where the content placed it, and a scenario swung at it 150 u from
+            -- the real NPC for a hundred swings (s157 #166: client 60 u, peer 153-213 u).
+            local puppeted = actors.isPuppetedActor(obj) == true
+            if probe[rec] and puppeted and not probe[rec].puppet then
+                local n = probe[rec].n
+                probe[rec] = nil
+                probeN[rec] = n
+            end
             if not probe[rec] then
                 local p = obj.position
                 -- `guard` so a scenario can find the actor that is supposed to REACT to a
@@ -1257,7 +1266,7 @@ function actors.tick(now)
                 local hp = -1
                 pcall(function() hp = types.Actor.stats.dynamic.health(obj).current end)
                 probe[rec] = { x = p.x, y = p.y, z = p.z, dead = types.Actor.isDead(obj),
-                    guard = isGuard, hp = hp, n = 1 }
+                    guard = isGuard, hp = hp, n = probeN[rec] or 1, puppet = puppeted }
             end
         end
         mp.set('actorProbe', json.encode(probe))
