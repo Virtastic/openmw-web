@@ -46,8 +46,8 @@ export default async function run(ctx) {
   // One a provoking blow cannot kill and that is alone under its record (#178: the 8 hp scrib
   // died to the sting, and 'n' was 2 -- the probe's one position for 'scrib' could be either).
   const { found: victim } = await pickUntil(ctx, async () => [Object.values(await netObjs(b)), JSON.parse(await b.eval('window.omw.state.actorProbe||"{}"'))],
-    (names, pr) => { probe = pr; const ok = (r) => pr[r] && !pr[r].dead && (pr[r].n ?? 1) === 1; return names.filter((r) => ok(r) && !(pr[r].hp >= 0 && pr[r].hp < 20)).sort((x, y) => Math.hypot(pr[x].x - me.x, pr[x].y - me.y) - Math.hypot(pr[y].x - me.x, pr[y].y - me.y))[0] ?? names.filter(ok)[0]; });
-  assert.ok(victim, `no living named creature alone under its record in the probe: ${JSON.stringify(Object.keys(probe))}`);
+    (names, pr) => { probe = pr; const live = (r) => pr[r] && !pr[r].dead; const ok = (r) => live(r) && (pr[r].n ?? 1) === 1; return names.filter((r) => ok(r) && !(pr[r].hp >= 0 && pr[r].hp < 20)).sort((x, y) => Math.hypot(pr[x].x - me.x, pr[x].y - me.y) - Math.hypot(pr[y].x - me.x, pr[y].y - me.y))[0] ?? names.filter(ok)[0] ?? names.find(live); }); // last resort: a duplicated record (#179: the cell held only rats, n > 1)
+  assert.ok(victim, `no living named creature in the probe: ${JSON.stringify(Object.keys(probe))}`);
 
   // Provoke it with ONE STING, not a spell that kills it. A Fire Bite is 15-30 damage and the
   // mark the peer rolls here is a scrib with 8 health: #106 killed it with the provocation
