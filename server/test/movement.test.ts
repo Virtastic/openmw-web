@@ -647,3 +647,18 @@ test('a player who joins AFTER someone already settled still receives their pose
   assert.ok(got.entries.some((e) => e.id === aId),
     'a late joiner never received the pose of a player who was already standing there');
 });
+
+
+test('the batch tick is 50 ms and the shipped LOD rates keep their meaning on it (s172 #179)', async () => {
+  const { BATCH_INTERVAL_MS, interestFromLimits } = await import('../src/core/movement');
+  assert.equal(BATCH_INTERVAL_MS, 50);
+  // The shipped defaults (config.default.toml): 15 / 5 / 1 Hz. Near sends every tick (20 Hz), mid keeps
+  // 5 Hz (every 4th tick), far keeps 1 Hz (every 20th).
+  const s = interestFromLimits({
+    interestRadius: 0, interestHysteresis: 0, interestMinPeers: 0,
+    lodNearRadius: 1000, lodMidRadius: 3000, lodNearHz: 15, lodMidHz: 5, lodFarHz: 1,
+  } as any);
+  assert.equal(s.nearStride, 1);
+  assert.equal(s.midStride, 4);
+  assert.equal(s.farStride, 20);
+});
