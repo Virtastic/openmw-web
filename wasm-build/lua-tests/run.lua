@@ -2043,6 +2043,14 @@ do
     np:find('[mp] avatar blow: strength=', 1, true) ~= nil and np:find('say("out of reach")', 1, true) ~= nil)
 end
 
+print('s131 a friend death is counted from the bars, not sampled off the puppet (#179, #181)')
+do
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('global.lua counts a puppet death in MP_PlayerStatsDynamic and mirrors puppetDeaths',
+    gl:find("puppetDeaths[data.id] = (puppetDeaths[data.id] or 0) + 1", 1, true) ~= nil
+    and gl:find("mp.set('puppetDeaths', json.encode(puppetDeaths))", 1, true) ~= nil)
+end
+
 print('s66 the sim peer dummy player never takes a blow meant for a player beside it')
 do
   local cb = io.open('./openmw/apps/openmw/mwmechanics/combat.cpp'):read('*a')

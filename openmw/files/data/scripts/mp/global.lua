@@ -357,6 +357,7 @@ local lastPose = {} -- id -> last known {x=, y=, z=}
 local lastFlags = {} -- id -> flags of the newest routed batch entry
 local jumpEdges = {} -- id -> count of bit-2 rising edges
 local remoteIdentity = {} -- id -> {appearance=, equipment=, dynamic=} (M2; kept across spawns)
+local puppetDeaths = {} -- id -> how many times a friend's bars hit zero on this screen (survives the puppet's despawn)
 local puppetRecordIds = {} -- identity fingerprint -> generated NPC record id (immutable)
 local ownCellKeyCache = nil
 local lastPuppetMirror = 0
@@ -2833,6 +2834,14 @@ local eventHandlers = {
         if not data.id or data.id == net.playerId then return end
         remoteIdentity[data.id] = remoteIdentity[data.id] or {}
         local was = remoteIdentity[data.id].dynamic
+        -- A FRIEND'S DEATH IS COUNTED WHEN THE BARS SAY SO, not only while their puppet still shows it:
+        -- a respawn far away despawns the puppet a few hundred ms after the fall, and the page mirror
+        -- (0.5 s) could sample that window or miss it (s131 #179/#181: 'the host sees the guest drown'
+        -- passed one run in two). Event-driven, so nothing is sampled.
+        if data.hp and data.hp.c <= 0 and not (was and was.hp and was.hp.c <= 0) and puppets[data.id] then
+            puppetDeaths[data.id] = (puppetDeaths[data.id] or 0) + 1
+            mp.set('puppetDeaths', json.encode(puppetDeaths))
+        end
         -- speed: the owner's base Speed, stamped on by the server (backlog 134) -- the puppet
         -- runs at it instead of the template's.
         remoteIdentity[data.id].dynamic = { hp = data.hp, mp = data.mp, ft = data.ft, speed = data.speed }
