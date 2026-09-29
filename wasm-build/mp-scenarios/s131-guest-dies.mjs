@@ -54,14 +54,15 @@ export default async function run(ctx) {
     await drown(guest.client, ctx);
     const before = await poseOf(guest.client);
     assert.ok(Math.hypot(before.x - at.x, before.y - at.y) > 500, 'the guest did not move away from the spawn point');
-    const guestId = String(await guest.client.eval('window.omw.state.playerId'));
     // THE HOST SEES IT: the puppet falls (the relayed bars hit zero) and gets up again with
     // the revive. Nobody asserted this before; a death that only the dying player saw is
     // half a death.
-    // The host's COUNT of that death (puppetDeaths, global.lua MP_PlayerStatsDynamic), not the puppet's
-    // `dead` flag: the harness respawn puts the guest 28 cells away, the puppet despawns a few hundred ms
-    // after the fall, and a 0.5 s mirror sampled that window one run in two (#179, #181).
-    await host.client.waitFor(`((JSON.parse(window.omw.state.puppetDeaths||"{}")[${JSON.stringify(guestId)}]||0) >= 1)`, 300_000, 'the host sees the guest drown (20 s of breath, then 3 hp/s on the peer)');
+    // OUT OF VIEW OR NOT, THE HOST IS TOLD (486, as s170 asserts): the respawn plugin says '<name> has
+    // fallen.' to everyone. The puppet is not the witness -- the sea bed is a cell from the host and the
+    // harness respawn puts the guest 28 cells away, so the host's puppet of the guest is despawned by view
+    // culling before, during or after the fall, and 'puppet.dead' / a counter of it passed one run in two
+    // (#179, #181, #183, #186). The server's line reaches the host whatever the geometry.
+    await host.client.waitFor(`String(window.omw.state.chatLog||"").indexOf(${JSON.stringify(guestHandle + ' has fallen')}) >= 0`, 300_000, 'the host is told the guest died (20 s of breath, then 3 hp/s on the peer)');
     // Respawn: moved, alive again, and STILL in the host's world with the host watching.
     let pose = before;
     const by = Date.now() + 90_000;
