@@ -53,6 +53,13 @@ local SNAP_DISTANCE = 256 -- near-tier divergence before asking for a teleport (
 local RUN_HOLD_S = 0.3 -- keep the run flag this long after the target stops advancing (#211: anim popping per burst)
 local runUntil = 0
 local STUCK_SECONDS = 0.7 -- commanded to move but no progress this long -> snap
+-- A GAP THAT WILL NOT CLOSE IS A SNAP, moving or not (s120/s157 #175-#179: a fighting NPC's puppet sat
+-- 260 u from the peer's real NPC, under the 256 u distance snap, swaying enough that the stuck detector
+-- (which only sees a body that does not move) never fired; the player swung at where they saw her and
+-- the peer's blows landed on air). Beyond FAR_GAP for FAR_SNAP_S straight -> ask for the position.
+local FAR_GAP = 128
+local FAR_SNAP_S = 2.0
+local farSince = nil
 local IDLE_TIMEOUT = 1.0 -- no snapshots this long -> stand still
 local SNAP_COOLDOWN = 1.0 -- let a requested teleport land before asking again
 
@@ -454,6 +461,7 @@ local function onUpdate(dt)
         -- armed across a tier change makes a promoted puppet fire a bogus snap immediately.
         stuckSince = nil
         lastProgressPos = nil
+        farSince = nil
         return
     end
 
@@ -462,6 +470,7 @@ local function onUpdate(dt)
     if idle and dist2d <= STEER_STOP then
         zeroControls()
         stuckSince = nil
+        farSince = nil
         return
     end
 
@@ -478,6 +487,17 @@ local function onUpdate(dt)
     local tgtV = interp:speed(now)
     if steering and dist2d <= STEER_STOP and tgtV < 20 then steering = false end
     if not steering and (dist2d >= STEER_START or (tgtV >= 20 and dist2d > STEER_STOP)) then steering = true end
+
+    if dist2d > FAR_GAP then
+        farSince = farSince or now
+        if now - farSince > FAR_SNAP_S then
+            print(string.format('[mp] puppet far-gap snap: %.0f u off for %.1f s (%s)', dist2d, now - farSince, tostring(actorKey or playerId)))
+            requestSnap(target, 'far')
+            farSince = nil
+        end
+    else
+        farSince = nil
+    end
 
     -- Stuck: steering toward a moving target without progressing (wedged on geometry). Only
     -- meaningful while we are actually STEERING — with hysteresis a puppet legitimately holds

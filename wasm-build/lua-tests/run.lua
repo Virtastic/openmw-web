@@ -1931,6 +1931,67 @@ do
   check('EXTRAP_S was raised to cover it', it:find('local EXTRAP_S = 0.09', 1, true) ~= nil)
 end
 
+print('s120 a puppet that stays far from its owner is snapped to it (#179: 260 u off, under the 256 u snap)')
+do
+  -- The peer's NPC stands (or circles) 200 u from where the puppet is; the puppet cannot close it (blocked, as
+  -- a body wedged on the player's capsule or a wall is). Before the fix nothing fired below 256 u while the
+  -- body swayed; now 2 s past 128 u asks for the position.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.animation', 'scripts.mp.interp' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local a1 = math.atan
+  math.atan = function(y, x) if x then return math.atan2(y, x) end return a1(y) end
+  local now = 0
+  local function v3(x, y, z) return setmetatable({ x = x, y = y, z = z }, { __sub = function(p, q) return v3(p.x - q.x, p.y - q.y, p.z - q.z) end,
+    __index = { length = function(p) return math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) end } }) end
+  local me = { controls = {}, position = v3(0, 0, 0), yaw = 0, object = {}, enableAI = function() end }
+  me.rotation = { getYaw = function() return me.yaw end, getPitch = function() return 0 end }
+  local snaps = {}
+  package.loaded['openmw.core'] = { getRealTime = function() return now end, sound = { playSound3d = function() end },
+    sendGlobalEvent = function(name, d) if name == 'mpSnapRequest' then snaps[#snaps + 1] = d end end }
+  package.loaded['openmw.self'] = me
+  package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 0 end,
+    setStance = function() end, getRunSpeed = function() return 250 end, getWalkSpeed = function() return 150 end,
+    EQUIPMENT_SLOT = { CarriedRight = 16 }, getEquipment = function() return nil end },
+    Creature = { objectIsInstance = function() return false end }, Weapon = { objectIsInstance = function() return false end, TYPE = {} } }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 },
+    hasGroup = function() return true end, playBlended = function() end }
+  package.loaded['scripts.mp.interp'] = nil
+  local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+  pup.engineHandlers.onInit({ actorKey = 'o:eldafire' })
+  local nextPose, dt, farAt = 0, 1 / 30, nil
+  local function run(seconds, blocked, gap)
+    local t0 = now
+    while now < t0 + seconds do
+      while nextPose <= now - 0.05 do
+        pup.eventHandlers.MP_Pose({ x = 0, y = gap, z = 0, yaw = 0, pitch = 0, flags = 16, t = now })
+        nextPose = nextPose + 0.05
+      end
+      pup.engineHandlers.onUpdate(dt)
+      snaps = snaps
+      local c = me.controls
+      if not blocked then me.position = v3(0, me.position.y + (c.movement or 0) * 250 * dt, 0) end
+      now = now + dt
+    end
+  end
+  run(0.3, true, 0) -- placement (attach snap), then standing on the mark
+  local function farSnaps() local n = 0; for _, d in ipairs(snaps) do if d.why == 'far' then n = n + 1 end end return n end
+  run(1.5, true, 200) -- 200 u off and blocked: not yet two seconds
+  local early = farSnaps()
+  run(1.5, true, 200)
+  check('a blocked puppet 200 u from its owner is snapped after ~2 s, not before', early == 0 and farSnaps() >= 1,
+    string.format('far snaps at 1.5 s: %d, at 3.0 s: %d', early, farSnaps()))
+  -- and one that closes the gap in time is left alone
+  snaps = {}
+  me.position = v3(0, 0, 0)
+  run(2.5, false, 200)
+  check('a puppet that closes a 200 u gap on its own is not snapped for it', farSnaps() == 0, 'far snaps: ' .. farSnaps())
+  math.atan = a1
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+end
+
 print('s177 a near-tier puppet reads interp:speed once a frame, not twice (#175: 20 puppets missed the frame budget)')
 do
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
