@@ -12,6 +12,7 @@
 #include <components/misc/rng.hpp>
 
 #include <components/debug/debuglog.hpp>
+#include "../mwmp/puppets.hpp"
 #include <components/esm3/loadbody.hpp>
 #include <components/esm3/loadclas.hpp>
 #include <components/esm3/loadmgef.hpp>
@@ -613,16 +614,37 @@ namespace MWClass
 
         MWMechanics::applyFatigueLoss(ptr, weapon, attackStrength);
 
+        // WHERE AN AVATAR'S BLOW ENDS, on the sim peer (#178: three NPCs' hp froze after ~10 landed
+        // blows while every later swing left no hit line and no 'found nothing' line either --
+        // so it stopped somewhere between the release and the damage). One line per release.
+        const bool avatarBlow = ptr != MWMechanics::getPlayer() && MWMP::isAvatar(ptr.getCellRef().getRefNum());
+        const auto say = [&](const char* fate) {
+            if (avatarBlow)
+                Log(Debug::Info) << "[mp] avatar blow: strength=" << attackStrength << " success=" << success
+                                 << " victim=" << (victim.isEmpty() ? std::string("none") : victim.getCellRef().getRefId().toDebugString())
+                                 << " -> " << fate;
+        };
+
         if (victim.isEmpty()) // Didn't hit anything
+        {
+            say("no victim");
             return;
+        }
 
         const MWWorld::Class& othercls = victim.getClass();
         MWMechanics::CreatureStats& otherstats = othercls.getCreatureStats(victim);
         if (otherstats.isDead()) // Can't hit dead actors
+        {
+            say("victim dead");
             return;
+        }
 
         if (!MWMechanics::isInMeleeReach(ptr, victim, MWMechanics::getMeleeWeaponReach(ptr, weapon)))
+        {
+            say("out of reach");
             return;
+        }
+        say("applied");
 
         if (ptr == MWMechanics::getPlayer())
             MWBase::Environment::get().getWindowManager()->setEnemy(victim);

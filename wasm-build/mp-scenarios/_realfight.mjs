@@ -172,6 +172,12 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     if (empty.length) ctx.log(`  the peer's avatar swung at nothing ${empty.length} time(s) -- last: ${empty.slice(-2).map((l) => l.replace(/^.*found nothing: /, '').slice(0, 300)).join(' | ')}`);
     const presses = tail.filter((l) => /avatar use (press|\+0\.3s):/.test(l));
     if (presses.length) ctx.log(`  the avatar's state at the presses (${presses.length} lines) -- last: ${presses.slice(-4).map((l) => l.replace(/^.*avatar use /, '').replace(/"}?$/, '').slice(0, 200)).join(' | ')}`);
+    // COUNTED, NOT TAILED (#178): presses, releases and where each avatar blow ended, over the
+    // whole retained log -- 'avatar blow: ... -> applied|out of reach|victim dead|no victim'.
+    const count = (re) => tail.filter((l) => re.test(l)).length;
+    ctx.log(`  the avatar over the whole fight: ${count(/avatar use press:/)} presses, ${count(/avatar use release:/)} releases, ${count(/avatar use held /)} held-lines; blows: ${count(/avatar blow:.*-> applied/)} applied, ${count(/avatar blow:.*-> out of reach/)} out of reach, ${count(/avatar blow:.*-> victim dead/)} victim dead, ${count(/avatar blow:.*-> no victim/)} no victim`);
+    const blows = tail.filter((l) => /avatar blow:/.test(l));
+    if (blows.length) ctx.log(`  last avatar blows: ${blows.slice(-3).map((l) => l.replace(/^.*avatar blow: /, '').replace(/"}?$/, '').slice(0, 160)).join(' | ')}`);
     const hits = tail.filter((l) => /hit on peer:/.test(l)).map((l) => { try { return JSON.parse(l).text.replace(/^.*hit on peer: /, ''); } catch { return l.slice(0, 160); } });
     ctx.log(`  the fight did not end after ${swings} swing(s); hits the peer logged: ${hits.length}` + (hits.length ? ' -- last: ' + hits.slice(-4).join(' | ') : ''));
   }

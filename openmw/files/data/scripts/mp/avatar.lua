@@ -71,6 +71,7 @@ local prevJump = false
 -- never reached the avatar while observers, who latch, saw it (#198).
 local jumpLatch, useLatch = false, false
 local useWasOn, useProbeAt = false, nil
+local useOnSince, useHeldSaidAt = nil, nil
 local function pressProbe(when)
     pcall(function()
         local ft = types.Actor.stats.dynamic.fatigue(self)
@@ -369,8 +370,16 @@ return {
             -- press reached the controls, 1 of 113 swings reached the hit test). On each rising
             -- edge of use, and once ~0.3 s after it: attacking, staggered, stance, fatigue, weapon.
             local useNow = self.controls.use == 1
-            if useNow and not useWasOn then useProbeAt = core.getRealTime() + 0.3; pressProbe('press') end
+            if useNow and not useWasOn then useProbeAt = core.getRealTime() + 0.3; useOnSince = core.getRealTime(); pressProbe('press') end
             if useProbeAt and core.getRealTime() >= useProbeAt then useProbeAt = nil; pressProbe('+0.3s') end
+            -- THE FALLING EDGE, and a use held past 3 s (#178: NPC hp froze after ~10 landed blows;
+            -- was the swing released, or held for good behind a latch while hit recovery kept the
+            -- body 'knocked down'?). The release is what lands the blow.
+            if useWasOn and not useNow then pressProbe('release') end
+            if useNow and useOnSince and core.getRealTime() - useOnSince > 3 and core.getRealTime() - (useHeldSaidAt or 0) >= 1 then
+                useHeldSaidAt = core.getRealTime()
+                pressProbe('held ' .. string.format('%.0fs latch=%s bit=%s', core.getRealTime() - useOnSince, tostring(useLatch), tostring(bit(input.flags, 3))))
+            end
             useWasOn = useNow
             -- ...BUT NOT WHILE STAGGERED (backlog 309). A body in hit recovery or on the floor
             -- cannot start a swing, so a latch consumed there was a tap lost for good. Hold it

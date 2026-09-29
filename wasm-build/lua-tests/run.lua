@@ -1951,6 +1951,16 @@ do
   check('the owner says it is dead-latched while the peer reports hp', pl:find('self is dead-latched while the peer reports hp', 1, true) ~= nil)
 end
 
+print('s120 the avatar says where each swing ends (#178: NPC hp froze after ~10 landed blows)')
+do
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  local np = io.open('./openmw/apps/openmw/mwclass/npc.cpp'):read('*a')
+  check('avatar.lua logs the release and a use held past 3 s',
+    av:find("pressProbe('release')", 1, true) ~= nil and av:find("pressProbe('held '", 1, true) ~= nil)
+  check('Npc::hit logs each avatar blow and its fate',
+    np:find('[mp] avatar blow: strength=', 1, true) ~= nil and np:find('say("out of reach")', 1, true) ~= nil)
+end
+
 print('s66 the sim peer dummy player never takes a blow meant for a player beside it')
 do
   local cb = io.open('./openmw/apps/openmw/mwmechanics/combat.cpp'):read('*a')
