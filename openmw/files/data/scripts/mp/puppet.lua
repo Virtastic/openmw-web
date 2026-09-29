@@ -488,7 +488,7 @@ local function onUpdate(dt)
     if steering and dist2d <= STEER_STOP and tgtV < 20 then steering = false end
     if not steering and (dist2d >= STEER_START or (tgtV >= 20 and dist2d > STEER_STOP)) then steering = true end
 
-    if dist2d > FAR_GAP then
+    if actorKey ~= nil and dist2d > FAR_GAP then -- NPC/creature puppets only: a friend on a slow link legitimately trails farther, and a pop there is worse than the lag (s172 #180: 5 snaps)
         farSince = farSince or now
         if now - farSince > FAR_SNAP_S then
             print(string.format('[mp] puppet far-gap snap: %.0f u off for %.1f s (%s)', dist2d, now - farSince, tostring(actorKey or playerId)))

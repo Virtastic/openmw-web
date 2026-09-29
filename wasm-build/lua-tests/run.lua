@@ -1983,9 +1983,30 @@ do
   run(1.5, true, 200)
   check('a blocked puppet 200 u from its owner is snapped after ~2 s, not before', early == 0 and farSnaps() >= 1,
     string.format('far snaps at 1.5 s: %d, at 3.0 s: %d', early, farSnaps()))
-  -- and one that closes the gap in time is left alone
-  snaps = {}
+  -- a FRIEND's puppet (playerId, no actorKey) is never far-snapped: on a slow link it trails farther
+  -- than 128 u for seconds, and the pop is worse than the lag (s172 #180: five snaps in one walk)
+  do
+    package.loaded['scripts.mp.interp'] = nil
+    local fr = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+    fr.engineHandlers.onInit({ playerId = 7 })
+    snaps = {}
+    me.position = v3(0, 0, 0)
+    local t0 = now
+    while now < t0 + 4 do
+      while nextPose <= now - 0.05 do
+        fr.eventHandlers.MP_Pose({ x = 0, y = 200, z = 0, yaw = 0, pitch = 0, flags = 0, t = now })
+        nextPose = nextPose + 0.05
+      end
+      fr.engineHandlers.onUpdate(dt)
+      now = now + dt
+    end
+    local n = 0; for _, d in ipairs(snaps) do if d.why == 'far' then n = n + 1 end end
+    check('a friend puppet 200 u off for 4 s is not far-snapped', n == 0, 'far snaps: ' .. n)
+  end
+  -- and one that closes the gap in time is left alone (after a settle on the mark, which resets the timer)
   me.position = v3(0, 0, 0)
+  run(0.5, false, 0)
+  snaps = {}
   run(2.5, false, 200)
   check('a puppet that closes a 200 u gap on its own is not snapped for it', farSnaps() == 0, 'far snaps: ' .. farSnaps())
   math.atan = a1
