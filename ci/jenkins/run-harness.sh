@@ -125,4 +125,5 @@ set -e
 echo "==> verdicts:"; grep -E '^(PASS|FAIL|SKIP) s' "$LOG" | sort -u || true
 pass=$(grep -E '^PASS s' "$LOG" | sort -u | wc -l); fail=$(grep -E '^FAIL s' "$LOG" | sort -u | wc -l)
 echo "==> ${pass} passed, ${fail} failed over ${HARNESS_LANES} lane(s)"
+flaky=$(grep -E '^FLAKY  s' "$LOG" | sort -u); [ -n "$flaky" ] && { echo "==> FLAKY (failed once, passed on the immediate retry; counted green, each one a lead):"; echo "$flaky"; echo "==> (the 'failed' count above includes those first attempts)"; } || true
 exit "$rc"

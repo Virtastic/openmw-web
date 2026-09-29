@@ -1017,7 +1017,16 @@ if (wanted.length === 0) {
 const play = await ensurePlayServer();
 let harnessLive = { chrome: 0, peers: 0 }; // processes alive after the previous scenario
 const results = [];
+// ONE RETRY PER FAILED SCENARIO (owner's decision, 2026-09-29 #182). A shared, loaded builder made a
+// handful of scenarios intermittent (a random target, a 0.5 s mirror, a timer), and every full sweep
+// failed on a different one. A scenario that fails and then PASSES on the immediate re-run is reported
+// FLAKY -- named in the summary with its first failure above it in the log, and it does not fail the
+// run; one that fails twice is a real failure. HARNESS_RETRY=0 turns it off.
+const RETRIES_ON = process.env.HARNESS_RETRY !== '0';
+const retried = new Set();
+let fileIdx = -1;
 for (const file of files) {
+  fileIdx++;
   const t0 = Date.now();
   const clients = []; // everything launched by this scenario, closed no matter what
   let torndown = false; // a client that finishes booting AFTER teardown must not leak
@@ -1248,7 +1257,13 @@ for (const file of files) {
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   // A scenario that FAILED is a failure even if it logged a skip on the way out.
-  results.push({ file, ok: !err, secs, skip: err ? null : skipReason, critical: isCritical, diagnostic: isDiagnostic });
+  results.push({ file, ok: !err, secs, skip: err ? null : skipReason, critical: isCritical, diagnostic: isDiagnostic,
+    firstErr: err ? String(err.message || err).split(String.fromCharCode(10))[0].slice(0, 200) : undefined });
+  if (err && RETRIES_ON && !retried.has(file)) {
+    retried.add(file);
+    files.splice(fileIdx + 1, 0, file); // the array iterator picks it up next
+    console.log(`RETRY ${file}: failed once, running it again (a second failure is a real failure)`);
+  }
   // WHAT THE LAST SCENARIO LEFT BEHIND. A leaked browser or peer does not fail the scenario
   // that leaked it -- it fails the ones after, on timing, for no visible reason (sweep #107:
   // 1847 chrome processes and load 39 by the 80th scenario, and every convergence assertion
@@ -1310,16 +1325,27 @@ for (const file of files) {
 play.stop();
 
 console.log('\n=== mp-harness summary ===');
-const verdictOf = (r) => !r.ok ? 'FAIL' : (r.skip !== null ? 'SKIP' : (r.diagnostic ? 'DIAG' : 'PASS'));
+// A first attempt that failed is FLAKY when a later attempt at the same file passed.
+for (let i = 0; i < results.length; i++) {
+  const r = results[i];
+  if (!r.ok && results.slice(i + 1).some((n) => n.file === r.file && n.ok)) r.flaky = true;
+}
+const verdictOf = (r) => r.flaky ? 'FLAKY' : (!r.ok ? 'FAIL' : (r.skip !== null ? 'SKIP' : (r.diagnostic ? 'DIAG' : 'PASS')));
 for (const r of results) {
   console.log(`${verdictOf(r)}  ${r.file}  (${r.secs}s)` + (r.skip !== null ? `  -- ${r.skip}` : ''));
 }
 const passed = results.filter((r) => verdictOf(r) === 'PASS').length;
 const skipped = results.filter((r) => r.ok && r.skip !== null);
 const diagnostics = results.filter((r) => verdictOf(r) === 'DIAG');
-const failed = results.filter((r) => !r.ok).length;
+const failed = results.filter((r) => !r.ok && !r.flaky).length;
+const flaky = results.filter((r) => r.flaky);
 console.log(``);
 console.log(`${passed} passed, ${failed} failed, ${skipped.length} SKIPPED (did not run), ${diagnostics.length} diagnostic (ran, assert nothing)`);
+if (flaky.length) {
+  console.log(``);
+  console.log(`FLAKY -- failed once, passed on the immediate retry (counted green; each is a lead, not a clean pass):`);
+  for (const r of flaky) console.log(`  ${r.file}  -- first failure: ${r.firstErr}`);
+}
 if (diagnostics.length) console.log(`diagnostic: ${diagnostics.map((r) => r.file).join(' ')}`);
 if (skipped.length) {
   // Repeated at the very bottom, because a per-line SKIP scrolls past and a bare count reads
@@ -1350,4 +1376,4 @@ if (skipped.length && process.env.OMW_ALLOW_SKIP !== '1') {
   console.log(`exit 1: ${skipped.length} scenario(s) skipped (set OMW_ALLOW_SKIP=1 to accept a partial run)`);
   process.exit(1);
 }
-process.exit(results.every((r) => r.ok) ? 0 : 1);
+process.exit(results.every((r) => r.ok || r.flaky) ? 0 : 1);
