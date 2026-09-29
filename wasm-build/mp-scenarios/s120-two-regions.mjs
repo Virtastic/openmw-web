@@ -64,7 +64,8 @@ export default async function run(ctx) {
     // A land creature first, a named NPC only when there is none: a named NPC in a guarded town makes the fight
     // a crime (PlayerCrime/PlayerArrest, an arrest dialogue on A's client, no use bit while a menu is open)
     // and five builds went red on it (#175-#181). Never a fish (the swinger drowns) or a dockside NPC.
-    va = pick(pa, ma, (r) => !pa[r].guard && /mudcrab|scrib|rat|kwama|guar|alit|racer|kagouti|nix/.test(r))
+    va = pick(pa, ma, (r) => !pa[r].guard && /^(mudcrab|scrib|rat|kwama .*|guar|alit|cliff racer|kagouti|nix-hound|shalk)$/i.test(r)) // ANCHORED: 'rat' unanchored matched 'indrele rathryon' (#182 s120 picked her as a creature)
+      
       ?? pick(pa, ma, (r) => !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|vodunius nuccius/.test(r));
     vb = pick(pb, mb, () => true);
     return va && vb;

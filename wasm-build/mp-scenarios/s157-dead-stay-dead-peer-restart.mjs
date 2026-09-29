@@ -45,7 +45,8 @@ export default async function run(ctx) {
     // relays PlayerCrime/PlayerArrest, a guard's arrest dialogue opens on the swinger's client, and a menu
     // holds no use bit (player.lua inputTick): 3 of 41 real swings reached the avatar, hp frozen, five
     // builds red. Vanilla behaves the same; the scenario is about the dead staying dead, not about crime.
-    return ok.find((r) => /mudcrab|scrib|rat|kwama|guar|alit|racer|kagouti|nix/.test(r)) ?? ok[0];
+    return ok.find((r) => /^(mudcrab|scrib|rat|kwama .*|guar|alit|cliff racer|kagouti|nix-hound|shalk)$/i.test(r)) // ANCHORED: 'rat' unanchored matched 'indrele rathryon' (#182 s120 picked her as a creature)
+       ?? ok[0];
   })); // UNIQUE in the cell: the probe is keyed by record, first wins, and after the restart 'mudcrab' was a different, living mudcrab on both screens (#139)
   assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
