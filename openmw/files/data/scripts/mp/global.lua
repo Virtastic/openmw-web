@@ -2839,7 +2839,8 @@ local eventHandlers = {
         -- (0.5 s) could sample that window or miss it (s131 #179/#181: 'the host sees the guest drown'
         -- passed one run in two). Event-driven, so nothing is sampled.
         if data.hp and data.hp.c <= 0 and not (was and was.hp and was.hp.c <= 0) and puppets[data.id] then
-            puppetDeaths[data.id] = (puppetDeaths[data.id] or 0) + 1
+            local key = tostring(data.id) -- json.encode wants string keys (#183: a numeric key threw and aborted the whole handler)
+            puppetDeaths[key] = (puppetDeaths[key] or 0) + 1
             mp.set('puppetDeaths', json.encode(puppetDeaths))
         end
         -- speed: the owner's base Speed, stamped on by the server (backlog 134) -- the puppet

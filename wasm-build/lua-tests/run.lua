@@ -2047,7 +2047,8 @@ print('s131 a friend death is counted from the bars, not sampled off the puppet 
 do
   local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
   check('global.lua counts a puppet death in MP_PlayerStatsDynamic and mirrors puppetDeaths',
-    gl:find("puppetDeaths[data.id] = (puppetDeaths[data.id] or 0) + 1", 1, true) ~= nil
+    gl:find("puppetDeaths[key] = (puppetDeaths[key] or 0) + 1", 1, true) ~= nil
+    and gl:find("local key = tostring(data.id)", 1, true) ~= nil
     and gl:find("mp.set('puppetDeaths', json.encode(puppetDeaths))", 1, true) ~= nil)
 end
 
