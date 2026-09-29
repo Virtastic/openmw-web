@@ -72,9 +72,17 @@ export default async function run(ctx) {
     const nearestCreature = Object.keys(pa)
       .filter((r) => r !== 'player' && !pa[r].dead && !pa[r].guard && (pa[r].n ?? 1) === 1 && creatureRe.test(r))
       .sort((r1, r2) => (ma ? Math.hypot(pa[r1].x - ma.x, pa[r1].y - ma.y) - Math.hypot(pa[r2].x - ma.x, pa[r2].y - ma.y) : 0))[0];
+    // ...a duplicated creature record before any NPC (a crime is worse than an ambiguous probe row).
+    const dupCreature = Object.keys(pa).filter((r) => !pa[r].dead && !pa[r].guard && creatureRe.test(r))
+      .sort((r1, r2) => (ma ? Math.hypot(pa[r1].x - ma.x, pa[r1].y - ma.y) - Math.hypot(pa[r2].x - ma.x, pa[r2].y - ma.y) : 0))[0];
     va = nearestCreature
+      ?? dupCreature
       ?? pick(pa, ma, (r) => !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|vodunius nuccius/.test(r));
-    vb = pick(pb, mb, () => true);
+    // Any live actor as the last resort, duplicates and distance allowed (#185: B's cell held only 'rat's,
+    // n > 1, so the unique-within-reach pick found nothing and the scenario died on its own precondition).
+    const anyLive = (q, me) => Object.keys(q).filter((r) => r !== 'player' && !q[r].dead && !q[r].guard)
+      .sort((r1, r2) => (me ? Math.hypot(q[r1].x - me.x, q[r1].y - me.y) - Math.hypot(q[r2].x - me.x, q[r2].y - me.y) : 0))[0];
+    vb = pick(pb, mb, () => true) ?? anyLive(pb, mb);
     return va && vb;
   });
   assert.ok(va && vb, `need a living actor in each cell: A=${JSON.stringify(Object.keys(pa))} B=${JSON.stringify(Object.keys(pb))}`);
