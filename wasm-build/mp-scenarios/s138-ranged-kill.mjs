@@ -190,6 +190,16 @@ export default async function run(ctx) {
   }
   const fwd = String(await a.eval('String(window.omw.state.hitFwdCount||0)'));
   ctx.log(`${shots} shot(s) loosed by the avatar; dead=${died}; forwards ${fwdBefore} -> ${fwd}; selfFlags=${await a.eval('window.omw.state.selfFlags')}`);
+  if (!died) {
+    // WHERE THE ARROWS ENDED (#186: red in five of six builds): presses and releases at the avatar, and each
+    // arrow that reached projectileHit with its victim, from the whole retained peer/server/gateway log.
+    const NL = String.fromCharCode(10);
+    const tail = [ctx.serverLogTail ? ctx.serverLogTail(20000) : '', ctx.peerLogTail ? ctx.peerLogTail(20000) : '',
+      ctx.childLogTail ? ctx.childLogTail('gateway', 20000) : ''].join(NL).split(NL);
+    const count = (re) => tail.filter((l) => re.test(l)).length;
+    const arrows = tail.filter((l) => /avatar arrow hit:/.test(l)).map((l) => l.replace(/^.*avatar arrow hit: /, '').replace(/"}?$/, '').slice(0, 120));
+    ctx.log(`the avatar over the whole shoot: ${count(/avatar use press:/)} presses, ${count(/avatar use release:/)} releases; ${arrows.length} arrow(s) reached a hit: ${arrows.slice(-4).join(' | ')}`);
+  }
   assert.ok(died, `the ${victim} never died after ${shots} shots: the avatar did not draw, did not release, missed every time, or its hits are not applied by the peer`);
   assert.equal(fwd, fwdBefore, `a real ranged hit went out under the OWNER's name (forwards ${fwdBefore} -> ${fwd}); the peer's avatar must be the one shooting`);
   await a.waitFor(deadExpr, STEP, "the creature is dead on the archer's screen");

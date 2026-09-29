@@ -243,6 +243,13 @@ namespace MWMechanics
 
         bool validVictim = !victim.isEmpty() && victim.getClass().isActor();
 
+        // WHERE AN AVATAR'S ARROW ENDS, on the sim peer (s138 #186: 24 real shots, the mark never died,
+        // and nothing said whether an arrow ever hit anything). One line per arrow that reaches here.
+        if (attacker != getPlayer() && MWMP::isAvatar(attacker.getCellRef().getRefNum()))
+            Log(Debug::Info) << "[mp] avatar arrow hit: victim="
+                             << (victim.isEmpty() ? std::string("none") : victim.getCellRef().getRefId().toDebugString())
+                             << " actor=" << validVictim << " strength=" << attackStrength;
+
         ESM::RefId weaponSkill = ESM::Skill::Marksman;
         if (!weapon.isEmpty())
             weaponSkill = weapon.getClass().getEquipmentSkill(weapon);

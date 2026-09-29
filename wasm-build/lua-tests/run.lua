@@ -2052,6 +2052,12 @@ do
     and gl:find("mp.set('puppetDeaths', json.encode(puppetDeaths))", 1, true) ~= nil)
 end
 
+print('s138 the avatar says where each arrow ends (#186)')
+do
+  local cb = io.open('./openmw/apps/openmw/mwmechanics/combat.cpp'):read('*a')
+  check('projectileHit logs an avatar arrow with its victim', cb:find('[mp] avatar arrow hit: victim=', 1, true) ~= nil)
+end
+
 print('s66 the sim peer dummy player never takes a blow meant for a player beside it')
 do
   local cb = io.open('./openmw/apps/openmw/mwmechanics/combat.cpp'):read('*a')
