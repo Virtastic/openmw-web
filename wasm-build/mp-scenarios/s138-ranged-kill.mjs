@@ -55,16 +55,9 @@ export default async function run(ctx) {
   assert.notEqual(dist(victim), Infinity, `every candidate shares its record id with another: ${named.map(([, r]) => r).join(', ')}`);
   ctx.log(`the archer's mark: the peer's "${victim}" (net ${netId}) at ${dist(victim).toFixed(0)} units, of ${named.map(([, r]) => `${r}@${dist(r).toFixed(0)}`).join(', ')}`);
 
-  // Kit: a real bow, a quiver, and the skill to use them; the avatar gets all three. One
-  // quiver: the avatar's equipped stack is what it looses from, and re-equipping per shot
-  // would sheathe it (an equipment change resets the draw state).
-  await a.cmd(`equip:${BOW}:16`);
-  await a.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(BOW)}) >= 0`, 15_000, 'the bow is in hand');
-  for (let i = 0; i < 24; i++) { await a.cmd(`equip:${ARROW}:18`); await ctx.sleep(150); } // the equip hook holds one pending item at a time
-  await a.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(ARROW)}) >= 0 && (window.omw.state.equippedIds||"").indexOf(${JSON.stringify(BOW)}) >= 0`, 15_000, 'bow and quiver both equipped');
-  await a.cmd('setskill:marksman:100');
   // A BIGGER POOL (s118, s149): with two of a kind excluded the only unique mark can be a kwama
-  // forager, which bites back for the whole shoot -- #179: hp 32 -> 2 across 19 shots, then dead.
+  // forager, which bites back for the whole shoot -- #179: hp 32 -> 2 across 19 shots, then dead. FIRST,
+  // before the kit, as s118/s149 do (#181: raised after the bow and marksman claims, the max never rose).
   {
     await a.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', STEP, 'the peer reports the bars'); // else b0 is 0/0 and the raise is measured from nothing (#180)
     const b0 = String(await a.eval('window.omw.state.selfStats') || '0/0').split('/').map(Number);
@@ -73,6 +66,15 @@ export default async function run(ctx) {
     await a.cmd(`sethp:${b0[1] + 60}`);
     await a.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[0]) >= ${b0[1] + 50}`, STEP, "A's pool filled");
   }
+
+  // Kit: a real bow, a quiver, and the skill to use them; the avatar gets all three. One
+  // quiver: the avatar's equipped stack is what it looses from, and re-equipping per shot
+  // would sheathe it (an equipment change resets the draw state).
+  await a.cmd(`equip:${BOW}:16`);
+  await a.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(BOW)}) >= 0`, 15_000, 'the bow is in hand');
+  for (let i = 0; i < 24; i++) { await a.cmd(`equip:${ARROW}:18`); await ctx.sleep(150); } // the equip hook holds one pending item at a time
+  await a.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(ARROW)}) >= 0 && (window.omw.state.equippedIds||"").indexOf(${JSON.stringify(BOW)}) >= 0`, 15_000, 'bow and quiver both equipped');
+  await a.cmd('setskill:marksman:100');
   await ctx.sleep(3_000); // equipment + skills diff out to the server and on to the avatar
   await a.cmd('stance:weapon');
   await a.waitFor('window.omw.state.stance === "weapon"', 10_000, 'the bow is drawn');
