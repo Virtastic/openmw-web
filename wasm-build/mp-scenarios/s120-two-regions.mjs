@@ -61,7 +61,11 @@ export default async function run(ctx) {
     // Dockside NPCs excluded too: vodunius nuccius stands over Seyda Neen's water, and a real
     // chase/swing loop can walk A off the pier into it (#178) -- what killed A there was a
     // slaughterfish plus drowning, not the fight itself, 35 real swings into an unrelated target.
-    va = pick(pa, ma, (r) => !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|vodunius nuccius/.test(r));
+    // A land creature first, a named NPC only when there is none: a named NPC in a guarded town makes the fight
+    // a crime (PlayerCrime/PlayerArrest, an arrest dialogue on A's client, no use bit while a menu is open)
+    // and five builds went red on it (#175-#181). Never a fish (the swinger drowns) or a dockside NPC.
+    va = pick(pa, ma, (r) => !pa[r].guard && /mudcrab|scrib|rat|kwama|guar|alit|racer|kagouti|nix/.test(r))
+      ?? pick(pa, ma, (r) => !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|vodunius nuccius/.test(r));
     vb = pick(pb, mb, () => true);
     return va && vb;
   });

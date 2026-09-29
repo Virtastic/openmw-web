@@ -39,7 +39,14 @@ export default async function run(ctx) {
   // landed 105 fatigue-only blows -- a hand-to-hand NPC the swing loop cannot beat; the avatar's
   // attack state, stagger and input path were each ruled out from the log and character.cpp).
   let pa, pb, victim;
-  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && r !== 'indrele rathryon' && (pa[r].n ?? 1) === 1 && (pb[r].n ?? 1) === 1))); // UNIQUE in the cell: the probe is keyed by record, first wins, and after the restart 'mudcrab' was a different, living mudcrab on both screens (#139)
+  ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => {
+    const ok = Object.keys(pa).filter((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && r !== 'indrele rathryon' && (pa[r].n ?? 1) === 1 && (pb[r].n ?? 1) === 1);
+    // A LAND CREATURE FIRST (#181): a named NPC in a guarded town turns the fight into a crime -- the peer
+    // relays PlayerCrime/PlayerArrest, a guard's arrest dialogue opens on the swinger's client, and a menu
+    // holds no use bit (player.lua inputTick): 3 of 41 real swings reached the avatar, hp frozen, five
+    // builds red. Vanilla behaves the same; the scenario is about the dead staying dead, not about crime.
+    return ok.find((r) => /mudcrab|scrib|rat|kwama|guar|alit|racer|kagouti|nix/.test(r)) ?? ok[0];
+  })); // UNIQUE in the cell: the probe is keyed by record, first wins, and after the restart 'mudcrab' was a different, living mudcrab on both screens (#139)
   assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   // 180 s: at #116's frame rate the test hits landed 8 s apart and 90 s was eleven of them.

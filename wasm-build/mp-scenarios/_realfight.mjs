@@ -154,7 +154,7 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     if (swings === 1 || swings % 10 === 0) {
       const moved = lastMark ? Math.round(flat(t, lastMark)) : 0;
       lastMark = { x: t.x, y: t.y };
-      ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark (moved ${moved} u), its hp ${t.hp ?? '?'}, own avatar ${await c.eval('window.omw.state.selfDivergence')} u off, own fatigue ${await c.eval('window.omw.state.selfFt')}`);
+      ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark (moved ${moved} u), its hp ${t.hp ?? '?'}, own avatar ${await c.eval('window.omw.state.selfDivergence')} u off, own fatigue ${await c.eval('window.omw.state.selfFt')}, uiMode ${await c.eval('window.omw.state.uiMode')}, bounty ${await c.eval('window.omw.state.bounty')}`);
     }
     await ctx.sleep(400);
   }
@@ -178,6 +178,8 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
     ctx.log(`  the avatar over the whole fight: ${count(/avatar use press:/)} presses, ${count(/avatar use release:/)} releases, ${count(/avatar use held /)} held-lines; blows: ${count(/avatar blow:.*-> applied/)} applied, ${count(/avatar blow:.*-> out of reach/)} out of reach, ${count(/avatar blow:.*-> victim dead/)} victim dead, ${count(/avatar blow:.*-> no victim/)} no victim`);
     const blows = tail.filter((l) => /avatar blow:/.test(l));
     if (blows.length) ctx.log(`  last avatar blows: ${blows.slice(-3).map((l) => l.replace(/^.*avatar blow: /, '').replace(/"}?$/, '').slice(0, 160)).join(' | ')}`);
+    // A MENU HOLDS THE USE BIT (player.lua inputTick inMenu): an arrest dialogue (global.lua avatarArrestTick -> MP_OpenDialogue) swallows every later swing (#181 s157).
+    ctx.log(`  the swinger's window at the end: uiMode ${await c.eval('window.omw.state.uiMode')}, bounty ${await c.eval('window.omw.state.bounty')}; peer arrests: ${count(/\[mp\] arrest: /)}`);
     const hits = tail.filter((l) => /hit on peer:/.test(l)).map((l) => { try { return JSON.parse(l).text.replace(/^.*hit on peer: /, ''); } catch { return l.slice(0, 160); } });
     ctx.log(`  the fight did not end after ${swings} swing(s); hits the peer logged: ${hits.length}` + (hits.length ? ' -- last: ' + hits.slice(-4).join(' | ') : ''));
   }
