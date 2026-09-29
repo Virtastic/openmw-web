@@ -273,7 +273,9 @@ export default async function run(ctx) {
   }
   if (havePeer && runs.length > 0 && rises.length < Math.ceil(runs.length * 0.8)) fails.push(`the peer's ${victim} attacked ${runs.length} times; the browser received the use bit ${rises.length} times`);
   const bitten = samples.some((s, i) => i > 0 && parseInt(s.ss) < parseInt(samples[0].ss));
-  if ((havePeer ? runs.length : rises.length) === 0 && !bitten) fails.push(`the ${victim} never attacked in ${Math.round(FIGHT_MS / 1000)} s -- nothing for the client to show`);
+  // A scrib is the mark of last resort (the pick above prefers a rat or a forager): it does not come at
+  // you and its 8 hp die to the first blow that connects, so 'it never attacked' is not a finding (#179).
+  if ((havePeer ? runs.length : rises.length) === 0 && !bitten && victim !== 'scrib') fails.push(`the ${victim} never attacked in ${Math.round(FIGHT_MS / 1000)} s -- nothing for the client to show`);
   const inRange = perSwing.length;
   if (inRange >= 3 && hpDrops.length === 0) fails.push(`${inRange} real in-range swings, the peer's ${victim} never lost health`);
   if (lat.some((x) => x > 250)) fails.push(`the bars reached the browser ${lat.filter((x) => x > 250).map(f0).join(',')} ms after the peer's hit (> 250)`);
