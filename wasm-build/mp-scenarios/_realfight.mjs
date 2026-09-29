@@ -156,6 +156,13 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
       lastMark = { x: t.x, y: t.y };
       ctx.log(`  swing ${swings}: ${Math.round(flat(t, me))} u from the mark (moved ${moved} u), its hp ${t.hp ?? '?'}, own avatar ${await c.eval('window.omw.state.selfDivergence')} u off, own fatigue ${await c.eval('window.omw.state.selfFt')}, uiMode ${await c.eval('window.omw.state.uiMode')}, bounty ${await c.eval('window.omw.state.bounty')}`);
     }
+    // ARRESTED, NOT FIGHTING (#184 s120: bounty 40, a guard's arrest dialogue open, 5 of 51 swings reached
+    // the avatar): a menu holds no use bit, so the rest of the budget is five minutes of nothing. Say what
+    // happened and stop -- the target was a crime, not a fight.
+    if (swings % 5 === 0 && String(await c.eval('window.omw.state.uiMode')) === 'Dialogue' && Number(await c.eval('window.omw.state.bounty')) > 0) {
+      ctx.log(`  ARRESTED after ${swings} swing(s): bounty ${await c.eval('window.omw.state.bounty')}, an arrest dialogue is open -- this mark was a crime (a named NPC in a guarded town), not a fight`);
+      return { done: false, swings, snaps, arrested: true };
+    }
     await ctx.sleep(400);
   }
   const ended = await done();

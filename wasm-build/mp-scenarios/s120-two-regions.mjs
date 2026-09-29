@@ -64,8 +64,15 @@ export default async function run(ctx) {
     // A land creature first, a named NPC only when there is none: a named NPC in a guarded town makes the fight
     // a crime (PlayerCrime/PlayerArrest, an arrest dialogue on A's client, no use bit while a menu is open)
     // and five builds went red on it (#175-#181). Never a fish (the swinger drowns) or a dockside NPC.
-    va = pick(pa, ma, (r) => !pa[r].guard && /^(mudcrab|scrib|rat|kwama .*|guar|alit|cliff racer|kagouti|nix-hound|shalk)$/i.test(r)) // ANCHORED: 'rat' unanchored matched 'indrele rathryon' (#182 s120 picked her as a creature)
-      
+    // ANY creature in A's loaded grid, not only one within REACH of where A stands: the swing loop walks
+    // or snaps beside the mark (_realfight.mjs), and Seyda Neen's centre has none within 3000 u -- so the
+    // reach-limited pick fell through to a named NPC every time (#184: eldafire, bounty 40, arrested,
+    // twice red). The anchored regex: an unanchored /rat/ matched 'indrele rathryon' (#182).
+    const creatureRe = /^(mudcrab|scrib|rat|kwama .*|guar|alit|cliff racer|kagouti|nix-hound|shalk)$/i;
+    const nearestCreature = Object.keys(pa)
+      .filter((r) => r !== 'player' && !pa[r].dead && !pa[r].guard && (pa[r].n ?? 1) === 1 && creatureRe.test(r))
+      .sort((r1, r2) => (ma ? Math.hypot(pa[r1].x - ma.x, pa[r1].y - ma.y) - Math.hypot(pa[r2].x - ma.x, pa[r2].y - ma.y) : 0))[0];
+    va = nearestCreature
       ?? pick(pa, ma, (r) => !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|vodunius nuccius/.test(r));
     vb = pick(pb, mb, () => true);
     return va && vb;
