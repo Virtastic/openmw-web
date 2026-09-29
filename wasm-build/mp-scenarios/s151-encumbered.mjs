@@ -117,6 +117,12 @@ export default async function run(ctx) {
   await ctx.sleep(4_000);
   const left = await countOf(a, HEAVY);
   ctx.log(`dropped the cuirasses (${left} left in the pack)`);
+  // A FRESH DECLARATION AFTER THE DROPS (#181: five builds walked ~1200 u here, one stood still on both
+  // screens for 55 s with A and its avatar agreeing to 3 u -- the avatar kept the weight). The server's
+  // drop debit edits the doc and pushes nothing to the peer; the avatar sheds when the next pack
+  // declaration is applied. A weightless item changes the pack fingerprint, so one is sent now.
+  await a.cmd('give:gold_001');
+  await ctx.sleep(3_000);
   // The avatar sheds the load when the inventory diff (2 s cadence) reaches the peer and
   // the doc is pushed; try a few walks over ~20 s rather than one guess at the latency.
   // ON B'S SCREEN, not A's own: A's engine drops the weight at once and its body walks off
