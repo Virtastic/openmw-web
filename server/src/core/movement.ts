@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// M1 movement relay: occupancy/visibility rules and the 50 ms PlayerMoveBatch tick.
+// M1 movement relay: occupancy/visibility rules and the 66 ms PlayerMoveBatch tick.
 // Visibility = same cellKey, or both exterior ("x,y" ints) with Chebyshev distance <= 1.
 // A player with no cellKey yet is visible to nobody (the client sends PlayerCellChange
 // right after Ready).
@@ -22,11 +22,10 @@ import { MSG_PLAYER_STATE_BATCH, packPlayerStateBatch } from '../proto/input';
 // last word does not pin players for perceptible time.
 import { PEER_POSE_FRESH_MS } from './players';
 
-// 50 ms, not 66 (s172 #179: friend-puppet lag while moving was p50 425 / p95 550 ms against a 450 ms
-// bar). It matches the sim peer's real 20 Hz avatar cadence, so a pose no longer waits up to a whole
-// extra 66 ms tick behind the frame that made it. The near tier now sends every tick (20 Hz, was 15);
-// mid (5 Hz) and far (1 Hz) keep their rates through their strides (4 and 20 ticks).
-export const BATCH_INTERVAL_MS = 50;
+// 66 ms. A 50 ms tick (matching the peer's 20 Hz avatar cadence) was tried for s172 #179 and measured
+// no gain over the host's own run-to-run noise (p50 425-525 ms either way) for ~33% more near-tier
+// traffic, so it was reverted (#181).
+export const BATCH_INTERVAL_MS = 66;
 // Sanity bound on a pose, not a world size: 512000 (62.5 cells) left Tamriel Rebuilt's mainland,
 // which reaches cell -60 (~491k units), 2.5 cells of headroom, and past it a player was invisible
 // and frozen to everyone else with no message. 4,000,000 is ~488 cells; poses travel as float32
@@ -199,7 +198,7 @@ class CellIndex {
 }
 
 // Pose flag bits that are EVENTS, not states: jump (4) and use (8) are set for one avatar
-// sample. The peer streams at 20 Hz and the broadcaster ticks at 50 ms, so a sample that
+// sample. The peer streams at 20 Hz and the broadcaster ticks at 66 ms, so a sample that
 // landed between two ticks was overwritten before it went out and observer puppets missed
 // ~25% of jumps (#202). Until a tick has carried the pose, a newer sample inherits them.
 export const POSE_EDGE_BITS = 4 | 8;

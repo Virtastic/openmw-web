@@ -257,7 +257,10 @@ export default async function run(ctx) {
   // alone takes ~0.37 s to reach B (four peer frames at 20 fps, the 15 Hz server tick, B's
   // 75 ms render delay) -- no puppet at run speed could meet it. 400 ms is ~64 u at a walk and
   // ~92 u at a run; the distance is logged beside it.
-  tbar(movingLagT.length > 0 && q(movingLagT, 0.95) <= 450, `a: friend's puppet at most 450 ms behind A while moving (p95 ${q(movingLagT, 0.95)} ms; ${q(movingLag, 0.95).toFixed(0)} u)`);
+  // MEDIAN <= 450 ms and p95 <= 750 ms (owner's decision, 2026-09-29 #181): p95 of ~18 samples is the
+  // second-worst one and swung 550-1150 ms between identical builds on the loaded builder; the median
+  // held 425-525. The 50 ms batch tick that was tried against it gained nothing measurable.
+  tbar(movingLagT.length > 0 && q(movingLagT, 0.5) <= 450 && q(movingLagT, 0.95) <= 750, `a: friend's puppet median <= 450 ms and p95 <= 750 ms behind A while moving (p50 ${q(movingLagT, 0.5)}, p95 ${q(movingLagT, 0.95)} ms; ${q(movingLag, 0.95).toFixed(0)} u)`);
   tbar(pupSnaps === 0 && jumps === 0, `a: friend's puppet never teleports (${pupSnaps} snaps, ${jumps} jumps)`);
 
   // b: A's own reconciliation over the same walk.
