@@ -66,6 +66,7 @@ export default async function run(ctx) {
   // A BIGGER POOL (s118, s149): with two of a kind excluded the only unique mark can be a kwama
   // forager, which bites back for the whole shoot -- #179: hp 32 -> 2 across 19 shots, then dead.
   {
+    await a.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', STEP, 'the peer reports the bars'); // else b0 is 0/0 and the raise is measured from nothing (#180)
     const b0 = String(await a.eval('window.omw.state.selfStats') || '0/0').split('/').map(Number);
     await a.cmd(`sethpbase:${b0[1] + 60}`);
     await a.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${b0[1] + 58}`, STEP, "A's max rose");
