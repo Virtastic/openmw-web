@@ -41,21 +41,22 @@ export default async function run(ctx) {
   let pa, pb, victim;
   ({ found: victim, probes: [pa, pb] } = await pickUntil(ctx, () => Promise.all([probeOf(a), probeOf(b)]), (pa, pb) => {
     const ok = Object.keys(pa).filter((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && r !== 'indrele rathryon' && (pa[r].n ?? 1) === 1 && (pb[r].n ?? 1) === 1);
-    // A LAND CREATURE FIRST (#181): a named NPC in a guarded town turns the fight into a crime -- the peer
-    // relays PlayerCrime/PlayerArrest, a guard's arrest dialogue opens on the swinger's client, and a menu
-    // holds no use bit (player.lua inputTick): 3 of 41 real swings reached the avatar, hp frozen, five
-    // builds red. Vanilla behaves the same; the scenario is about the dead staying dead, not about crime.
-    return ok.find((r) => /^(mudcrab|scrib|rat|kwama .*|guar|alit|cliff racer|kagouti|nix-hound|shalk)$/i.test(r)) // ANCHORED: 'rat' unanchored matched 'indrele rathryon' (#182 s120 picked her as a creature)
-       ?? ok[0];
+    return ok.find((r) => !/^(mudcrab|scrib|rat|slaughterfish|kwama .*|guar|alit|cliff racer|kagouti|nix-hound|shalk)$/i.test(r)); // an NPC: a levelled creature is re-rolled on a peer restart, so its corpse is not the claim (#186: a mudcrab came back alive)
   })); // UNIQUE in the cell: the probe is keyed by record, first wins, and after the restart 'mudcrab' was a different, living mudcrab on both screens (#139)
   assert.ok(victim, `need a living NPC visible to both: A=${JSON.stringify(Object.keys(pa))}`);
   const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  // 180 s: at #116's frame rate the test hits landed 8 s apart and 90 s was eleven of them.
-  // Killed FOR REAL: W to walk up, the mouse button to swing (_realfight.mjs).
-  await focus(a); await armMelee(a);
-  const fight = await swingUntil(ctx, a, () => probeRec(a, victim), async () => (await a.eval(deadExpr)) === true, { budgetMs: 240_000 });
-  const died = fight.done;
-  ctx.log(`${fight.swings} real swing(s)`);
+  // KILLED BY THE RELAY HOOK, not by real swings. This scenario is about the dead staying dead across a
+  // peer restart, not about the fight (s118, s164 and s120 own that): a named NPC in a guarded town makes
+  // a REAL swing loop a crime -- a guard's arrest dialogue holds the use bit and the fight never ends
+  // (#175-#184, five builds red) -- and a creature is re-rolled by the restarted peer, so its corpse is
+  // not the claim (#186). hitn:<record>:500 is how this scenario killed for years before the real-swing pass.
+  let died = false;
+  for (let i = 0; i < 20 && !died; i++) {
+    await a.cmd(`hitn:${victim}:500`);
+    await ctx.sleep(1_500);
+    died = (await a.eval(deadExpr)) === true;
+  }
+  ctx.log(`killed by the relay hook: died=${died}`);
   assert.ok(died, `"${victim}" never died (s118 covers the fight)`);
   await b.waitFor(deadExpr, STEP, 'B sees it dead');
   ctx.log(`"${victim}" is dead in "${inside}" on both screens; restarting the peer`);
