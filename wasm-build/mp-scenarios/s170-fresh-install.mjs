@@ -657,12 +657,13 @@ export default async function run(ctx) {
   // (#191: four rats, netId was the first ranked one, the swings killed another -- containers [] on a live rat).
   // Ask each net object of that record to open; only the dead one registers as a container.
   const sameKind = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"'))).filter((e) => e[1] === victim).map((e) => e[0]);
+  let opened = false; // opened ONCE: a second chest:open of the same corpse re-arms its watch and the put never lands
   for (const id of [netId, ...sameKind.filter((k) => k !== netId)]) {
     await host.cmd(`chest:open:${id}`);
     const got = await host.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.containerItems||"{}"), "n:${id}")`, sameKind.length > 1 ? 6_000 : STEP, 'a corpse registered').then(() => true).catch(() => false);
-    if (got) { netId = id; break; }
+    if (got) { netId = id; opened = true; break; }
   }
-  await host.cmd(`chest:open:${netId}`);
+  if (!opened) await host.cmd(`chest:open:${netId}`);
   try {
     await host.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.containerItems||"{}"), "n:${netId}")`, STEP, 'the corpse registered as a container');
   } catch (e) {
