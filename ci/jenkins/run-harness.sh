@@ -130,7 +130,7 @@ fi
 set -e
 # Verdict lines print twice in the raw log (see harness-log-and-build-context); dedupe here.
 echo "==> verdicts:"; grep -E '^(PASS|FAIL|SKIP) s' "$LOG" | sort -u || true
-pass=$(grep -E '^PASS s' "$LOG" | sort -u | wc -l); fail=$(grep -E '^FAIL s' "$LOG" | sort -u | wc -l)
+pass=$(grep -E '^PASS s' "$LOG" | sort -u | wc -l || true); fail=$(grep -E '^FAIL s' "$LOG" | sort -u | wc -l || true)
 echo "==> ${pass} passed, ${fail} failed over ${HARNESS_LANES} lane(s)"
-flaky=$(grep -E '^FLAKY  s' "$LOG" | sort -u); [ -n "$flaky" ] && { echo "==> FLAKY (failed once, passed on the immediate retry; counted green, each one a lead):"; echo "$flaky"; echo "==> (the 'failed' count above includes those first attempts)"; } || true
+flaky=$(grep -E '^FLAKY  s' "$LOG" | sort -u || true); [ -n "$flaky" ] && { echo "==> FLAKY (failed once, passed on the immediate retry; counted green, each one a lead):"; echo "$flaky"; echo "==> (the 'failed' count above includes those first attempts)"; } || true
 exit "$rc"
