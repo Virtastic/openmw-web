@@ -42,18 +42,28 @@ export default async function run(ctx) {
   await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'the peer named a creature');
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP, 'the cell is puppeted (the peer holds it)');
   const named = Object.entries(await netObjs(a));
-  // The NEAREST mark: an arrow is a physical projectile and a wandering creature walks out
-  // of a long shot's flight time. Probe positions are keyed by record, so pick by record --
-  // and ONLY when alone under it (probe[r].n === 1, #178): two scribs share the record
-  // "scrib", the probe can only report one position for it, and which of the two that is can
-  // swap frame to frame as their relative distances trade places. 24 shots at a mark that
-  // silently relocates never converge; the archer's own aim was fine.
+  // THE MARK IS ONE NET OBJECT, PASSIVE FIRST (#187). Two things kept this red in six builds of seven:
+  // (1) the probe is keyed by RECORD, so two scribs give one row that swaps between them -- the aim
+  // followed a mark that silently relocated; so the mark's position now comes from the RECEIVED pose of
+  // its own net id (the page's actor tap, as s171 does), never from the record row; and (2) the unique
+  // mark the old pick forced was a kwama forager, which bites the archer every ~1.3 s at point-blank --
+  // 25 presses and 25 releases reached the avatar, `attacking=false` at every +0.3 s, one arrow hit a
+  // TREE: a hit interrupts a 1.5 s bow draw. A scrib does not fight back, so it is preferred.
   const me = JSON.parse(await a.eval('window.omw.state.pose||"{}"'));
   const probe = JSON.parse(await a.eval('window.omw.state.actorProbe||"{}"'));
-  const dist = (r) => { const p = probe[r]; return p && (p.n ?? 1) === 1 ? Math.hypot(p.x - me.x, p.y - me.y) : Infinity; };
-  const [netId, victim] = [...named].sort((x, y) => dist(x[1]) - dist(y[1]))[0];
-  assert.notEqual(dist(victim), Infinity, `every candidate shares its record id with another: ${named.map(([, r]) => r).join(', ')}`);
-  ctx.log(`the archer's mark: the peer's "${victim}" (net ${netId}) at ${dist(victim).toFixed(0)} units, of ${named.map(([, r]) => `${r}@${dist(r).toFixed(0)}`).join(', ')}`);
+  const rx0 = JSON.parse(await a.eval('JSON.stringify((window.__omwActorTap||{}).last||{})'));
+  const cands = named.map(([id, r]) => { const t = rx0['n' + id]; return { id, r, d: t ? Math.hypot(t.x - me.x, t.y - me.y) : Infinity }; })
+    .filter((c) => Number.isFinite(c.d) && probe[c.r] && !probe[c.r].dead)
+    .sort((x, y) => (x.r !== 'scrib') - (y.r !== 'scrib') || x.d - y.d);
+  assert.ok(cands.length, `no living named creature with a received pose: named=${JSON.stringify(named)} tap=${JSON.stringify(Object.keys(rx0))}`);
+  const netId = cands[0].id, victim = cands[0].r;
+  ctx.log(`the archer's mark: the peer's "${victim}" (net ${netId}) at ${cands[0].d.toFixed(0)} units, of ${cands.map((c) => `${c.r}@${c.d.toFixed(0)}`).join(', ')}`);
+  // Its position: the received pose of THIS net id merged over the record row (hp, dead).
+  const markOf = async (c, rec) => {
+    const row = (await probeOf(c, rec)) || null;
+    const t = JSON.parse(await c.eval(`JSON.stringify(((window.__omwActorTap||{}).last||{})['n${netId}']||null)`));
+    return row && t ? { ...row, x: t.x, y: t.y, z: t.z } : row;
+  };
 
   // A BIGGER POOL (s118, s149): with two of a kind excluded the only unique mark can be a kwama
   // forager, which bites back for the whole shoot -- #179: hp 32 -> 2 across 19 shots, then dead. FIRST,
@@ -101,7 +111,7 @@ export default async function run(ctx) {
       await ctx.sleep(3_000);
     }
   }
-  const p0 = await probeOf(a, victim);
+  const p0 = await markOf(a, victim);
   assert.ok(p0, `no probe position for ${victim}`);
   ctx.log(`in position: pose=${await a.eval('window.omw.state.pose')} divergence=${await a.eval('window.omw.state.selfDivergence')} baselineReady=${await a.eval('window.omw.state.baselineReady')} chargenDone=${await a.eval('window.omw.state.chargenDone')}`);
   ctx.log(`server doc: ${docInventory(ctx)}`);
@@ -128,7 +138,7 @@ export default async function run(ctx) {
     let range = Infinity;
     while (Date.now() < by) {
       if (await a.eval(deadExpr)) break;
-      const q = (await probeOf(a, victim)) || p0;
+      const q = (await markOf(a, victim)) || p0;
       const meNow = JSON.parse(await a.eval('window.omw.state.pose||"{}"'));
       range = Math.hypot(q.x - meNow.x, q.y - meNow.y);
       if (range < 140) break;
@@ -144,12 +154,12 @@ export default async function run(ctx) {
     // The mark wanders. Aim at where it is NOW, and hold fire while it is out of a fair
     // shot's reach: a physical arrow into a walking scrib 1000 units off is a coin the
     // scenario should not be flipping.
-    const p = (await probeOf(a, victim)) || p0;
+    const p = (await markOf(a, victim)) || p0;
     const meNow = JSON.parse(await a.eval('window.omw.state.pose||"{}"'));
     const range = Math.hypot(p.x - meNow.x, p.y - meNow.y);
     // OUT OF A FAIR SHOT: walk up, as an archer does (W held; _realfight). Holding fire forever
     // waited on a scrib the first arrow had not provoked, 499 u off for four minutes (#158).
-    if (range > 260) { skipped++; if (skipped % 5 === 1) ctx.log(`${victim} is ${range.toFixed(0)} units off: walking up`); await walkTo(ctx, a, () => probeOf(a, victim), 200); await a.cmd('stance:weapon'); continue; }
+    if (range > 260) { skipped++; if (skipped % 5 === 1) ctx.log(`${victim} is ${range.toFixed(0)} units off: walking up`); await walkTo(ctx, a, () => markOf(a, victim), 200); await a.cmd('stance:weapon'); continue; }
     // Bracket the height: the arrow leaves the drawn hand, whose exact height on the peer's
     // body this test does not know to the unit, and a scrib is forty units tall.
     const aimZ = [20, 40, 60][shots % 3];
@@ -179,12 +189,12 @@ export default async function run(ctx) {
     // TRACK THE MARK THROUGH THE DRAW, as an archer does: a scrib walks 100 units a second
     // and an aim taken before a 1.5 s draw is a shot at where it was.
     await ctx.sleep(900);
-    const p2 = (await probeOf(a, victim)) || p;
+    const p2 = (await markOf(a, victim)) || p;
     await a.cmd(`face:${Math.round(p2.x)},${Math.round(p2.y)},${Math.round(p2.z + aimZ)}`);
     await ctx.sleep(3_000); // draw + flight + the peer's report back
     died = (await a.eval(deadExpr)) === true;
     if (shots % 3 === 1) {
-      const q = (await probeOf(a, victim)) || {};
+      const q = (await markOf(a, victim)) || {};
       ctx.log(`shot ${shots}: me=${await a.eval('window.omw.state.pose')} mark=(${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}) dead=${q.dead} div=${await a.eval('window.omw.state.selfDivergence')} flags=${await a.eval('window.omw.state.selfFlags')} batchesIn=${await a.eval('window.omw.state.actorBatchesIn')} hp=${await a.eval('window.omw.state.hp')}`);
     }
   }
