@@ -653,6 +653,15 @@ export default async function run(ctx) {
   await host.cmd('equiptest'); // a dynamic helmet record (global.lua mpTestItem), equipped beside the sword
   await host.waitFor(`(window.omw.state.equippedIds||"").split(",").some(function(id){ return id && id !== ${JSON.stringify(WEAPON)}; })`, 12_000, 'the host holds a test item');
   const itemId = (await host.eval('window.omw.state.equippedIds')).split(',').find((id) => id && id !== WEAPON);
+  // WHICH net object is the corpse: the kill is tracked by RECORD ('rat'), and the world holds several of a kind
+  // (#191: four rats, netId was the first ranked one, the swings killed another -- containers [] on a live rat).
+  // Ask each net object of that record to open; only the dead one registers as a container.
+  const sameKind = Object.entries(JSON.parse(await host.eval('window.omw.state.netObjects||"{}"'))).filter((e) => e[1] === victim).map((e) => e[0]);
+  for (const id of [netId, ...sameKind.filter((k) => k !== netId)]) {
+    await host.cmd(`chest:open:${id}`);
+    const got = await host.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.containerItems||"{}"), "n:${id}")`, sameKind.length > 1 ? 6_000 : STEP, 'a corpse registered').then(() => true).catch(() => false);
+    if (got) { netId = id; break; }
+  }
   await host.cmd(`chest:open:${netId}`);
   try {
     await host.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.containerItems||"{}"), "n:${netId}")`, STEP, 'the corpse registered as a container');
