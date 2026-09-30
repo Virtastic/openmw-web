@@ -2095,6 +2095,16 @@ do
     and ob:find('#data.deaths > 0 then deps.cellDeathsFn', 1, true) == nil)
 end
 
+print('s157 #187 a holder retries a recorded death whose key did not resolve on the first answer')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('noteCellDeaths keeps a held cell death keys for a bounded retry',
+    ac:find('h.cellKey, h.deathKeys, h.deathUntil = cellKey, keys, core.getRealTime() + DEATH_RETRY_SECONDS', 1, true) ~= nil)
+  check('the holder tick retries them until they read dead, then says so if they never did',
+    ac:find('if cell.deathKeys then killRecorded(cell, now) end', 1, true) ~= nil
+    and ac:find('[mp] recorded deaths never applied in ', 1, true) ~= nil)
+end
+
 print('#432 the peer says what a forwarded spell hit did')
 do
   local c = io.open('./openmw/files/data/scripts/mp/combat.lua'):read('*a')

@@ -1052,17 +1052,47 @@ local function objOfWireKey(key)
     return ok and obj or nil
 end
 
+-- HOLDER RETRY (s157 #187: eldafire came back alive on the restarted peer while every screen
+-- showed her corpse). The record is answered ONCE per held cell and a key that does not resolve
+-- in that frame was dropped ("the next WorldCellState says it again" -- never true for a holder:
+-- nothing re-sends it) while `recorded` opened the bars anyway. A held cell now keeps its unkilled
+-- keys and retries each tick for DEATH_RETRY_SECONDS. Bounded: a scripted Resurrect after that
+-- must not be undone by a stale list.
+local DEATH_RETRY_SECONDS = 30
+local function killRecorded(cell, now)
+    local left = {}
+    for _, wireKey in ipairs(cell.deathKeys or {}) do
+        local obj = objOfWireKey(wireKey)
+        local okv, valid = pcall(function() return obj and obj:isValid() end)
+        if okv and valid then
+            local okd, dead = pcall(types.Actor.isDead, obj) -- a key that names a non-actor must not abort the holder tick
+            if okd and not dead then
+                if not obj:hasScript('scripts/mp/testkill.lua') then pcall(function() obj:addScript('scripts/mp/testkill.lua', {}) end) end
+                left[#left + 1] = wireKey -- until it reads dead
+            end
+        else
+            left[#left + 1] = wireKey
+        end
+    end
+    cell.deathKeys = (#left > 0 and now < (cell.deathUntil or 0)) and left or nil
+    if #left > 0 and not cell.deathKeys then print('[mp] recorded deaths never applied in ' .. tostring(cell.cellKey) .. ': ' .. table.concat(left, ',')) end
+end
+
 function actors.noteCellDeaths(cellKey, keys)
     -- The record answered the request broadcastCell sent once the cell had actors (#431):
     -- from here the holder's bars can go out. The grant's own request may be answered before
     -- the cell is loaded, when no key below resolves; that answer does not count.
     if held[cellKey] and held[cellKey].resynced then held[cellKey].recorded = true end
+    if held[cellKey] and keys and #keys > 0 then
+        local h = held[cellKey]
+        h.cellKey, h.deathKeys, h.deathUntil = cellKey, keys, core.getRealTime() + DEATH_RETRY_SECONDS
+    end
     for _, wireKey in ipairs(keys or {}) do
         local obj = objOfWireKey(wireKey)
         local okv, valid = pcall(function() return obj and obj:isValid() end)
         if not (okv and valid) then
-            -- Not loaded here yet: nothing to key on. The next WorldCellState for the cell
-            -- (sent on every entry) says it again once the object exists.
+            -- Not loaded here yet: nothing to key on. A held cell retries it (killRecorded);
+            -- a viewer waits for its next WorldCellState.
         else
             local key = refKeyOf(obj)
             if held[cellKey] then
@@ -1199,6 +1229,7 @@ function actors.tick(now)
     -- One knob, on the server, instead of two that alias against each other.
     local byCell = next(held) and actorsByCell() or nil
     for cellKey, cell in pairs(held) do
+        if cell.deathKeys then killRecorded(cell, now) end
         broadcastCell(cellKey, cell.epoch, cell, now, byCell[cellKey] or {})
     end
     if now - lastSnapshot >= SNAPSHOT_SECONDS then
