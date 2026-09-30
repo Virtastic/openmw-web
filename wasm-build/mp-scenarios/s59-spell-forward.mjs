@@ -82,7 +82,11 @@ export default async function run(ctx) {
   // ONE living, unguarded NPC both clients see; the caster stands beside it. With the peer
   // holding the cell every actor here is a puppet on the caster, so a touch cast lands on
   // the seam under test.
-  const victims = Object.keys(pa).filter((r) => r !== 'player' && pb[r] && !pa[r].guard
+  // Not "darvame hleran" (#186 and #188, both attempts each: 122 casts, her hp frozen at 32, and a 300 s CDP
+  // stall on the caster's page; the other NPCs -- indrele, erene llenim, vodunius, fargoth, a mudcrab --
+  // passed in #172-#187). She stands still, so "the one standing stillest" picks her every time, and the
+  // harness retry re-picks her: an exclusion, not a re-roll.
+  const victims = Object.keys(pa).filter((r) => r !== 'player' && r !== 'darvame hleran' && pb[r] && !pa[r].guard
     && pa[r].dead !== true && pb[r].dead !== true);
   assert.ok(victims.length > 0, 'need at least one living NPC visible to both clients');
   // THE ONE STANDING STILLEST. Fire Bite is a touch spell cast from beside the mark, and on a
