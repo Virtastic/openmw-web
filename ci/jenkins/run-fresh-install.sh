@@ -26,5 +26,6 @@ mkdir -p "$FRESH_REL"
 echo "==> fresh data dir: $FRESH_REL (empty)"
 
 export HARNESS_DOCKER_ARGS="-e OMW_FRESH_DATA=/repo/$FRESH_REL -e OPENMW_MP_UPSTREAM=127.0.0.1:$GW_PORT"
+export HARNESS_STANDALONE=1 # this script IS the standalone scenario
 export SCENARIOS=s170 LOG="wasm-build/harness-out/fresh-${BUILD_NUMBER:-local}.log"
 exec "$(dirname "$0")/run-harness.sh"

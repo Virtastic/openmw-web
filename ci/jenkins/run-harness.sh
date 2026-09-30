@@ -70,7 +70,14 @@ HARNESS_LANES="${HARNESS_LANES:-1}"
 ALL=()
 if [ -n "${SCENARIOS:-}" ]; then
   for w in $SCENARIOS; do
-    for f in wasm-build/mp-scenarios/"$w"*.mjs; do [ -e "$f" ] && ALL+=("$(basename "$f" .mjs)"); done
+    for f in wasm-build/mp-scenarios/"$w"*.mjs; do
+      [ -e "$f" ] || continue
+      # A standalone scenario (s170) runs through run-fresh-install.sh, which sets HARNESS_STANDALONE. Named in
+      # a targeted run beside others it is left out HERE, or it SKIPs, the stage exits 1 and the rehearsal
+      # stage never runs (#189).
+      if [ -z "${HARNESS_STANDALONE:-}" ] && grep -q 'export const standalone = true' "$f"; then continue; fi
+      ALL+=("$(basename "$f" .mjs)")
+    done
   done
 else
   for f in wasm-build/mp-scenarios/s*.mjs; do
