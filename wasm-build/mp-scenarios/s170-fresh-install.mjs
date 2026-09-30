@@ -16,7 +16,7 @@
 // binary plus retail data must exist for the worlds to simulate anything.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createReadStream, existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -230,6 +230,11 @@ export default async function run(ctx) {
   // An EMPTY data dir. The shell script hands one over so the run's artefacts (setup-token,
   // .mode, logs, the uploaded game files) can be inspected afterwards; alone, a temp dir.
   const dataDir = process.env.OMW_FRESH_DATA || mkdtempSync(join(tmpdir(), 'omw-fresh-'));
+  // A RETRY starts from the empty dir the rehearsal is about (#188: the harness's one retry died in 0.6 s on the first
+  // attempt's leftovers). Only the dir the shell script handed over, only on the second attempt.
+  if (process.env.HARNESS_ATTEMPT === '2' && process.env.OMW_FRESH_DATA) {
+    for (const f of readdirSync(dataDir)) rmSync(join(dataDir, f), { recursive: true, force: true });
+  }
   assert.ok(existsSync(dataDir) && readdirSync(dataDir).length === 0, `the fresh data dir must be EMPTY: ${dataDir} holds ${readdirSync(dataDir).join(', ')}`);
   ctx.syncPeerScripts(); // the worlds' peers run the scripts under test, not the image's baked copy
   const gwLog = () => ctx.childLogTail('gateway', 20_000);
@@ -649,7 +654,18 @@ export default async function run(ctx) {
   await host.waitFor(`(window.omw.state.equippedIds||"").split(",").some(function(id){ return id && id !== ${JSON.stringify(WEAPON)}; })`, 12_000, 'the host holds a test item');
   const itemId = (await host.eval('window.omw.state.equippedIds')).split(',').find((id) => id && id !== WEAPON);
   await host.cmd(`chest:open:${netId}`);
-  await host.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.containerItems||"{}"), "n:${netId}")`, STEP, 'the corpse registered as a container');
+  try {
+    await host.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.containerItems||"{}"), "n:${netId}")`, STEP, 'the corpse registered as a container');
+  } catch (e) {
+    // WHAT THE HOST SAW (#188: red here, s111 loots the same way and passed): the net objects it knows, the
+    // containers it holds, and the container/chest lines of its own log -- the last 25 log lines were weather.
+    const NL = String.fromCharCode(10);
+    ctx.log(`  net ${netId} objects: ${await host.eval('window.omw.state.netObjects')}`);
+    ctx.log(`  containers: ${await host.eval('window.omw.state.containerItems')}`);
+    const cl = (host.logTail ? host.logTail(2000) : '').split(NL).filter((l) => /\[mp\].*(ontainer|hest|OpenContainer|ObjectContainer|corpse)/i.test(l)).slice(-10);
+    ctx.log('  host [mp] container lines: ' + (cl.length ? cl.join(' || ') : '(none)'));
+    throw e;
+  }
   await host.cmd(`chest:put:${itemId}`);
   await host.waitFor(corpseHas(netId, itemId, 1), STEP, 'the corpse holds the item');
   await guest.cmd(`chest:open:${netId}`);

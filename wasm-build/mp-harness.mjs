@@ -1027,6 +1027,7 @@ const retried = new Set();
 let fileIdx = -1;
 for (const file of files) {
   fileIdx++;
+  process.env.HARNESS_ATTEMPT = retried.has(file) ? '2' : '1'; // a scenario with state on disk can start clean on its retry
   const t0 = Date.now();
   const clients = []; // everything launched by this scenario, closed no matter what
   let torndown = false; // a client that finishes booting AFTER teardown must not leak
