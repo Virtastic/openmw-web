@@ -385,7 +385,10 @@ export default async function run(ctx) {
   const nearby = Object.keys(probe).filter((r) => !probe[r].dead && !probe[r].guard && d2(probe[r], me) < 3000).sort((x, y) => d2(probe[x], me) - d2(probe[y], me));
   // A mark the provoking swing cannot kill (#167: an 8 hp scrib died to it and there was no fight
   // left to watch) -- and if every creature here is that small, the nearest one anyway (#168: none).
-  const victim = nearby.find((r) => !(probe[r].hp >= 0 && probe[r].hp < 20)) ?? nearby[0];
+  // ...and an attacker: a scrib never comes at you (#187: the 8 hp scrib gave 0 use-bit edges and 0 hp drops,
+  // so both attack bars failed on a creature that cannot pass them), so it is the last resort.
+  const victim = nearby.find((r) => r !== 'scrib' && !(probe[r].hp >= 0 && probe[r].hp < 20)) ?? nearby.find((r) => r !== 'scrib') ?? nearby.find((r) => !(probe[r].hp >= 0 && probe[r].hp < 20)) ?? nearby[0];
+  const passiveMark = victim === 'scrib';
 
   ctx.log(`d: net creatures ${[...netRecs].join(",")}; probe ${Object.keys(probe).join(",")}`);
   assert.ok(victim, 'no living unique creature to fight');
@@ -449,8 +452,11 @@ export default async function run(ctx) {
   ctx.log(`d1: the creature on the peer: ${peerV.length} samples, attacking in ${peerAttack.length} (up/lo groups ${[...new Set(peerV.map((r) => r.lo + '/' + r.up))].join(' ')})`);
   ctx.log(`d1: use-bit edges on the wire -- at A (ref ${refA}) ${edgesIn(wA1, refA)}, at B (ref ${refB}) ${edgesIn(wB1, refB)}; A's hp on A's screen ${hpA.map((e) => e[1]).join(' -> ') || '(no change)'} (${hpDrops.length} drops)`);
   if (peer.length) bar(peerAttack.length > 0, `d: the creature attacks on the peer (${peerAttack.length} samples)`);
-  bar(nA.some((x) => x.edges > 0) && nB.some((x) => x.edges > 0), 'd: attacks on A reach both screens (use-bit edges from an actor beside A, at A and at B)');
-  bar(hpDrops.length > 0, `d: A's hp drops on A's screen (${hpDrops.length})`);
+  if (passiveMark) ctx.log('d: NOT JUDGED here: the only creature is a scrib, which does not attack (no use-bit edges, no hp drops to look for)');
+  else {
+    bar(nA.some((x) => x.edges > 0) && nB.some((x) => x.edges > 0), 'd: attacks on A reach both screens (use-bit edges from an actor beside A, at A and at B)');
+    bar(hpDrops.length > 0, `d: A's hp drops on A's screen (${hpDrops.length})`);
+  }
 
   // Real swings: focus the canvas the way a player does, face the creature, hold the button.
   try { await a.mouseHold(60); } catch (e) { ctx.log('focus click: ' + e.message); }
