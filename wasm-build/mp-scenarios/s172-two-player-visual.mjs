@@ -260,8 +260,14 @@ export default async function run(ctx) {
   // MEDIAN <= 450 ms and p95 <= 750 ms (owner's decision, 2026-09-29 #181): p95 of ~18 samples is the
   // second-worst one and swung 550-1150 ms between identical builds on the loaded builder; the median
   // held 425-525. The 50 ms batch tick that was tried against it gained nothing measurable.
-  tbar(movingLagT.length > 0 && q(movingLagT, 0.5) <= 450 && q(movingLagT, 0.95) <= 750, `a: friend's puppet median <= 450 ms and p95 <= 750 ms behind A while moving (p50 ${q(movingLagT, 0.5)}, p95 ${q(movingLagT, 0.95)} ms; ${q(movingLag, 0.95).toFixed(0)} u)`);
-  tbar(pupSnaps === 0 && jumps === 0, `a: friend's puppet never teleports (${pupSnaps} snaps, ${jumps} jumps)`);
+  // MEDIAN <= 550 ms, p95 <= 900 ms (owner's decision, 2026-09-30 #186). Measured medians over the last
+  // five builds: 425, 425, 500, 525, 475 ms -- the pipeline sits at ~475 ms on the loaded builder and
+  // neither the render-delay cut nor a 50 ms tick moved it below the run-to-run noise. The bar is a
+  // regression guard just above what the box measures; the numbers stay logged.
+  tbar(movingLagT.length > 0 && q(movingLagT, 0.5) <= 550 && q(movingLagT, 0.95) <= 900, `a: friend's puppet median <= 550 ms and p95 <= 900 ms behind A while moving (p50 ${q(movingLagT, 0.5)}, p95 ${q(movingLagT, 0.95)} ms; ${q(movingLag, 0.95).toFixed(0)} u)`);
+  // <= 2 distance snaps in the walk (owner's decision, 2026-09-30): a stall on the loaded builder can put the
+  // puppet 256 u behind for a second; a snap puts it back, and each snap reads as one jump.
+  tbar(pupSnaps <= 2 && jumps <= 2, `a: friend's puppet teleports at most twice (${pupSnaps} snaps, ${jumps} jumps)`);
 
   // b: A's own reconciliation over the same walk.
   const div = (hA.selfDivergence || []).map(([, v]) => Number(v)).filter(Number.isFinite);
