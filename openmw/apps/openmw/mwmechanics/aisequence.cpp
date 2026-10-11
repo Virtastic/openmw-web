@@ -393,6 +393,13 @@ namespace MWMechanics
         if (actor == getPlayer())
             throw std::runtime_error("Can't add AI packages to player");
 
+        // Multiplayer (backlog 221): a NEW package is not done. The flag is one frame in the vanilla
+        // engine, so this changes nothing there; on a client's AI-off puppet it is sticky (written by the
+        // holder's relay), and a script that stacks the next leg (Fargoth's lookout: AiTravel, then poll
+        // GetAiPackageDone) read the PREVIOUS leg's flag and raced through every leg in seconds.
+        if (isActualAiPackage(package.getTypeId()))
+            mDone = false;
+
         // Stop combat when a non-combat AI package is added
         if (isActualAiPackage(package.getTypeId()))
         {

@@ -39,6 +39,9 @@ local escortSaid = 0 -- peer diagnostic cadence (above)
 -- top of the package stack is static -- the only thing that can change it is a dialogue result
 -- ("AITravel x y z" on Goodbye), which is exactly the case that never reached the holder.
 local reportedTravel = nil
+-- ...and whether we have read our own travel yet. The FIRST read is what the record carried (a guard's
+-- patrol, a shopkeeper's post), not a script's doing: sent as `initial` so a non-holder does not claim it.
+local travelRead = false
 local function travelDest()
     local ok, pkg = pcall(function() return I.AI.getActivePackage() end)
     if not (ok and pkg and pkg.type == 'Travel' and pkg.destPosition) then return nil end
@@ -195,8 +198,9 @@ return {
             local destKey = dest and string.format('%.0f,%.0f,%.0f', dest.x, dest.y, dest.z) or nil
             if destKey ~= reportedTravel then
                 reportedTravel = destKey
-                if dest then core.sendGlobalEvent('mpActorTravel', { actor = self.object, dest = dest }) end
+                if dest then core.sendGlobalEvent('mpActorTravel', { actor = self.object, dest = dest, initial = not travelRead }) end
             end
+            travelRead = true
 
             local target, escort = followedPlayer()
             -- Compared by ID, not by object: two reads of the same actor are different Lua

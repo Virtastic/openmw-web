@@ -17,6 +17,8 @@ local MAX_DELAY = 0.30
 local START_DELAY = 0.10 -- before two arrivals have been seen
 local GAP_MAX = 0.5 -- a longer silence is a stop, a cell load or a tier change: not jitter
 local GAP_GAIN = 1 / 8 -- the TCP-RTO smoothing for the mean and the deviation
+local MARGIN = 0.01 -- always a hair more than the arrival statistics say
+local PULL = 0.1 -- how fast a sample's playout time follows its arrival time
 local SLEW = 0.1 -- seconds of delay change per second: render time runs at 90-110%, never jumps
 local MAX_SNAPSHOTS = 16 -- ~1s of history at 15 Hz
 -- A LATE POSE IS NOT A STOP. Even with the adaptive buffer a pose can arrive later than it
@@ -30,12 +32,20 @@ function Interp.new()
     return setmetatable({ buf = {}, mean = nil, dev = 0.01, cur = START_DELAY, lastNow = nil }, Interp)
 end
 
--- s = {t=realTime, x=, y=, z=, yaw=, pitch=, flags=, animVel=}
+-- s = {t=arrival realTime, x=, y=, z=, yaw=, pitch=, flags=, animVel=}
+--
+-- THE SAMPLE'S TIME IS WHEN IT WAS MADE, NOT WHEN IT ARRIVED. The server generates poses evenly
+-- (one per batch interval) but they reach us bunched and late; stamping each with its arrival
+-- time wrote that jitter into the rendered SPEED (equal steps over 33 ms then 99 ms read as
+-- 280 then 93 u/s). A sample's time is therefore the previous one's plus the mean gap, pulled a
+-- little toward its arrival and never later than it (it cannot have been made after it arrived).
+-- The buffer delay below covers whatever lateness is left.
 function Interp:push(s)
     local buf = self.buf
     local last = buf[#buf]
+    s.at = s.t
     if last then
-        local gap = s.t - last.t
+        local gap = s.at - last.at
         if gap > 0.005 and gap < GAP_MAX then
             if self.mean == nil then
                 self.mean = gap
@@ -43,6 +53,9 @@ function Interp:push(s)
                 self.dev = self.dev + (math.abs(gap - self.mean) - self.dev) * GAP_GAIN
                 self.mean = self.mean + (gap - self.mean) * GAP_GAIN
             end
+            local st = last.t + self.mean
+            st = st + (s.at - st) * PULL
+            s.t = math.min(s.at, math.max(st, last.t + 0.005))
         end
     end
     buf[#buf + 1] = s
@@ -57,7 +70,7 @@ end
 -- The delay this stream wants right now, and the (slewed) one actually in use.
 function Interp:wantedDelay()
     if self.mean == nil then return START_DELAY end
-    return math.min(MAX_DELAY, math.max(MIN_DELAY, self.mean + 2 * self.dev))
+    return math.min(MAX_DELAY, math.max(MIN_DELAY, self.mean + 2 * self.dev + MARGIN))
 end
 
 function Interp:delay()

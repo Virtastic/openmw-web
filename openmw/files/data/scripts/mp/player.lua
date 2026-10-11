@@ -297,6 +297,11 @@ end
 local SNAP_DIST = 256
 local CORRECT_CAP = 48 -- = maxCorrectPerCall in mwmp/luabindings.cpp
 local CORRECT_GAIN = 0.25 -- fraction of the divergence per FRAME that has a fresh sample
+-- BELOW THIS THE TWO BODIES AGREE. The peer's avatar and our own run different physics steps over
+-- slightly different frame times, so a few units apart is the normal state, not an error -- and
+-- correcting every sample down to 1 unit nudged the player all the time ("slightly rubber-bandy",
+-- players, 1.5.0). 5 u is ~7 cm; anything larger is still pulled in.
+local CORRECT_DEADZONE = 5
 local latestSelf = nil -- newest authoritative self pose, consumed by selfReconcileTick
 local lastSnapAt = 0
 local SNAP_COOLDOWN_S = 2.0
@@ -379,7 +384,7 @@ local function selfReconcileTick()
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
     mp.set('selfDivergence', string.format('%.1f', dist))
     mp.set('selfFlags', tostring(e.flags or 0)) -- bit 3 = the avatar is attacking (s67)
-    if dist < 1 then return end
+    if dist < CORRECT_DEADZONE then return end
     if dist > SNAP_DIST then
         local now = core.getRealTime()
         if now - lastSnapAt >= SNAP_COOLDOWN_S then
