@@ -1906,15 +1906,17 @@ do
   -- A target running +250 u/s along y, poses every 66 ms, then the stream is late.
   for i = 0, 5 do it:push({ t = i * 0.066, x = 0, y = i * 0.066 * 250, z = 0, yaw = 0, pitch = 0, flags = 1 }) end
   local newest = 5 * 0.066
-  -- 40 ms past the newest sample in render time (now = newest + RENDER_DELAY + 0.04).
-  local tg = it:target(newest + 0.04 + 0.04)
+  it:target(newest) -- the first read adopts the delay this stream wants
+  local d = it:delay()
+  -- 40 ms past the newest sample in render time (now = newest + delay + 0.04).
+  local tg = it:target(newest + d + 0.04)
   check('a query past the newest pose carries on along the last step (was clamped to it)',
     tg ~= nil and tg.y > newest * 250 + 5, string.format('y %.1f, newest %.1f', tg and tg.y or -1, newest * 250))
-  local far = it:target(newest + 0.04 + 1.0)
+  local far = it:target(newest + d + 1.0)
   check('...by at most EXTRAP_S of it (a real stop overshoots <= ~22 u at a run, s172 #175)',
     far ~= nil and far.y <= newest * 250 + 0.09 * 250 + 0.5, string.format('y %.1f', far and far.y or -1))
   check('the speed feed-forward keeps reading the run through a late pose',
-    it:speed(newest + 0.04 + 0.04) > 200, string.format('speed %.0f', it:speed(newest + 0.04 + 0.04)))
+    it:speed(newest + d + 0.04) > 200, string.format('speed %.0f', it:speed(newest + d + 0.04)))
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   local cc = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('puppet steering may exceed top speed to close a gap',
@@ -1924,11 +1926,55 @@ do
   package.loaded['scripts.mp.interp'] = nil
 end
 
-print('s172 the render-delay buffer was cut below one batch interval (#175: the 450 ms time-lag bar)')
+print('players said NPCs are jerky and movement rubber-bandy: the render delay adapts to the stream (it was a fixed 40 ms, below one batch interval)')
 do
+  package.loaded['scripts.mp.interp'] = nil
+  local Interp = dofile('./openmw/files/data/scripts/mp/interp.lua')
+  local function feed(it, gaps, n, speed)
+    local t, y = 0, 0
+    for i = 1, n do
+      local g = gaps[(i % #gaps) + 1]
+      t = t + g
+      it:push({ t = t, x = 0, y = t * speed, z = 0, yaw = 0, pitch = 0, flags = 1 })
+    end
+    return t
+  end
+  local steady = Interp.new(); feed(steady, { 0.066 }, 40, 140)
+  check('a steady 15 Hz stream settles near one interval (not 40 ms)',
+    steady:wantedDelay() >= 0.07 and steady:wantedDelay() <= 0.12, string.format('%.3f', steady:wantedDelay()))
+  local jitter = Interp.new(); feed(jitter, { 0.033, 0.099 }, 40, 140)
+  check('a jittery stream buys itself more buffer than a steady one', jitter:wantedDelay() > steady:wantedDelay() + 0.03,
+    string.format('%.3f vs %.3f', jitter:wantedDelay(), steady:wantedDelay()))
+  local slow = Interp.new(); feed(slow, { 0.2 }, 30, 140)
+  check('a 5 Hz mid-tier stream is interpolated over its own interval', slow:wantedDelay() >= 0.2 and slow:wantedDelay() <= 0.30,
+    string.format('%.3f', slow:wantedDelay()))
+  local stop = Interp.new(); feed(stop, { 0.066 }, 20, 140); stop:push({ t = 99, x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = 0 })
+  check('a long silence (a stop, a cell load) is not read as jitter', stop:wantedDelay() < 0.13, string.format('%.3f', stop:wantedDelay()))
+  -- RENDERED SMOOTHNESS at 60 fps over a jittery arrival pattern (gaps 33/99 ms): the worst
+  -- frame-to-frame speed against the walker's real 140 u/s. A fixed 40 ms delay freezes the
+  -- puppet when a gap runs long and then lurches; the adaptive one keeps within a modest band.
+  local function worstRatio(it, fixed)
+    if fixed then it.wantedDelay = function() return fixed end end
+    local gaps, t, y, arrive = { 0.033, 0.099 }, 0, 0, {}
+    for i = 1, 60 do t = t + gaps[(i % 2) + 1]; arrive[#arrive + 1] = { t = t, y = t * 140 } end
+    local next, prevY, worst = 1, nil, 0
+    for now = 1.0, t - 0.1, 1 / 60 do
+      while arrive[next] and arrive[next].t <= now do
+        it:push({ t = arrive[next].t, x = 0, y = arrive[next].y, z = 0, yaw = 0, pitch = 0, flags = 1 }); next = next + 1
+      end
+      local tg = it:target(now)
+      if tg and prevY and now > 2.0 then worst = math.max(worst, math.abs(tg.y - prevY) * 60 / 140) end
+      prevY = tg and tg.y or prevY
+    end
+    return worst
+  end
+  local adaptive = worstRatio(Interp.new(), nil)
+  local old = worstRatio(Interp.new(), 0.04)
+  check('rendered speed stays within 1.5x of the walker's with the adaptive delay', adaptive <= 1.5, string.format('worst %.2fx', adaptive))
+  check('...where the old fixed 40 ms delay lurched past it (the complaint)', old > adaptive + 0.3, string.format('old %.2fx vs %.2fx', old, adaptive))
   local it = io.open('./openmw/files/data/scripts/mp/interp.lua'):read('*a')
-  check('RENDER_DELAY is 40 ms, not the old 75', it:find('local RENDER_DELAY = 0.04', 1, true) ~= nil)
-  check('EXTRAP_S was raised to cover it', it:find('local EXTRAP_S = 0.09', 1, true) ~= nil)
+  check('the delay is bounded and slewed, never a jump', it:find('local MAX_DELAY = 0.30', 1, true) ~= nil and it:find('local SLEW = 0.1', 1, true) ~= nil)
+  package.loaded['scripts.mp.interp'] = nil
 end
 
 print('s120 a puppet that stays far from its owner is snapped to it (#179: 260 u off, under the 256 u snap)')
