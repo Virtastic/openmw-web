@@ -310,7 +310,8 @@ test('dialogue lock', async (t) => {
     b.sendEvent('ActorAI', { ref: NPC_REF, cellKey: '0,0', epoch: 0, travel: { x: 1, y: 2, z: 3 } });
     b.sendEvent('ChatSend', { text: 'travelfence' });
     await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'travelfence');
-    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a bystander sent an NPC walking');
+    // Relaxed (backlog 363/79): a scripted walk from a nearby player inside reach is relayed, rate-bounded.
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 1, 'a scripted walk inside reach reaches the holder');
     // Re-take the lock so the release subtest below still has something to release.
     a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
     await a.waitEvent('DialogueLockResult');

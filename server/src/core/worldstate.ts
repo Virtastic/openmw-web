@@ -58,6 +58,9 @@ const ACTOR_REF_TTL_MS = 10 * 60_000;
 // #363: scripted "this NPC is now there" claims per player per minute (a Heart-chamber
 // script fires once; a modified client teleporting every quest NPC into the void does not).
 const MAX_POSITION_CLAIMS_PER_MIN = 5;
+// A scripted walk is a chain of short AITravel legs (Fargoth's lookout: seven in about a minute),
+// so it gets its own, wider bucket than a position or crime claim.
+const MAX_TRAVEL_CLAIMS_PER_MIN = 12;
 // A CELL'S STATE IS ONE FRAME, AND THE WIRE HAS A CEILING. WorldCellState and CellSnapshotReplace
 // carry every placed object and every tombstone in a cell in a single LSER value, and LSER
 // refuses anything past 65,536 nodes. A placed object is ~19 nodes, so around 3,400 dropped
@@ -656,19 +659,21 @@ export class WorldState {
   private static readonly MAX_ACTOR_SPAWNS_PER_MIN = 10; // a sleeper ambush is one or two
   private actorSpawnsBy = new Map<number, number[]>(); // playerId -> recent request times (spawn)
   private positionClaimsBy = new Map<number, number[]>(); // #363: playerId -> recent lock-less claims
+  private travelClaimsBy = new Map<number, number[]>(); // scripted travel legs, same shape
 
   /** #363: lock-less ActorAI claims (position, crime) share one MAX_POSITION_CLAIMS_PER_MIN
    *  bucket per player -- a script fires once, a loop does not. */
-  private claimWithinRate(player: Player, name: string, cellKey: string, note: string): boolean {
+  private claimWithinRate(player: Player, name: string, cellKey: string, note: string,
+    max = MAX_POSITION_CLAIMS_PER_MIN, by = this.positionClaimsBy): boolean {
     const nowMs = Date.now();
-    const recent = (this.positionClaimsBy.get(player.id) ?? []).filter((t) => nowMs - t < 60_000);
-    if (recent.length >= MAX_POSITION_CLAIMS_PER_MIN) {
+    const recent = (by.get(player.id) ?? []).filter((t) => nowMs - t < 60_000);
+    if (recent.length >= max) {
       log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: note.replace('_', ' ') + ' rate' });
       this.moderationNote?.(player.accountKey, note);
       return false;
     }
     recent.push(nowMs);
-    this.positionClaimsBy.set(player.id, recent);
+    by.set(player.id, recent);
     return true;
   }
   private replayFollows(holderId: number, cellKey: string): void {
@@ -843,10 +848,18 @@ export class WorldState {
           this.invalid(player, name);
           return;
         }
-        if (player.system || this.dialogueHolder?.(ref.key) !== player.id || !cellsVisible(player.cellKey, cellKey)) {
-          log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'travel claim without the conversation' });
+        if (player.system || !cellsVisible(player.cellKey, cellKey)) {
+          log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'travel claim from afar' });
           return;
         }
+        // NO CONVERSATION IS NOT NO SCRIPT. A world script that walks an NPC on a player's
+        // trigger (Fargoth's lookoutScript: journal index, GetDistance Player, the hour) runs
+        // on that player's client, where the NPC is an AI-off puppet -- the peer's dummy player
+        // never meets those conditions. The claim is held to the same bounds as a dialogue
+        // result (a human near the cell, a destination within two cells) and, without the
+        // conversation, a rate: a script walks an NPC a few legs a minute, a loop does not.
+        if (this.dialogueHolder?.(ref.key) !== player.id
+          && !this.claimWithinRate(player, name, cellKey, 'travel_claim', MAX_TRAVEL_CLAIMS_PER_MIN, this.travelClaimsBy)) return;
         // Bounded by the actor's cell (backlog 84): AITravel walks, it does not teleport, and a
         // dialogue result sends an NPC across the street, not across the map. Within two cells
         // of the actor's own; an interior's coordinates are local, so its cell is the origin.

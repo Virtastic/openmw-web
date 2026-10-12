@@ -783,18 +783,25 @@ function actors.noteCombat(obj, target)
     if body then mp.sendEvent('ActorAI', body) end
 end
 
--- SCRIPTED TRAVEL. "AITravel x y z" from a dialogue result stacks Travel on the talking
--- player's puppet; the holder's copy never moves. The holder reports its own travel too (it
--- is authoritative), a non-holder only right after talking to the NPC (worldstate.ts admits
--- it from the dialogue-lock holder) -- and on an AI-off puppet the only way the active package
--- changes IS a script, so there is nothing else this could be.
-function actors.noteTravel(obj, dest)
+-- SCRIPTED TRAVEL. "AITravel x y z" from a dialogue result OR a world script (Fargoth's
+-- lookoutScript walks him to the stump when the journal, the hour and GetDistance Player say so --
+-- none of which the peer's dummy player ever meets) stacks Travel on the player's puppet; the
+-- holder's copy never moves. The holder reports its own travel too (it is authoritative); a
+-- non-holder reports a CHANGE of its puppet's travel -- on an AI-off puppet the only way the
+-- active package changes IS a script -- except the two things that are not ours to claim: the
+-- package the record carried when the puppet was first read (`initial`), and the one the holder
+-- relayed (appliedTravel). worldstate.ts admits it from a human near the cell, within two cells of
+-- the NPC, and rate-bounded when there is no conversation.
+local appliedTravel = {} -- refKey -> "x,y,z" of the Travel the holder's relay last stacked here
+local function travelKeyOf(x, y, z) return string.format('%.0f,%.0f,%.0f', x, y or 0, z or 0) end
+function actors.noteTravel(obj, dest, initial)
     if not (obj and obj:isValid()) or type(dest) ~= 'table' or type(dest.x) ~= 'number' then return end
     local cellKey = actors.cellKeyOfObj(obj)
     if not cellKey then return end
-    -- A non-holder's claim stands only from the conversation (as noteCombat): a puppet's Travel
-    -- the holder relayed, or one its record carries, is not ours to claim.
-    if not actors.isHolderOf(cellKey) and not talkingTo(obj) then return end
+    if not actors.isHolderOf(cellKey) then
+        if initial == true and not talkingTo(obj) then return end
+        if appliedTravel[refKeyOf(obj)] == travelKeyOf(dest.x, dest.y, dest.z) then return end
+    end
     local body = withAddr({
         cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0,
         travel ={ x = dest.x, y = dest.y or 0, z = dest.z or 0 },
@@ -930,6 +937,7 @@ actors.handlers.MP_ActorAI = function(data)
     if type(data.travel) == 'table' and type(data.travel.x) == 'number' then
         -- A scripted destination. On a puppet (AI off) it is state only; on the holder the
         -- actor walks there, which is the point.
+        appliedTravel[refKeyOf(obj)] = travelKeyOf(data.travel.x, data.travel.y, data.travel.z)
         pcall(function()
             obj:sendEvent('StartAIPackage', { type = 'Travel',
                 destPosition = util.vector3(data.travel.x, data.travel.y or 0, data.travel.z or 0) })

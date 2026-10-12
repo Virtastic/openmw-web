@@ -708,6 +708,49 @@ test('ActorAI travel is bounded to two cells of the actor', async (t) => {
   assert.equal(eve.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a far travel destination was relayed');
 });
 
+// Players: "I can't get Fargoth to walk to the stump". His lookoutScript walks him on the PLAYER'S
+// journal index, the hour and GetDistance Player -- none of which the peer's dummy player meets -- so
+// the AITravel is issued on that player's client, with no conversation. It was refused ('travel claim
+// without the conversation') and he never moved.
+test('a scripted AITravel with no conversation is relayed (rate-bounded, near the cell, within reach)', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const join = async (name: string, cell: string) => {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    await c.joinAsNew(name);
+    c.sendCellChange(cell, 0, 0, 0);
+    await c.waitEvent('PlayerCellChange', (v) => (v as { cellKey: string }).cellKey === cell);
+    return c;
+  };
+  const walker = await join('Walker', '3,3'); // the player whose script walks the NPC: holds no lock
+  const watcher = await join('Watcher', '3,3');
+  const afar = await join('Afar', '40,40');
+  const npc = { __refnum: { index: 4242, contentFile: 0 } };
+  const leg = (c: TestClient, x: number, y: number) => c.sendEvent('ActorAI', { ref: npc, cellKey: '3,3', epoch: 0, travel: { x, y, z: 0 } });
+  const fence = async (from: TestClient, to: TestClient, word: string) => {
+    from.sendEvent('ChatSend', { text: word });
+    await to.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === word);
+  };
+
+  leg(walker, 3 * 8192 + 100, 3 * 8192 + 100);
+  const got = (await watcher.waitEvent('ActorAI', (v) => (v as { travel?: unknown }).travel !== undefined)).value as { travel: Record<string, number> };
+  assert.equal(got.travel['x'], 3 * 8192 + 100, 'the lock-less scripted leg did not reach the room');
+
+  watcher.inbox.events.length = 0;
+  leg(afar, 3 * 8192 + 5, 3 * 8192 + 5); // a client standing 37 cells away is not in the room
+  leg(walker, 9 * 8192, 9 * 8192); // and a destination past two cells is not a walk
+  await fence(walker, watcher, 'fence1');
+  assert.equal(watcher.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a claim from afar or beyond reach was relayed');
+
+  // A script walks an NPC a few legs a minute; a loop does not. 12 a minute: the first and the beyond-reach one are already counted.
+  watcher.inbox.events.length = 0;
+  for (let i = 0; i < 20; i++) leg(walker, 3 * 8192 + 200 + i, 3 * 8192 + 200);
+  await fence(walker, watcher, 'fence2');
+  const relayed = watcher.inbox.events.filter((e) => e.name === 'ActorAI').length;
+  assert.equal(relayed, 10, 'the bucket passes 12 a minute: 10 of the 20 after the first and the refused far leg, got ' + relayed);
+});
+
 // Backlog 82: gold is never a placement. A human's gold drop is judged as a drop whether or
 // not the client flagged it, so an undeclared purse on the ground is refused when enforcement
 // is on -- the flag was the one thing a modified client could simply leave out.

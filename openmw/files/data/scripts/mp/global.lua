@@ -3403,7 +3403,7 @@ local eventHandlers = {
         actors.noteCombat(data and data.actor, data and data.target)
     end,
     mpActorTravel = function(data)
-        actors.noteTravel(data and data.actor, data and data.dest)
+        actors.noteTravel(data and data.actor, data and data.dest, data and data.initial)
     end,
 
     mpSocialTab = function(data)
