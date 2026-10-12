@@ -137,16 +137,24 @@ jobs:
           code=$(E -o /dev/null -w '%{http_code}' "$WURL")
           test "$code" = 200 || { echo "FATAL: engine wasm $WURL returned HTTP $code" >&2; exit 1; }
           E -D - -o /dev/null "$WURL" | grep -qi '^content-type: *application/wasm'
-          # launcher gate: bare / and ?nomw both reachable (200)
-          E -f -o /dev/null https://morrowind.virtastic.app/
+          # "/" is the MULTIPLAYER SIGN-IN PAGE since 2026-10-12 (the gateway's front door, routed in
+          # deploy/Caddyfile). It is served by openmw-mp, so it answers 302 /admin until that server
+          # has restarted with setup completed -- which deploy-mp does, possibly after this job.
+          # Accept either; anything else (a 404, a 5xx) is a broken front door.
+          rc=$(E -o /tmp/front -w '%{http_code}' https://morrowind.virtastic.app/)
+          case "$rc" in
+            200) grep -q 'Sign in to play' /tmp/front || { echo "FATAL: / is not the sign-in page" >&2; exit 1; } ;;
+            302) echo "note: / redirects to /admin until openmw-mp restarts with setup completed" ;;
+            *) echo "FATAL: / returned HTTP $rc" >&2; exit 1 ;;
+          esac
           E -f -o /dev/null "https://morrowind.virtastic.app/index.html?nomw"
 
           # Indexable posture. Google once indexed /index.html?nomw= as its own result, titled with
           # the engine's "Engine failed to load" overlay -- a crawler cannot run wasm, so the fatal
           # path is all it can render. The canonical is what folds every boot URL back into "/", so
-          # losing it silently re-creates that failure. Both pages must carry it, and it must point
-          # at the bare root, not at itself.
-          E -o /tmp/root https://morrowind.virtastic.app/
+          # losing it silently re-creates that failure. The launcher (now /launcher.html and the
+          # /join door) and the game page must carry it, pointing at the bare root.
+          E -o /tmp/root https://morrowind.virtastic.app/launcher.html
           for f in /tmp/root /tmp/idx; do
             grep -q '<link rel="canonical" href="https://morrowind.virtastic.app/">' "$f" || {
               echo "FATAL: canonical missing/wrong in $f" >&2; exit 1; }
