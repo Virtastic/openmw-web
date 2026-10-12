@@ -68,7 +68,7 @@ FROM caddy:2-alpine AS runtime
 # Static web files straight from the build context.
 # og.png is the social card the OG/Twitter tags in launcher.html point at; robots.txt carries
 # the Sitemap line (Cloudflare prepends its managed AI-crawler block to whatever we serve).
-COPY play/index.html play/launcher.html play/streamfs.js /srv/
+COPY play/index.html play/launcher.html play/join.html play/streamfs.js /srv/
 COPY play/og.png play/robots.txt play/sitemap.xml /srv/
 # Built engine artifacts from the builder stage (raw + .br).
 COPY --from=builder /build/play/openmw.js      /build/play/openmw.js.br      /srv/
