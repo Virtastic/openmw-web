@@ -20,7 +20,7 @@ still a drop"), 84 (worldstate.test "ActorAI travel is bounded to two cells of t
 
 125 (session token in an auth-link query string, dead in gateway mode: remove the route or move
 the token to a POST body), 190 (wire version handshake: check proto on connect and refuse on
-mismatch), 388-range items are not in this list.
+mismatch),.
 
 ## ENGINE (C++ or Lua, needs a rebake)
 
