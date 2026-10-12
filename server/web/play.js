@@ -139,8 +139,29 @@
     note('This server is not taking new players: sign-in works for existing accounts, but new '
       + 'ones cannot be created here.');
   } else if (auth.inviteRequired && !invited) {
-    note('This server is invite-only. New players need the invite link from whoever runs it; '
-      + 'returning players can sign in as usual.');
+    // NEW PLAYERS TYPE THE CODE. An invite link is not always how a code travels (a Discord
+    // post, a friend reading it out), so the code can also be typed here; it then rides on
+    // every provider link exactly as an invite link's would. Returning players ignore it.
+    const help = typeof auth.inviteHelpUrl === 'string' && /^https:\/\//.test(auth.inviteHelpUrl)
+      ? ` <a href="${esc(auth.inviteHelpUrl)}" rel="noopener">Join our Discord to get the invite code.</a>`
+      : ' Ask whoever runs it for the invite code.';
+    const form = document.createElement('form');
+    form.id = 'inviteForm';
+    form.innerHTML = '<label class="fld"><span>Invite code (new players only)</span>'
+      + '<input id="inviteCode" name="invite" autocomplete="off" spellcheck="false" maxlength="128"></label>';
+    box.prepend(form);
+    const apply = () => {
+      const code = String($('#inviteCode').value || '').trim();
+      try { if (code) sessionStorage.setItem('omwmp:invite', code); else sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ }
+      for (const a of box.querySelectorAll('a.prov')) {
+        const u = new URL(a.href);
+        if (code) u.searchParams.set('invite', code); else u.searchParams.delete('invite');
+        a.href = u.href;
+      }
+    };
+    $('#inviteCode').addEventListener('input', apply);
+    form.addEventListener('submit', (e) => { e.preventDefault(); apply(); });
+    note('This server is invite-only. Returning players sign in as usual; new players enter the invite code above, then pick a sign-in.' + help);
   }
 
   /**

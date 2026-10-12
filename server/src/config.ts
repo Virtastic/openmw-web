@@ -86,6 +86,8 @@ export interface Config {
   login: {
     allowRegistration: boolean;
     inviteCode: string;
+    /** Where a player without an invite is sent to get one (e.g. the server's Discord). "" = no link. */
+    inviteHelpUrl: string;
     resumeWindowSec: number;
     requireProfile: boolean;
     // The shipped client can auto-register with a FIXED, publicly known password
@@ -540,6 +542,7 @@ function validate(t: Tree): Config {
     login: {
       allowRegistration: reqBool(t, 'login', 'allowRegistration'),
       inviteCode: reqStr(t, 'login', 'inviteCode'),
+      inviteHelpUrl: reqStr(t, 'login', 'inviteHelpUrl'),
       resumeWindowSec: reqNum(t, 'login', 'resumeWindowSec'),
       requireProfile: reqBool(t, 'login', 'requireProfile'),
       allowHarnessAuth: reqBool(t, 'login', 'allowHarnessAuth'),

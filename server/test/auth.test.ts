@@ -905,3 +905,15 @@ test('SSO into the admin dashboard: role required, session lands as /admin#t=', 
   assert.equal(state.authed, true);
   assert.equal(state.role, 'moderator');
 });
+
+// The invite-only front door links new players to where the invite code lives (a Discord, say).
+// Only an https link is passed on, so a typo in config cannot make the sign-in page an open redirect.
+test('the providers answer carries the invite help link, https only', async (t) => {
+  const on = await boot(t, { login: { allowRegistration: true, inviteCode: 'opensesame', inviteHelpUrl: 'https://discord.gg/example' } });
+  const a = (await (await fetch(`${on.base}/auth/providers`)).json()) as { inviteRequired: boolean; inviteHelpUrl: string };
+  assert.equal(a.inviteRequired, true);
+  assert.equal(a.inviteHelpUrl, 'https://discord.gg/example');
+  const bad = await boot(t, { login: { allowRegistration: true, inviteCode: 'opensesame', inviteHelpUrl: 'javascript:alert(1)' } });
+  const b = (await (await fetch(`${bad.base}/auth/providers`)).json()) as { inviteHelpUrl: string };
+  assert.equal(b.inviteHelpUrl, '', 'a non-https help link is dropped');
+});

@@ -391,6 +391,8 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
         // page asks for it and sends it as ?invite= on /auth/<provider>/start. Without this no
         // page knew to ask, so an invite-only server refused every SSO sign-up (invite_required).
         inviteRequired: config.login.allowRegistration && config.login.inviteCode !== '',
+        // Only a public link (an https URL), so a typo cannot turn the sign-in page into an open redirect.
+        inviteHelpUrl: /^https:\/\/[^\s"<>]+$/.test(config.login.inviteHelpUrl) ? config.login.inviteHelpUrl : '',
       });
       return true;
     }

@@ -26,6 +26,7 @@ password = ""
 [login]
 allowRegistration = true          # false -> SessionRegister is refused (AUTH_FAILED)
 inviteCode = ""                   # non-empty -> SessionRegister must carry a matching inviteCode
+inviteHelpUrl = ""                # where a player without an invite gets one (e.g. a Discord invite); shown on the sign-in page
 resumeWindowSec = 300             # M1 (reserved): how long a dropped session may resume via resumeToken
 requireProfile = false            # true -> SessionReady is refused until email + username are set (ProfileSetup)
 # The shipped client's ?mpauto=1 harness mode logs in with a FIXED, publicly known

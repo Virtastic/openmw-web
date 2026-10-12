@@ -37,8 +37,13 @@
 	# deployed site.
 	#
 	# Matching "/" alone needs no query guard: index.html?nomw and ?src=local are not "/".
-	@bareroot path /
-	rewrite @bareroot /launcher.html
+	#
+	# 2026-10-12: morrowind.virtastic.app is a MULTIPLAYER server now. "/" is no longer the demo
+	# chooser: it is the gateway's sign-in page (Google / Discord / Microsoft, invite code for new
+	# players), routed in @gateway below. /join is launcher.html in DOOR MODE -- the username,
+	# character and world steps a signed-in player is handed to (see play/launcher.html <head>).
+	@door path /join
+	rewrite @door /launcher.html
 
 	# Caching: the engine binaries are content-built and effectively immutable; the HTML is the only
 	# thing that should re-fetch. (Cloudflare's Cache Rule mirrors this at the edge.)
@@ -51,7 +56,7 @@
 	# returning visitors to morrowind.virtastic.app were served a stale launcher for hours after
 	# a deploy without ever revalidating. That is the bare domain every link points at, so a
 	# deploy was effectively invisible to exactly the people most likely to come back.
-	@html path / *.html
+	@html path / /join *.html
 	header @html Cache-Control "no-cache"
 
 	# Crawler + social files. Without a rule these fall through with NO Cache-Control at all, so
@@ -94,7 +99,7 @@
 	# /admin: the operator dashboard. Reachable from the internet on purpose (2026-10-12): it enforces its
 	# own sign-in and a dashboard owner role. It is in this matcher so the address-header rules below apply to it
 	# too. /metrics, /healthz and /status stay unreachable.
-	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/* /clientlog /mwdata/* /mwdata-manifest.json /mwdata-mods.json /admin /admin/*
+	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/* /clientlog /mwdata/* /mwdata-manifest.json /mwdata-mods.json /admin /admin/* / /play
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080} {
 		# STRIP CLIENT-SUPPLIED ADDRESS HEADERS. The gateway trusts these because its peer is
 		# this proxy, on a private network — but "the peer is private" only means the header
