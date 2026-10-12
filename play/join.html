@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Join to play</title>
+<style>
+  :root { --bg: #14110d; --fg: #efe6d4; --muted: #b8a88a; --accent: #c99a4a; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #f6f1e6; --fg: #2a2218; --muted: #6b5d45; --accent: #8a5a1c; } }
+  :root[data-theme="light"] { --bg: #f6f1e6; --fg: #2a2218; --muted: #6b5d45; --accent: #8a5a1c; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 4rem 16px; }
+  h1 { font-size: 1.6rem; margin: 0 0 .75rem; }
+  p { color: var(--fg); }
+  .muted { color: var(--muted); }
+  a.button { display: inline-block; margin: .75rem 0; padding: .7rem 1.1rem; border-radius: 6px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>This server is invite-only</h1>
+  <p>New accounts on morrowind.virtastic.app need an invite code. The code is posted in our Discord.</p>
+  <p><a class="button" href="https://discord.gg/PzFfDkbSue" rel="noopener">Join our Discord to get the invite code</a></p>
+  <p class="muted">Already have an account? <a href="/">Go back and sign in</a>. Signing in with Google, Discord or Microsoft works the same way as before.</p>
+</main>
+</body>
+</html>
