@@ -91,7 +91,10 @@
 	#             Tamriel Rebuilt peer refused every prod client BAD_CONTENT. The gateway still
 	#             answers 404 (= "not hosted", locker fallback) unless prod's config.toml sets
 	#             [setup] deliveryModel = "serve"; prod MUST set that for hosted data.
-	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/* /clientlog /mwdata/* /mwdata-manifest.json /mwdata-mods.json
+	# /admin: the operator dashboard. Reachable from the internet on purpose (2026-10-12): it enforces its
+	# own sign-in and a dashboard owner role. It is in this matcher so the address-header rules below apply to it
+	# too. /metrics, /healthz and /status stay unreachable.
+	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/* /clientlog /mwdata/* /mwdata-manifest.json /mwdata-mods.json /admin /admin/*
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080} {
 		# STRIP CLIENT-SUPPLIED ADDRESS HEADERS. The gateway trusts these because its peer is
 		# this proxy, on a private network — but "the peer is private" only means the header
