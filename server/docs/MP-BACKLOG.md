@@ -509,7 +509,7 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 78 | Greeting/idle on the peer targets the parked dummy: NPCs near the park spot face nothing | actors.cpp (skip when peerRulesBody) |
 | 79 | Escort claim needs no dialogue lock: any client can send any NPC walking | superseded by #363 (an escort is a follow claim with a destination) |
 | 80 | "npc"->AddItem in a dialogue result lands on the local puppet only | no relay for non-holder NPC inventory |
-| 81 | Level +1 per message at 60/s reaches 255 in 4 s; attributes/skills unbounded | superseded by #99 / #369 |
+| 81 | Level +1 per message at 60/s reaches 255 in 4 s; attributes/skills unbounded | done -- re-verified 2026-10-12: playerstate.ts handleLevel refuses a step inside LEVEL_STEP_MS (noteGain level_rate) and a 2+ jump; redteam-client.test.ts covers the rate |
 | 82 | Gold placement with fromInventory=false is counted, never refused (party worlds) | fixed (unit): worldstate.ts spawn: a human's `gold_001` is always fromInventory (no script or tool of a human's places a purse), so it is refused under refuseUnownedDrops flag or no flag; the default stays off. worldstate.test.ts "a gold drop without fromInventory is still a drop" |
 | 83 | Fabricated first ContainerOpen becomes canonical (poison every container in a town) | superseded by #99 / #365 |
 | 84 | ActorAI travel destination bounded only by MAX_ABS_COORD | fixed (unit): worldstate.ts travel claim: floor(x/8192), floor(y/8192) must be within ±2 of the actor's exterior cell or the claim is dropped (`travel destination beyond reach`); an interior's coordinates are local, so its cell is the origin and the same ±2-cell box applies. worldstate.test.ts "ActorAI travel is bounded to two cells of the actor" |
