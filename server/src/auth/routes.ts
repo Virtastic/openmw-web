@@ -18,6 +18,7 @@
 // permitted origin instead; leave it empty to stay fully dynamic.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import type { Config } from '../config';
 import type { AccountStore } from '../core/accounts';
 import type { BanStore } from '../persist/banstore';
@@ -113,6 +114,14 @@ function resolveReturn(configured: string, req: IncomingMessage, requested: stri
 // hook, and threading a list through it would touch every caller for one composition.
 export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
   const { config, oidc, identities, tickets, sessions, lockerSessions, accounts, bans, limiter } = deps;
+  // Link tickets (backlog 125): one use, LINK_TICKET_MS long, held in memory only.
+  const LINK_TICKET_MS = 60_000;
+  type LinkTicket = { who: NonNullable<ReturnType<SessionIndex['get']>>; provider: string; exp: number };
+  const linkTickets = new Map<string, LinkTicket>();
+  const pruneLinkTickets = (): void => {
+    const now = Date.now();
+    for (const [k, v] of linkTickets) if (v.exp < now) linkTickets.delete(k);
+  };
 
   // A failure the player caused (or a provider refused) goes back to the game page as a
   // machine-readable code; the human-readable reason stays in the server log. Nothing the
@@ -352,6 +361,22 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       return true;
     }
 
+    // POST /auth/link/:provider/ticket: the game session travels in a HEADER, and the link flow
+    // gets back a one-use, 60-second ticket to put in the navigation URL. The session itself never
+    // reaches a URL, so an edge log cannot record it (backlog 125).
+    if (req.method === 'POST' && seg.length === 4 && seg[1] === 'link' && seg[3] === 'ticket') {
+      const provider = seg[2] ?? '';
+      if (!isProviderId(provider)) { sendJson(res, 400, { error: 'unknown_provider' }); return true; }
+      const auth = String(req.headers.authorization ?? '');
+      const who = auth.startsWith('Bearer ') ? sessions.get(auth.slice(7)) : undefined;
+      if (!who) { sendJson(res, 401, { error: 'not_signed_in' }); return true; }
+      pruneLinkTickets();
+      const ticket = randomBytes(24).toString('base64url');
+      linkTickets.set(ticket, { who, provider, exp: Date.now() + LINK_TICKET_MS });
+      sendJson(res, 200, { path: '/auth/link/' + provider + '?ticket=' + ticket, expiresInSeconds: LINK_TICKET_MS / 1000 });
+      return true;
+    }
+
     if (req.method !== 'GET') return also ? also(req, res, url) : false;
 
     if (seg.length === 2 && seg[1] === 'providers') {
@@ -375,14 +400,15 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     if (seg.length === 3 && seg[1] === 'link') {
       const provider = seg[2] ?? '';
       if (!isProviderId(provider)) return fail(req, res, 'unknown_provider', provider, clientIp(req));
-      // The game session token proves who is asking. It arrives in the query because a
-      // top-level browser navigation has nowhere else to put it; it is consumed here and
-      // the very next thing the browser sees is a 302 to the provider, so it never becomes
-      // the address of a page.
-      const token = url.searchParams.get('session') ?? '';
-      const who = sessions.get(token);
-      if (!who) return fail(req, res, 'not_signed_in', 'link requires a live game session token', clientIp(req));
-      return startFlow(req, res, url, provider, who);
+      // A ONE-USE ticket from POST /auth/link/:provider/ticket. Consumed on every read, even when
+      // it is stale or for another provider, so a leaked URL is good for one attempt at most.
+      const ticket = url.searchParams.get('ticket') ?? '';
+      const entry = linkTickets.get(ticket);
+      linkTickets.delete(ticket);
+      if (!entry || entry.provider !== provider || entry.exp < Date.now()) {
+        return fail(req, res, 'not_signed_in', 'link requires a fresh ticket from POST /auth/link/' + provider + '/ticket', clientIp(req));
+      }
+      return startFlow(req, res, url, provider, entry.who);
     }
 
     if (seg.length === 3) {

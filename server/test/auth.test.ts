@@ -565,6 +565,13 @@ test('a banned account is refused through the SSO path', async (t) => {
   owner.close();
 });
 
+// Backlog 125: the link flow starts from a one-use ticket, never from the session in a URL.
+async function linkPath(h: { base: string }, sessionToken: string, provider = 'google'): Promise<string> {
+  const res = await fetch(h.base + '/auth/link/' + provider + '/ticket', { method: 'POST', headers: { authorization: 'Bearer ' + sessionToken } });
+  if (res.status !== 200) return '/auth/link/' + provider + '?ticket=expired';
+  return ((await res.json()) as { path: string }).path;
+}
+
 test('one account, several providers', async (t) => {
   const h = await boot(t);
   const first = await ssoLogin(h, { sub: 'multi-1', nameHint: 'Linker' });
@@ -579,8 +586,18 @@ test('one account, several providers', async (t) => {
     assert.equal(fragment(bogus.headers.get('location')).get('mperror'), 'not_signed_in');
   });
 
+  await t.test('a link ticket works once, and the session in the URL is refused', async () => {
+    const path = await linkPath(h, sessionToken);
+    const first = await fetch(h.base + path, { redirect: 'manual' });
+    assert.equal(first.status, 302, 'the first use starts the link flow');
+    const again = await fetch(h.base + path, { redirect: 'manual' });
+    assert.equal(fragment(again.headers.get('location')).get('mperror'), 'not_signed_in', 'a used ticket is dead');
+    const inUrl = await fetch(h.base + '/auth/link/google?session=' + sessionToken, { redirect: 'manual' });
+    assert.equal(fragment(inUrl.headers.get('location')).get('mperror'), 'not_signed_in', 'a session in the URL is not a credential');
+  });
+
   await t.test('a second provider links to the same account and then logs into it', async () => {
-    const start = await fetch(`${h.base}/auth/link/google?session=${sessionToken}`, { redirect: 'manual' });
+    const start = await fetch(`${h.base}${await linkPath(h, sessionToken)}`, { redirect: 'manual' });
     assert.equal(start.status, 302);
     const authorize = new URL(start.headers.get('location')!);
     assert.equal(authorize.origin, h.idp2.issuer);
@@ -607,7 +624,7 @@ test('one account, several providers', async (t) => {
     const session2 = (await joinWithTicket(h, other.ticket!)) as { client: TestClient; welcome: Record<string, unknown> };
     const token2 = session2.welcome['sessionToken'] as string;
 
-    const start = await fetch(`${h.base}/auth/link/google?session=${token2}`, { redirect: 'manual' });
+    const start = await fetch(`${h.base}${await linkPath(h, token2)}`, { redirect: 'manual' });
     const authorize = new URL(start.headers.get('location')!);
     const code = h.idp2.issueCode(authorize, { sub: 'google-sub-1' }); // already Linker's
     const done = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookieOf(start));
@@ -625,7 +642,7 @@ test('one account, several providers', async (t) => {
   });
 
   await t.test('a session token stops working for linking once the socket is gone', async () => {
-    const res = await fetch(`${h.base}/auth/link/google?session=${sessionToken}`, { redirect: 'manual' });
+    const res = await fetch(`${h.base}${await linkPath(h, sessionToken)}`, { redirect: 'manual' });
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'not_signed_in');
   });
 });
