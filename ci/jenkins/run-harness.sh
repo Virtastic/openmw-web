@@ -88,13 +88,22 @@ mapfile -t ALL < <(printf '%s\n' "${ALL[@]}" | awk 'NF && !seen[$0]++')
 [ "${#ALL[@]}" -gt 0 ] || { echo "FATAL: no scenarios matched: ${SCENARIOS:-<full suite>}"; exit 2; }
 [ "${#ALL[@]}" -lt "$HARNESS_LANES" ] && HARNESS_LANES=${#ALL[@]}
 
+# THE PEER RUNS THE SCRIPTS ITS IMAGE INSTALLED. Mounting the repo's scripts/mp over them hid a
+# missing CMake install entry (reconcile.lua, 1.5.0): every sweep passed while every production
+# peer died at start. The image was just built from this branch, so its scripts are this
+# branch's. HARNESS_MOUNT_SCRIPTS=1 restores the mount for a run against an older image.
+SCRIPT_MOUNTS=""
+if [ "${HARNESS_MOUNT_SCRIPTS:-0}" = "1" ]; then
+  SCRIPT_MOUNTS="-v $HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro -v $HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"
+fi
+
 run_lane() { # the scenario names; output on stdout
   # shellcheck disable=SC2086
   # --init: a real PID 1 that REAPS. Without it every Chrome and sim peer the harness kills
   # becomes a zombie under the container's `sh`, and a full sweep ended with 2422 of them and a
   # load average of 39 on a 32-core box (#107) -- every timing assertion in the back half of the
   # run failed for reasons that had nothing to do with the code under test.
-  docker run --rm --init --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${GPU_ARGS} ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo"   -v "$HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro"   -v "$HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
+  docker run --rm --init --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${GPU_ARGS} ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo" ${SCRIPT_MOUNTS}   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
     -- "$@" 2>&1
 }
 
