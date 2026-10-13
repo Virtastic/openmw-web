@@ -146,11 +146,11 @@ export default async function run(ctx) {
     }
     ctx.log(`the stung ${victim} is ${range.toFixed(0)} units off`);
   }
-  const deadline = Date.now() + 180_000;
+  const deadline = Date.now() + 300_000; // 40 shots at ~5.7 s each
   let shots = 0, died = (await a.eval(deadExpr)) === true;
   if (died) ctx.log(`the provoking arrow killed the ${victim}`);
   let skipped = 0;
-  while (Date.now() < deadline && !died && shots < 24) {
+  while (Date.now() < deadline && !died && shots < 40) {
     // The mark wanders. Aim at where it is NOW, and hold fire while it is out of a fair
     // shot's reach: a physical arrow into a walking scrib 1000 units off is a coin the
     // scenario should not be flipping.
@@ -159,7 +159,9 @@ export default async function run(ctx) {
     const range = Math.hypot(p.x - meNow.x, p.y - meNow.y);
     // OUT OF A FAIR SHOT: walk up, as an archer does (W held; _realfight). Holding fire forever
     // waited on a scrib the first arrow had not provoked, 499 u off for four minutes (#158).
-    if (range > 260) { skipped++; if (skipped % 5 === 1) ctx.log(`${victim} is ${range.toFixed(0)} units off: walking up`); await walkTo(ctx, a, () => markOf(a, victim), 200); await a.cmd('stance:weapon'); continue; }
+    // 160, not 260 (#204: 24 arrows released at a wandering 40-unit scrib from up to 260 u, one reached
+    // anything -- the ground). Closer halves the aim error; the kill is still the only pass.
+    if (range > 160) { skipped++; if (skipped % 5 === 1) ctx.log(`${victim} is ${range.toFixed(0)} units off: walking up`); await walkTo(ctx, a, () => markOf(a, victim), 120); await a.cmd('stance:weapon'); continue; }
     // Bracket the height: the arrow leaves the drawn hand, whose exact height on the peer's
     // body this test does not know to the unit, and a scrib is forty units tall.
     const aimZ = [20, 40, 60][shots % 3];
