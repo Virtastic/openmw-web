@@ -19,6 +19,9 @@ const REF_ENTRY: ActorEntry = {
   pose: { x: 7.5, y: -3, z: 100, yaw: 0x2000, pitch: 0x30, flags: 0b100, animVel: 128, counter: 0 },
 };
 
+// #77's dialogue hold also rides ActorAI to the holder; these tests wait for the claim itself.
+const notHold = (v: unknown): boolean => (v as { hold?: unknown }).hold === undefined;
+
 test('ActorMoveBatch codec round-trips', () => {
   const buf = packActorMoveBatch(5, [REF_ENTRY]);
   // header: epoch u32 LE, count u8
@@ -114,7 +117,7 @@ test('actor authority and relay end to end', async (t) => {
     assert.deepEqual((eq.value as { slots?: unknown }).slots, slots, 'and carries the slots whole');
 
     a.sendEvent('ActorAI', { cellKey: '0,0', epoch: epochA, ref: ACTOR_REF, pkg: 'combat' });
-    const ai = await b.waitEvent('ActorAI');
+    const ai = await b.waitEvent('ActorAI', notHold);
     assert.equal((ai.value as { pkg?: string }).pkg, 'combat');
 
     // A NON-HOLDER cannot dress or command somebody else's NPCs. Bob is in the same cell and
@@ -157,7 +160,7 @@ test('actor authority and relay end to end', async (t) => {
     b.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: true });
     await b.waitEvent('DialogueLockResult');
     b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: bId });
-    const claim = await a.waitEvent('ActorAI');
+    const claim = await a.waitEvent('ActorAI', notHold);
     assert.equal((claim.value as { follow?: number }).follow, bId, 'the holder is told who the actor follows');
 
     a.inbox.events.length = 0;
@@ -170,7 +173,7 @@ test('actor authority and relay end to end', async (t) => {
     // is refused as a whole message.
     a.inbox.events.length = 0;
     b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: bId, escort: { x: 100, y: 200, z: 3, duration: 0 } });
-    const esc = await a.waitEvent('ActorAI');
+    const esc = await a.waitEvent('ActorAI', notHold);
     assert.deepEqual((esc.value as { escort?: unknown }).escort, { x: 100, y: 200, z: 3, duration: 0 }, 'the destination reaches the holder');
     a.inbox.events.length = 0;
     b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: bId, escort: { x: 'far' } });
@@ -191,7 +194,7 @@ test('actor authority and relay end to end', async (t) => {
       "a stranger dismissed somebody else's companion and the server relayed it");
 
     b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF });
-    const dismiss = await a.waitEvent('ActorAI');
+    const dismiss = await a.waitEvent('ActorAI', notHold);
     assert.equal((dismiss.value as { follow?: number }).follow, undefined, 'the follower is dismissed by the one they followed');
     d.close();
     await a.waitEvent('PlayerLeaveWorld'); // free her per-IP connection slot before the next test connects
@@ -504,7 +507,7 @@ test('a follow claim is re-issued to the holder for the character\'s new session
   first.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: true }); // #363: a recruit is a conversation
   await first.waitEvent('DialogueLockResult');
   first.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: firstId });
-  assert.equal(((await peer.waitEvent('ActorAI')).value as { follow: number }).follow, firstId, 'the holder hears the recruit');
+  assert.equal(((await peer.waitEvent('ActorAI', notHold)).value as { follow: number }).follow, firstId, 'the holder hears the recruit');
   first.ws.close();
   await new Promise((r) => setTimeout(r, 200));
 
@@ -536,7 +539,7 @@ test('a follow claim survives a world restart', async (t) => {
   first.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: true }); // #363: a recruit is a conversation
   await first.waitEvent('DialogueLockResult');
   first.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: firstId });
-  await peer.waitEvent('ActorAI');
+  await peer.waitEvent('ActorAI', notHold);
   first.close();
   peer.close();
   await Promise.all([first.closed, peer.closed]);

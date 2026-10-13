@@ -255,6 +255,34 @@ test('a member var reaches the peer holding the cell while its avatar stands els
   assert.deepEqual(heard.value, { ref: NPC_REF, name: 'talked', value: 1 }, 'the simulator of the NPC hears its locals change');
 });
 
+// #77: in single player the world stops for a conversation. Here the holder keeps simulating,
+// so the lock must tell it to park the NPC, and let it go on Goodbye or when the talker leaves.
+test('a dialogue lock parks the NPC on the holder until it is released', async (t) => {
+  const PEER_PASS = 'peer-secret-1';
+  const { server } = await boot(t, { server: { password: PEER_PASS } });
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  await bob.waitEvent('PlayerList');
+  bob.sendCellChange('0,0', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  bob.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
+  await bob.waitEvent('DialogueLockResult');
+  const parked = await peer.waitEvent('ActorAI', (v) => (v as { hold?: boolean }).hold === true, 3000);
+  assert.deepEqual((parked.value as { ref?: unknown }).ref, NPC_REF, 'the holder is told which NPC to park');
+  bob.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: false });
+  await peer.waitEvent('ActorAI', (v) => (v as { hold?: boolean }).hold === false, 3000);
+  // Walking off mid-conversation lets it go too (releaseDialogueLocks on a cell change).
+  bob.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
+  await peer.waitEvent('ActorAI', (v) => (v as { hold?: boolean }).hold === true, 3000);
+  bob.sendCellChange('5,5', 0, 0, 0);
+  await peer.waitEvent('ActorAI', (v) => (v as { hold?: boolean }).hold === false, 3000);
+});
+
 test('dialogue lock', async (t) => {
   const { server } = await boot(t);
   const { a, b, aId } = await twoInCell(server);

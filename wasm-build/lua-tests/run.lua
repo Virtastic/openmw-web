@@ -511,6 +511,25 @@ do
         and not src:find('[^.]unpack%('))
     end
   end
+  -- EVERY MP SCRIPT IS INSTALLED. The native peer (tier2, the prod and GHCR images) gets only
+  -- the files openmw/files/data/CMakeLists.txt lists; the browser build and the harness peer
+  -- (scripts mounted from the repo) see the whole folder. reconcile.lua shipped in 1.5.0
+  -- unlisted, so every production peer died on "module not found: scripts.mp.reconcile" while
+  -- every sweep passed: no holder, every client running its own NPCs (prod 2026-10-10..13).
+  do
+    local cm = io.open('./openmw/files/data/CMakeLists.txt'):read('*a')
+    local ls = io.popen('ls ./openmw/files/data/scripts/mp')
+    local missing, n = {}, 0
+    for f in ls:lines() do
+      if f:match('%.lua$') then
+        n = n + 1
+        if not cm:find('scripts/mp/' .. f, 1, true) then missing[#missing + 1] = f end
+      end
+    end
+    ls:close()
+    check('every scripts/mp/*.lua is in the CMake install list (the native peer gets nothing else)',
+      n > 0 and #missing == 0, 'unlisted: ' .. table.concat(missing, ', ') .. ' (of ' .. n .. ')')
+  end
   -- A dial refused by a world that is not ours must go HOME, not dead-end at "sign in again".
   local n = io.open('./openmw/files/data/scripts/mp/net.lua'):read('*a')
   check('net.lua hands an admission refusal to the go-home hook before the fresh-ticket ask',
@@ -1835,15 +1854,51 @@ do
     for _, c in ipairs(env.calls.events) do if c.name == 'ActorAI' then n = n + 1 end end
     return n
   end
+  -- Travel: the package the record carried when first read (`initial`) and the one the holder
+  -- relayed are never claimed back. A CHANGE a script made is (Fargoth's lookout, s184): that
+  -- half was relaxed out of the conversation gate when s184's walk had no dialogue behind it.
   actors.noteCombat(rat, me)
-  actors.noteTravel(rat, { x = 1, y = 2, z = 3 })
-  check('a relayed fight or travel on a puppet is not claimed outside a conversation', claims() == 0, 'claims=' .. claims())
+  actors.noteTravel(rat, { x = 1, y = 2, z = 3 }, true)
+  actors.handlers.MP_ActorAI({ ref = rat, cellKey = '-2,-7', travel = { x = 4, y = 5, z = 6 } })
+  actors.noteTravel(rat, { x = 4, y = 5, z = 6 })
+  check('a relayed fight, the initial travel or the relayed travel is not claimed outside a conversation', claims() == 0, 'claims=' .. claims())
+  actors.noteTravel(rat, { x = 7, y = 8, z = 9 })
+  check('...a travel a script started is, with no conversation', claims() == 1, 'claims=' .. claims())
   talking = true
   actors.noteCombat(rat, me)
-  actors.noteTravel(rat, { x = 1, y = 2, z = 3 })
-  check('...and a taunt or AITravel from our own conversation still is', claims() == 2, 'claims=' .. claims())
+  actors.noteTravel(rat, { x = 1, y = 2, z = 3 }, true)
+  check('...and a taunt or AITravel from our own conversation still is', claims() == 3, 'claims=' .. claims())
+  -- #77: the holder parks the NPC someone is talking to; companion.lua does the parking.
+  local sent = {}
+  rat.sendEvent = function(_, name, data) sent[#sent + 1] = name .. '=' .. tostring(data and data.on) end
+  actors.handlers.MP_ActorAI({ ref = rat, cellKey = '-2,-7', hold = true })
+  actors.handlers.MP_ActorAI({ ref = rat, cellKey = '-2,-7', hold = false })
+  check('a dialogue hold reaches the NPC as MP_DialogueHold on, then off', table.concat(sent, ',') == 'MP_DialogueHold=true,MP_DialogueHold=false', table.concat(sent, ','))
+  check('...and is not claimed back as travel or combat', claims() == 3, 'claims=' .. claims())
   package.loaded['scripts.mp.quests'] = nil
   package.loaded['scripts.mp.actors'] = nil
+end
+
+print('220 a guest does not carry Dagoth Gares\' curse home from another campaign')
+do
+  fresh()
+  package.loaded['scripts.mp.quests'] = nil
+  local env = stubs.install({})
+  local book, stage = { corprus = { id = 'corprus' } }, 0
+  local function remove(_, id) book[id] = nil end
+  env.types.Actor.spells = function() return setmetatable({}, { __index = function(_, k)
+    if k == 'remove' then return remove end
+    return book[k] end }) end
+  env.types.Player.quests = function() return { a2_2_6thhouse = { stage = stage } } end
+  local q = require('scripts.mp.quests')
+  local said = nil
+  q.init({ playerFn = function() return {} end, noticeFn = function(t) said = t end })
+  q.dropBorrowedCurse({})
+  check('at home, a curse our own campaign never earned is removed', book.corprus == nil and said ~= nil)
+  book.corprus, stage, said = { id = 'corprus' }, 50, nil
+  q.dropBorrowedCurse({})
+  check('...one our own campaign did earn (A2_2_6thHouse 50) stays', book.corprus ~= nil and said == nil)
+  package.loaded['scripts.mp.quests'] = nil
 end
 
 print('s149 the harness kill takes a LIVE fish, never the corpse or one already dying')

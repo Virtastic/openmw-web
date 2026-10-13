@@ -10,7 +10,7 @@
 // Individual mode stores per-player and never relays.
 
 import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
-import { parseObjRef, type ObjRef } from '../proto/ref';
+import { objRefToJs, parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
 
@@ -153,7 +153,7 @@ function index(v: LValue | undefined): number | undefined {
 
 export class Quests {
   // refKey -> the player currently holding the conversation, plus where it started.
-  private dialogueLocks = new Map<string, { playerId: number; cellKey: string }>();
+  private dialogueLocks = new Map<string, { playerId: number; cellKey: string; ref?: ObjRef }>();
 
   constructor(private readonly ctx: QuestCtx) {}
 
@@ -791,6 +791,7 @@ export class Quests {
       if (held?.playerId === player.id) {
         if (!player.system) player.lastDialogueAt = Date.now();
         this.dialogueLocks.delete(ref.key);
+        this.holdForDialogue(ref, held.cellKey, false);
         // A dialogue's consequences land AFTER the window closes -- a taunted NPC or a guard
         // whose arrest was resisted starts combat on "Goodbye" -- and the client's report of
         // that state polls at 1 Hz. Keep "who was just talking to it" for a moment.
@@ -811,8 +812,20 @@ export class Quests {
       return;
     }
     if (!player.system) { this.releaseDialogueLocks(player.id); player.lastDialogueAt = Date.now(); }
-    this.dialogueLocks.set(ref.key, { playerId: player.id, cellKey });
+    this.dialogueLocks.set(ref.key, { playerId: player.id, cellKey, ref });
+    this.holdForDialogue(ref, cellKey, true);
     player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: true });
+  }
+
+  // #77: in single player the world stops for a conversation; here the holder kept the NPC
+  // wandering, so it walked off on everyone else's screen and the talker's copy jumped to
+  // wherever it had got to when the window closed. The holder parks the NPC (a distance-0
+  // Wander on top of its stack, companion.lua) for as long as the lock is held.
+  private holdForDialogue(ref: ObjRef, cellKey: string, hold: boolean): void {
+    const holderId = this.ctx.holderOf?.(cellKey);
+    const holder = holderId === undefined ? undefined : this.ctx.roster.get(holderId);
+    if (!holder?.inWorld) return;
+    holder.peer.sendEvent('ActorAI', { ...objRefToJs(ref), cellKey, epoch: 0, hold });
   }
 
   // Release every lock held by a player (disconnect), or only those bound to a cell they
@@ -822,6 +835,7 @@ export class Quests {
       if (held.playerId !== playerId) continue;
       if (onlyCellKey !== undefined && held.cellKey !== onlyCellKey) continue;
       this.dialogueLocks.delete(key);
+      if (held.ref) this.holdForDialogue(held.ref, held.cellKey, false);
     }
   }
 

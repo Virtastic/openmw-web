@@ -934,6 +934,14 @@ actors.handlers.MP_ActorAI = function(data)
         if puppetActors[refKeyOf(obj)] and mp.setAiPackageDone then pcall(mp.setAiPackageDone, obj) end
         return
     end
+    if data.hold ~= nil then
+        -- #77: someone is talking to this NPC. The server sends it to the holder only; a
+        -- puppet's AI is off anyway. companion.lua parks it and lets it go.
+        if not puppetActors[refKeyOf(obj)] then
+            pcall(function() obj:sendEvent('MP_DialogueHold', { on = data.hold == true }) end)
+        end
+        return
+    end
     if type(data.travel) == 'table' and type(data.travel.x) == 'number' then
         -- A scripted destination. On a puppet (AI off) it is state only; on the holder the
         -- actor walks there, which is the point.

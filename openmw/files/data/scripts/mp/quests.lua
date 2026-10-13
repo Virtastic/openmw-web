@@ -690,7 +690,25 @@ handlers.MP_JournalSync = function(data)
         end
     end
     pendingJournal = {}
+    if data.borrowed ~= true then quests.dropBorrowedCurse(player) end
     print('[mp] journal sync applied')
+end
+
+-- #220: Dagoth Gares' CorprusOnPC runs OnDeath on every client in the cell, so "player->AddSpell
+-- Corprus" cursed every guest standing there -- while the A2_2 journal entry, and with it the
+-- whole cure, went to the HOST's campaign. Guests keep loot, not quests: at home, a character
+-- whose own campaign never reached the curse (A2_2_6thHouse 50) does not carry it.
+function quests.dropBorrowedCurse(player)
+    if not player then return end
+    pcall(function()
+        local spells = types.Actor.spells(player)
+        if not spells.corprus then return end
+        local q = types.Player.quests(player)['a2_2_6thhouse']
+        if q and (q.stage or 0) >= 50 then return end
+        spells:remove('corprus')
+        print('[mp] corprus: removed a curse from another campaign')
+        notice("Dagoth Gares' curse belonged to the campaign you visited; it does not follow you home.")
+    end)
 end
 
 handlers.MP_GlobalVarUpdate = function(data)

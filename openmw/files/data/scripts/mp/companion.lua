@@ -129,6 +129,23 @@ local function reissueStalledFollow()
     pcall(function() I.AI.startPackage({ type = 'Follow', target = target }) end)
 end
 
+-- #77: the holder parks an NPC someone is talking to. A distance-0 Wander stacked WITHOUT
+-- cancelling goes in front of the NPC's own same-priority package (AiSequence::stack), and a
+-- fight (higher priority) stays on top. Releasing removes the FIRST distance-0 Wander only:
+-- ours, never a shopkeeper's own stand-still wander further down the stack.
+local HOLD_MAX_S = 300
+local heldSince = nil
+local function releaseHold()
+    heldSince = nil
+    local removed = false
+    pcall(function()
+        I.AI.filterPackages(function(p)
+            if not removed and p.type == 'Wander' and (p.distance or 0) == 0 then removed = true; return false end
+            return true
+        end)
+    end)
+end
+
 return {
     engineHandlers = {
         onUpdate = function()
@@ -165,6 +182,14 @@ return {
             local now = core.getRealTime()
             if now < nextPoll then return end
             nextPoll = now + POLL
+
+            -- Parked for a conversation (#77): the hold is on top of the stack, so nothing the
+            -- reports below would read is true of the NPC. A lost release must not park it
+            -- for good: a conversation is minutes, not an afternoon.
+            if heldSince then
+                if now - heldSince < HOLD_MAX_S then return end
+                releaseHold()
+            end
 
             reissueStalledFollow()
 
@@ -225,6 +250,15 @@ return {
         end,
     },
     eventHandlers = {
+        MP_DialogueHold = function(data)
+            if data.on then
+                if heldSince then return end
+                local ok = pcall(function() I.AI.startPackage({ type = 'Wander', distance = 0, cancelOther = false }) end)
+                if ok then heldSince = core.getRealTime() end
+            elseif heldSince then
+                releaseHold()
+            end
+        end,
         -- Scenario probe (s114): what this actor's AI stack looks like from its own script.
         mpTestFollowProbe = function()
             local out = {}
