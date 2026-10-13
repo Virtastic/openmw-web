@@ -47,7 +47,13 @@
 
 	# Caching: the engine binaries are content-built and effectively immutable; the HTML is the only
 	# thing that should re-fetch. (Cloudflare's Cache Rule mirrors this at the edge.)
-	@immutable path *.wasm *.data *.js *.br *.bsa *.esm *.tar
+	# NOT the gateway's own scripts (/admin/static/play.js, providers.js): they keep their name
+	# across releases, so "immutable" let Cloudflare serve the sign-in page a year-old play.js
+	# (2026-10-13: #124's change deployed, CF answered HIT with the previous file).
+	@immutable {
+		path *.wasm *.data *.js *.br *.bsa *.esm *.tar
+		not path /admin/*
+	}
 	header @immutable Cache-Control "public, max-age=31536000, immutable"
 	# "/" MUST be in this matcher. The rewrite above serves launcher.html for the bare root, but
 	# this matcher tests the REQUEST path, which is still "/" — so the root shipped with no
