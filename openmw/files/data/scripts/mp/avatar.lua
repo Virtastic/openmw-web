@@ -72,6 +72,8 @@ local prevJump = false
 local jumpLatch, useLatch = false, false
 local useWasOn, useProbeAt = false, nil
 local useOnSince, useHeldSaidAt = nil, nil
+local ownerSlots = {} -- slot -> record the owner holds there (MP_Equip); see rebindAmmo
+local lastPushSaid = 'none' -- the last MP_Equip's slots, for the press probe
 local function pressProbe(when)
     pcall(function()
         local ft = types.Actor.stats.dynamic.fatigue(self)
@@ -81,10 +83,26 @@ local function pressProbe(when)
         -- stopped applying this body's controls (#161 s118). body=none with a weapon drawn means
         -- the actor is not in the engine's actor list at all.
         local hp = types.Actor.stats.dynamic.health(self)
-        print(string.format('[mp] avatar use %s: attacking=%s body=%s dead=%s hp=%.0f staggered=%s stance=%s fatigue=%.0f/%.0f weapon=%s',
+        -- THE QUIVER (s138: one arrow ever lands, then 40 releases loose nothing): what is
+        -- equipped in the ammo slot, and how many of that record the pack holds in all.
+        local am = types.Actor.getEquipment(self, types.Actor.EQUIPMENT_SLOT.Ammunition)
+        local want = ownerSlots[types.Actor.EQUIPMENT_SLOT.Ammunition]
+        local amTotal = (am or want) and types.Actor.inventory(self):countOf(am and am.recordId or want) or 0
+        print(string.format('[mp] avatar use %s: attacking=%s body=%s dead=%s hp=%.0f staggered=%s stance=%s fatigue=%.0f/%.0f weapon=%s ammo=%s x%s of %s',
             when, tostring(mp.isAttacking and mp.isAttacking(self.object)), tostring(mp.upperBody and mp.upperBody(self.object)),
             tostring(types.Actor.isDead(self)), hp.current, tostring(mp.isKnockedDown and mp.isKnockedDown(self.object)),
-            tostring(types.Actor.getStance(self)), ft.current, ft.base, w and w.recordId or 'none'))
+            tostring(types.Actor.getStance(self)), ft.current, ft.base, w and w.recordId or 'none',
+            am and am.recordId or 'none', am and tostring(am.count) or '0', tostring(amTotal))
+            .. ' owner=' .. tostring(want) .. ' push=' .. lastPushSaid .. ' pack=' .. (function()
+                local out = {}
+                for _, it in ipairs(types.Actor.inventory(self):getAll()) do
+                    if types.Weapon.objectIsInstance(it) then
+                        local t = types.Weapon.record(it).type
+                        if t == types.Weapon.TYPE.Arrow or t == types.Weapon.TYPE.Bolt then out[#out + 1] = it.recordId .. 'x' .. tostring(it.count) end
+                    end
+                end
+                return #out > 0 and table.concat(out, ',') or 'no-ammo'
+            end)())
     end)
 end
 local hitHandlerRegistered = false
@@ -145,7 +163,36 @@ end
 -- items land a frame or more after the event.
 local pendingEquip = nil
 local equipRetryUntil = 0
+-- THE QUIVER REFILLS ITSELF ON A PLAYER, NOT ON THIS BODY. The owner's copy only aims, so its
+-- arrows never run down and the doc keeps granting the full count; this body spends its equipped
+-- stack, the slot empties, and the reconciler's refill lands as a NEW stack nothing equips. The
+-- engine re-equips ammo for the player character only, so an archer loosed one stack and then
+-- dry-fired for good (s138: 41 releases, one arrow ever flew; probe: ammo=none at every press).
+-- Thrown weapons are the same story in the right hand: the dart stack IS the weapon.
+local ammoCheckAt = 0
+local function rebindAmmo(now)
+    if now < ammoCheckAt or next(ownerSlots) == nil then return end
+    ammoCheckAt = now + 0.5
+    pcall(function()
+        local eq, changed = nil, false
+        for slot, rid in pairs(ownerSlots) do
+            local cur = types.Actor.getEquipment(self, slot)
+            if not (cur and (cur.count or 0) > 0) then
+                local best = nil
+                for _, item in ipairs(types.Actor.inventory(self):getAll()) do
+                    if item.recordId == rid and (not best or (item.count or 1) > (best.count or 1)) then best = item end
+                end
+                if best then
+                    if not eq then eq = {}; for s, it in pairs(types.Actor.getEquipment(self)) do eq[s] = it end end
+                    eq[slot] = best; changed = true
+                end
+            end
+        end
+        if changed then types.Actor.setEquipment(self, eq) end
+    end)
+end
 local function equipTick(now)
+    rebindAmmo(now)
     if not pendingEquip then return end
     local have = {}
     for _, item in ipairs(types.Actor.inventory(self):getAll()) do have[item.recordId] = true end
@@ -435,6 +482,15 @@ return {
             local slots = {}
             for slot, id in pairs(data.slots or {}) do slots[tonumber(slot) or slot] = id end
             pendingEquip = slots
+            local said = {}
+            for s, id in pairs(slots) do said[#said + 1] = tostring(s) .. '=' .. tostring(id) end
+            lastPushSaid = table.concat(said, ';')
+            print('[mp] avatar equip push: ' .. lastPushSaid)
+            -- What the owner holds in the slots this body can spend empty (rebindAmmo).
+            ownerSlots = {}
+            for _, s in ipairs({ types.Actor.EQUIPMENT_SLOT.Ammunition, types.Actor.EQUIPMENT_SLOT.CarriedRight }) do
+                if type(slots[s]) == 'string' then ownerSlots[s] = slots[s] end
+            end
             equipRetryUntil = core.getRealTime() + 3
         end,
         mpAvatarPolicy = function(data)

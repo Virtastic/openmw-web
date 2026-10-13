@@ -43,11 +43,18 @@ export default async function run(ctx) {
   // The nearest living named creature (keyed by record, s164).
   const me = await poseOf(b);
   let probe = {};
+  // THE STING CAN STILL KILL: the next swing is already in flight when the first wound shows,
+  // and a 23 hp rat at 9 died to it right after the retreat (#207, twice: dead 0.6 s later, read
+  // as "never chased"). Wait out the blows in flight; a mark that died is replaced, up to 3 times.
+  const tried = new Set();
+  let victim, p0, stung, hurt = false;
+  for (let attempt = 1; attempt <= 3; attempt++) {
   // One a provoking blow cannot kill and that is alone under its record (#178: the 8 hp scrib
   // died to the sting, and 'n' was 2 -- the probe's one position for 'scrib' could be either).
-  const { found: victim } = await pickUntil(ctx, async () => [Object.values(await netObjs(b)), JSON.parse(await b.eval('window.omw.state.actorProbe||"{}"'))],
-    (names, pr) => { probe = pr; const live = (r) => pr[r] && !pr[r].dead; const ok = (r) => live(r) && (pr[r].n ?? 1) === 1; return names.filter((r) => ok(r) && !(pr[r].hp >= 0 && pr[r].hp < 20)).sort((x, y) => Math.hypot(pr[x].x - me.x, pr[x].y - me.y) - Math.hypot(pr[y].x - me.x, pr[y].y - me.y))[0] ?? names.filter(ok)[0] ?? names.find(live); }); // last resort: a duplicated record (#179: the cell held only rats, n > 1)
-  assert.ok(victim, `no living named creature in the probe: ${JSON.stringify(Object.keys(probe))}`);
+  ({ found: victim } = await pickUntil(ctx, async () => [Object.values(await netObjs(b)).filter((r) => !tried.has(r)), JSON.parse(await b.eval('window.omw.state.actorProbe||"{}"'))],
+    (names, pr) => { probe = pr; const live = (r) => pr[r] && !pr[r].dead; const ok = (r) => live(r) && (pr[r].n ?? 1) === 1; return names.filter((r) => ok(r) && !(pr[r].hp >= 0 && pr[r].hp < 20)).sort((x, y) => Math.hypot(pr[x].x - me.x, pr[x].y - me.y) - Math.hypot(pr[y].x - me.x, pr[y].y - me.y))[0] ?? names.filter(ok)[0] ?? names.find(live); })); // last resort: a duplicated record (#179: the cell held only rats, n > 1)
+  assert.ok(victim, `no living named creature in the probe: ${JSON.stringify(Object.keys(probe))} (already tried: ${[...tried].join(', ')})`);
+  tried.add(victim);
 
   // Provoke it with ONE STING, not a spell that kills it. A Fire Bite is 15-30 damage and the
   // mark the peer rolls here is a scrib with 8 health: #106 killed it with the provocation
@@ -55,20 +62,24 @@ export default async function run(ctx) {
   // which is not JSON, so the scenario read NaN. s138/s164 provoke the same way: a 1-point
   // relay sting, which cannot kill anything and still makes the creature come at you. The
   // chase is what this scenario is about; the cast path is s59's and s166 need not re-prove it.
-  const p0 = await probeOf(b, victim);
+  p0 = await probeOf(b, victim);
   await b.cmd(`snapto:${Math.round(p0.x + 60)},${Math.round(p0.y)},${Math.round(p0.z + 8)}`);
   await b.eval("if (window.omw.state) window.omw.state.selfDivergence = null; 'cleared';");
   await b.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', 60_000, 'the avatar rules our pose beside the mark');
   // Provoked FOR REAL and weakly (longblade 40): hurt, not killed, so it has a reason to chase.
-  let hurt = false;
+  hurt = false;
   await focus(b); await armMelee(b, undefined, 40);
   await swingUntil(ctx, b, () => probeRec(b, victim), async () => {
     const q = await probeOf(b, victim);
     hurt = !!q && Number(q.hp) < Number(p0.hp);
     return hurt;
   }, { maxSwings: 15, budgetMs: 120_000 });
-  const stung = await probeOf(b, victim);
+  await ctx.sleep(2_000); // the blows still in flight land
+  stung = await probeOf(b, victim);
   ctx.log(`the mark: the peer's "${victim}" hp ${p0.hp} -> ${(stung || {}).hp} (hurt=${hurt}); B retreats ${RETREAT} u`);
+  if (hurt && stung && !stung.dead && Number(stung.hp) > 0) break;
+  if (attempt < 3) ctx.log(`  the sting ${hurt ? 'killed' : 'never hurt'} the ${victim}: another mark`);
+  }
   assert.ok(hurt, `the ${victim} was never hurt by the sting; nothing to provoke a chase with`);
   assert.ok(stung && !stung.dead && Number(stung.hp) > 0, `the sting killed the ${victim} (${JSON.stringify(stung)}); a corpse cannot chase`);
 

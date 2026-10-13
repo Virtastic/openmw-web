@@ -82,7 +82,13 @@ export default async function run(ctx) {
   // would sheathe it (an equipment change resets the draw state).
   await a.cmd(`equip:${BOW}:16`);
   await a.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(BOW)}) >= 0`, 15_000, 'the bow is in hand');
-  for (let i = 0; i < 24; i++) { await a.cmd(`equip:${ARROW}:18`); await ctx.sleep(150); } // the equip hook holds one pending item at a time
+  // ONE QUIVER, AS A PLAYER HAS IT: the stack first, then one equip. Twenty-four equip: grants
+  // left the owner's slot on a one-arrow stack that the first shot emptied; the owner's next
+  // equipment push then carried no ammo slot at all and the avatar dry-fired with 23 arrows in
+  // its pack (#207 probe: push=...16=long bow... pack=iron arrowx23, ammo=none at every press).
+  await a.evalAsync(`Promise.all(Array.from({ length: 23 }, () => window.omw.send('give:${ARROW}')))`);
+  await ctx.sleep(1_000);
+  await a.cmd(`equip:${ARROW}:18`);
   await a.waitFor(`(window.omw.state.equippedIds||"").indexOf(${JSON.stringify(ARROW)}) >= 0 && (window.omw.state.equippedIds||"").indexOf(${JSON.stringify(BOW)}) >= 0`, 15_000, 'bow and quiver both equipped');
   await a.cmd('setskill:marksman:100');
   await ctx.sleep(3_000); // equipment + skills diff out to the server and on to the avatar
