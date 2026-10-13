@@ -8,6 +8,7 @@
 //
 // Resolves from both src/ (tsx) and dist/ (bundle), exactly like config.default.toml.
 
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, extname, normalize, sep } from 'node:path';
@@ -56,10 +57,23 @@ export function readWebFile(rel: string): { body: Buffer; type: string } | undef
   return { body: readFileSync(full), type: TYPES[extname(full).toLowerCase()] ?? 'application/octet-stream' };
 }
 
+// CONTENT-VERSIONED ASSET URLS. play.js and app.js keep their names across releases, and an
+// edge that cached one (prod's Cloudflare had /admin/static/play.js as a year-long immutable
+// HIT, 2026-10-13) kept serving it after every deploy. A page now names each of its
+// /admin/static assets with ?v=<hash of that file>, so a changed file is a new URL.
+export function versionAssetUrls(html: string): string {
+  return html.replace(/((?:src|href)=")\/admin\/static\/([^"?#]+)"/g, (m, attr: string, path: string) => {
+    const f = readWebFile(path);
+    if (!f) return m;
+    return `${attr}/admin/static/${path}?v=${createHash('sha256').update(f.body).digest('hex').slice(0, 12)}"`;
+  });
+}
+
 export function serveWebFile(res: ServerResponse, rel: string): boolean {
-  const file = readWebFile(rel);
+  let file = readWebFile(rel);
   if (!file) return false;
   const isPage = file.type.startsWith('text/html');
+  if (isPage) file = { ...file, body: Buffer.from(versionAssetUrls(file.body.toString('utf8'))) };
   res.writeHead(200, {
     'content-type': file.type,
     'content-length': file.body.length,

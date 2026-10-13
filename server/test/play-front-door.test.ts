@@ -246,3 +246,14 @@ test('streamfs prefetches the next chunk after a sequential miss', sfsOpts, () =
   assert.ok(sfs.includes('if (prefetch && prefetch.ckey === ckey) await prefetch.done;'), 'a read of the chunk in flight must wait for it, not refetch');
   assert.ok(sfs.includes('S.lastMiss.end === start'), 'sequential = this miss starts where the last one ended');
 });
+
+test('pages name their /admin/static assets by content hash (an edge cache cannot pin an old play.js)', async () => {
+  const { versionAssetUrls, readWebFile } = await import('../src/net/admin/static');
+  const html = versionAssetUrls(readFileSync(join(process.cwd(), 'web', 'play.html'), 'utf8'));
+  const m = /src="\/admin\/static\/play\.js\?v=([0-9a-f]{12})"/.exec(html);
+  assert.ok(m, 'play.js is referenced with ?v=<hash>');
+  const { createHash } = await import('node:crypto');
+  assert.equal(m[1], createHash('sha256').update(readWebFile('play.js')!.body).digest('hex').slice(0, 12));
+  assert.equal(versionAssetUrls('<script src="/admin/static/nope.js"></script>'), '<script src="/admin/static/nope.js"></script>',
+    'a missing file is left alone');
+});

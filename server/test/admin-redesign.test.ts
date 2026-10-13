@@ -62,7 +62,7 @@ test('the front door: / sends you to setup until it is done, then serves the sig
     // Anchored on what makes it the sign-in page, not on a sentence: this used to match a
     // subtitle, so deleting a line of copy failed a test about routing.
     assert.match(body, /id="options"/, 'it is the sign-in page');
-    assert.match(body, /src="\/admin\/static\/play\.js"/, 'and it loads the sign-in script');
+    assert.match(body, /src="\/admin\/static\/play\.js\?v=[0-9a-f]{12}"/, 'and it loads the sign-in script');
     assert.doesNotMatch(body, /<script>/, 'no inline script: the page runs under script-src self');
   }
 });
