@@ -2,6 +2,38 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.5.2
+
+**The world simulator runs again.** Since 1.5.0 the server's headless simulator, the "peer" that
+plays every NPC, creature and quest script for all players at once, crashed the moment it started:
+one new script file was missing from the install list, so every packaged server (prod, the GHCR
+image, self-hosted installs) shipped without it. Each player's game then ran its own NPCs, which is
+what made them jerky, out of step between players, and why scripted walks such as Fargoth's
+lookout were never shared. The file is installed again, a test now fails on any script the native
+install would miss, and the test harness checks the scripts the image really installed instead of
+mounting the repository's over them.
+
+**Someone you are talking to stays put.** In single player the world stops for a conversation;
+here the simulator kept the NPC wandering, so it walked off on everyone else's screen and jumped
+when the window closed. The NPC now waits until the conversation ends (or the talker walks away).
+
+**Archers keep shooting.** The simulator's copy of you is an NPC body, and the engine only
+re-equips a quiver for the player character, so once that body's equipped stack ran out the bow
+dry-fired with arrows still in the pack. It now re-equips the stack you hold (and thrown weapons
+in the hand) whenever the slot empties.
+
+**Visiting does not curse you for good.** Dagoth Gares' dying curse used to land on every guest in
+the room while the quest that cures it went to the host's journal. A guest who goes home without
+that quest of their own no longer carries Corprus.
+
+**Signing in.** The sign-in page says up front that you need your own copy of Morrowind on servers
+where players upload their game files. The page's scripts are now named by content, so a cache can
+no longer keep serving an old one after an update. Saves keep reaching the browser's storage when
+it closes its database underneath the game.
+
+**New scenario:** s184 walks Fargoth through his lookout route and checks it on a second player's
+screen.
+
 ## 1.5.0
 
 **What you carry stays what you carry.** Inventory changes in OpenMW land at the end of the frame,
