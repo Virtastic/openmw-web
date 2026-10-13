@@ -545,7 +545,9 @@ window.omw = (function(){
    function want(text, cls){
      if (mode === 'all') return true;
      if (cls === 'err') return true;
-     return /\berror\b|\bwarn|\bfailed\b|\bABORT\b|Lua error|can not parse/i.test(text);
+     // [locker] lines are the upload funnel: without them a player who stops at the wizard
+     // (no Data Files to hand, folder picker refused) leaves no trace beyond "never_joined".
+     return /^\[locker\]|\berror\b|\bwarn|\bfailed\b|\bABORT\b|Lua error|can not parse/i.test(text);
    }
    function flush(){
      if (sending || !queue.length) return;
@@ -1365,6 +1367,15 @@ window.omw = (function(){
      window.__omwSyncing = true;
      FS.syncfs(false, function(err){
        if (err) append('[syncfs] ' + err, 'err'); // a save that did not reach IDBFS (410)
+       // The browser can close an IndexedDB connection under us (storage pressure, another tab
+       // upgrading the db). Emscripten caches the handle in IDBFS.dbs and reuses the dead one on
+       // every later sync, so one close meant no save reached disk for the rest of the session
+       // (prod 2026-10-13: a client logged this once a minute for over an hour). Drop the cached
+       // handle so the next sync reopens it, and retry once now.
+       if (err && /closing|InvalidStateError/i.test(String(err)) && !window.__omwSyncReopened){
+         try { var dbs = FS.filesystems.IDBFS.dbs; for (var k in dbs) delete dbs[k]; } catch(e){}
+         window.__omwSyncReopened = true; window.__omwSyncAgain = true;
+       } else if (!err) window.__omwSyncReopened = false;
        window.__omwSyncing = false;
        if (window.__omwSyncAgain) { window.__omwSyncAgain = false; window.__omwSyncfs(); }
      });
@@ -2895,11 +2906,12 @@ window.omw = (function(){
              }
              pick.onclick=async function(){
                if (pick.disabled || busy) return;
+               append('[locker] folder picker opened (' + (window.showDirectoryPicker ? 'directory' : 'input') + ')');
                if (!window.showDirectoryPicker){ dirInput.click(); return; } // older browser fallback
                var res;
                try { res = await pickFolderTargeted(); }
                catch(e){
-                 if (e && e.name === 'AbortError') return;
+                 if (e && e.name === 'AbortError'){ append('[locker] folder picker cancelled'); return; }
                  // Chromium refuses folders inside system locations (Program Files, Windows, …).
                  // Steam's default library lives under C:\Program Files (x86)\Steam\, so a default
                  // Steam install trips this — same handling as the launcher's local-play picker.
