@@ -322,6 +322,18 @@ ensureHitHandler()
 -- (mwmp/puppets.hpp). Drain ours each frame and forward on the same route melee takes — the
 -- global script owns the socket, so it sends. Without this, spell damage simply vanished:
 -- applied to our local copy, never told to the owner, reverted on the next stats push.
+local PASSIVE = {}
+local SPELL_TYPE = (core.magic and core.magic.SPELL_TYPE) or {}
+for _, k in ipairs({ 'Ability', 'Disease', 'Blight', 'Curse' }) do
+    local v = SPELL_TYPE[k]
+    if v ~= nil then PASSIVE[v] = true end
+end
+local function passiveSpell(id)
+    if type(id) ~= 'string' or id == '' then return false end
+    local ok, rec = pcall(function() return core.magic.spells.records[id] end)
+    return ok and rec ~= nil and PASSIVE[rec.type] == true
+end
+
 local function forwardMagicHits()
     if not (playerId or actorKey) then return end
     if not mp.takeMagicHits then return end
@@ -338,18 +350,25 @@ local function forwardMagicHits()
     -- PvP veto (backlog 249). combat.lua drops the harmful indexes under PvP off.
     local effects, spellId, beneficial, ignoreReflect = {}, nil, true, false
     for _, h in ipairs(hits) do
-        local one = { id = tostring(h.effectId), magnitude = h.magnitude or 0, duration = 0,
-            beneficial = h.beneficial == true }
-        if type(h.index) == 'number' and h.index >= 0 then one.index = h.index end
-        effects[#effects + 1] = one
-        spellId = spellId or (h.spellId ~= '' and h.spellId or nil)
-        -- A helper's heal on a friend: forwarded like damage, but it must cross the PvP veto
-        -- (which stops harm, not help) and apply as a restore on the owner's avatar.
-        if h.beneficial ~= true then beneficial = false end
-        -- A reflection landing on the caster's puppet: the owner applies it without rolling
-        -- Reflect again, or two Reflect-wearers volley one spell forever (backlog 254).
-        if h.reflected == true then ignoreReflect = true end
+        -- THE ACTOR'S OWN SPELLS ARE NOT HITS. An ability, disease, blight or curse is applied
+        -- to the puppet when it loads (a racial Resist Fire, a diseased kagouti's Yellow Tick)
+        -- and parks here like a cast -- prod 2026-10-14: every one forwarded, every one refused
+        -- "spell not known to the caster". Nobody casts those at anyone.
+        if not passiveSpell(h.spellId) then
+            local one = { id = tostring(h.effectId), magnitude = h.magnitude or 0, duration = 0,
+                beneficial = h.beneficial == true }
+            if type(h.index) == 'number' and h.index >= 0 then one.index = h.index end
+            effects[#effects + 1] = one
+            spellId = spellId or (h.spellId ~= '' and h.spellId or nil)
+            -- A helper's heal on a friend: forwarded like damage, but it must cross the PvP veto
+            -- (which stops harm, not help) and apply as a restore on the owner's avatar.
+            if h.beneficial ~= true then beneficial = false end
+            -- A reflection landing on the caster's puppet: the owner applies it without rolling
+            -- Reflect again, or two Reflect-wearers volley one spell forever (backlog 254).
+            if h.reflected == true then ignoreReflect = true end
+        end
     end
+    if #effects == 0 then return end
     core.sendGlobalEvent('mpCombatSpellHit', {
         victim = self.object,
         playerId = playerId,
