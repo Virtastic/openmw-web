@@ -1312,7 +1312,10 @@ function actors.tick(now)
                 -- reloaded alive reads dead here with hp climbing back up (s157).
                 local hp = -1
                 pcall(function() hp = types.Actor.stats.dynamic.health(obj).current end)
-                probe[rec] = { x = p.x, y = p.y, z = p.z, dead = types.Actor.isDead(obj),
+                -- yaw: the drawn facing, which the page compares with the server's for the same
+                -- NPC (telemetry npcFacing) -- "they do 180s as they walk" was invisible in
+                -- every position metric (prod 2026-10-14).
+                probe[rec] = { x = p.x, y = p.y, z = p.z, yaw = obj.rotation:getYaw(), dead = types.Actor.isDead(obj),
                     guard = isGuard, hp = hp, n = probeN[rec] or 1, puppet = puppeted }
             end
         end

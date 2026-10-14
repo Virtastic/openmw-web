@@ -36,6 +36,7 @@ def lines():
 ev = Counter(); warn = Counter(); sso_fail = Counter(); drops = Counter(); reaped = Counter()
 client_err = Counter(); peer_err = Counter(); accounts = set(); joined = set()
 path95, path_max, snaps, first_unheld = [], [], 0, 0
+facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
 seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set); data_setup = {}
 num = lambda s: re.sub(r'\d[\d.:x]*', 'N', s)
 f = lambda t, k: (re.search(k + r'=(\S+)', t) or [None, None])[1]
@@ -61,6 +62,8 @@ for e in lines():
             m = re.search(r'npcPath p50=\d+ p95=(\d+) max=(\d+)', t)
             sn = f(t, 'snaps')
             if sn and sn.isdigit(): snaps += int(sn)
+            mf = re.search(r'npcFacing bad=(\d+) n=(\d+)', t)
+            if mf: facing_bad += int(mf[1]); facing_n += int(mf[2])
             if s not in seen_session:
                 seen_session.add(s)
                 if f(t, 'holder') == 'none' and f(t, 'cell') not in (None, '?'): first_unheld += 1
@@ -83,6 +86,7 @@ print(f"worlds reaped:\n{top(reaped)}")
 print(f"stuck on the loading screen 5 min (settle timeout): {sum(v for k, v in client_err.items() if 'settle hold released' in k)}")
 print(f"smoothness: NPC path p95 per 5 s window -- median {q(path95, .5)}, p90 {q(path95, .9)}, p99 {q(path95, .99)}, max {q(path_max, 1)} u"
       f" ({len(path95)} windows) | snaps {snaps} | sessions whose first window was unheld {first_unheld}")
+print(f"facing: walking NPCs drawn turned round (>120 deg off the server) {facing_bad}/{facing_n} samples" + (f" ({100 * facing_bad / facing_n:.1f}%)" if facing_n else ''))
 print(f'Lua errors (peer + clients): {lua_errors}')
 print(f"sim peer start failures: {ev['simpeer.start_timeout']}   peer errors:\n{top(peer_err, 8)}")
 print(f"refused player actions (a thing a player did that did nothing):\n{top(drops)}")

@@ -659,20 +659,34 @@ window.omw = (function(){
    // NPC AGREEMENT, live: each alive actor this screen draws (the probe mirror, its own copy)
    // against the nearest pose the server sent in the last second. The live half of the 64 u
    // bar -- a software-rendered harness client cannot run fast enough to judge it.
-   var npcGap = [], npcPath = [];
+   var npcGap = [], npcPath = [], npcFacingN = 0, npcFacingBad = 0;
    setInterval(function(){
      var s = st();
      if (s.netstate !== 'Joined' || !s.actorProbe) return;
      var probe; try { probe = JSON.parse(s.actorProbe); } catch (e) { return; }
-     var now = Date.now(), rx = [];
-     for (var k in actorTap.last) { var r = actorTap.last[k]; if (now - r.t < 1000) rx.push(r); }
+     var now = Date.now(), rx = [], rk = [];
+     for (var k in actorTap.last) { var r = actorTap.last[k]; if (now - r.t < 1000) { rx.push(r); rk.push(k); } }
      if (!rx.length) return;
      for (var rec in probe) {
        var p = probe[rec];
        if (rec === 'player' || !p || p.dead || (p.n || 1) !== 1) continue;
-       var best = Infinity;
-       for (var i = 0; i < rx.length; i++) { var dx = rx[i].x - p.x, dy = rx[i].y - p.y, dd = dx * dx + dy * dy; if (dd < best) best = dd; }
+       var best = Infinity, near = null, nearK = null;
+       for (var i = 0; i < rx.length; i++) { var dx = rx[i].x - p.x, dy = rx[i].y - p.y, dd = dx * dx + dy * dy; if (dd < best) { best = dd; near = rx[i]; nearK = rk[i]; } }
        if (best < 1024 * 1024) npcGap.push(Math.sqrt(best)); // beyond that it is another actor
+       // npcFacing: a WALKING NPC (server speed over 20 u/s) drawn facing more than 120 degrees
+       // off the server's own heading for it. Positions can be right while it walks backwards or
+       // spins ("doing 180s as they walk", prod 2026-10-14); no position metric shows that.
+       if (near && best < 64 * 64 && typeof p.yaw === 'number') {
+         var nh = actorTap.hist[nearK] || [];
+         var pa = nh.length > 1 ? nh[nh.length - 2] : null;
+         var sp = pa && near.t > pa.t ? Math.hypot(near.x - pa.x, near.y - pa.y) / ((near.t - pa.t) / 1000) : 0;
+         if (sp > 20) {
+           var dyaw = Math.abs(((p.yaw - near.yaw) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
+           npcFacingN++; if (dyaw > 2.1) npcFacingBad++;
+           var tot = window.__omwNpcFacing || (window.__omwNpcFacing = { n: 0, bad: 0 }); // never reset: scenarios read it
+           tot.n++; if (dyaw > 2.1) tot.bad++;
+         }
+       }
        // npcPath: the same drawn position against the PATH the server sent over the last 2 s.
        // npcGap compares with the NEWEST pose, so a running NPC drawn on purpose ~0.1-0.3 s in
        // the past (interp.lua's render delay) reads 20-100 u "off" while exactly on its path. A
@@ -722,6 +736,7 @@ window.omw = (function(){
        + ' puppeted=' + (s.puppetedActors || '?')
        + ' npcGap p50=' + gq(0.5) + ' p95=' + gq(0.95) + ' n=' + npcGap.length
        + ' npcPath p50=' + pq(0.5) + ' p95=' + pq(0.95) + ' max=' + pq(1) + ' n=' + npcPath.length
+       + ' npcFacing bad=' + npcFacingBad + ' n=' + npcFacingN
        + ' wsRx=' + JSON.stringify(wsRx)
        + ' raw=' + JSON.stringify({ abi: s.actorBatchesIn, isHolder: s.isHolder, puppetRx: s.puppetRx,
            puppetMark: s.puppetMark, simReady: s.simReady, snap: s.selfSnap, stale: s.selfStale });
@@ -736,7 +751,7 @@ window.omw = (function(){
        });
        line += ' state=' + JSON.stringify(keep);
      }
-     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = [];
+     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = []; npcFacingN = 0; npcFacingBad = 0;
      fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
        body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
    }, 5000);
