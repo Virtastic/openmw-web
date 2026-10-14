@@ -4557,7 +4557,17 @@ window.omw = (function(){
       // Once ready, the grace runs to completion — the ceiling below only bounds the WAIT for
       // readiness, and cutting the grace short would hand back the seconds it exists to cover.
       if (readyAt) {
-        if (Date.now() - readyAt >= GRACE_MS) { settled(); return; }
+        // ...AND THE CELL YOU STAND IN IS HELD, ITS NPCS UPDATED. simReady means the world's peer
+        // is up, not that it holds YOUR cell yet (anchoring waits JOIN_SETTLE_MS plus a 2 s pass
+        // plus the cell load). Prod 1.5.2: a join's first window read holder=none puppeted=0, the
+        // browser's own NPCs on screen until the peer's first pose moved them up to 764 u. Held =
+        // a holder named and, if anything is puppeted, a batch received. Character creation is
+        // exempt (its cells are unheld by design); +10 s bounds it either way.
+        var held = (st.authorityHolder && st.authorityHolder !== 'none'
+            && (Number(st.puppetedActors || 0) === 0 || Number(st.actorBatchesIn || 0) > 0))
+          || st.chargenDone !== '1';
+        var waited = Date.now() - readyAt;
+        if (waited >= GRACE_MS && (held || waited >= GRACE_MS + 10000)) { settled(); return; }
       } else {
         if (Date.now() > until) { // let the net layer speak
           settled();
