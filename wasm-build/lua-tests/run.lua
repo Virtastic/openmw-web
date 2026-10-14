@@ -408,6 +408,10 @@ do
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   check('puppet.lua words the cast beneficial only when EVERY hit is (249)',
     pp:find('if h.beneficial ~= true then beneficial = false end', 1, true) ~= nil)
+  check('puppet.lua never forwards the actor\'s own ability/disease/blight/curse as a hit',
+    pp:find("{ 'Ability', 'Disease', 'Blight', 'Curse' }", 1, true) ~= nil
+    and pp:find('if not passiveSpell(h.spellId) then', 1, true) ~= nil
+    and pp:find('if #effects == 0 then return end', 1, true) ~= nil)
   types.Book = nil
 end
 
