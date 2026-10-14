@@ -18,7 +18,7 @@
 // LEAK private world ids to people who were not invited, which is why listing filters on the
 // caller-supplied account and why that is only a listing filter, never an access control.
 
-import { createServer, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import { clientIp, CLIENT_IP_HEADER } from '../net/ws';
 import { existsSync } from 'node:fs';
@@ -160,8 +160,20 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     wsPath: `/w/${w.id}`,
   });
 
+  // ONE BAD REQUEST MUST NOT END THE GATEWAY. A throw in here was an uncaughtException, which
+  // runs the whole crash shutdown: prod 2026-10-14 21:42, a request whose URL `new URL` could
+  // not parse took every world offline (502 on /mwdata, /clientlog) until a manual restart.
   const server: Server = createServer((req, res) => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    try { handle(req, res); } catch (err) {
+      log('error', 'gateway.request_failed', { url: String(req.url ?? '').slice(0, 200), error: String(err) });
+      if (!res.headersSent) json(res, 500, { error: 'internal error' }); else res.destroy();
+    }
+  });
+  function handle(req: IncomingMessage, res: ServerResponse): void {
+    let url: URL;
+    try { url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`); } catch {
+      json(res, 400, { error: 'bad request' }); return;
+    }
     const path = url.pathname;
 
     // The game page is a DIFFERENT origin than this gateway, so every endpoint here is a
@@ -425,7 +437,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     }
 
     json(res, 404, { error: 'not found' });
-  });
+  }
 
   // WORLD TRAFFIC ON ONE PORT.
   //

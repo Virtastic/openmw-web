@@ -370,6 +370,11 @@ process.on('SIGHUP', () => {
 // and flush their stores on the way out, instead of being abandoned mid-write.
 function crashExit(kind: string, err: unknown): void {
   log('error', 'gateway.crash', { kind, error: String(err), stack: (err as Error)?.stack });
+  // A CRASH ALWAYS ENDS IN AN EXIT. The orderly path closes the directory first and then waits on
+  // the worlds; on 2026-10-14 that wait never returned, so the process lived on with no listener
+  // and /healthz still answering -- "healthy", serving nothing, never restarted. The worlds' own
+  // stop grace is 20 s; past 30 s the supervisor restarts us instead.
+  setTimeout(() => process.exit(1), 30_000).unref();
   void shutdown(kind, 1);
 }
 process.on('uncaughtException', (err) => crashExit('uncaughtException', err));
