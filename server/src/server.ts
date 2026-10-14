@@ -620,7 +620,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       hooks.playerHit({ id: attacker.id, name: attacker.name, rank: attacker.rank }, victimId, name),
     knowsSource: (caster, id) => {
       const doc = playerStore.getCached(caster.charId);
-      return doc?.spells?.includes(id) === true || doc?.inventory?.some((i) => i.id === id) === true;
+      // Case-blind: engine record ids are, and a spell the client names "Fireball" is the doc's "fireball".
+      const want = id.toLowerCase();
+      return doc?.spells?.some((s) => s.toLowerCase() === want) === true
+        || doc?.inventory?.some((i) => i.id.toLowerCase() === want) === true;
     },
   });
 

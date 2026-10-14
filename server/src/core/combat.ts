@@ -215,8 +215,8 @@ export class Combat {
     }
   }
 
-  private drop(player: Player, name: string, why: string): void {
-    log('warn', 'combat.dropped', { from: player.name, name, why });
+  private drop(player: Player, name: string, why: string, detail?: Record<string, string>): void {
+    log('warn', 'combat.dropped', { from: player.name, name, why, ...detail });
     // COUNT IT. The attacker's client cancelled its own damage before sending, so every drop
     // here is an attack the player made that did nothing at all and was told nothing about.
     // A rising rate on any reason is the machine-readable form of "my hits are not landing".
@@ -416,7 +416,7 @@ export class Combat {
     // cast-when-used ring) is in their inventory. The sim peer forwards the WORLD's casts at
     // avatars (an NPC's spell on a puppet) and has no doc to check against.
     if (player.system !== true && !this.ctx.knowsSource(player, spellId)) {
-      this.drop(player, 'CombatSpellHit', 'spell not known to the caster');
+      this.drop(player, 'CombatSpellHit', 'spell not known to the caster', { spellId });
       return;
     }
     const owner = this.resolveOwner(player, target, 'CombatSpellHit', beneficial);
