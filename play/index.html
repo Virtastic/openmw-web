@@ -3751,7 +3751,11 @@ window.omw = (function(){
              if (dir > 0) { try { FS.mkdirTree('/mwdata/' + f.p.slice(0, dir)); } catch(e){} }
              // No mtime in the key here: retail files are immutable (mwdata-routes.ts), and
              // folding `m` in would throw away every player's cached base game once for nothing.
-             try { StreamFS.mount('/mwdata/' + f.p, 'mwdata/' + f.p, f.s); }
+             // ?v=2: a fixed key, not the mtime -- still cached for good. Before 2026-10-14 the edge
+             // stamped every /mwdata/*.esm|bsa answer immutable, so the 404 a server not (yet)
+             // serving gave was cached by Cloudflare for a year; prod turned "serve" on and every
+             // player got that 404. A new key is the way past a cache we cannot purge.
+             try { StreamFS.mount('/mwdata/' + f.p, 'mwdata/' + encodeURI(f.p) + '?v=2', f.s); }
              catch(e){ append('[mw] mount failed '+f.p+': '+e, 'err'); }
            });
            append('[mw] mounted '+(list.length-tars.length)+' files from mwdata/ ('

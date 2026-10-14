@@ -53,6 +53,9 @@
 	@immutable {
 		path *.wasm *.data *.js *.br *.bsa *.esm *.tar
 		not path /admin/*
+		# Hosted game data caches itself (mwdata-routes.ts: retail immutable, mods not). Stamped
+		# here it also made the gateway's 404 -- "not serving" -- immutable at Cloudflare.
+		not path /mwdata/*
 	}
 	header @immutable Cache-Control "public, max-age=31536000, immutable"
 	# "/" MUST be in this matcher. The rewrite above serves launcher.html for the bare root, but
