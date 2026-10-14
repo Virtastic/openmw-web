@@ -127,6 +127,14 @@
       out += `<a class="prov" href="/auth/${esc(p)}/start">${ICONS[p] || ''}<span>Continue with ${NICE[p]}</span></a>`;
     }
   }
+  // THE COMMUNITY, FOR EVERYONE. The Discord is where players find each other, get the invite
+  // code and report problems, so it is on the door for returning players too -- not only in the
+  // invite note new ones see. Same configured URL ([login] inviteHelpUrl), https only.
+  const community = typeof auth.inviteHelpUrl === 'string' && /^https:\/\//.test(auth.inviteHelpUrl) ? auth.inviteHelpUrl : '';
+  if (community) {
+    out += `<a class="btn" id="discordCta" href="${esc(community)}" target="_blank" rel="noopener">`
+      + 'Join our Discord &mdash; find people to play with</a>';
+  }
   box.innerHTML = out;
   if (auth.inviteRequired && invited) {
     // The server checks it only when the sign-in would create an account; a returning

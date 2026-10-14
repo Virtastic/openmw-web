@@ -226,6 +226,7 @@ window.omw = (function(){
     <div class="ld-status" id="ld-status">Preparing…</div>
     <div class="ld-bar"><div class="ld-fill" id="ld-fill"></div></div>
     <div class="ld-detail" id="ld-detail"></div>
+    <div class="ld-credit" id="ld-community" hidden>Looking for people to play with? <a id="ld-community-a" target="_blank" rel="noopener">Join our Discord</a></div>
     <div class="ld-credit">OpenMW-Web by <a href="https://virtastic.app" target="_blank" rel="noopener">Virtastic</a>
       &middot; GPLv3 &middot; <a href="https://github.com/Virtastic/openmw-web" target="_blank" rel="noopener">Source</a></div>
   </div>
@@ -1558,6 +1559,15 @@ window.omw = (function(){
                     + '. Open the launcher fresh instead of reusing an old link.','err');
            } else {
              window.__omwMPEnabled = true;
+             // THE COMMUNITY ON THE LOADING SCREEN: every join and world switch waits here, and the
+             // Discord is where players find each other. The server's own configured link
+             // ([login] inviteHelpUrl, the same one the sign-in page shows); absent = nothing shown.
+             fetch('/auth/providers', { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(a){
+               var u = a && a.inviteHelpUrl;
+               if (typeof u !== 'string' || !/^https:\/\//.test(u)) return;
+               var link = document.getElementById('ld-community-a'), row = document.getElementById('ld-community');
+               if (link && row) { link.href = u; row.hidden = false; }
+             }).catch(function(){});
              // ONE CONTINUOUS SCREEN. The engine calls __omwLoading.done() on its first frame,
              // which lands BEFORE the multiplayer session has joined and settled — so holding
              // for the settle after that would hide the screen and immediately bring it back,
