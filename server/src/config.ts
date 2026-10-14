@@ -532,7 +532,7 @@ function validate(t: Tree): Config {
       userDataDir: reqStr(t, 'simPeer', 'userDataDir'),
       startCell: reqStr(t, 'simPeer', 'startCell'),
       maxPeers: reqNum(t, 'simPeer', 'maxPeers'),
-      anchorIdleSec: optNum(t, 'simPeer', 'anchorIdleSec', 60),
+      anchorIdleSec: optNum(t, 'simPeer', 'anchorIdleSec', 300),
       osgStatsFile: optStr(t, 'simPeer', 'osgStatsFile', ''),
       idleReapMs: reqNum(t, 'simPeer', 'idleReapMs'),
       startTimeoutMs: reqNum(t, 'simPeer', 'startTimeoutMs'),

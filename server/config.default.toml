@@ -599,7 +599,11 @@ maxPeers = 0
 # a cell border does not flap the peer's grid. Dropping an anchor is cheap; this is pure
 # hysteresis. An interior's anchor goes the pass its last player leaves (each one is a whole
 # extra active cell on the peer).
-anchorIdleSec = 60
+# 300, not 60 (2026-10-14): a shop visit outlasts a minute. Prod telemetry caught a player 75 s in
+# a Seyda Neen house; the street was unloaded behind them, cold-loaded on the way out, and for a
+# window no NPC was streamed -- the street's NPCs then jumped up to ~800 u to where the peer had
+# them. Held cells cost the peer AI ticks, not correctness.
+anchorIdleSec = 300
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
 # A cold peer loading Tamriel Rebuilt takes minutes, and cold starts are serialised: at 120 s
 # the sweeper SIGKILLed it mid-load and left the cell unsimulated. Failure is still non-fatal.
