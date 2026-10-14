@@ -1972,7 +1972,13 @@ do
     far ~= nil and far.y <= newest * 250 + 0.09 * 250 + 0.5, string.format('y %.1f', far and far.y or -1))
   check('the speed feed-forward keeps reading the run through a late pose',
     it:speed(newest + d + 0.04) > 200, string.format('speed %.0f', it:speed(newest + d + 0.04)))
+  local vx, vy = it:velocity(newest + d + 0.04)
+  check('velocity points the way the target walks (+y), for the ahead-of-target rule',
+    math.abs(vx) < 1 and vy > 200, string.format('vx %.1f vy %.1f', vx, vy))
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  check('a puppet ahead of a walking target keeps facing its travel, never turns round (180s)',
+    pp:find('if steering and tgtV >= 20 and dist2d < FAR_GAP and (dx * vx + dy * vy) < 0 then', 1, true) ~= nil
+    and pp:find('self.controls.yawChange = shortestArc(math.atan(vx, vy) - curYaw)', 1, true) ~= nil)
   local cc = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('puppet steering may exceed top speed to close a gap',
     pp:find('math.min(PUPPET_MAX_SPEED, (tgtV + dist2d', 1, true) ~= nil and pp:find('local PUPPET_MAX_SPEED = 1.25', 1, true) ~= nil)

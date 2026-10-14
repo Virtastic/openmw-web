@@ -526,7 +526,17 @@ local function onUpdate(dt)
     local run = bit(target.flags, 0) and (steering or tgtV >= 20)
     if run then runUntil = now + RUN_HOLD_S end
     self.controls.run = run or now < runUntil
-    if steering then
+    -- AHEAD OF A WALKING TARGET: DO NOT TURN AROUND. Steering at the target point from in front
+    -- of it means a bearing ~180 degrees off the way the NPC is walking: the puppet spun round,
+    -- stood (movement is zero past 60 degrees), the target passed, it spun back -- NPCs "doing
+    -- 180s as they walk" (prod 2026-10-14, positions 1-3 u off the whole time). Keep facing the
+    -- direction of travel and drop to half pace until the target catches up. Within FAR_GAP
+    -- only: further out the far-gap snap owns it.
+    local vx, vy = interp:velocity(now)
+    if steering and tgtV >= 20 and dist2d < FAR_GAP and (dx * vx + dy * vy) < 0 then
+        self.controls.yawChange = shortestArc(math.atan(vx, vy) - curYaw)
+        self.controls.movement = steerMovement(0, tgtV, self.controls.run, dt) * 0.5
+    elseif steering then
         -- Steer toward the target point (MW yaw: 0 = +Y, clockwise positive).
         local headingErr = shortestArc(math.atan(dx, dy) - curYaw)
         self.controls.yawChange = headingErr
