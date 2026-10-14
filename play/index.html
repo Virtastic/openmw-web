@@ -576,6 +576,24 @@ window.omw = (function(){
      queue.push(text);
    };
  })();
+ // WHICH REQUEST FAILED. A network-level fetch failure reaches the log as a bare "unhandled
+ // rejection: Failed to fetch" -- prod 2026-10-14, a player took four tries over five minutes
+ // and nothing said what was unreachable. The PATH only: queries and fragments carry tickets.
+ (function(){
+   var f = window.fetch;
+   if (!f) return;
+   window.fetch = function(input){
+     var p = f.apply(this, arguments);
+     return p.catch(function(err){
+       try {
+         var u = new URL(typeof input === 'string' ? input : (input && input.url) || '', location.href);
+         if (u.pathname === '/clientlog') return; // its own failures would re-queue every 5 s offline
+         append('[net] fetch failed: ' + (u.origin === location.origin ? '' : u.host) + u.pathname + ' (' + (err && err.message || err) + ')', 'err');
+       } catch(_){}
+       throw err;
+     });
+   };
+ })();
  // MOVEMENT TELEMETRY, every 5 s while in a multiplayer world: what the player's screen is
  // doing, which the server otherwise never sees. Frame rate and the worst frame gap (browser
  // stalls), the self-correction distances (selfDivergence, sampled every 100 ms: p50/p95/max),

@@ -36,7 +36,7 @@ def lines():
 ev = Counter(); warn = Counter(); sso_fail = Counter(); drops = Counter(); reaped = Counter()
 client_err = Counter(); peer_err = Counter(); accounts = set(); joined = set()
 path95, path_max, snaps, first_unheld = [], [], 0, 0
-seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set)
+seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set); data_setup = {}
 num = lambda s: re.sub(r'\d[\d.:x]*', 'N', s)
 f = lambda t, k: (re.search(k + r'=(\S+)', t) or [None, None])[1]
 
@@ -65,6 +65,8 @@ for e in lines():
                 seen_session.add(s)
                 if f(t, 'holder') == 'none' and f(t, 'cell') not in (None, '?'): first_unheld += 1
             if m: path95.append(int(m[1])); path_max.append(int(m[2]))
+        elif re.match(r'\[(mw|assets|data)\] |\[[\d:.]+ I\] ', t):
+            data_setup[s] = data_setup.get(s, 0) + 1  # info, not an error (#139 ships the boot's data setup)
         elif not t.startswith('[locker]'):
             if 'Lua error' in t: lua_errors += 1
             k = num(t)[:140]; client_err[k] += 1; err_sessions[k].add(s)
