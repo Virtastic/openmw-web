@@ -853,6 +853,10 @@ export class Connection implements Peer {
         this.provisionalCharId = undefined;
         this.creationInProgress = false;
         if (this.player) this.player.inChargen = false;
+        // NOW AN OCCUPANT of the cell they stand in. authorityEnter skipped them there while in
+        // creation (the sanctuary), so the peer's re-claim on the next anchor pass informed
+        // nobody: the client kept "no holder", drew the peer's NPCs over its own (s187).
+        if (this.player?.cellKey) this.ctx.world.authorityEnter(this.player, this.player.cellKey);
         this.ctx.track?.(this.ctx.accounts.get(this.player.accountKey).then((account) => {
           if (!account) return;
           const r = this.ctx.accounts.adoptCharacter(account, id, label);

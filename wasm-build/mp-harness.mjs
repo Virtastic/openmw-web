@@ -459,7 +459,11 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   // just landed -- go Solo from Public and it asks the PUBLIC world to turn private. The
   // launcher sets this in production and it rides every switch; a harness client had none.
   // Unlike #mplocker this does not flip the page into locker mode, so it is safe in the URL.
-  const frag = [opts.homeUrl ? `mphome=${encodeURIComponent(opts.homeUrl)}` : '', opts.newGame ? 'mpnew=1' : '']
+  // opts.charId -> #mpchar: a provisional id (c + 24 hex) is what the launcher hands a new
+  // character, and the only thing that makes the SERVER see creation in progress (inChargen,
+  // the chargen sanctuary). Without it a newGame client is in chargen on its own screen only.
+  const frag = [opts.homeUrl ? `mphome=${encodeURIComponent(opts.homeUrl)}` : '', opts.newGame ? 'mpnew=1' : '',
+    opts.charId ? `mpchar=${opts.charId}` : '']
     .filter(Boolean).map((f, i) => (i ? '&' : '#') + f).join('');
   // opts.url: a page that is NOT the game. The admin dashboard is served by the same
   // processes this harness drives, and nothing else in CI ever loaded it in a browser -- so

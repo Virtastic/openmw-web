@@ -52,3 +52,38 @@ test('one player creating does not unsimulate everyone else', () => {
     ['-15,2', '3,4'],
   );
 });
+
+// AND THE PLAYER IS TOLD. Creation ends where the player stands -- the exterior the sanctuary
+// kept unheld, so they were never made an occupant of it (worldstate.authorityEnter skips a
+// creating player). The peer re-claimed on its next pass, Info went to the occupants, and the
+// new character was not one: their client kept "no holder" over the peer's puppets (s187).
+test('finishing creation makes the player an occupant, so the peer\'s claim reaches them', async (t) => {
+  const { startServer } = await import('../src/server');
+  const { TestClient, tmpDataDir } = await import('./helpers');
+  const PASS = 'peer-secret-1';
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PASS } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PASS);
+  t.after(() => peer.close());
+
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  b.hello();
+  await b.waitJson('SessionHelloOk');
+  b.register('Newbie', 'hunter22', { characterId: 'c' + 'ab'.repeat(12) }); // provisional = in creation
+  await b.waitJson('SessionWelcome');
+  b.sendJson({ t: 'SessionReady' });
+  b.sendCellChange('-2,-9', 0, 0, 0);
+  await b.waitEvent('PlayerCellChange');
+
+  b.sendEvent('ChargenComplete', {});
+  b.sendEvent('ChatSend', { text: 'fence' });
+  await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'fence');
+
+  peer.sendCellChange('-2,-9', 0, 0, 0);
+  const info = await b.waitEvent('ActorAuthorityInfo', (v) => (v as { cellKey?: string }).cellKey === '-2,-9');
+  assert.equal((info.value as { holderId?: number }).holderId, peer.playerId);
+});
