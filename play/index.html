@@ -588,7 +588,7 @@ window.omw = (function(){
    // Binary frames as the BROWSER receives them, by envelope type: tells "never arrived"
    // apart from "arrived and the engine dropped it" (the Lua counters only see the latter).
    var wsRx = {}, lastSeq = 0, dumped = false;
-   var actorTap = window.__omwActorTap = { last: {}, edges: [], events: [] };
+   var actorTap = window.__omwActorTap = { last: {}, hist: {}, edges: [], events: [] };
    var NativeWS = window.WebSocket;
    if (NativeWS) {
      window.WebSocket = function(url, protocols){
@@ -617,6 +617,8 @@ window.omw = (function(){
              var fl = v.getUint8(o + 23), was = actorTap.last[k];
              if (was && ((was.fl ^ fl) & 8)) actorTap.edges.push([now, k, fl]);
              actorTap.last[k] = { t: now, x: v.getFloat32(o + 8, true), y: v.getFloat32(o + 12, true), z: v.getFloat32(o + 16, true), fl: fl, yaw: v.getUint16(o + 20, true) * 2 * Math.PI / 65536 };
+             var h = actorTap.hist[k] || (actorTap.hist[k] = []);
+             h.push(actorTap.last[k]); if (h.length > 40) h.shift(); // ~2 s at 20 Hz: the path npcPath measures against
            }
            if (actorTap.edges.length > 600) actorTap.edges.splice(0, 300);
          } else if (ty === 0x0002 && d.byteLength > 7) {
@@ -635,7 +637,7 @@ window.omw = (function(){
    // NPC AGREEMENT, live: each alive actor this screen draws (the probe mirror, its own copy)
    // against the nearest pose the server sent in the last second. The live half of the 64 u
    // bar -- a software-rendered harness client cannot run fast enough to judge it.
-   var npcGap = [];
+   var npcGap = [], npcPath = [];
    setInterval(function(){
      var s = st();
      if (s.netstate !== 'Joined' || !s.actorProbe) return;
@@ -649,6 +651,23 @@ window.omw = (function(){
        var best = Infinity;
        for (var i = 0; i < rx.length; i++) { var dx = rx[i].x - p.x, dy = rx[i].y - p.y, dd = dx * dx + dy * dy; if (dd < best) best = dd; }
        if (best < 1024 * 1024) npcGap.push(Math.sqrt(best)); // beyond that it is another actor
+       // npcPath: the same drawn position against the PATH the server sent over the last 2 s.
+       // npcGap compares with the NEWEST pose, so a running NPC drawn on purpose ~0.1-0.3 s in
+       // the past (interp.lua's render delay) reads 20-100 u "off" while exactly on its path. A
+       // path distance is what a jerk or a desync shows up in: the NPC drawn where it never was.
+       var bestPath = Infinity;
+       for (var hk in actorTap.hist) {
+         var hh = actorTap.hist[hk];
+         for (var j = 0; j < hh.length; j++) {
+           if (now - hh[j].t > 2000) continue;
+           var a = hh[j], b = hh[j + 1] && now - hh[j + 1].t <= 2000 ? hh[j + 1] : a;
+           var ex = b.x - a.x, ey = b.y - a.y, len = ex * ex + ey * ey;
+           var u = len > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * ex + (p.y - a.y) * ey) / len)) : 0;
+           var qx = a.x + u * ex - p.x, qy = a.y + u * ey - p.y, dq = qx * qx + qy * qy;
+           if (dq < bestPath) bestPath = dq;
+         }
+       }
+       if (bestPath < 1024 * 1024) npcPath.push(Math.sqrt(bestPath));
      }
    }, 1000);
    setInterval(function(){
@@ -671,6 +690,8 @@ window.omw = (function(){
      div.sort(function(a, b){ return a - b; });
      var q = function(p){ return div.length ? div[Math.min(div.length - 1, Math.floor(p * div.length))].toFixed(1) : '-'; };
      npcGap.sort(function(a, b){ return a - b; });
+     npcPath.sort(function(a, b){ return a - b; });
+     var pq = function(p){ return npcPath.length ? npcPath[Math.min(npcPath.length - 1, Math.floor(p * npcPath.length))].toFixed(0) : '-'; };
      var gq = function(p){ return npcGap.length ? npcGap[Math.min(npcGap.length - 1, Math.floor(p * npcGap.length))].toFixed(0) : '-'; };
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
@@ -678,6 +699,7 @@ window.omw = (function(){
        + ' cell=' + (s.cell || '?') + ' holder=' + (s.authorityHolder || '?') + ' actors=' + (s.actorCount || '?')
        + ' puppeted=' + (s.puppetedActors || '?')
        + ' npcGap p50=' + gq(0.5) + ' p95=' + gq(0.95) + ' n=' + npcGap.length
+       + ' npcPath p50=' + pq(0.5) + ' p95=' + pq(0.95) + ' max=' + pq(1) + ' n=' + npcPath.length
        + ' wsRx=' + JSON.stringify(wsRx)
        + ' raw=' + JSON.stringify({ abi: s.actorBatchesIn, isHolder: s.isHolder, puppetRx: s.puppetRx,
            puppetMark: s.puppetMark, simReady: s.simReady, snap: s.selfSnap, stale: s.selfStale });
@@ -692,7 +714,7 @@ window.omw = (function(){
        });
        line += ' state=' + JSON.stringify(keep);
      }
-     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = [];
+     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = [];
      fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
        body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
    }, 5000);
