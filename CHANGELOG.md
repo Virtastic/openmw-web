@@ -2,6 +2,32 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.5.3
+
+**NPCs walk like NPCs again.** In multiplayer, the NPCs on your screen are copies that follow
+what the server's simulator is doing. The copies aimed at the exact point the server reported,
+which made walking NPCs spin round and later jerk their heads side to side. They now face the way
+they are walking and drift back onto their path smoothly. NPCs also no longer slide around right
+after you join, rejoin, cross into the next area, or finish character creation, and the
+simulator keeps an area running for five minutes after you leave it instead of one.
+
+**Loading screens tell you what is happening.** The first load now names each stage: downloading
+the engine, reading the game data (and that the first visit can take a minute), connecting,
+signing in, and placing you where you left off. Doors that do not take you anywhere, because they
+are locked, scripted shut or start a conversation, no longer flash a loading screen.
+
+**Steadier on slow connections.** A dropped or stalled download no longer kills the game; it is
+retried. A single malformed request could take the multiplayer server offline for everyone and
+leave it looking healthy; it now answers that request with an error, and a crash restarts the
+server within 30 seconds.
+
+**Hosted game data.** Servers can hand out the game files themselves (deliveryModel "serve"), so
+players sign in and play without uploading anything.
+
+Also: NPCs' own abilities and diseases are no longer sent as spell casts; engine builds ship a
+symbol map so a browser crash report names the function; the health report (deploy/mp-health.py)
+covers sign-ins, smoothness, NPC facing, errors and refused actions.
+
 ## 1.5.2
 
 **The world simulator runs again.** Since 1.5.0 the server's headless simulator, the "peer" that
