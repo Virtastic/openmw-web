@@ -104,14 +104,47 @@
         }
         throw last;
       }
+      // BACKGROUND WARM-UP. A first read of any chunk is a network round trip with the game's
+      // main thread blocked on it (fetchChunkSync), which is the mid-play hitch players see when
+      // something new comes into view (prod 2026-10-15: 270 windows of 0.5-1 s stalls, most with
+      // no area change). Once in the world, fill the persistent chunk cache from the archives in
+      // the background so those reads are local. One chunk at a time, and only while the game
+      // has not asked for anything for 1.5 s: it never competes with a read the game is waiting on.
+      let fg = 0, lastFg = 0, warming = false;
+      const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+      async function warm(files, chunk) {
+        if (warming) return;
+        warming = true;
+        let fetched = 0;
+        try {
+          const c = await caches.open('mwdata-chunks-v1');
+          for (const f of files) {
+            for (let s = 0; s < f.size; s += chunk) {
+              while (fg > 0 || Date.now() - lastFg < 1500) await nap(250);
+              const ckey = 'https://sfs.chunk/' + encodeURIComponent(f.pkey) + '/' + s;
+              if (await c.match(ckey)) continue;
+              try {
+                const buf = await rangeFetch(f.url, s, Math.min(s + chunk, f.size));
+                await c.put(ckey, new Response(buf));
+                fetched++; postMessage({ warmed: 1 });
+              } catch (err) { await nap(5000); }
+              await nap(30);
+            }
+          }
+        } catch (err) { /* Cache API unavailable: nothing to warm into */ }
+        warming = false;
+        postMessage({ warmed: 0, done: true });
+      }
       onmessage = async (e) => {
         const m = e.data;
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
+        if (m.warm) { warm(m.warm, m.chunk); return; }
         if (m.mountLocal) { handles.set(m.mountLocal.id, m.mountLocal.handle); return; }
         // A Blob (BSA from the Cache API) reads exactly like a File (slice + arrayBuffer), so it
         // goes straight into the files map and the m.id read path below slices it locally.
         if (m.mountBlob) { files.set(m.mountBlob.id, m.mountBlob.blob); return; }
         // m: {url|id, start, end, gen}
+        fg++; lastFg = Date.now(); // the game is waiting on this: the warm-up stands aside
         try {
           let buf;
           if (m.id !== undefined) {
@@ -170,7 +203,7 @@
           ctrl[1] = -1;
           Atomics.store(ctrl, 0, m.gen);
           Atomics.notify(ctrl, 0);
-        }
+        } finally { fg--; lastFg = Date.now(); }
       };`;
   }
 
@@ -277,6 +310,7 @@
       S.data = new Uint8Array(dataBuf);
       S.worker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
       S.worker.postMessage({ init: 1, ctrl: ctrlBuf, data: dataBuf });
+      S.worker.onmessage = (e) => { if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) ST.warmDone = true; } };
       try { Object.defineProperty(window, '__streamfsStats', { get: () => window.StreamFS.stats() }); } catch (e) {}
     },
 
@@ -294,7 +328,7 @@
       // the engine treats as EOF mid-file.
       const pkey = u.origin === location.origin && !u.search
         ? u.pathname + '@' + size + (mtime ? '@' + mtime : '') + '@' + CHUNK : null;
-      const src = { url: abs, pkey };
+      const src = { url: abs, pkey, size };
       // Registered so the URL can be refreshed later (presigned locker URLs expire): the cache
       // key stays `abs` (stable across renewals — the bytes are the same file), only src.url
       // changes, so a re-signed URL is used for future Range fetches without dropping the cache.
@@ -302,6 +336,19 @@
       return makeNode(path, size, function (buffer, offset, length, position) {
         return readSync(src, abs, size, buffer, offset, length, position);
       });
+    },
+
+    // Fill the persistent chunk cache from every mounted file whose path matches `re`, in the
+    // background (see warm() in the worker). Persistable (hosted, same-origin) files only; the
+    // order of `first` decides which archive warms first. Skipped on a Save-Data connection.
+    warm(re, first) {
+      if (!S.worker || (navigator.connection && navigator.connection.saveData)) return 0;
+      const files = [];
+      for (const [path, src] of S.urlSrcs) if (src.pkey && src.size && re.test(path)) files.push({ path, url: src.url, pkey: src.pkey, size: src.size });
+      const rank = (p) => { const i = (first || []).findIndex((r) => r.test(p)); return i < 0 ? 99 : i; };
+      files.sort((a, b) => rank(a.path) - rank(b.path));
+      if (files.length) S.worker.postMessage({ warm: files.map(({ url, pkey, size }) => ({ url, pkey, size })), chunk: CHUNK });
+      return files.length;
     },
 
     // Swap in a freshly-signed URL for an already-mounted path. The read path is synchronous

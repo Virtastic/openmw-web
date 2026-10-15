@@ -37,6 +37,7 @@ ev = Counter(); warn = Counter(); sso_fail = Counter(); drops = Counter(); reape
 client_err = Counter(); peer_err = Counter(); accounts = set(); joined = set()
 path95, path_max, snaps, first_unheld = [], [], 0, 0
 facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
+hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
 seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set); data_setup = {}
 num = lambda s: re.sub(r'\d[\d.:x]*', 'N', s)
 f = lambda t, k: (re.search(k + r'=(\S+)', t) or [None, None])[1]
@@ -62,6 +63,12 @@ for e in lines():
             m = re.search(r'npcPath p50=\d+ p95=(\d+) max=(\d+)', t)
             sn = f(t, 'snaps')
             if sn and sn.isdigit(): snaps += int(sn)
+            if ' hidden=1' in t: hidden_w += 1
+            else:
+                wf = re.search(r'worstFrameMs=(\d+)', t); ss = re.search(r'sfsStallMs=(\d+)', t)
+                if wf and int(wf[1]) >= 500:
+                    hitch += 1
+                    if ss and int(ss[1]) >= 300: hitch_sfs += 1
             mf = re.search(r'npcFacing bad=(\d+) n=(\d+)', t)
             if mf: facing_bad += int(mf[1]); facing_n += int(mf[2])
             if s not in seen_session:
@@ -86,6 +93,7 @@ print(f"worlds reaped:\n{top(reaped)}")
 print(f"stuck on the loading screen 5 min (settle timeout): {sum(v for k, v in client_err.items() if 'settle hold released' in k)}")
 print(f"smoothness: NPC path p95 per 5 s window -- median {q(path95, .5)}, p90 {q(path95, .9)}, p99 {q(path95, .99)}, max {q(path_max, 1)} u"
       f" ({len(path95)} windows) | snaps {snaps} | sessions whose first window was unheld {first_unheld}")
+print(f"hitches: {hitch} visible windows with a frame of 500 ms or more, {hitch_sfs} of them waiting 300 ms+ on streamed game files | {hidden_w} windows in a background tab (not counted)")
 print(f"facing: walking NPCs drawn turned round (>120 deg off the server) {facing_bad}/{facing_n} samples" + (f" ({100 * facing_bad / facing_n:.1f}%)" if facing_n else ''))
 print(f'Lua errors (peer + clients): {lua_errors}')
 print(f"sim peer start failures: {ev['simpeer.start_timeout']}   peer errors:\n{top(peer_err, 8)}")
