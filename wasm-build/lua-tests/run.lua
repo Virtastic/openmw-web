@@ -1980,23 +1980,22 @@ do
   check('velocity points the way the target walks (+y), for the ahead-of-target rule',
     math.abs(vx) < 1 and vy > 200, string.format('vx %.1f vy %.1f', vx, vy))
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
-  -- Walking +y (travel heading 0). Every case must stay within 20 degrees of the travel heading:
-  -- the target point a few units off to any side, ahead, behind -- the jitter cases.
-  local deg = function(r) return math.abs(r) * 57.3 end
-  local worst = 0
-  for _, c in ipairs({ { 5, 0 }, { -5, 0 }, { 3, -2 }, { -3, 2 }, { 0, -6 }, { 40, 10 }, { -40, -10 }, { 10, -60 } }) do
-    local h = Interp.walkHeading(c[1], c[2], 0, 250, math.sqrt(c[1] ^ 2 + c[2] ^ 2))
-    worst = math.max(worst, deg(h))
-  end
-  check('a puppet following a walking target faces within 20 degrees of its travel, wherever the point is (side-to-side jitter, 180s)',
-    worst <= 20.1, string.format('worst %.1f deg', worst))
-  check('...and a target 3 u to the side barely turns it (was 45-90 degrees aiming at the point)',
-    deg(Interp.walkHeading(3, 0.5, 0, 250, 3.04)) < 2, string.format('%.1f deg', deg(Interp.walkHeading(3, 0.5, 0, 250, 3.04))))
-  check('puppet.lua steers a walking target by walkHeading',
-    pp:find('Interp.walkHeading(dx, dy, vx, vy, dist2d)', 1, true) ~= nil)
+  -- Facing +y (yaw 0). The body keeps the server's facing; movement goes where the target goes.
+  local f, sd = Interp.bodyControls(0, 250, 0, 200, 1.25)
+  check('walking +y while facing +y moves forward, no side step', f > 1 and math.abs(sd) < 1e-6, string.format('%.2f %.2f', f, sd))
+  f, sd = Interp.bodyControls(0, -150, 0, 200, 1.25)
+  check('a creature backing off while facing you moves BACKWARD, it does not turn round', f < -0.7 and math.abs(sd) < 1e-6, string.format('%.2f %.2f', f, sd))
+  f, sd = Interp.bodyControls(150, 0, 0, 200, 1.25)
+  check('a side-step to the right is sideMovement > 0, facing kept', math.abs(f) < 1e-6 and sd > 0.7, string.format('%.2f %.2f', f, sd))
+  f, sd = Interp.bodyControls(0, 1000, 0, 200, 1.25)
+  check('capped at PUPPET_MAX_SPEED', math.abs(f - 1.25) < 1e-6, string.format('%.2f', f))
+  check('puppet.lua always takes the server facing and moves by bodyControls',
+    pp:find('self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)', 1, true) ~= nil
+    and pp:find('Interp.bodyControls(cx, cy, curYaw, top, PUPPET_MAX_SPEED)', 1, true) ~= nil
+    and pp:find('math.atan(dx, dy) - curYaw', 1, true) == nil)
   local cc = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('puppet steering may exceed top speed to close a gap',
-    pp:find('math.min(PUPPET_MAX_SPEED, (tgtV + dist2d', 1, true) ~= nil and pp:find('local PUPPET_MAX_SPEED = 1.25', 1, true) ~= nil)
+    pp:find('vx + dx / math.max(CATCHUP_S, dt or 0)', 1, true) ~= nil and pp:find('local PUPPET_MAX_SPEED = 1.25', 1, true) ~= nil)
   check('the engine honours it for puppets only',
     cc:find('MWMP::isPuppet(mPtr.getCellRef().getRefNum()) ? 1.25f : 1.f', 1, true) ~= nil)
   package.loaded['scripts.mp.interp'] = nil
@@ -2179,10 +2178,6 @@ end
 print('s177 a near-tier puppet reads interp:speed once a frame, not twice (#175: 20 puppets missed the frame budget)')
 do
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
-  local body = pp:match('local function steerMovement%b()(.-)\nend')
-  check('steerMovement takes the caller\'s tgtV instead of reading interp:speed itself',
-    body ~= nil and not body:find('interp:speed', 1, true) and body:find('tgtV', 1, true) ~= nil,
-    body and 'still calls interp:speed' or 'steerMovement not found')
   local code = pp:gsub('%-%-[^\n]*', '') -- strip comments, so mentioning the call in prose does not count
   check('onUpdate reads tgtV once and both call sites reuse it',
     (select(2, code:gsub('interp:speed%(now%)', ''))) == 1, 'expected exactly one interp:speed(now) call in the code')

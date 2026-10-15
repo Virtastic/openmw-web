@@ -151,14 +151,16 @@ function Interp:velocity(now)
     return (b.x - a.x) / SPEED_WINDOW, (b.y - a.y) / SPEED_WINDOW
 end
 
--- Heading for a puppet following a WALKING target: its travel direction (vx, vy), bent toward
--- the target point (dx, dy from the puppet) by at most 0.35 rad, fading to nothing under 48 u.
--- Aiming at the point itself from a few units away swung the head side to side (puppet.lua).
-local function arc(a) return (a + math.pi) % (2 * math.pi) - math.pi end
-function Interp.walkHeading(dx, dy, vx, vy, dist2d)
-    local travel = math.atan(vx, vy)
-    local corr = math.max(-0.35, math.min(0.35, arc(math.atan(dx, dy) - travel)))
-    return travel + corr * math.min(1, dist2d / 48)
+-- The forward/side controls that move a body facing `yaw` along the world vector (cx, cy) u/s,
+-- as fractions of `top` (its walk/run speed), capped at `cap`. MW yaw: 0 = +Y, clockwise, so
+-- forward = (sin, cos) and right = (cos, -sin). Lets a puppet keep the server's facing while it
+-- moves any direction -- a creature backing off or side-stepping in a fight, still facing you.
+function Interp.bodyControls(cx, cy, yaw, top, cap)
+    local want = math.sqrt(cx * cx + cy * cy)
+    if want < 1e-3 or not top or top <= 0 then return 0, 0 end
+    local frac = math.min(cap or 1.25, want / top)
+    local fx, fy = math.sin(yaw), math.cos(yaw)
+    return frac * (cx * fx + cy * fy) / want, frac * (cx * fy - cy * fx) / want
 end
 
 function Interp:clear()

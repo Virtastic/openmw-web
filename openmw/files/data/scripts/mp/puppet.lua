@@ -382,26 +382,15 @@ end
 -- THE TARGET'S OWN SPEED, PLUS THE GAP (s171). Proportional-only (dist / 96) made a puppet trail
 -- by 96 u x (its speed / its top speed) before it moved at full pace: a charging creature's
 -- puppet sat 110-150 u behind the peer's and crept the last stretch at a quarter walk -- "they
--- move slowly towards me". Feed the target's speed forward and close what is left in CATCHUP_S.
--- Floored so it always closes the gap rather than creeping forever.
+-- move slowly towards me". Feed the target's velocity forward and close what is left in CATCHUP_S.
+-- The catch-up never covers more than the gap in one frame (s117): divided by max(CATCHUP_S, dt),
+-- or a 200 ms hitch stepped 1.3x the gap, overshot, and a companion circled its stopped target.
 local CATCHUP_S = 0.15
 -- A PUPPET MAY RUN A LITTLE FASTER THAN ITS OWNER, or a gap on a running target is never closed:
 -- capped at 1 x run speed it kept every stall, start and turn it lost until the owner stopped
 -- (s172 #161: 91 u behind at p50 while the wire was 14). The engine honours up to this factor
 -- for puppets only (character.cpp).
 local PUPPET_MAX_SPEED = 1.25
--- The catch-up never covers more than the gap in one frame (s117): at CATCHUP_S alone a 200 ms
--- frame (a hitch; every frame on a slow client) stepped 1.3x the gap, overshot, turned, and a
--- companion's copy circled its stopped target for a minute instead of settling.
--- tgtV: the caller's own interp:speed(now), passed in rather than read again here. s177 #175:
--- onUpdate below already computes it once a frame per near-tier puppet for the steer/pace
--- hysteresis; a second read here doubled that (each is two Interp:target() scans + table
--- allocs) and, times 20 puppets in a crowd, cost enough to miss the frame budget.
-local function steerMovement(dist2d, tgtV, running, dt)
-    local ok, top = pcall(running and types.Actor.getRunSpeed or types.Actor.getWalkSpeed, self)
-    if not ok or type(top) ~= 'number' or top <= 0 then return math.max(0.25, math.min(1, dist2d / 96)) end
-    return math.max(0.25, math.min(PUPPET_MAX_SPEED, (tgtV + dist2d / math.max(CATCHUP_S, dt or 0)) / top))
-end
 
 local function onUpdate(dt)
     ensureHitHandler()
@@ -552,36 +541,28 @@ local function onUpdate(dt)
     -- direction of travel and drop to half pace until the target catches up. Within FAR_GAP
     -- only: further out the far-gap snap owns it.
     local vx, vy = interp:velocity(now)
-    if steering and tgtV >= 20 and dist2d < FAR_GAP then
-        -- A WALKING TARGET IS FOLLOWED BY ITS HEADING, NOT BY ITS POINT. Aiming at the target
-        -- point from a few units away turns a 5 u sideways offset into 45 degrees, and a puppet
-        -- that slips just ahead/behind every frame flipped between that and the travel heading:
-        -- NPCs "looking side to side rapidly" as they walk (prod 2026-10-15, after #141 had
-        -- already removed the full 180s). Face the way it walks; steer back onto its path by at
-        -- most 20 degrees, fading to nothing as the gap closes; ahead of it, only slow down.
-        self.controls.yawChange = shortestArc(Interp.walkHeading(dx, dy, vx, vy, dist2d) - curYaw)
-        local ahead = (dx * vx + dy * vy) < 0
-        self.controls.movement = steerMovement(ahead and 0 or dist2d, tgtV, self.controls.run, dt) * (ahead and 0.5 or 1)
-    elseif steering then
-        -- Steer toward the target point (MW yaw: 0 = +Y, clockwise positive).
-        local headingErr = shortestArc(math.atan(dx, dy) - curYaw)
-        self.controls.yawChange = headingErr
-        -- MOVE AS FAR AS THE HEADING ALLOWS (s117, #145/#147). The engine applies this frame's
-        -- speed along the heading the body HAD, and a puppet's speed is no longer ramped
-        -- (character.cpp, s172) -- so full speed with the target off to the side stepped the
-        -- copy sideways, every frame, and a recruited companion's copy circled its standing
-        -- target for a minute. Scaled by the cosine and zero past 60 degrees: turn first. A
-        -- chase is already facing its target, so it costs a charge nothing.
-        local facing = math.cos(headingErr)
-        self.controls.movement = facing > 0.5 and steerMovement(dist2d, tgtV, self.controls.run, dt) * facing or 0
-    else
-        -- Close enough: face the remote player's actual heading, and keep their pace if they move.
-        self.controls.movement = tgtV >= 20 and steerMovement(0, tgtV, self.controls.run, dt) or 0
-        self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)
-    end
+    -- FACE WHAT THE SERVER FACES; MOVE WHERE IT MOVES. A body only goes forward along its own
+    -- heading, so following a target used to mean TURNING toward where it was going: walking NPCs
+    -- spun round or snapped their heads side to side (prod 2026-10-15), and a creature backing off
+    -- or side-stepping in a fight turned its back on the player, then turned round to strike.
+    -- Now the heading is always the server's, and the movement -- forward, back, sideways -- is
+    -- split along that body to follow the target's own velocity plus closing the gap over
+    -- CATCHUP_S. The split uses the heading the body HAS this frame: that is the one the engine
+    -- moves it along (character.cpp). Out of steering (close and standing still) only the
+    -- target's own velocity is followed, so a slow shuffle is still mirrored.
+    self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)
+    local okT, top = pcall(self.controls.run and types.Actor.getRunSpeed or types.Actor.getWalkSpeed, self)
+    if not okT or type(top) ~= 'number' or top <= 0 then top = 150 end
+    local cx, cy = vx, vy
+    if steering then cx, cy = vx + dx / math.max(CATCHUP_S, dt or 0), vy + dy / math.max(CATCHUP_S, dt or 0) end
+    local fwd, side = Interp.bodyControls(cx, cy, curYaw, top, PUPPET_MAX_SPEED)
+    -- A puppet that only needs to creep less than a step stands; the hysteresis above decides
+    -- when it steers again.
+    if not steering and tgtV < 20 then fwd, side = 0, 0 end
+    self.controls.movement = fwd
+    self.controls.sideMovement = side
     -- Look up and down too (avatar.lua applies the input's pitch the same way).
     self.controls.pitchChange = (target.pitch or 0) - self.rotation:getPitch()
-    self.controls.sideMovement = 0
     self.controls.sneak = bit(target.flags, 1)
     -- Posture: a friend with a sword out looks like it. Purely visual here -- the puppet never
     -- swings (its controls.use stays 0); the peer's avatar does the hitting.
