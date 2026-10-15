@@ -3014,6 +3014,33 @@ local eventHandlers = {
 
     -- Race the take: request through the transactional server path; the ok/fail lands in
     -- the chestOp mirror via MP_ContainerOpResult below.
+    mpTestLoot = function(data)
+        local me = world.players[1]
+        if not me then return end
+        local corpse, bestD = nil, math.huge
+        for _, obj in ipairs(world.activeActors) do
+            local okD, dead = pcall(types.Actor.isDead, obj)
+            if obj:isValid() and obj.recordId == data.record and okD and dead then
+                local d = (obj.position - me.position):length()
+                if d < bestD then corpse, bestD = obj, d end
+            end
+        end
+        if not corpse then print('[mp] mpTestLoot: no dead ' .. tostring(data.record)); mp.set('lootTest', 'no-corpse'); return end
+        pcall(objects.onActivate, corpse, me)
+        local async = require('openmw.async')
+        async:newUnsavableSimulationTimer(1.5, function()
+            if not corpse:isValid() then mp.set('lootTest', 'corpse-gone'); return end
+            local moved = 0
+            for _, item in ipairs(types.Actor.inventory(corpse):getAll()) do
+                if item.recordId == data.item and moved == 0 then
+                    pcall(function() item:moveInto(types.Actor.inventory(me)) end)
+                    moved = item.count or 1
+                end
+            end
+            print(string.format('[mp] mpTestLoot: moved %d x %s from %s', moved, tostring(data.item), tostring(data.record)))
+            mp.set('lootTest', 'moved:' .. moved)
+        end)
+    end,
     mpChestTake = function(data)
         local netId = data.netId or (chestObj and objects.netIdOf(chestObj))
         if netId then

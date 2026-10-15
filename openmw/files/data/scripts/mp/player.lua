@@ -1167,6 +1167,11 @@ local function dispatch(cmd)
             end)
             mp.set('countName', tostring(n))
         end
+        -- loot:<corpseRecord>:<itemId>: what the game window's take does -- the corpse is
+        -- activated (the watch arms), then the item moves into our pack LOCALLY and the diff
+        -- reports it, unlike chesttake/takenet which ask the server directly (s913).
+        local lootRec, lootItem = cmd:match('^loot:([^:]+):(.+)$')
+        if lootRec then core.sendGlobalEvent('mpTestLoot', { record = lootRec, item = lootItem }) end
         local countId = cmd:match('^count:(.+)$')
         if countId then
             local ok, n = pcall(function()

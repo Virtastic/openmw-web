@@ -689,6 +689,9 @@ function objects.onItemActive(item)
         pcall(function() item:remove() end)
         return
     end
+    -- SAID: this is the line that turned a corpse's crab meat into a 'drop' on prod (2026-10-15,
+    -- the take credited, then a world.spawn by the player debited it). clientlog ships it.
+    print(string.format('[mp] drop: %d x %s appeared %.0f u from us, reported as dropped from our pack', item.count or 1, tostring(item.recordId), dist))
     objects.requestSpawn(item, nil, nil, true) -- came OUT of our inventory: conservation applies
 end
 
@@ -1460,6 +1463,8 @@ function objects.tick(now)
 end
 
 function objects.sendContainerOp(obj, op, itemId, n)
+    -- SAID, so a lost loot can be followed on prod (clientlog ships '[mp] loot:' lines).
+    print(string.format('[mp] loot: %s %d x %s %s %s', tostring(op), n or 0, tostring(itemId), op == 'take' and 'from' or 'into', tostring(obj and obj.recordId)))
     if isChargenCell(cellKeyOfObj(obj)) then
         dropOut('ContainerOpRequest', 'chargen-cell', tostring(obj.recordId))
         return nil -- tutorial cells are local-only, by design
