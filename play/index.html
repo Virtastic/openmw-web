@@ -97,6 +97,12 @@ window.omw = (function(){
  #loading{pointer-events:none}
  #loading .ld-inner{pointer-events:auto}
  #loading.hide{opacity:0;pointer-events:none}
+ /* A DOOR THAT MAY NOT LOAD. Up at activation (a load freezes the page, so the overlay must be on
+    screen before it), but transparent: the compositor runs this fade even while the main thread
+    is frozen, so a real load still shows the screen; a door that refuses you is withdrawn before
+    it ever becomes visible (watchCellLoad). */
+ #loading.pending{will-change:opacity;animation:ldPending .5s linear forwards}
+ @keyframes ldPending{0%,60%{opacity:0}100%{opacity:1}}
  #loading::before{content:'';position:absolute;inset:0;pointer-events:none;
    background:radial-gradient(150% 72% at 50% 132%, rgba(198,90,46,.30), rgba(198,90,46,.05) 34%, transparent 60%),
      radial-gradient(90% 60% at 50% 134%, rgba(233,180,90,.16), transparent 56%);
@@ -795,8 +801,22 @@ window.omw = (function(){
      else if ((m = /^\[local\] mounted (\d+) files/.exec(t))) set(null, 'Loading', m[1] + ' files');
      else if (/^\[(local|mw)\] READY/.test(t))          set(null, 'Entering the world');
      else if (/SKIPPED \(nomw\)/.test(t))               set(null, 'Loading');
-     else if (/^\[mw\] loading Morrowind/.test(t))      set(null, 'Downloading');
+     else if (/^\[mw\] loading Morrowind/.test(t))      set(null, 'Preparing game files');
    }
+   // THE CONNECTION, NAMED. Between the engine starting and the world settling, the screen sat
+   // on "Running" while the client connected, signed in and joined -- the stretch that feels
+   // hung. Only replaces the engine's own labels: the settle/world-switch/reconnect owners set
+   // their own text and are left alone.
+   var NET = { Connecting: 'Connecting to the server', HelloSent: 'Connecting to the server',
+               Authing: 'Signing in', Joining: 'Joining your world' };
+   var OWNED = /^(Loading Morrowind|Running|Connecting to the server|Signing in|Joining your world|Placing you where you left off)$/;
+   setInterval(function(){
+     if (done || !E() || !st || !OWNED.test(st.textContent)) return;
+     var s = (window.omw && window.omw.state) || {}, n = s.state || '';
+     if (NET[n]) set(null, NET[n], '');
+     else if (n === 'Joined' && window.__omwAwaitRestore && window.__omwAwaitRestore())
+       set(null, 'Placing you where you left off', '');
+   }, 250);
    function finish(){
      if (done || !E()) return;
      // In multiplayer the engine spawns you at the DEFAULT start point and the server's saved
@@ -818,7 +838,7 @@ window.omw = (function(){
      if (!E()) return;
      done = false;
      el.style.display = '';
-     el.classList.remove('hide');
+     el.classList.remove('hide', 'pending'); // any other owner's screen is visible at once
      set(null, label || 'Loading', detail == null ? '' : detail);
    }
    // ONE OWNER. A world switch is a page navigation, but FOUR independent watchers hide this
@@ -830,7 +850,14 @@ window.omw = (function(){
    var locked = false;
    function lock(label, detail){ show(label, detail); locked = true; }
    function unlock(){ locked = false; finish(); }
-   return { set:set, fromLog:fromLog, done:finish, show:show,
+   // A door overlay that never became visible: gone at once, no fade, nothing seen.
+   function withdraw(){
+     if (!E()) return;
+     el.classList.remove('pending');
+     if (locked) return;
+     done = true; el.classList.add('hide'); el.style.display = 'none';
+   }
+   return { set:set, fromLog:fromLog, done:finish, show:show, withdraw:withdraw,
             hide: function(){ if (!locked) finish(); },
             lock:lock, unlock:unlock };
  })();
@@ -3908,7 +3935,19 @@ window.omw = (function(){
      try {
        var m = /\((\d+)\s*\/\s*(\d+)\)/.exec(t);
        if (window.__omwLoading){
-         if (m && +m[2] > 0) window.__omwLoading.set(Math.round(+m[1]*100/+m[2]), 'Downloading');
+         // The total emscripten reports is not the whole download (it read "195 of 32 MB"), so
+         // the bar moves only while it is believable and the detail counts what has arrived.
+         // The NEXT step is named here too: the engine starts reading the game data in the same
+         // task the download ends in, so this is the frame left on screen during that freeze.
+         if (m && +m[2] > 0) window.__omwLoading.set(+m[1] <= +m[2] ? Math.round(+m[1]*100/+m[2]) : null,
+           'Downloading the game engine',
+           Math.round(+m[1] / 1048576) + ' MB received. Then the game data is read (up to a minute the first time).');
+         // "Running..." is emscripten's word for "main() started": the engine now reads the game
+         // data in ONE blocking call, and nothing on this page can repaint until it returns --
+         // only the CSS animations keep moving. Say what is happening and that it is expected,
+         // or a first visit reads as a hang (prod 2026-10-15, player report).
+         else if (/^Running/.test(t)) window.__omwLoading.set(null, 'Loading Morrowind',
+           'Reading the game data. The first visit can take a minute.');
          else window.__omwLoading.set(null, t.replace(/\.\.\.$/, ''));
        }
      } catch(e){}
@@ -5716,14 +5755,35 @@ window.omw = (function(){
 
   (function watchCellLoad(){
     var seen = '', hideAt = 0, saidWaiting = false;
+    // pendingFrom: the door was used and the overlay is up but still transparent. fromCell: where
+    // the player stood. lastTick: the previous frame, so a frozen page (a load) shows as a gap.
+    var pendingFrom = 0, fromCell = '', lastTick = 0;
+    var ldEl = document.getElementById('loading');
     (function tick(){
       var st = window.omw.state;
       var v = st.cellLoad || '';
+      var now = Date.now(), gap = lastTick ? now - lastTick : 0;
+      lastTick = now;
       if (v && v !== seen) {
         seen = v;
         window.__omwLoading.show('Loading', 'Entering a new area…');
+        if (ldEl) ldEl.classList.add('pending');
+        pendingFrom = now; fromCell = String(st.cell || '');
         hideAt = Date.now() + 15000; // hard ceiling: never strand the player behind it
         saidWaiting = false;
+      }
+      if (pendingFrom) {
+        if (gap > 300 || String(st.cell || '') !== fromCell) {
+          // The page froze (a cell load) or we arrived somewhere: this is a real trip. The fade
+          // has already shown it during the freeze; make it plainly visible from here on.
+          pendingFrom = 0; if (ldEl) ldEl.classList.remove('pending');
+        } else if (now - pendingFrom > 250) {
+          // A quarter second of normal frames and still in the same place: the door refused us
+          // (a scripted door, a message box, a dialogue) and no load is coming. Withdraw before
+          // the fade reaches it -- the "loading screen that flashes and goes back".
+          pendingFrom = 0; hideAt = 0; saidWaiting = false;
+          window.__omwLoading.withdraw();
+        }
       }
       // The load is over once frames are flowing again — this callback running IS that proof.
       if (hideAt && Date.now() > hideAt - 14400) {
