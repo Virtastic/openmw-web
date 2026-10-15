@@ -38,7 +38,9 @@ export default async function run(ctx) {
   await a.waitFor('String(window.omw.state.lootTest||"").length > 0', 10_000, 'the loot command ran');
   const res = String(await a.eval('window.omw.state.lootTest'));
   const item = String(await a.eval('window.omw.state.lootItem||""'));
-  const moved = Number(res.split(':')[1] || 0);
+  // moveInto zeroes the moved object's own count, so 'moved:N' can read 0 after a real move;
+  // the item id is set only when something actually moved.
+  const moved = item ? 1 : 0;
   const takes = () => a.logMatches(/\[mp\] loot: take/);
   ctx.log(`loot: ${res} item=${item}`);
   for (const l of a.logMatches(/\[mp\] (loot|drop):/)) ctx.log('  ' + l.slice(0, 220));
