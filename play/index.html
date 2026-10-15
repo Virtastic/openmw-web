@@ -659,7 +659,7 @@ window.omw = (function(){
    // NPC AGREEMENT, live: each alive actor this screen draws (the probe mirror, its own copy)
    // against the nearest pose the server sent in the last second. The live half of the 64 u
    // bar -- a software-rendered harness client cannot run fast enough to judge it.
-   var npcGap = [], npcPath = [], npcFacingN = 0, npcFacingBad = 0;
+   var npcGap = [], npcPath = [], npcFacingN = 0, npcFacingBad = 0, npcFacingWhy = [];
    setInterval(function(){
      var s = st();
      if (s.netstate !== 'Joined' || !s.actorProbe) return;
@@ -688,7 +688,7 @@ window.omw = (function(){
          for (var yi = 0; yi < nh.length; yi++) if (now - nh[yi].t < 2000) spread = Math.max(spread, ad(nh[yi].yaw, near.yaw));
          if (sp > 20 && spread < 0.79) {
            var dyaw = ad(p.yaw, near.yaw), bad = dyaw > 2.1;
-           npcFacingN++; if (bad) npcFacingBad++;
+           npcFacingN++; if (bad) { npcFacingBad++; if (npcFacingWhy.length < 4) npcFacingWhy.push(Math.round(Math.sqrt(best)) + '/' + Math.round(sp) + '/' + Math.round(dyaw * 57.3)); }
            var tot = window.__omwNpcFacing || (window.__omwNpcFacing = { n: 0, bad: 0, bads: [] }); // never reset: scenarios read it
            tot.n++;
            if (bad) {
@@ -747,7 +747,7 @@ window.omw = (function(){
        + ' puppeted=' + (s.puppetedActors || '?')
        + ' npcGap p50=' + gq(0.5) + ' p95=' + gq(0.95) + ' n=' + npcGap.length
        + ' npcPath p50=' + pq(0.5) + ' p95=' + pq(0.95) + ' max=' + pq(1) + ' n=' + npcPath.length
-       + ' npcFacing bad=' + npcFacingBad + ' n=' + npcFacingN
+       + ' npcFacing bad=' + npcFacingBad + ' n=' + npcFacingN + (npcFacingWhy.length ? ' why=' + npcFacingWhy.join(',') : '')
        + ' wsRx=' + JSON.stringify(wsRx)
        + ' raw=' + JSON.stringify({ abi: s.actorBatchesIn, isHolder: s.isHolder, puppetRx: s.puppetRx,
            puppetMark: s.puppetMark, simReady: s.simReady, snap: s.selfSnap, stale: s.selfStale });
@@ -762,7 +762,7 @@ window.omw = (function(){
        });
        line += ' state=' + JSON.stringify(keep);
      }
-     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = []; npcFacingN = 0; npcFacingBad = 0;
+     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = []; npcFacingN = 0; npcFacingBad = 0; npcFacingWhy = [];
      fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
        body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
    }, 5000);
