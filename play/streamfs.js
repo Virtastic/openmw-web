@@ -80,6 +80,30 @@
       const handles = new Map();   // id -> FileSystemFileHandle
       const files = new Map();     // id -> File (cached getFile() result)
       let prefetch = null;         // {ckey, done}: the one outstanding sequential prefetch (backlog 389)
+      // ONE DROPPED REQUEST WAS FATAL. A range read that failed threw straight into the engine
+      // ("read failed"), and one that hung became "read timeout" after 30 s: prod 2026-10-15, a
+      // player on a slow link stuck on the loading screen for five minutes, another's game dead
+      // mid-session. Each attempt gets its own deadline; network errors, 408/429 and 5xx are
+      // retried with a short backoff. A 4xx is an answer, not a blip, and is not retried.
+      const ATTEMPTS = 4, ATTEMPT_MS = 12000;
+      async function rangeFetch(url, start, end) {
+        let last;
+        for (let i = 0; i < ATTEMPTS; i++) {
+          if (i) await new Promise((r) => setTimeout(r, 400 * i * i));
+          const ac = new AbortController();
+          const t = setTimeout(() => ac.abort(), ATTEMPT_MS);
+          try {
+            const r = await fetch(url, { headers: { Range: 'bytes=' + start + '-' + (end - 1) }, signal: ac.signal });
+            if (r.ok || r.status === 206) return new Uint8Array(await r.arrayBuffer());
+            last = new Error('HTTP ' + r.status);
+            if (r.status < 500 && r.status !== 408 && r.status !== 429) throw last;
+          } catch (err) {
+            last = err;
+            if (/^HTTP 4/.test(String(err && err.message)) && !/^HTTP 4(08|29)/.test(err.message)) throw err;
+          } finally { clearTimeout(t); }
+        }
+        throw last;
+      }
       onmessage = async (e) => {
         const m = e.data;
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
@@ -111,9 +135,7 @@
               } catch (e) { /* Cache API unavailable: fall through to the network */ }
             }
             if (!buf) {
-              const r = await fetch(m.url, { headers: { Range: 'bytes=' + m.start + '-' + (m.end - 1) } });
-              if (!r.ok && r.status !== 206) throw new Error('HTTP ' + r.status);
-              buf = new Uint8Array(await r.arrayBuffer());
+              buf = await rangeFetch(m.url, m.start, m.end);
               if (ckey) {
                 // Not awaited: the copy into the shared buffer below reads buf, the put keeps
                 // its own reference, and nothing mutates buf afterwards.
@@ -179,7 +201,9 @@
     // eviction-thrashing working set shows up as misses climbing without bytes growing.
     const t0 = performance.now();
     while (Atomics.load(S.ctrl, 0) !== gen) {
-      if (performance.now() - t0 > 30000) throw new Error('streamfs: read timeout ' + cacheKey + '@' + start);
+      // Above the worker's whole retry budget (4 x 12 s + 0.4/1.6/3.6 s backoff = 53.6 s), so a
+      // read that is still being retried is never abandoned here first.
+      if (performance.now() - t0 > 60000) throw new Error('streamfs: read timeout ' + cacheKey + '@' + start);
     }
     ST.misses++; ST.stallMs += performance.now() - t0;
     const n = S.ctrl[1];
