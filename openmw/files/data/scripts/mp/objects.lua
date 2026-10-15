@@ -390,7 +390,24 @@ end
 
 -- Diff a watched container against its last snapshot and report every change. Extracted so the
 -- expiry path can run it too: the watch window closing does not mean nothing happened inside it.
+-- What our own pack holds, by record. A take is the container going down AND the pack going up;
+-- a put the other way round. A container that changed while the pack did not was changed by
+-- someone else -- the server's canonical copy replacing this engine's own roll of a corpse --
+-- and reporting that as our take credited loot nobody held (prod 2026-10-15: the crab meat the
+-- holder's mudcrab never had, credited, then taken away again; s913).
+local function packSnapshot()
+    local counts = {}
+    local player = deps.playerFn and deps.playerFn()
+    if not player then return counts end
+    pcall(function()
+        for _, item in ipairs(types.Actor.inventory(player):getAll()) do
+            counts[item.recordId] = (counts[item.recordId] or 0) + item.count
+        end
+    end)
+    return counts
+end
 local function diffContainer(obj, watch)
+    local pack = packSnapshot()
     local current = snapshotContainer(obj, watch.live)
     if not current then
         dropOut('ContainerOpRequest', 'contents-unreadable', tostring(obj.recordId))
@@ -402,6 +419,7 @@ local function diffContainer(obj, watch)
                 -- The apply has landed and nothing else happened: this is the baseline.
                 watch.rebase, watch.expect, watch.expectFrame = nil, nil, nil
                 watch.last = current
+                watch.pack = pack
                 return
             elseif frameNo < watch.expectFrame then
                 return -- still landing; look again next poll
@@ -415,21 +433,31 @@ local function diffContainer(obj, watch)
             -- deferred rewrite has landed. Nothing to report.
             watch.rebase = nil
             watch.last = current
+            watch.pack = pack
             return
+        end
+    end
+    local prevPack = watch.pack or pack
+    local function report(recId, dn)
+        local dp = (pack[recId] or 0) - (prevPack[recId] or 0)
+        local mine = dn < 0 and math.min(-dn, math.max(0, dp)) or math.min(dn, math.max(0, -dp))
+        if mine > 0 then objects.sendContainerOp(obj, dn < 0 and 'take' or 'put', recId, mine) end
+        if mine < math.abs(dn) then
+            print(string.format('[mp] loot: %s %d x %s changed with no matching change in our pack -- not ours, not reported',
+                tostring(obj.recordId), dn, tostring(recId)))
         end
     end
     local seen = {}
     for recId, n in pairs(current) do
         seen[recId] = true
         local dn = n - (watch.last[recId] or 0)
-        if dn ~= 0 then objects.sendContainerOp(obj, dn < 0 and 'take' or 'put', recId, math.abs(dn)) end
+        if dn ~= 0 then report(recId, dn) end
     end
     for recId, n in pairs(watch.last) do
-        if not seen[recId] and n > 0 then
-            objects.sendContainerOp(obj, 'take', recId, n)
-        end
+        if not seen[recId] and n > 0 then report(recId, -n) end
     end
     watch.last = current
+    watch.pack = pack
 end
 
 local function trackContainerData(key, items, seq)
@@ -566,6 +594,7 @@ local function openContainerNow(object, now, live)
         containerWatch[object.id] = {
             obj = object,
             last = snapshot,
+            pack = packSnapshot(), -- what a take must show up in (diffContainer)
             live = live, -- a merchant stays alive while we watch it; a corpse does not
             gold = gold, -- baseline to diff the purse against when the window closes
             -- Poll on the NEXT tick, not a quarter second from now. A harvest can resolve and the

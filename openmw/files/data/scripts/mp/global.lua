@@ -3032,9 +3032,10 @@ local eventHandlers = {
             if not corpse:isValid() then mp.set('lootTest', 'corpse-gone'); return end
             local moved = 0
             for _, item in ipairs(types.Actor.inventory(corpse):getAll()) do
-                if item.recordId == data.item and moved == 0 then
+                if (data.item == '*' or item.recordId == data.item) and moved == 0 then
                     pcall(function() item:moveInto(types.Actor.inventory(me)) end)
                     moved = item.count or 1
+                    mp.set('lootItem', tostring(item.recordId))
                 end
             end
             print(string.format('[mp] mpTestLoot: moved %d x %s from %s', moved, tostring(data.item), tostring(data.record)))
