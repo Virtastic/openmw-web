@@ -58,7 +58,7 @@ RUN \
  && ninja -C "$BUILD_DIR" -j "${BUILD_JOBS:-8}" components openmw-lib \
  && bash wasm-build/link-openmw.sh \
  && mkdir -p play \
- && cp "$BUILD_DIR"/openmw.js "$BUILD_DIR"/openmw.wasm "$BUILD_DIR"/openmw.data play/ \
+ && cp "$BUILD_DIR"/openmw.js "$BUILD_DIR"/openmw.wasm "$BUILD_DIR"/openmw.data "$BUILD_DIR"/openmw.js.symbols play/ \
  && bash wasm-build/make_br.sh
 
 # ---- runtime ---------------------------------------------------------------------------------
@@ -74,12 +74,15 @@ COPY play/og.png play/robots.txt play/sitemap.xml /srv/
 COPY --from=builder /build/play/openmw.js      /build/play/openmw.js.br      /srv/
 COPY --from=builder /build/play/openmw.wasm    /build/play/openmw.wasm.br    /srv/
 COPY --from=builder /build/play/openmw.data    /build/play/openmw.data.br    /srv/
+# Beside the engine it names, so e/<hash>/openmw.js.symbols resolves that build's crash stacks.
+COPY --from=builder /build/play/openmw.js.symbols /srv/
 
 # Content-version the engine: move openmw.{js,wasm,data}(+.br) into /srv/e/<hash>/ and stamp that hash
 # into /srv/index.html, so Cloudflare can never serve a mismatched mix of two builds (the null-function
 # crash). Alpine busybox has sh/sed/sha256sum. index.html stays no-cache and points at the current dir.
 COPY wasm-build/version-engine.sh /tmp/version-engine.sh
-RUN PLAY=/srv sh /tmp/version-engine.sh && rm /tmp/version-engine.sh
+RUN PLAY=/srv sh /tmp/version-engine.sh && rm /tmp/version-engine.sh \
+ && mv /srv/openmw.js.symbols "/srv/e/$(cat /srv/engine-version.txt)/"
 
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 EXPOSE 8080

@@ -245,6 +245,9 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   ${OMW_PROXY:+-sPROXY_TO_PTHREAD -sOFFSCREENCANVAS_SUPPORT=1 -sOFFSCREENCANVASES_TO_PTHREAD=#canvas} \
   -sENVIRONMENT=web,worker \
   ${OMW_PROFILING:+--profiling-funcs} \
+  `# openmw.js.symbols: function index -> name. A browser crash names wasm-function[N] only` \
+  `# (prod 2026-10-15: memory access out of bounds, unresolvable). Does not touch the wasm.` \
+  --emit-symbol-map \
   ${OMW_CLOSURE:+--closure=1} \
   -Wl,--whole-archive \
     "$LIB/libosgdb_bmp.a" "$LIB/libosgdb_dds.a" "$LIB/libosgdb_freetype.a" \
