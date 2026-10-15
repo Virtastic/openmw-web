@@ -673,18 +673,29 @@ window.omw = (function(){
        var best = Infinity, near = null, nearK = null;
        for (var i = 0; i < rx.length; i++) { var dx = rx[i].x - p.x, dy = rx[i].y - p.y, dd = dx * dx + dy * dy; if (dd < best) { best = dd; near = rx[i]; nearK = rk[i]; } }
        if (best < 1024 * 1024) npcGap.push(Math.sqrt(best)); // beyond that it is another actor
-       // npcFacing: a WALKING NPC (server speed over 20 u/s) drawn facing more than 120 degrees
-       // off the server's own heading for it. Positions can be right while it walks backwards or
-       // spins ("doing 180s as they walk", prod 2026-10-14); no position metric shows that.
+       // npcFacing: a WALKING NPC (server speed over 20 u/s, server heading steady within 45
+       // degrees over the last 2 s) drawn facing more than 120 degrees off that heading. Positions
+       // can be right while it walks backwards or spins ("doing 180s as they walk", prod
+       // 2026-10-14); no position metric shows that. The steadiness gate is what keeps a REAL
+       // turn out: the drawn copy trails its server pose by the render delay, so an NPC turning
+       // at the end of its path read as "turned round" for a moment (s188: 11 of 15 such).
        if (near && best < 64 * 64 && typeof p.yaw === 'number') {
          var nh = actorTap.hist[nearK] || [];
          var pa = nh.length > 1 ? nh[nh.length - 2] : null;
          var sp = pa && near.t > pa.t ? Math.hypot(near.x - pa.x, near.y - pa.y) / ((near.t - pa.t) / 1000) : 0;
-         if (sp > 20) {
-           var dyaw = Math.abs(((p.yaw - near.yaw) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
-           npcFacingN++; if (dyaw > 2.1) npcFacingBad++;
-           var tot = window.__omwNpcFacing || (window.__omwNpcFacing = { n: 0, bad: 0 }); // never reset: scenarios read it
-           tot.n++; if (dyaw > 2.1) tot.bad++;
+         var ad = function(u, v){ return Math.abs(((u - v) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI); };
+         var spread = 0;
+         for (var yi = 0; yi < nh.length; yi++) if (now - nh[yi].t < 2000) spread = Math.max(spread, ad(nh[yi].yaw, near.yaw));
+         if (sp > 20 && spread < 0.79) {
+           var dyaw = ad(p.yaw, near.yaw), bad = dyaw > 2.1;
+           npcFacingN++; if (bad) npcFacingBad++;
+           var tot = window.__omwNpcFacing || (window.__omwNpcFacing = { n: 0, bad: 0, bads: [] }); // never reset: scenarios read it
+           tot.n++;
+           if (bad) {
+             tot.bad++;
+             tot.bads.push({ rec: rec, d: Math.round(dyaw * 57.3), sp: Math.round(sp), gap: Math.round(Math.sqrt(best)) });
+             if (tot.bads.length > 30) tot.bads.shift();
+           }
          }
        }
        // npcPath: the same drawn position against the PATH the server sent over the last 2 s.

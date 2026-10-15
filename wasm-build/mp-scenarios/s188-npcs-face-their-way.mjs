@@ -7,7 +7,10 @@
 // the server's pose but facing more than 120 degrees off the server's heading
 // (window.__omwNpcFacing, the same count telemetry ships as npcFacing).
 //
-// Seyda Neen for 45 s with the player walking about. Asserted: enough walking samples to mean
+// Only while the server heading is STEADY (within 45 degrees over 2 s): a real turn at the
+// end of a path reads as turned round for the render delay (11 of 15 such in the first run).
+//
+// Seyda Neen for 45 s with the player walking about (three runs: 0/138, 0/105, 2/163). Asserted: enough walking samples to mean
 // something, and under 2% of them turned round.
 //
 // RETAIL DATA REQUIRED.
@@ -36,6 +39,7 @@ export default async function run(ctx) {
   const f = await read();
   const pct = f.n ? (100 * f.bad) / f.n : 0;
   ctx.log(`walking NPC samples ${f.n}, turned round ${f.bad} (${pct.toFixed(1)}%)`);
+  for (const b of (f.bads || [])) ctx.log('  turned round: ' + JSON.stringify(b));
   assert.ok(f.n >= 20, `too few walking-NPC samples to judge (${f.n})`);
   assert.ok(pct < 2, `walking NPCs drawn turned round in ${pct.toFixed(1)}% of samples (${f.bad}/${f.n})`);
   assert.deepEqual(a.luaErrors(), [], 'no Lua error');
