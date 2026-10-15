@@ -552,9 +552,16 @@ local function onUpdate(dt)
     -- direction of travel and drop to half pace until the target catches up. Within FAR_GAP
     -- only: further out the far-gap snap owns it.
     local vx, vy = interp:velocity(now)
-    if steering and tgtV >= 20 and dist2d < FAR_GAP and (dx * vx + dy * vy) < 0 then
-        self.controls.yawChange = shortestArc(math.atan(vx, vy) - curYaw)
-        self.controls.movement = steerMovement(0, tgtV, self.controls.run, dt) * 0.5
+    if steering and tgtV >= 20 and dist2d < FAR_GAP then
+        -- A WALKING TARGET IS FOLLOWED BY ITS HEADING, NOT BY ITS POINT. Aiming at the target
+        -- point from a few units away turns a 5 u sideways offset into 45 degrees, and a puppet
+        -- that slips just ahead/behind every frame flipped between that and the travel heading:
+        -- NPCs "looking side to side rapidly" as they walk (prod 2026-10-15, after #141 had
+        -- already removed the full 180s). Face the way it walks; steer back onto its path by at
+        -- most 20 degrees, fading to nothing as the gap closes; ahead of it, only slow down.
+        self.controls.yawChange = shortestArc(Interp.walkHeading(dx, dy, vx, vy, dist2d) - curYaw)
+        local ahead = (dx * vx + dy * vy) < 0
+        self.controls.movement = steerMovement(ahead and 0 or dist2d, tgtV, self.controls.run, dt) * (ahead and 0.5 or 1)
     elseif steering then
         -- Steer toward the target point (MW yaw: 0 = +Y, clockwise positive).
         local headingErr = shortestArc(math.atan(dx, dy) - curYaw)

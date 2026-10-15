@@ -1980,9 +1980,20 @@ do
   check('velocity points the way the target walks (+y), for the ahead-of-target rule',
     math.abs(vx) < 1 and vy > 200, string.format('vx %.1f vy %.1f', vx, vy))
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
-  check('a puppet ahead of a walking target keeps facing its travel, never turns round (180s)',
-    pp:find('if steering and tgtV >= 20 and dist2d < FAR_GAP and (dx * vx + dy * vy) < 0 then', 1, true) ~= nil
-    and pp:find('self.controls.yawChange = shortestArc(math.atan(vx, vy) - curYaw)', 1, true) ~= nil)
+  -- Walking +y (travel heading 0). Every case must stay within 20 degrees of the travel heading:
+  -- the target point a few units off to any side, ahead, behind -- the jitter cases.
+  local deg = function(r) return math.abs(r) * 57.3 end
+  local worst = 0
+  for _, c in ipairs({ { 5, 0 }, { -5, 0 }, { 3, -2 }, { -3, 2 }, { 0, -6 }, { 40, 10 }, { -40, -10 }, { 10, -60 } }) do
+    local h = Interp.walkHeading(c[1], c[2], 0, 250, math.sqrt(c[1] ^ 2 + c[2] ^ 2))
+    worst = math.max(worst, deg(h))
+  end
+  check('a puppet following a walking target faces within 20 degrees of its travel, wherever the point is (side-to-side jitter, 180s)',
+    worst <= 20.1, string.format('worst %.1f deg', worst))
+  check('...and a target 3 u to the side barely turns it (was 45-90 degrees aiming at the point)',
+    deg(Interp.walkHeading(3, 0.5, 0, 250, 3.04)) < 2, string.format('%.1f deg', deg(Interp.walkHeading(3, 0.5, 0, 250, 3.04))))
+  check('puppet.lua steers a walking target by walkHeading',
+    pp:find('Interp.walkHeading(dx, dy, vx, vy, dist2d)', 1, true) ~= nil)
   local cc = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('puppet steering may exceed top speed to close a gap',
     pp:find('math.min(PUPPET_MAX_SPEED, (tgtV + dist2d', 1, true) ~= nil and pp:find('local PUPPET_MAX_SPEED = 1.25', 1, true) ~= nil)
