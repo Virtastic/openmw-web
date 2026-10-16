@@ -395,6 +395,7 @@ end
 -- someone else -- the server's canonical copy replacing this engine's own roll of a corpse --
 -- and reporting that as our take credited loot nobody held (prod 2026-10-15: the crab meat the
 -- holder's mudcrab never had, credited, then taken away again; s913).
+local MATCH_WINDOW_S = 1.5 -- how long one side of a pack<->container move may wait for the other
 local function packSnapshot()
     local counts = {}
     local player = deps.playerFn and deps.playerFn()
@@ -437,24 +438,46 @@ local function diffContainer(obj, watch)
             return
         end
     end
+    -- MATCHED ACROSS POLLS, NOT WITHIN ONE. A move between pack and container lands in two
+    -- frames: the source side changes at once, the destination at the end of the frame
+    -- (reconcile.lua's engine rule). A poll between the two saw the container change with no
+    -- pack change and threw a real put away (s31, first failure in 30 builds), or a real take.
+    -- So both sides accumulate per record and are matched as they land; what is still
+    -- unmatched after MATCH_WINDOW_S was not ours (a canonical correction) and is only said.
     local prevPack = watch.pack or pack
-    local function report(recId, dn)
-        local dp = (pack[recId] or 0) - (prevPack[recId] or 0)
-        local mine = dn < 0 and math.min(-dn, math.max(0, dp)) or math.min(dn, math.max(0, -dp))
-        if mine > 0 then objects.sendContainerOp(obj, dn < 0 and 'take' or 'put', recId, mine) end
-        if mine < math.abs(dn) then
-            print(string.format('[mp] loot: %s %d x %s changed with no matching change in our pack -- not ours, not reported',
-                tostring(obj.recordId), dn, tostring(recId)))
+    local now = core.getRealTime()
+    local acc = watch.acc or {}
+    watch.acc = acc
+    local function add(recId, dc, dp)
+        if dc == 0 and dp == 0 then return end
+        local a = acc[recId] or { c = 0, p = 0, since = now }
+        a.c, a.p = a.c + dc, a.p + dp
+        acc[recId] = a
+    end
+    local recs = {}
+    for recId in pairs(current) do recs[recId] = true end
+    for recId in pairs(watch.last) do recs[recId] = true end
+    for recId in pairs(pack) do recs[recId] = true end
+    for recId in pairs(prevPack) do recs[recId] = true end
+    for recId in pairs(recs) do
+        add(recId, (current[recId] or 0) - (watch.last[recId] or 0), (pack[recId] or 0) - (prevPack[recId] or 0))
+    end
+    for recId, a in pairs(acc) do
+        local mine = 0
+        if a.c < 0 and a.p > 0 then mine = math.min(-a.c, a.p)
+        elseif a.c > 0 and a.p < 0 then mine = math.min(a.c, -a.p) end
+        if mine > 0 then
+            objects.sendContainerOp(obj, a.c < 0 and 'take' or 'put', recId, mine)
+            if a.c < 0 then a.c, a.p = a.c + mine, a.p - mine else a.c, a.p = a.c - mine, a.p + mine end
         end
-    end
-    local seen = {}
-    for recId, n in pairs(current) do
-        seen[recId] = true
-        local dn = n - (watch.last[recId] or 0)
-        if dn ~= 0 then report(recId, dn) end
-    end
-    for recId, n in pairs(watch.last) do
-        if not seen[recId] and n > 0 then report(recId, -n) end
+        if a.c == 0 and a.p == 0 then acc[recId] = nil
+        elseif now - a.since > MATCH_WINDOW_S then
+            if a.c ~= 0 then
+                print(string.format('[mp] loot: %s %d x %s changed with no matching change in our pack -- not ours, not reported',
+                    tostring(obj.recordId), a.c, tostring(recId)))
+            end
+            acc[recId] = nil -- a lone pack change (a potion drunk, a pickup) is not this container's business
+        end
     end
     watch.last = current
     watch.pack = pack
