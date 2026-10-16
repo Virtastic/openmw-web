@@ -115,25 +115,33 @@
       async function warm(files, chunk) {
         if (warming) return;
         warming = true;
-        let fetched = 0;
+        let fetched = 0, fetchFails = 0, stop = null;
         try {
           const c = await caches.open('mwdata-chunks-v1');
-          for (const f of files) {
+          outer: for (const f of files) {
             for (let s = 0; s < f.size; s += chunk) {
               while (fg > 0 || Date.now() - lastFg < 1500) await nap(250);
               const ckey = 'https://sfs.chunk/' + encodeURIComponent(f.pkey) + '/' + s;
               if (await c.match(ckey)) continue;
-              try {
-                const buf = await rangeFetch(f.url, s, Math.min(s + chunk, f.size));
-                await c.put(ckey, new Response(buf));
-                fetched++; postMessage({ warmed: 1 });
-              } catch (err) { await nap(5000); }
+              // STOP ON A FULL STORE. A put that fails is almost always the origin's quota: every
+              // later chunk would be downloaded and thrown away (prod 2026-10-15: warm-up stuck at
+              // 38 chunks for two hours, every retry a 2 MB download for nothing).
+              let buf;
+              try { buf = await rangeFetch(f.url, s, Math.min(s + chunk, f.size)); }
+              catch (err) {
+                if (++fetchFails >= 5) { stop = 'fetch: ' + String(err && err.message || err).slice(0, 60); break outer; }
+                await nap(5000); continue;
+              }
+              fetchFails = 0;
+              try { await c.put(ckey, new Response(buf)); }
+              catch (err) { stop = 'store: ' + String(err && err.name || err).slice(0, 60); break outer; }
+              fetched++; postMessage({ warmed: 1 });
               await nap(30);
             }
           }
-        } catch (err) { /* Cache API unavailable: nothing to warm into */ }
+        } catch (err) { stop = 'cache api: ' + String(err && err.name || err).slice(0, 60); }
         warming = false;
-        postMessage({ warmed: 0, done: true });
+        postMessage({ warmed: 0, done: true, err: stop });
       }
       onmessage = async (e) => {
         const m = e.data;
@@ -310,7 +318,7 @@
       S.data = new Uint8Array(dataBuf);
       S.worker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
       S.worker.postMessage({ init: 1, ctrl: ctrlBuf, data: dataBuf });
-      S.worker.onmessage = (e) => { if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) ST.warmDone = true; } };
+      S.worker.onmessage = (e) => { if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
       try { Object.defineProperty(window, '__streamfsStats', { get: () => window.StreamFS.stats() }); } catch (e) {}
     },
 
@@ -347,7 +355,19 @@
       for (const [path, src] of S.urlSrcs) if (src.pkey && src.size && re.test(path)) files.push({ path, url: src.url, pkey: src.pkey, size: src.size });
       const rank = (p) => { const i = (first || []).findIndex((r) => r.test(p)); return i < 0 ? 99 : i; };
       files.sort((a, b) => rank(a.path) - rank(b.path));
-      if (files.length) S.worker.postMessage({ warm: files.map(({ url, pkey, size }) => ({ url, pkey, size })), chunk: CHUNK });
+      // ONLY WHAT FITS. Warming past the origin's storage quota downloads chunks only to fail
+      // storing them. Files are queued in priority order while they fit in 80% of what is free;
+      // without the estimate API, everything is queued and the worker stops at the first failed put.
+      const send = (list) => { if (list.length) S.worker.postMessage({ warm: list.map(({ url, pkey, size }) => ({ url, pkey, size })), chunk: CHUNK }); };
+      if (navigator.storage && navigator.storage.estimate) {
+        navigator.storage.estimate().then((est) => {
+          let room = Math.max(0, ((est.quota || 0) - (est.usage || 0)) * 0.8);
+          const fit = [];
+          for (const f of files) { if (f.size <= room) { fit.push(f); room -= f.size; } }
+          if (!fit.length) ST.warmErr = 'no room: ' + Math.round(((est.quota || 0) - (est.usage || 0)) / 1048576) + ' MB free';
+          send(fit);
+        }, () => send(files));
+      } else send(files);
       return files.length;
     },
 
