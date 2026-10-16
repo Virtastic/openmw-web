@@ -567,13 +567,15 @@ function objects.onActivate(object, actor)
     -- duplicate across everyone who opens them.
     if isLootable(object) then
         -- Deferred: the contents may not exist yet at this instant (see CONTAINER_OPEN_DELAY).
-        containerOpenPending[object.id] = { obj = object, at = now + CONTAINER_OPEN_DELAY }
+        -- The pack as it was WHEN the player opened it: a put made before the watch arms
+        -- (CONTAINER_OPEN_DELAY later) has already left the pack by then (s31).
+        containerOpenPending[object.id] = { obj = object, at = now + CONTAINER_OPEN_DELAY, pack = packSnapshot() }
     end
 end
 
 -- The deferred half of a container open: snapshot the contents once the engine has actually
 -- populated them, tell the server, and start watching for takes from that same snapshot.
-local function openContainerNow(object, now, live)
+local function openContainerNow(object, now, live, packAtOpen)
     if not (object and object:isValid()) then return end
     local snapshot = snapshotContainer(object, live)
     -- A merchant's purse rides the open alongside its stock: same object, same refKey, and it
@@ -604,7 +606,7 @@ local function openContainerNow(object, now, live)
         local tries = (openRetries[object.id] or 0) + 1
         if object:isValid() and tries <= CONTAINER_OPEN_RETRIES then
             openRetries[object.id] = tries
-            containerOpenPending[object.id] = { obj = object, at = now + CONTAINER_OPEN_DELAY, live = live }
+            containerOpenPending[object.id] = { obj = object, at = now + CONTAINER_OPEN_DELAY, live = live, pack = packAtOpen }
         else
             openRetries[object.id] = nil
             -- Give up LOUDLY. The whole failure mode here is silence.
@@ -617,7 +619,7 @@ local function openContainerNow(object, now, live)
         containerWatch[object.id] = {
             obj = object,
             last = snapshot,
-            pack = packSnapshot(), -- what a take must show up in (diffContainer)
+            pack = packAtOpen or packSnapshot(), -- what a take must show up in (diffContainer), from the open
             live = live, -- a merchant stays alive while we watch it; a corpse does not
             gold = gold, -- baseline to diff the purse against when the window closes
             -- Poll on the NEXT tick, not a quarter second from now. A harvest can resolve and the
@@ -665,7 +667,7 @@ end
 function objects.onBarterOpen(merchant)
     if not (merchant and merchant:isValid()) then return end
     local now = core.getRealTime()
-    containerOpenPending[merchant.id] = { obj = merchant, at = now + CONTAINER_OPEN_DELAY, live = true }
+    containerOpenPending[merchant.id] = { obj = merchant, at = now + CONTAINER_OPEN_DELAY, live = true, pack = packSnapshot() }
 end
 
 -- THE HOLDER'S CORPSE IS THE LOOT (#297). Corpse contents used to become canonical from
@@ -1387,7 +1389,7 @@ function objects.tick(now)
     for id, pending in pairs(containerOpenPending) do
         if now >= pending.at then
             containerOpenPending[id] = nil
-            openContainerNow(pending.obj, now, pending.live)
+            openContainerNow(pending.obj, now, pending.live, pending.pack)
         end
     end
 
