@@ -70,6 +70,16 @@ local prevJump = false
 -- second input of a tick overwrote the first and one jump in three (or a short use click)
 -- never reached the avatar while observers, who latch, saw it (#198).
 local jumpLatch, useLatch = false, false
+-- A TIMED JUMP GOES WITH ITS SEGMENT, NOT WITH ITS ARRIVAL. It used to fire the frame the input
+-- landed, i.e. ahead of the queued movement, from wherever the body was then -- and if that body
+-- was still in the air from the previous hop (it lands when ITS physics says, not the owner's),
+-- the engine ignored the jump outright. Hopping rock to rock the owner made each jump, the avatar
+-- walked off the rock and fell (prod 2026-10-16: "fell 60" while the owner stood on the rocks),
+-- and the owner was dragged back down: rubber-banding. Now the jump is due when its segment
+-- starts playing and waits up to JUMP_HOLD_S for the body to be on the ground; past that it
+-- fires anyway (a jump in water or mid-air did the same before).
+local jumpDue, segJumpPrev = nil, false
+local JUMP_HOLD_S = 0.35
 local useWasOn, useProbeAt = false, nil
 local useOnSince, useHeldSaidAt = nil, nil
 local ownerSlots = {} -- slot -> record the owner holds there (MP_Equip); see rebindAmmo
@@ -296,7 +306,7 @@ return {
                 -- owner held the button (measured 1.6 per arrow from a long bow). A bow held
                 -- a moment longer harms nothing; keep it for a bounded while.
                 local keepUse = input and bit(input.flags, 3) and now - inputAt <= USE_HOLD_S
-                segs, spendPrev, doneInPrev, owed = {}, 0, false, 0
+                segs, spendPrev, doneInPrev, owed, jumpDue = {}, 0, false, 0, nil
                 stop()
                 if keepUse then self.controls.use = 1 end
                 return
@@ -323,9 +333,17 @@ return {
                 while #segs > 1 and backlog > SEGS_LAG_S and (segs[1].d.move or 0) == 0 and (segs[1].d.side or 0) == 0 do
                     local s = table.remove(segs, 1)
                     backlog, ctl, lastDone, done = backlog - s.t, s.d, s.d.seq, true
+                    if bit(s.d.flags, 2) then jumpDue = jumpDue or now end
                 end
                 while left > 0 and #segs > 0 do
                     local s = segs[1]
+                    if not s.started then
+                        s.started = true
+                        -- the rising edge only: a key held over several inputs is one jump
+                        local j = bit(s.d.flags, 2)
+                        if j and not segJumpPrev then jumpDue = jumpDue or now end
+                        segJumpPrev = j
+                    end
                     local use = math.min(s.t, left)
                     mSum, sSum = mSum + (s.d.move or 0) * use, sSum + (s.d.side or 0) * use
                     left, s.t, ctl = left - use, s.t - use, s.d
@@ -373,10 +391,18 @@ return {
             self.controls.pitchChange = (ctl.pitch or curPitch) - curPitch
             self.controls.run = bit(ctl.flags, 0)
             self.controls.sneak = bit(ctl.flags, 1)
-            local jump = jumpLatch or bit(input.flags, 2)
-            jumpLatch = false
-            self.controls.jump = jump and not prevJump
-            prevJump = jump
+            if timed then
+                local okg, onGround = pcall(types.Actor.isOnGround, self)
+                local fire = jumpDue ~= nil and ((okg and onGround) or now - jumpDue >= JUMP_HOLD_S)
+                self.controls.jump = fire
+                if fire then jumpDue = nil end
+                jumpLatch, prevJump = false, false
+            else
+                local jump = jumpLatch or bit(input.flags, 2)
+                jumpLatch = false
+                self.controls.jump = jump and not prevJump
+                prevJump = jump
+            end
             -- THE SEQ THIS BODY HAS ACTUALLY APPLIED. The pose stream used to be stamped with the
             -- newest input the global script had RECEIVED, but that input only reaches these
             -- controls a frame later (a local event) and moves the body a frame after that, so
@@ -521,10 +547,11 @@ return {
                 while total > SEGS_MAX_S and #segs > 1 do
                     total = total - segs[1].t
                     lastDone = segs[1].d.seq
+                    if not segs[1].started and bit(segs[1].d.flags, 2) then jumpDue = jumpDue or core.getRealTime() end
                     table.remove(segs, 1)
                 end
             end
-            if bit(data.flags, 2) then jumpLatch = true end
+            if bit(data.flags, 2) and not timed then jumpLatch = true end
             if bit(data.flags, 3) then useLatch = true end
         end,
         -- Same three-step contract as puppet.lua: re-enable AI HERE, then ask the global

@@ -6,6 +6,8 @@
 package.path = './openmw/files/data/?.lua;./wasm-build/lua-tests/?.lua;' .. package.path
 
 local stubs = require('stubs')
+-- puppet.lua's never-glide-into-a-player check reads nearby.players; nobody stands near in a unit test
+package.preload['openmw.nearby'] = function() return { players = {} } end
 -- A Windows checkout (core.autocrlf) hands the source checks CRLF files; the checks look for
 -- '\n'-delimited hunks. Normalise every read here so a check means the same on both hosts.
 do
@@ -650,9 +652,20 @@ do
   check("the sim peer's own dummy player is not a collision body for the avatars",
     pl:find('if mp.setSelfCollisionBody then mp.setSelfCollisionBody(false) end', 1, true) ~= nil)
   check('avatar.lua latches the jump and use edges until onUpdate consumes them (198)',
-    av:find('if bit(data.flags, 2) then jumpLatch = true end', 1, true) ~= nil
+    av:find('if bit(data.flags, 2) and not timed then jumpLatch = true end', 1, true) ~= nil
     and av:find('local jump = jumpLatch or bit(input.flags, 2)', 1, true) ~= nil
     and av:find('(useLatch or bit(input.flags, 3)) and 1 or 0', 1, true) ~= nil)
+  -- prod 2026-10-16, rubber-banding hopping rock to rock: a timed jump fires when its SEGMENT
+  -- plays, and waits for the body to be on the ground instead of being lost mid-air.
+  check('avatar.lua fires a timed jump with its segment, once the body is on the ground',
+    av:find('if j and not segJumpPrev then jumpDue = jumpDue or now end', 1, true) ~= nil
+    and av:find('local fire = jumpDue ~= nil and ((okg and onGround) or now - jumpDue >= JUMP_HOLD_S)', 1, true) ~= nil)
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  check('puppet.lua glides the gap its legs leave, never into a player (s190)',
+    pp:find('pcall(mp.correctActor, self.object, dx / dist2d * step, dy / dist2d * step, 0)', 1, true) ~= nil
+    and pp:find('not towardAPlayer(pos, target)', 1, true) ~= nil)
+  check('puppet.lua flinches on a landed punch, not only on health (prod 2026-10-16)',
+    (pp:match("'Hand To Hand Hit 2', self%)%s+flinch%(%)")) ~= nil)
   check('avatar.lua holds the last input through a retransmit stall (205)',
     av:find('local INPUT_HOLD_S = 1.0', 1, true) ~= nil)
   local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')

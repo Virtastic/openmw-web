@@ -14,6 +14,7 @@ local I = require('openmw.interfaces')
 -- openmw.mp is available in LOCAL scripts too (luabindings.cpp registers it for every context);
 -- puppet.lua needs it only for setPuppet, which is why it was not imported before.
 local mp = require('openmw.mp')
+local nearby = require('openmw.nearby')
 
 local Interp = require('scripts.mp.interp')
 
@@ -391,6 +392,25 @@ local CATCHUP_S = 0.15
 -- (s172 #161: 91 u behind at p50 while the wire was 14). The engine honours up to this factor
 -- for puppets only (character.cpp).
 local PUPPET_MAX_SPEED = 1.25
+-- THE GAP THE LEGS DO NOT CLOSE IS GLIDED, NOT TELEPORTED. A puppet's own engine can move it
+-- slower than the holder moved the original (s990: a walking mudcrab drawn at 23 u/s against the
+-- server's 34), so it fell behind until the far-gap snap teleported it 130-170 u -- the "little
+-- teleports" in a fight (prod 2026-10-16). Past GLIDE_FROM the rest is closed through physics
+-- (mp.correctActor, collision-resolved like the player's own correction) at up to GLIDE_MAX u/s.
+local GLIDE_FROM = 24
+local GLIDE_GAIN = 3 -- fraction of the excess per second
+local GLIDE_MAX = 200
+-- ...but never INTO a player. The holder's copy stands where it does against the holder's
+-- picture of that player, a step behind where they really are; gliding the puppet onto that
+-- spot shoves it against the player's capsule and physics slides it round them sideways.
+local function towardAPlayer(pos, target)
+    for _, p in ipairs(nearby.players) do
+        local pp = p.position
+        local mine = (pos.x - pp.x) ^ 2 + (pos.y - pp.y) ^ 2
+        if mine < 160 * 160 and (target.x - pp.x) ^ 2 + (target.y - pp.y) ^ 2 < mine then return true end
+    end
+    return false
+end
 
 local function onUpdate(dt)
     ensureHitHandler()
@@ -559,6 +579,10 @@ local function onUpdate(dt)
     -- A puppet that only needs to creep less than a step stands; the hysteresis above decides
     -- when it steers again.
     if not steering and tgtV < 20 then fwd, side = 0, 0 end
+    if steering and dist2d > GLIDE_FROM and mp.correctActor and not towardAPlayer(pos, target) then
+        local step = math.min((dist2d - GLIDE_FROM) * math.min(1, GLIDE_GAIN * dt), GLIDE_MAX * dt)
+        pcall(mp.correctActor, self.object, dx / dist2d * step, dy / dist2d * step, 0)
+    end
     self.controls.movement = fwd
     self.controls.sideMovement = side
     -- Look up and down too (avatar.lua applies the input's pitch the same way).
@@ -681,22 +705,28 @@ return {
             -- knows a miss for certain, and running drains fatigue too, hence the window.
             pcall(function()
                 local recent = core.getRealTime() - lastSwingAt <= SWING_FEEL_WINDOW_S
+                -- ...and the FLINCH (s171). The holder's actor plays its hit reaction on a landed
+                -- blow; the puppet only changed a number, so a landed hit looked like a miss to the
+                -- player who landed it. A PUNCH TOO: hand-to-hand lands on fatigue, the engine
+                -- flinches the victim for it all the same (Creature/Npc::onHit), and unarmed fights
+                -- showed no hit at all (prod 2026-10-16). Not on the killing blow (death plays) nor
+                -- the knockout (fatigue gone: the engine drops the body itself).
+                local function flinch()
+                    if (data.hp and (data.hp.c or 0) <= 0) or (data.ft and (data.ft.c or 0) <= 0) then return end
+                    local anim = require('openmw.animation')
+                    local hits = {}
+                    for i = 1, 5 do if anim.hasGroup(self, 'hit' .. i) then hits[#hits + 1] = 'hit' .. i end end
+                    if #hits > 0 then anim.playBlended(self, hits[math.random(#hits)], { priority = anim.PRIORITY.Hit }) end
+                end
                 if hpDrop then
                     core.sound.playSound3d('Health Damage', self)
-                    -- ...and the FLINCH (s171). The holder's actor plays its hit reaction on a
-                    -- damaging blow; the puppet only changed a number, so a landed hit looked like
-                    -- a miss to the player who landed it. Not on the killing blow (death plays).
-                    if data.hp and (data.hp.c or 0) > 0 then
-                        local anim = require('openmw.animation')
-                        local hits = {}
-                        for i = 1, 5 do if anim.hasGroup(self, 'hit' .. i) then hits[#hits + 1] = 'hit' .. i end end
-                        if #hits > 0 then anim.playBlended(self, hits[math.random(#hits)], { priority = anim.PRIORITY.Hit }) end
-                    end
+                    flinch()
                     if recent and lastSwingPos and I.Combat and I.Combat.spawnBloodEffect then
                         I.Combat.spawnBloodEffect(lastSwingPos)
                     end
                 elseif ftDrop and recent then
                     core.sound.playSound3d(math.random(2) == 1 and 'Hand To Hand Hit' or 'Hand To Hand Hit 2', self)
+                    flinch()
                 end
                 if hpDrop or ftDrop then lastSwingAt = 0 end
             end)

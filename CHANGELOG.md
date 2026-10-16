@@ -2,6 +2,18 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.5.4
+
+**No more rubber-banding when you hop.** In multiplayer the server keeps its own copy of your
+character, and that copy dropped jumps: if it was still in the air from your last hop when the
+next jump arrived, the jump was lost, the copy walked off the rock, and you were pulled back down
+after it. It now jumps at the same point in your movement that you did, and waits to land before
+taking the next hop.
+
+**Enemies stop teleporting in a fight.** The creatures and NPCs on your screen could move a little
+slower than the server's own, fall behind, and then jump forward to catch up. They now close the
+gap smoothly. A punch that lands also shows the enemy flinch now, not only a hit that draws blood.
+
 ## 1.5.3
 
 **NPCs walk like NPCs again.** In multiplayer, the NPCs on your screen are copies that follow
