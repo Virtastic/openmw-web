@@ -79,7 +79,7 @@ local jumpLatch, useLatch = false, false
 -- starts playing and waits up to JUMP_HOLD_S for the body to be on the ground; past that it
 -- fires anyway (a jump in water or mid-air did the same before).
 local jumpDue, segJumpPrev = nil, false
-local JUMP_HOLD_S = 0.35
+local JUMP_HOLD_S = 0.6
 local useWasOn, useProbeAt = false, nil
 local useOnSince, useHeldSaidAt = nil, nil
 local ownerSlots = {} -- slot -> record the owner holds there (MP_Equip); see rebindAmmo

@@ -3,7 +3,9 @@
 // s190: A WALKING CREATURE KEEPS PACE WITHOUT TELEPORTING. Prod 2026-10-16: an enemy "teleports
 // around" in a fight. Traced (s990 diagnostic): a mudcrab the server walked at 34 u/s was drawn
 // here at 23 u/s, fell 130-170 u behind, and puppet.lua's far-gap snap teleported it forward
-// every ~10 s. The residual gap is now glided through physics (mp.correctActor).
+// every ~10 s. getCurrentSpeed is a formula; a creature whose run animation carries it covers
+// more ground, so the holder never set the run bit. actors.lua now sets it from the measured
+// speed, and a puppet left 48 u behind runs. Before: 3 far snaps, p95 169 u; after: 0, p95 26 u.
 //
 // A mudcrab ~3000 u off is provoked (hitn) and walks to the player for 25 s. Sampled every
 // 100 ms: the crab as the server sends it (page ws tap) and as this screen draws it (probe).

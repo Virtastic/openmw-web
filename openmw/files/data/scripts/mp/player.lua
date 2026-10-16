@@ -192,6 +192,9 @@ local posRing = {} -- [seq % POS_RING_N] = {seq, x, y, z, cx, cy, cz}
 -- ringing that read as constant rubber-banding. Each entry records the total at the time it
 -- was taken, and posAt adds whatever has been corrected since.
 local corrX, corrY, corrZ = 0, 0, 0
+local corrPath = 0 -- every correction's length, summed: the rubber band as one number (s191)
+local airSince = nil
+local HOP_S = 1.5
 -- The total as of the START of this frame: an entry recorded later in the frame (inputTick
 -- runs after selfReconcileTick) was taken before this frame's correction lands, since the
 -- engine applies it at the end of the frame.
@@ -201,7 +204,7 @@ local function posAt(seq)
     if seq == nil then return nil end
     local r = posRing[seq % POS_RING_N]
     if r and r.seq == seq then
-        return { x = r.x + (corrX - r.cx), y = r.y + (corrY - r.cy), z = r.z + (corrZ - r.cz) }
+        return { x = r.x + (corrX - r.cx), y = r.y + (corrY - r.cy), z = r.z + (corrZ - r.cz), air = r.air }
     end
     return nil -- older than the ring (a long stall): the caller uses the current position
 end
@@ -248,13 +251,26 @@ local function inputTick(now)
     -- 60 fps, so half of all real jumps never reached the avatar -- the owner rose, the
     -- avatar did not, and reconciliation dragged the owner back down mid-air. Latch the
     -- edge until it has ridden an input frame.
-    if self.controls.jump then jumpLatched = true end
+    -- ...BUT ONLY A JUMP THAT HAPPENS. The engine ignores a jump in mid-air, and a player mashing
+    -- the key between rocks sent every press; the avatar, landing a moment later than us, took a
+    -- press we had ignored as a jump we never made (s191: due 4 in 10, fired mid-air or late).
+    if self.controls.jump then
+        local okg, onGround = pcall(types.Actor.isOnGround, self)
+        local okw, swimming = pcall(types.Actor.isSwimming, self)
+        if not okg or onGround or (okw and swimming) then jumpLatched = true end
+    end
     if now - lastInputSend < INPUT_EVERY then return end
     lastInputSend = now
     inputSeq = inputSeq + 1
     local p = self.position
+    -- A HOP, not any time off the ground: levitation and a long fall are corrected as ever.
+    local okg, grounded = pcall(types.Actor.isOnGround, self)
+    local okw, swimming = pcall(types.Actor.isSwimming, self)
+    local air = okg and not grounded and not (okw and swimming)
+    airSince = air and (airSince or now) or nil
     posRing[inputSeq % POS_RING_N] = { seq = inputSeq, x = p.x, y = p.y, z = p.z,
-        cx = frameCorrX, cy = frameCorrY, cz = frameCorrZ }
+        cx = frameCorrX, cy = frameCorrY, cz = frameCorrZ,
+        air = air and now - airSince < HOP_S }
     local c = self.controls
     local flags = 0
     if c.run then flags = flags + 1 end
@@ -385,6 +401,13 @@ local function selfReconcileTick()
     mp.set('selfDivergence', string.format('%.1f', dist))
     mp.set('selfFlags', tostring(e.flags or 0)) -- bit 3 = the avatar is attacking (s67)
     if dist < CORRECT_DEADZONE then return end
+    -- NOT AGAINST A MOMENT IN THE AIR. Our jump and the avatar's are two physics runs of the same
+    -- arc, a frame or two apart, and mid-arc they disagree by tens of units that the landing
+    -- settles by itself; correcting every sample of it tugged the player back and forth through
+    -- every hop ("jumping rock to rock we are rubberbanding", prod 2026-10-16; s191 p95 60-77 u).
+    -- Once both stand again the samples are compared as usual, so an avatar that really fell off
+    -- the rock still brings us down with it, and the hard snap below is never skipped.
+    if pos.air and dist <= SNAP_DIST then return end
     if dist > SNAP_DIST then
         local now = core.getRealTime()
         if now - lastSnapAt >= SNAP_COOLDOWN_S then
@@ -411,6 +434,8 @@ local function selfReconcileTick()
         end
         mp.correctSelf(cx, cy, cz)
         corrX, corrY, corrZ = corrX + cx, corrY + cy, corrZ + cz
+        corrPath = corrPath + math.sqrt(cx * cx + cy * cy + cz * cz)
+        mp.set('selfCorrPath', string.format('%.0f', corrPath)) -- how far we have been pulled, in all
     end
 end
 

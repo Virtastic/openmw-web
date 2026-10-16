@@ -167,11 +167,31 @@ local function attackingOf(obj)
     return (mp.isAttacking and mp.isAttacking(obj)) or casting[refKeyOf(obj)] == true
 end
 
+-- WHAT THE BODY ACTUALLY DID, per actor: getCurrentSpeed is the formula speed, and a creature
+-- whose run animation carries it (root motion) covers ground well past it -- a mudcrab in
+-- pursuit at 34-80 u/s against a formula 28. The run bit never went out, every other screen
+-- walked it at 28, and it fell behind into a far-gap teleport every few seconds (s190, prod
+-- 2026-10-16 "enemies teleport side to side"). Measured over at least 0.2 s between samples.
+local movedFrom = {}
+local function actualSpeed(obj, pos)
+    local key = obj.id
+    local now = core.getRealTime()
+    local m = movedFrom[key]
+    if not m then movedFrom[key] = { x = pos.x, y = pos.y, t = now, v = 0 }; return 0 end
+    local dt = now - m.t
+    if dt >= 0.2 then
+        local d = math.sqrt((pos.x - m.x) ^ 2 + (pos.y - m.y) ^ 2)
+        m.v = d < 512 and d / dt or 0 -- a teleport is not a speed
+        m.x, m.y, m.t = pos.x, pos.y, now
+    end
+    return m.v
+end
+
 local function actorPose(obj)
     local pos = obj.position
     local okV, walkSpeed, speed = pcall(speedsOf, obj)
     if not okV then walkSpeed, speed = 0, 0 end
-    local animVel = walkSpeed > 0 and (speed / walkSpeed) or 0
+    local animVel = walkSpeed > 0 and (math.max(speed, actualSpeed(obj, pos) / 1.2) / walkSpeed) or 0 -- 1.2: a walk's measured jitter is not a run
     -- Coarse AI-package hint from motion (reading a foreign actor's AI package is not
     -- exposed to global scripts; motion is a good enough facing/anim hint for puppets).
     -- Bit 0 (run): types.Actor.isRunning does not exist, so the bit was never set and a running

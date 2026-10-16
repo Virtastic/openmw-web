@@ -14,7 +14,6 @@ local I = require('openmw.interfaces')
 -- openmw.mp is available in LOCAL scripts too (luabindings.cpp registers it for every context);
 -- puppet.lua needs it only for setPuppet, which is why it was not imported before.
 local mp = require('openmw.mp')
-local nearby = require('openmw.nearby')
 
 local Interp = require('scripts.mp.interp')
 
@@ -392,25 +391,6 @@ local CATCHUP_S = 0.15
 -- (s172 #161: 91 u behind at p50 while the wire was 14). The engine honours up to this factor
 -- for puppets only (character.cpp).
 local PUPPET_MAX_SPEED = 1.25
--- THE GAP THE LEGS DO NOT CLOSE IS GLIDED, NOT TELEPORTED. A puppet's own engine can move it
--- slower than the holder moved the original (s990: a walking mudcrab drawn at 23 u/s against the
--- server's 34), so it fell behind until the far-gap snap teleported it 130-170 u -- the "little
--- teleports" in a fight (prod 2026-10-16). Past GLIDE_FROM the rest is closed through physics
--- (mp.correctActor, collision-resolved like the player's own correction) at up to GLIDE_MAX u/s.
-local GLIDE_FROM = 24
-local GLIDE_GAIN = 3 -- fraction of the excess per second
-local GLIDE_MAX = 200
--- ...but never INTO a player. The holder's copy stands where it does against the holder's
--- picture of that player, a step behind where they really are; gliding the puppet onto that
--- spot shoves it against the player's capsule and physics slides it round them sideways.
-local function towardAPlayer(pos, target)
-    for _, p in ipairs(nearby.players) do
-        local pp = p.position
-        local mine = (pos.x - pp.x) ^ 2 + (pos.y - pp.y) ^ 2
-        if mine < 160 * 160 and (target.x - pp.x) ^ 2 + (target.y - pp.y) ^ 2 < mine then return true end
-    end
-    return false
-end
 
 local function onUpdate(dt)
     ensureHitHandler()
@@ -551,7 +531,9 @@ local function onUpdate(dt)
     -- Mirror the remote actor's run flag while steering. The speed below is a fraction of the
     -- top speed this picks, so a run no longer overshoots a small correction (it used to be
     -- withheld inside STEER_START, which left a charging creature's puppet walking).
-    local run = bit(target.flags, 0) and (steering or tgtV >= 20)
+    -- ...and a puppet left well behind runs to catch up: a walk that cannot close the gap ends
+    -- in the far-gap teleport (s190).
+    local run = (bit(target.flags, 0) and (steering or tgtV >= 20)) or (steering and dist2d > 48)
     if run then runUntil = now + RUN_HOLD_S end
     self.controls.run = run or now < runUntil
     -- AHEAD OF A WALKING TARGET: DO NOT TURN AROUND. Steering at the target point from in front
@@ -579,10 +561,6 @@ local function onUpdate(dt)
     -- A puppet that only needs to creep less than a step stands; the hysteresis above decides
     -- when it steers again.
     if not steering and tgtV < 20 then fwd, side = 0, 0 end
-    if steering and dist2d > GLIDE_FROM and mp.correctActor and not towardAPlayer(pos, target) then
-        local step = math.min((dist2d - GLIDE_FROM) * math.min(1, GLIDE_GAIN * dt), GLIDE_MAX * dt)
-        pcall(mp.correctActor, self.object, dx / dist2d * step, dy / dist2d * step, 0)
-    end
     self.controls.movement = fwd
     self.controls.sideMovement = side
     -- Look up and down too (avatar.lua applies the input's pitch the same way).

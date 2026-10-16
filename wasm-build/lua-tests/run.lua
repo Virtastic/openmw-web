@@ -6,8 +6,6 @@
 package.path = './openmw/files/data/?.lua;./wasm-build/lua-tests/?.lua;' .. package.path
 
 local stubs = require('stubs')
--- puppet.lua's never-glide-into-a-player check reads nearby.players; nobody stands near in a unit test
-package.preload['openmw.nearby'] = function() return { players = {} } end
 -- A Windows checkout (core.autocrlf) hands the source checks CRLF files; the checks look for
 -- '\n'-delimited hunks. Normalise every read here so a check means the same on both hosts.
 do
@@ -639,7 +637,7 @@ do
     and pl:find('local pos = posAt(e.lastInputSeq) or self.position', 1, true) ~= nil)
   -- Dev box 2026-09-23, constant micro rubber-banding. Three halves of one loop:
   check('player.lua shifts each ring entry by the corrections sent since it was taken',
-    pl:find('cx = frameCorrX, cy = frameCorrY, cz = frameCorrZ }', 1, true) ~= nil
+    pl:find('cx = frameCorrX, cy = frameCorrY, cz = frameCorrZ,', 1, true) ~= nil
     and pl:find('x = r.x + (corrX - r.cx)', 1, true) ~= nil
     and pl:find('corrX, corrY, corrZ = corrX + cx, corrY + cy, corrZ + cz', 1, true) ~= nil
     and pl:find('frameCorrX, frameCorrY, frameCorrZ = corrX, corrY, corrZ', 1, true) ~= nil)
@@ -661,9 +659,16 @@ do
     av:find('if j and not segJumpPrev then jumpDue = jumpDue or now end', 1, true) ~= nil
     and av:find('local fire = jumpDue ~= nil and ((okg and onGround) or now - jumpDue >= JUMP_HOLD_S)', 1, true) ~= nil)
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
-  check('puppet.lua glides the gap its legs leave, never into a player (s190)',
-    pp:find('pcall(mp.correctActor, self.object, dx / dist2d * step, dy / dist2d * step, 0)', 1, true) ~= nil
-    and pp:find('not towardAPlayer(pos, target)', 1, true) ~= nil)
+  check('puppet.lua runs to close a gap a walk cannot (s190)',
+    pp:find('or (steering and dist2d > 48)', 1, true) ~= nil)
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('actors.lua sets the run bit from how fast the body actually moved (s190: root-motion creatures)',
+    ac:find('math.max(speed, actualSpeed(obj, pos) / 1.2)', 1, true) ~= nil)
+  check('player.lua does not reconcile against a hop in the air (s191), but never skips the hard snap',
+    pl:find('if pos.air and dist <= SNAP_DIST then return end', 1, true) ~= nil
+    and pl:find('air = air and now - airSince < HOP_S }', 1, true) ~= nil)
+  check('player.lua sends only a jump the engine will make (on the ground or swimming)',
+    pl:find('if not okg or onGround or (okw and swimming) then jumpLatched = true end', 1, true) ~= nil)
   check('puppet.lua flinches on a landed punch, not only on health (prod 2026-10-16)',
     (pp:match("'Hand To Hand Hit 2', self%)%s+flinch%(%)")) ~= nil)
   check('avatar.lua holds the last input through a retransmit stall (205)',

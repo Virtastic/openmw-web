@@ -918,29 +918,6 @@ namespace MWMP
                 "MPCorrectSelf");
         };
 
-        // mp.correctActor(obj, dx, dy, dz): the same primitive for a PUPPET (puppet.lua). A puppet
-        // that trailed its server copy used to be teleported once it fell 128 u behind -- a pop
-        // in the middle of a fight (prod 2026-10-16) -- because its own engine moved it slower
-        // than the holder's did. The residual gap now closes through the next physics step,
-        // collision-resolved like the player's, and the teleport stays the last resort.
-        api["correctActor"] = [luaManager = context.mLuaManager](const sol::object& obj, float dx, float dy, float dz) {
-            if (!obj.is<MWLua::Object>())
-                return;
-            const MWWorld::Ptr ptr = obj.as<MWLua::Object>().ptrOrEmpty();
-            if (ptr.isEmpty() || !ptr.getClass().isActor())
-                return;
-            constexpr float maxCorrectPerCall = 48.f;
-            osg::Vec3f off(dx, dy, dz);
-            const float len = off.length();
-            if (!(len > 0.f))
-                return;
-            if (len > maxCorrectPerCall)
-                off *= maxCorrectPerCall / len;
-            luaManager->addAction(
-                [ptr, off] { MWBase::Environment::get().getWorld()->adjustActorPosition(ptr, off); },
-                "MPCorrectActor");
-        };
-
         // mp.setSelfCollisionBody(on): whether OTHER actors collide with this process's player.
         // For the SIM PEER's own dummy player only. It stands 200 u beside whichever real player
         // anchors a cell (global.lua MP_SimAnchors) and no client ever sees it, yet its capsule
