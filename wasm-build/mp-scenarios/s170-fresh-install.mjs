@@ -650,9 +650,13 @@ export default async function run(ctx) {
   ctx.log(`ok: the peer's ${victim} killed with ${swings} real swing(s)`);
 
   // LOOT: the corpse is a shared container; the friend takes what the host put in.
-  await host.cmd('equiptest'); // a dynamic helmet record (global.lua mpTestItem), equipped beside the sword
-  await host.waitFor(`(window.omw.state.equippedIds||"").split(",").some(function(id){ return id && id !== ${JSON.stringify(WEAPON)}; })`, 12_000, 'the host holds a test item');
-  const itemId = (await host.eval('window.omw.state.equippedIds')).split(',').find((id) => id && id !== WEAPON);
+  // THE HOST'S OWN CLOTHES, a content record. The equiptest helmet is a local `Generated:` record
+  // the server never registers, and in a retail world the peer reads that id as one of ITS
+  // generated records -- an avatar NPC: "Object Generated:0x10 of type NPC can not be placed into
+  // a container", the put never lands (Jenkins #225). Player-made items do register and travel by
+  // net id (s31, s153); s175 moves clothes for the same reason.
+  await host.waitFor(`(window.omw.state.equippedIds||"").split(",").some(function(id){ return id && id !== ${JSON.stringify(WEAPON)} && !/^Generated:/.test(id); })`, 30_000, 'the host wears something of its own');
+  const itemId = (await host.eval('window.omw.state.equippedIds')).split(',').find((id) => id && id !== WEAPON && !/^Generated:/.test(id));
   // WHICH net object is the corpse: the kill is tracked by RECORD ('rat'), and the world holds several of a kind
   // (#191: four rats, netId was the first ranked one, the swings killed another -- containers [] on a live rat).
   // Ask each net object of that record to open; only the dead one registers as a container.
