@@ -53,6 +53,8 @@ export default async function run(ctx) {
   assert.equal(refused.display, 'none', 'and it is gone afterwards');
 
   const cell0 = String(await a.eval('String(window.omw.state.cell||"")'));
+  // The longest frame of the trip: a load freezes the page, and THAT is what the screen covers.
+  await a.eval('window.__gap = 0; window.__gapOn = true; (function f(t0){ requestAnimationFrame(function(t){ if (t0) window.__gap = Math.max(window.__gap, t - t0); if (window.__gapOn) f(t); }); })(0); 1');
   await a.cmd('door:enter');
   let peak = 0, cell = cell0;
   for (let i = 0; i < 60 && cell === cell0; i++) {
@@ -62,8 +64,12 @@ export default async function run(ctx) {
     await ctx.sleep(100);
   }
   for (let i = 0; i < 5; i++) { const o = Number(await a.eval(SHOWN)); if (o > peak) peak = o; await ctx.sleep(50); }
-  ctx.log(`real door: ${cell0} -> ${cell}, screen peak opacity ${peak.toFixed(2)}`);
+  const gap = Number(await a.eval('window.__gapOn = false; window.__gap'));
+  ctx.log(`real door: ${cell0} -> ${cell}, screen peak opacity ${peak.toFixed(2)}, longest frame ${gap.toFixed(0)} ms`);
   assert.notEqual(cell, cell0, 'door:enter must actually change cell for this half to mean anything');
-  assert.ok(peak > 0.5, `a real trip through a door showed no loading screen (opacity ${peak})`);
+  // A trip the engine loads in under 300 ms never freezes the page, and the screen rightly stays
+  // down -- the same rule that keeps a refused door from flashing it (builder #223: a cached
+  // interior, opacity 0, no freeze). A trip that DOES freeze the page must show it.
+  assert.ok(peak > 0.5 || gap < 300, `the page froze ${gap.toFixed(0)} ms going through a door with no loading screen (opacity ${peak})`);
   assert.deepEqual(a.jsErrors(), [], 'no JS error');
 }
