@@ -756,14 +756,21 @@ export class WorldSupervisor {
 
     for (const w of order) {
       log('info', 'world.rolling_restart', { id: w.id });
+      const old = this.worlds.get(w.id);
       this.stop(w.id);
       // Wait for the old process to actually exit before starting its replacement, or the
       // two briefly share a data dir. Bounded by ATTEMPTS rather than by comparing the
       // injected clock against real sleeps — mixing the two hangs forever whenever now()
       // is frozen, which is exactly what a test does.
+      //
+      // THE OLD PROCESS, not the id. Its players redial the moment it says SHUTDOWN, and a dial
+      // that lands between the exit and the next 100 ms check starts a fresh process under the
+      // same id -- which read as "still there" until the timeout: 300 s, then "stuck", then the
+      // rollout halted (s175, first attempt on a cold box, 2026-10-16/17). A successor started
+      // by a dial IS the restart; ensure() below returns it and the readiness wait applies.
       const goneTries = Math.max(1, Math.ceil(readyTimeoutMs / 100));
-      for (let i = 0; i < goneTries && this.worlds.has(w.id); i++) await delay(100);
-      if (this.worlds.has(w.id)) {
+      for (let i = 0; i < goneTries && old !== undefined && this.worlds.get(w.id) === old; i++) await delay(100);
+      if (old !== undefined && this.worlds.get(w.id) === old) {
         failed.push(w.id);
         log('error', 'world.rolling_restart_stuck', { id: w.id });
         continue; // leave it alone rather than starting a second copy

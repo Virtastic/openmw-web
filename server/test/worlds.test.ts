@@ -302,6 +302,24 @@ test('rolling restart: worlds come back one at a time, emptiest first', async ()
   assert.equal(sup.running, 3, 'all three are up again');
 });
 
+test('rolling restart: a player redialling the instant the old world exits is the restart, not a stuck world', async () => {
+  // s175: the clients redial on SHUTDOWN; a dial between the exit and the next 100 ms check
+  // started a fresh process under the same id, and the rollout waited for the id to vanish for
+  // the full timeout, then reported it stuck.
+  const { sup, spawned } = harness({ maxWorlds: 5, startTimeoutMs: 5_000 });
+  sup.ensure('host', 'private');
+  await sup.poll();
+  const first = spawned.find((s) => s.id === 'host')!.child;
+  first.once('exit', () => setImmediate(() => sup.ensure('host', 'private'))); // the redial
+  const spawnsBefore = spawned.length;
+  const t0 = Date.now();
+  const r = await sup.rollingRestart({ readyTimeoutMs: 3_000 });
+  assert.deepEqual(r, { restarted: ['host'], failed: [] });
+  assert.ok(Date.now() - t0 < 2_000, `the rollout waited ${Date.now() - t0} ms on a world that had already come back`);
+  assert.equal(spawned.length, spawnsBefore + 1, 'the redial started the successor and the rollout did not start a second one');
+  sup.stopAll();
+});
+
 test('rolling restart: a world that will not come back HALTS the rollout', async () => {
   // One broken world must not become a full outage by restarting everything behind it.
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-worlds-'));
