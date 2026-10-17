@@ -1085,7 +1085,7 @@ window.omw = (function(){
    window.addEventListener('keydown', function(e){ if (e.key === '`') toggleLog(); });
  // Live status HUD + periodic console logging so you can SEE what's happening / the FPS.
  (function(){
-   let lastFps = -1, tick = 0;
+   let lastFps = -1, tick = 0, bootDismissed = false;
    setInterval(function(){
      const fps = (window.__fps|0), ms = (window.__frameMs||0);
      // Fade the loading overlay only when the engine's main loop is ACTUALLY rendering (the start
@@ -1095,7 +1095,10 @@ window.omw = (function(){
      // on its first real frame, so it covers the whole boot (wasm + game data + init) end to end.
      const rendering = !!(window.Module && window.Module.__omwRunning !== undefined);
      const running = rendering || !!(window.Module && window.Module._omw_pump_frame);
-     if (rendering && window.__omwLoading && !window.__omwMPSettling) window.__omwLoading.done();
+     // THE BOOT SCREEN ONLY, ONCE. Re-run on every tick, this dismissed EVERY later screen as
+     // soon as it went up -- a door's "Entering a new area" lasted until the next tick, 34 ms
+     // in the s189 timeline (2026-10-17). Later screens have their own owners.
+     if (!bootDismissed && rendering && window.__omwLoading && !window.__omwMPSettling) { window.__omwLoading.done(); bootDismissed = true; }
      // Save Backup/Restore toolbar is opt-in (?savetools=1) — hidden by default so it never sits in
      // the chrome. The tar backup/restore functionality stays wired up; only the buttons are gated.
      if (rendering && /[?&]savetools=1\b/.test(location.search)) { var st=document.getElementById('savetools'); if (st) st.classList.add('show'); }
@@ -5782,25 +5785,38 @@ window.omw = (function(){
     // pendingFrom: the door was used and the overlay is up but still transparent. fromCell: where
     // the player stood. lastTick: the previous frame, so a frozen page (a load) shows as a gap.
     var pendingFrom = 0, fromCell = '', lastTick = 0;
+    // THE FREEZE CAN COME FIRST. A door whose cell loads in the same frame as its activation
+    // freezes the page before the cellLoad mirror reaches it; the mirror then lands on normal
+    // frames in the NEW cell, and the trip read as a refused door: withdrawn, never shown (s189,
+    // Jenkins #224: a 900 ms freeze, opacity 0). A freeze in the last second counts as the trip.
+    var bigGapAt = 0, prevCell = '';
     var ldEl = document.getElementById('loading');
     (function tick(){
       var st = window.omw.state;
       var v = st.cellLoad || '';
       var now = Date.now(), gap = lastTick ? now - lastTick : 0;
       lastTick = now;
+      if (gap > 300) bigGapAt = now;
       if (v && v !== seen) {
         seen = v;
         window.__omwLoading.show('Loading', 'Entering a new area…');
         if (ldEl) ldEl.classList.add('pending');
-        pendingFrom = now; fromCell = String(st.cell || '');
+        pendingFrom = now; fromCell = prevCell || String(st.cell || '');
+        if (now - bigGapAt < 1000) gap = 301; // the load already happened: a real trip
         hideAt = Date.now() + 15000; // hard ceiling: never strand the player behind it
         saidWaiting = false;
       }
+      prevCell = String(st.cell || '');
       if (pendingFrom) {
         if (gap > 300 || String(st.cell || '') !== fromCell) {
           // The page froze (a cell load) or we arrived somewhere: this is a real trip. The fade
           // has already shown it during the freeze; make it plainly visible from here on.
           pendingFrom = 0; if (ldEl) ldEl.classList.remove('pending');
+          // ...and the "load is over" clock starts NOW, at the end of the freeze. Counted from
+          // the door, any load over 600 ms was already "over" on its first frame back and the
+          // screen was hidden in the same tick it was shown (s189 timeline: 627 ms freeze,
+          // pending -> hide, opacity never above 0).
+          hideAt = Date.now() + 15000;
         } else if (now - pendingFrom > 250) {
           // A quarter second of normal frames and still in the same place: the door refused us
           // (a scripted door, a message box, a dialogue) and no load is coming. Withdraw before

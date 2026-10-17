@@ -2,6 +2,18 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.5.5
+
+**Door loading screens actually show.** Going through a door that loads a new area now shows the
+"Entering a new area" screen for the load and a moment after it. A check meant only for the very
+first boot was closing every later loading screen within a fraction of a second, and on loads
+longer than about half a second the screen was dismissed the moment the game came back. Doors that
+take you nowhere (locked, scripted, a conversation) still show nothing.
+
+**Server restarts no longer get stuck.** When the server restarted a game world while its players
+were connected, their clients reconnecting straight away could make the restart wait five minutes
+and then give up on that world. It now treats the reconnected world as the restart.
+
 ## 1.5.4
 
 **No more rubber-banding when you hop.** In multiplayer the server runs its own copy of your
