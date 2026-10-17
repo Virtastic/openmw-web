@@ -2,6 +2,12 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.5.6
+
+**A failed download says so instead of hanging.** If a game file would not download while the game
+was starting (after several retries), the loading screen sat there for five minutes before giving
+up. It now says the download failed and offers a Reload button straight away.
+
 ## 1.5.5
 
 **Door loading screens actually show.** Going through a door that loads a new area now shows the

@@ -4090,6 +4090,17 @@ window.omw = (function(){
        'The game data (openmw.data) failed to download (' + (e.reason && e.reason.message || e.reason) + '). '
        + 'Check your connection and reload.');
    }
+   // A GAME ARCHIVE THAT WILL NOT ARRIVE AT BOOT. streamfs has already retried (4 tries, 12 s
+   // each) when this rejects; before the engine's first frame the read is the engine opening a
+   // BSA, and nothing continues past it. Prod: 3 of 10 sessions that sat on the loading screen
+   // until the 5-minute settle ceiling had exactly this, at offset 0 of a .bsa. Say so and offer
+   // a reload. Once the game runs, streamfs failures are survivable and stay in the log.
+   else if (/^streamfs: read (failed|timeout)/.test(String(e.reason && e.reason.message || e.reason))
+       && !(window.Module && window.Module.__omwRunning !== undefined)) {
+     fatalOverlay('Could not download the game',
+       'A game file did not download after several tries (' + (e.reason && e.reason.message || e.reason) + '). '
+       + 'Check your connection and reload.');
+   }
  });
 </script>
 <script src="streamfs.js"></script>
