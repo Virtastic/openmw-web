@@ -50,4 +50,28 @@ rf = load(async () => { calls++; throw new TypeError('Failed to fetch'); }, 1000
 await assert.rejects(rf('u', 0, 2), /Failed to fetch/);
 assert.equal(calls, 4);
 
+// WARM-UP BUDGET (prod 2026-10-17): chunks already in the store cost nothing, so a file mostly
+// cached from a past visit is still finished; new bytes stop at the budget.
+{
+  const warmSrc = body.slice(body.indexOf('let fg = 0'));
+  const stored = new Set(['https://sfs.chunk/big/0', 'https://sfs.chunk/big/2']); // 2 of 4 chunks cached
+  const puts = [];
+  const msgs = [];
+  const fakeCaches = { open: async () => ({ match: async (k) => stored.has(k), put: async (k) => { puts.push(k); stored.add(k); } }) };
+  const run = new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response',
+    body.slice(0, body.indexOf('let fg = 0')) + warmSrc + '; return warm;');
+  const fetchFake = async (url, opts) => ok(2);
+  let warm = run(fetchFake, AbortController, (f) => setTimeout(f, 0), clearTimeout, fakeCaches, (m) => msgs.push(m), class { constructor(b) { this.b = b; } });
+  // 4 chunks of 2 bytes, 2 cached, budget 10 bytes: the 2 missing chunks are fetched (4 bytes).
+  await warm([{ url: 'u', pkey: 'big', size: 8 }], 2, 10);
+  assert.deepEqual(puts, ['https://sfs.chunk/big/4', 'https://sfs.chunk/big/6'], 'only the missing chunks are fetched');
+  assert.deepEqual(msgs.at(-1), { warmed: 0, done: true, err: null }, 'finished within budget');
+  // A budget smaller than what is missing stops with 'budget', after what fits.
+  stored.clear(); puts.length = 0; msgs.length = 0;
+  warm = run(fetchFake, AbortController, (f) => setTimeout(f, 0), clearTimeout, fakeCaches, (m) => msgs.push(m), class { constructor(b) { this.b = b; } });
+  await warm([{ url: 'u', pkey: 'big', size: 8 }], 2, 5);
+  assert.equal(puts.length, 2, 'two chunks fit a 5-byte budget');
+  assert.equal(msgs.at(-1).err, 'budget');
+}
+
 console.log('streamfs retry: ok');

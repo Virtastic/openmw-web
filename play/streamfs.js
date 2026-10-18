@@ -112,10 +112,13 @@
       // has not asked for anything for 1.5 s: it never competes with a read the game is waiting on.
       let fg = 0, lastFg = 0, warming = false;
       const nap = (ms) => new Promise((r) => setTimeout(r, ms));
-      async function warm(files, chunk) {
+      async function warm(files, chunk, budget) {
         if (warming) return;
         warming = true;
         let fetched = 0, fetchFails = 0, stop = null;
+        // BYTES WE MAY STILL ADD, not bytes the files weigh: a chunk already in the store costs
+        // nothing (see warm() on the main thread).
+        let left = typeof budget === 'number' ? budget : Infinity;
         try {
           const c = await caches.open('mwdata-chunks-v1');
           outer: for (const f of files) {
@@ -133,8 +136,10 @@
                 await nap(5000); continue;
               }
               fetchFails = 0;
+              if (buf.length > left) { stop = 'budget'; break outer; }
               try { await c.put(ckey, new Response(buf)); }
               catch (err) { stop = 'store: ' + String(err && err.name || err).slice(0, 60); break outer; }
+              left -= buf.length;
               fetched++; postMessage({ warmed: 1 });
               await nap(30);
             }
@@ -146,7 +151,7 @@
       onmessage = async (e) => {
         const m = e.data;
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
-        if (m.warm) { warm(m.warm, m.chunk); return; }
+        if (m.warm) { warm(m.warm, m.chunk, m.budget); return; }
         if (m.mountLocal) { handles.set(m.mountLocal.id, m.mountLocal.handle); return; }
         // A Blob (BSA from the Cache API) reads exactly like a File (slice + arrayBuffer), so it
         // goes straight into the files map and the m.id read path below slices it locally.
@@ -246,7 +251,11 @@
       // read that is still being retried is never abandoned here first.
       if (performance.now() - t0 > 60000) throw new Error('streamfs: read timeout ' + cacheKey + '@' + start);
     }
-    ST.misses++; ST.stallMs += performance.now() - t0;
+    const waited = performance.now() - t0;
+    ST.misses++; ST.stallMs += waited;
+    // WHICH FILE THE GAME WAITED ON (telemetry sfsSlow): a read over 50 ms went to the network,
+    // not the persistent store, and the file says whether the warm-up should have had it.
+    if (waited > 50) { ST.slow = (ST.slow || 0) + 1; const fk = cacheKey.slice(0, cacheKey.lastIndexOf(':')).split('/').pop(); (ST.slowBy || (ST.slowBy = {}))[fk] = (ST.slowBy[fk] || 0) + 1; }
     const n = S.ctrl[1];
     if (n < 0) throw new Error('streamfs: read failed ' + cacheKey + '@' + start);
     const chunk = new Uint8Array(n);
@@ -355,19 +364,22 @@
       for (const [path, src] of S.urlSrcs) if (src.pkey && src.size && re.test(path)) files.push({ path, url: src.url, pkey: src.pkey, size: src.size });
       const rank = (p) => { const i = (first || []).findIndex((r) => r.test(p)); return i < 0 ? 99 : i; };
       files.sort((a, b) => rank(a.path) - rank(b.path));
-      // ONLY WHAT FITS. Warming past the origin's storage quota downloads chunks only to fail
-      // storing them. Files are queued in priority order while they fit in 80% of what is free;
-      // without the estimate API, everything is queued and the worker stops at the first failed put.
-      const send = (list) => { if (list.length) S.worker.postMessage({ warm: list.map(({ url, pkey, size }) => ({ url, pkey, size })), chunk: CHUNK }); };
+      // ONLY WHAT FITS -- COUNTED IN NEW BYTES. Warming past the origin's quota downloads chunks
+      // only to fail storing them, so the worker gets a budget of 80% of what is free and spends
+      // it only on chunks it actually adds. It used to drop any WHOLE FILE larger than the free
+      // room -- and a returning player's usage already holds most of Morrowind.bsa, so the main
+      // archive "did not fit", the warm-up reported done after the small archives (38 chunks),
+      // and every new area waited on the network (prod 2026-10-17, c3iqmpok: 173 misses at
+      // ~0.7 s each on an 87 fps machine). Every file is queued; a big one warms as far as fits.
+      const send = (budget) => { if (files.length) S.worker.postMessage({ warm: files.map(({ url, pkey, size }) => ({ url, pkey, size })), chunk: CHUNK, budget }); };
       if (navigator.storage && navigator.storage.estimate) {
         navigator.storage.estimate().then((est) => {
-          let room = Math.max(0, ((est.quota || 0) - (est.usage || 0)) * 0.8);
-          const fit = [];
-          for (const f of files) { if (f.size <= room) { fit.push(f); room -= f.size; } }
-          if (!fit.length) ST.warmErr = 'no room: ' + Math.round(((est.quota || 0) - (est.usage || 0)) / 1048576) + ' MB free';
-          send(fit);
-        }, () => send(files));
-      } else send(files);
+          const free = Math.max(0, (est.quota || 0) - (est.usage || 0));
+          ST.roomMb = Math.round(free / 1048576);
+          if (free * 0.8 < CHUNK) ST.warmErr = 'no room: ' + ST.roomMb + ' MB free';
+          send(free * 0.8);
+        }, () => send(undefined));
+      } else send(undefined);
       return files.length;
     },
 
