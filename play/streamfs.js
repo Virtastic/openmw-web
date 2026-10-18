@@ -85,24 +85,55 @@
       // player on a slow link stuck on the loading screen for five minutes, another's game dead
       // mid-session. Each attempt gets its own deadline; network errors, 408/429 and 5xx are
       // retried with a short backoff. A 4xx is an answer, not a blip, and is not retried.
+      //
+      // THE DEADLINE IS FOR SILENCE, NOT FOR THE WHOLE READ. Prod 2026-10-17/18: the first read
+      // of Morrowind.bsa at boot (offset 0, 2 MB) failed in ~54 s -- exactly four 12 s attempts
+      // plus backoff -- for ~15 of 24 never-joined worlds, while the same CDN answers that range
+      // in 0.2-0.6 s cold or warm. A body still arriving slowly (a boot link busy with the engine's
+      // own downloads) was cut at 12 s and started over from byte 0 every time. The clock now
+      // restarts on every piece received; only 12 s of nothing aborts.
+      // A 200 is the WHOLE FILE (the Range was ignored): it used to be returned whole, so a read at
+      // any offset but 0 got the file's first bytes, and the main thread was told the chunk was
+      // hundreds of MB. Read only up to `end`, cancel the rest, and slice.
+      // ponytail: a 200 at a deep offset still downloads everything before it; ranges are honoured today.
+      // Each attempt's outcome rides the error (status, ranges, bytes, ms): the page ships it.
       const ATTEMPTS = 4, ATTEMPT_MS = 12000;
       async function rangeFetch(url, start, end) {
         let last;
+        const seen = [];
+        const fail = (err) => new Error(String(err && err.message || err) + ' [' + seen.join('; ') + ']');
         for (let i = 0; i < ATTEMPTS; i++) {
           if (i) await new Promise((r) => setTimeout(r, 400 * i * i));
           const ac = new AbortController();
-          const t = setTimeout(() => ac.abort(), ATTEMPT_MS);
+          let t = setTimeout(() => ac.abort(), ATTEMPT_MS);
+          const t0 = Date.now();
+          let what = '', got = 0;
           try {
             const r = await fetch(url, { headers: { Range: 'bytes=' + start + '-' + (end - 1) }, signal: ac.signal });
-            if (r.ok || r.status === 206) return new Uint8Array(await r.arrayBuffer());
+            what = r.status + ' cl=' + r.headers.get('content-length') + ' cr=' + r.headers.get('content-range');
+            if (r.ok || r.status === 206) {
+              const whole = r.status !== 206, want = whole ? end : end - start;
+              const buf = new Uint8Array(want), rd = r.body.getReader();
+              while (got < want) {
+                const { done, value } = await rd.read();
+                if (done) break;
+                clearTimeout(t); t = setTimeout(() => ac.abort(), ATTEMPT_MS);
+                const n = Math.min(value.length, want - got);
+                buf.set(value.subarray(0, n), got); got += n;
+              }
+              if (got < want) throw new Error('short body ' + got + '/' + want);
+              if (whole) rd.cancel().catch(() => {});
+              return whole ? buf.subarray(start, end) : buf;
+            }
             last = new Error('HTTP ' + r.status);
-            if (r.status < 500 && r.status !== 408 && r.status !== 429) throw last;
-          } catch (err) {
-            last = err;
-            if (/^HTTP 4/.test(String(err && err.message)) && !/^HTTP 4(08|29)/.test(err.message)) throw err;
-          } finally { clearTimeout(t); }
+            last.http = r.status;
+          } catch (err) { last = err; }
+          finally { clearTimeout(t); }
+          seen.push((what || 'no response') + ' ' + (last && (last.name + ': ' + last.message) || '').slice(0, 60) + ' got=' + got + ' ' + (Date.now() - t0) + 'ms');
+          // A 4xx is an answer, not a blip: no retry (408/429 are blips).
+          if (last.http >= 400 && last.http < 500 && last.http !== 408 && last.http !== 429) throw fail(last);
         }
-        throw last;
+        throw fail(last);
       }
       // BACKGROUND WARM-UP. A first read of any chunk is a network round trip with the game's
       // main thread blocked on it (fetchChunkSync), which is the mid-play hitch players see when
@@ -213,7 +244,10 @@
             })() };
           }
         } catch (err) {
-          ctrl[1] = -1;
+          // WHY, for the page's error line: ASCII in the shared buffer, its length as -1 - n.
+          const why = String(err && err.message || err).replace(/[^\x20-\x7e]/g, '?').slice(0, 400);
+          for (let k = 0; k < why.length; k++) data[k] = why.charCodeAt(k);
+          ctrl[1] = -1 - why.length;
           Atomics.store(ctrl, 0, m.gen);
           Atomics.notify(ctrl, 0);
         } finally { fg--; lastFg = Date.now(); }
@@ -257,7 +291,8 @@
     // not the persistent store, and the file says whether the warm-up should have had it.
     if (waited > 50) { ST.slow = (ST.slow || 0) + 1; const fk = cacheKey.slice(0, cacheKey.lastIndexOf(':')).split('/').pop(); (ST.slowBy || (ST.slowBy = {}))[fk] = (ST.slowBy[fk] || 0) + 1; }
     const n = S.ctrl[1];
-    if (n < 0) throw new Error('streamfs: read failed ' + cacheKey + '@' + start);
+    if (n < 0) throw new Error('streamfs: read failed ' + cacheKey + '@' + start + ' after ' + Math.round(waited) + 'ms: '
+      + String.fromCharCode.apply(null, S.data.subarray(0, -1 - n)));
     const chunk = new Uint8Array(n);
     chunk.set(S.data.subarray(0, n));
     S.cache.set(cacheKey, chunk);

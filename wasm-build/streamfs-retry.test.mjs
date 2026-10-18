@@ -16,7 +16,8 @@ function load(fetchImpl, attemptMs) {
   return new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', code + '; return rangeFetch;')(
     fetchImpl, AbortController, setTimeout, clearTimeout);
 }
-const ok = (n) => ({ ok: false, status: 206, arrayBuffer: async () => new Uint8Array(n).buffer });
+const ok = (n) => new Response(new Uint8Array(n), { status: 206, headers: { 'content-range': 'bytes 0-' + (n - 1) + '/*' } });
+const status = (code) => new Response(null, { status: code });
 
 // Two network failures, then success.
 let calls = 0;
@@ -26,7 +27,7 @@ assert.equal(calls, 3, 'retried through two drops');
 
 // A 503 then success.
 calls = 0;
-rf = load(async () => (++calls === 1 ? { ok: false, status: 503 } : ok(4)), 1000);
+rf = load(async () => (++calls === 1 ? status(503) : ok(4)), 1000);
 assert.equal((await rf('u', 0, 4)).length, 4);
 
 // A hung first attempt is aborted on its deadline and the retry answers.
@@ -40,7 +41,7 @@ assert.equal(calls, 2);
 
 // A 404 is an answer: no retry.
 calls = 0;
-rf = load(async () => { calls++; return { ok: false, status: 404 }; }, 1000);
+rf = load(async () => { calls++; return status(404); }, 1000);
 await assert.rejects(rf('u', 0, 2), /HTTP 404/);
 assert.equal(calls, 1, 'a 404 is not retried');
 
@@ -49,6 +50,23 @@ calls = 0;
 rf = load(async () => { calls++; throw new TypeError('Failed to fetch'); }, 1000);
 await assert.rejects(rf('u', 0, 2), /Failed to fetch/);
 assert.equal(calls, 4);
+
+// A 200 IS THE WHOLE FILE (the Range was ignored): only the requested slice comes back.
+rf = load(async () => new Response(Uint8Array.from({ length: 64 }, (_, i) => i), { status: 200 }), 1000);
+assert.deepEqual([...(await rf('u', 8, 12))], [8, 9, 10, 11], 'a 200 is sliced to the range');
+
+// A SLOW BODY IS NOT A HUNG ONE (prod 2026-10-18, the boot read of Morrowind.bsa): pieces 30 ms
+// apart for 150 ms, under a 50 ms deadline, still complete -- the clock restarts on each piece.
+calls = 0;
+rf = load(async (url, opts) => { calls++; let k = 0; return new Response(new ReadableStream({
+  async pull(c) { await new Promise((r) => setTimeout(r, 30)); if (opts.signal.aborted) return c.error(new Error('aborted')); if (k++ < 5) c.enqueue(new Uint8Array(2)); else c.close(); },
+}), { status: 206 }); }, 50);
+assert.equal((await rf('u', 0, 10)).length, 10);
+assert.equal(calls, 1, 'one attempt, not restarted at the deadline');
+
+// The failure says what each attempt saw: status, ranges, bytes, ms.
+rf = load(async () => new Response(new Uint8Array(3), { status: 206, headers: { 'content-range': 'bytes 0-2/9' } }), 1000);
+await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && /206 cl=\S+ cr=bytes 0-2\/9 .*got=3 \d+ms/.test(e.message) && e.message.split('; ').length === 4);
 
 // WARM-UP BUDGET (prod 2026-10-17): chunks already in the store cost nothing, so a file mostly
 // cached from a past visit is still finished; new bytes stop at the budget.

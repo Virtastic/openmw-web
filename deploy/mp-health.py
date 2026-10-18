@@ -36,6 +36,7 @@ def lines():
 ev = Counter(); warn = Counter(); sso_fail = Counter(); drops = Counter(); reaped = Counter()
 client_err = Counter(); peer_err = Counter(); accounts = set(); joined = set()
 path95, path_max, snaps, first_unheld = [], [], 0, 0
+no_pose = Counter()  # windows with a drawn NPC that has no pose stream of its own (npcNoPose), by record
 facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
 hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
 seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set); data_setup = {}
@@ -74,7 +75,12 @@ for e in lines():
             if s not in seen_session:
                 seen_session.add(s)
                 if f(t, 'holder') == 'none' and f(t, 'cell') not in (None, '?'): first_unheld += 1
-            if m: path95.append(int(m[1])); path_max.append(int(m[2]))
+            # A background tab runs no frames while poses keep arriving: its puppets read as off
+            # their paths (363 of 1532 windows, 2026-10-16/18). Visible windows only.
+            if m and ' hidden=1' not in t: path95.append(int(m[1])); path_max.append(int(m[2]))
+            np = f(t, 'npcNoPose')
+            if np and np.isdigit() and int(np):
+                for rec in (f(t, 'noPoseRec') or '?').split(','): no_pose[rec] += 1
         elif re.match(r'\[(mw|assets|data)\] |\[[\d:.]+ I\] ', t):
             data_setup[s] = data_setup.get(s, 0) + 1  # info, not an error (#139 ships the boot's data setup)
         elif not t.startswith('[locker]'):
@@ -93,6 +99,7 @@ print(f"worlds reaped:\n{top(reaped)}")
 print(f"stuck on the loading screen 5 min (settle timeout): {sum(v for k, v in client_err.items() if 'settle hold released' in k)}")
 print(f"smoothness: NPC path p95 per 5 s window -- median {q(path95, .5)}, p90 {q(path95, .9)}, p99 {q(path95, .99)}, max {q(path_max, 1)} u"
       f" ({len(path95)} windows) | snaps {snaps} | sessions whose first window was unheld {first_unheld}")
+print(f"NPCs drawn with no pose stream of their own (5 s windows, by record):\n{top(no_pose, 6)}")
 print(f"hitches: {hitch} visible windows with a frame of 500 ms or more, {hitch_sfs} of them waiting 300 ms+ on streamed game files | {hidden_w} windows in a background tab (not counted)")
 print(f"facing: walking NPCs drawn turned round (>120 deg off the server) {facing_bad}/{facing_n} samples" + (f" ({100 * facing_bad / facing_n:.1f}%)" if facing_n else ''))
 print(f'Lua errors (peer + clients): {lua_errors}')
