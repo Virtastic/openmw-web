@@ -122,7 +122,10 @@ local stuckSince = nil
 -- distance; every later correction keeps the existing distance and cooldown rules.
 local placed = false
 local lastProgressPos = nil
-local prevJump = false
+-- EVERY JUMP THE RENDER TIME PASSED, not the one sample a frame lands on. A jump rides ONE pose
+-- (bit 2, ~66 ms of render time); read off the target once a frame, a client under 15 fps (9%
+-- of prod telemetry windows, 2026-10) stepped over it and the friend never left the ground.
+local jumpRt = nil -- the render time the previous frame scanned up to
 -- The use bit's edges AS RECEIVED, latched until a frame plays them (s171). A creature's bite
 -- holds the bit for ONE peer frame (50 ms); read off the render-delayed target once per client
 -- frame, that pulse fell between frames on any client under 20 fps and the rat bit the player
@@ -437,6 +440,13 @@ local function onUpdate(dt)
         zeroControls()
         return
     end
+    -- Scanned before any early return, so a jump passed while parked, snapped or far-tiered is
+    -- dropped (as it always was), never played late.
+    local rt, jumped = now - interp:delay(), false
+    for _, s in ipairs(interp.buf) do
+        if s.t > (jumpRt or rt) and s.t <= rt and bit(s.flags, 2) then jumped = true end
+    end
+    jumpRt = rt
 
     local pos = self.position
     local dx, dy = target.x - pos.x, target.y - pos.y
@@ -587,9 +597,7 @@ local function onUpdate(dt)
         end
         pcall(function() types.Actor.setStance(self, want) end)
     end
-    local jumpEdge = bit(target.flags, 2)
-    self.controls.jump = jumpEdge and not prevJump
-    prevJump = jumpEdge
+    self.controls.jump = jumped
 end
 
 return {
@@ -626,6 +634,15 @@ return {
             -- Absent tier (a server predating G2, or renderLod = "full") means near: the
             -- fallback must be full fidelity, never a silent degrade.
             tier = e.tier or TIER_NEAR
+            -- A TELEPORT IS NOT A PATH. A friend who respawns or takes a door within the cell
+            -- jumps thousands of units between two poses; interpolated, the render-delayed target
+            -- swept the line between them, the distance snap put the body on a point of it, and
+            -- the 1 s snap cooldown left it standing there. Start the buffer over at the new spot.
+            local last = interp.buf[#interp.buf]
+            local far = SNAP_BY_TIER[tier] or SNAP_DISTANCE
+            if last and e.x and ((e.x - last.x) ^ 2 + (e.y - last.y) ^ 2 + (e.z - last.z) ^ 2) > far * far then
+                interp:clear()
+            end
             interp:push(e)
             local u = bit(e.flags, 3)
             if u and not rxUse then pressLatch = true end
