@@ -3515,5 +3515,41 @@ do
     table.concat(steps, ' -> ') .. ' / state=' .. tostring(net.state))
 end
 
+-- ============================================================ net.lua: the second drop of a page
+-- Prod 2026-10-14/16/18: a page's first drop resumed in place, its second was refused "resume
+-- token expired or unknown" -- the redial presented the token the FIRST resume had already spent
+-- (net.resumeToken was never refreshed at Welcome), fell to the spent boot ticket and rebooted.
+print('net.lua -- every drop resumes with the token the last Welcome handed out')
+do
+  fresh()
+  local env = stubs.install({ resumeToken = 'tok0' }) -- a reload: the stored token from last time
+  local net = require('scripts.mp.net')
+  local json = require('scripts.mp.json')
+  local function authSent()
+    net.onOpen()
+    net.onJson(json.encode({ t = 'SessionHelloOk', serverName = 'test' }))
+    return json.decode(env.calls.json[#env.calls.json])
+  end
+  local function welcome(tok)
+    net.onJson(json.encode({ t = 'SessionWelcome', playerId = 7, sessionToken = tok, motd = '', characters = {} }))
+  end
+  local function drop()
+    net.onClose()
+    env.advance(120); net.tick()
+    return authSent()
+  end
+  net.start()
+  local first = authSent()
+  welcome('tok1')
+  local second = drop()
+  welcome('tok2')
+  local third = drop()
+  check('boot resumes with the stored token, each drop with the latest Welcome token',
+    first.t == 'SessionResume' and first.token == 'tok0'
+      and second.t == 'SessionResume' and second.token == 'tok1'
+      and third.t == 'SessionResume' and third.token == 'tok2',
+    tostring(first.token) .. ' / ' .. tostring(second.token) .. ' / ' .. tostring(third.token))
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

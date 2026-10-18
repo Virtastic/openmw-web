@@ -4079,7 +4079,10 @@ window.omw = (function(){
    // Filter the benign, self-healing pointer-lock rejection FIRST (SDL re-requests on the next
    // click). e.preventDefault() only suppresses the browser's own console logging, so this must be
    // the ONLY unhandledrejection handler or the filtered case still gets logged/opens the debug log.
-   if (String(e.reason && e.reason.message || e.reason).indexOf('Pointer lock') !== -1) { e.preventDefault(); return; }
+   // Chrome words the same benign case several ways, and the case-sensitive 'Pointer lock' match
+   // missed three of them ("Pointer is already locked.", "The user has exited the lock before this
+   // request was completed.", "...not valid for pointer lock.") -- prod logged them as errors.
+   if (/pointer lock|pointer is already locked|exited the lock/i.test(String(e.reason && e.reason.message || e.reason))) { e.preventDefault(); return; }
    append('unhandled rejection: '+(e.reason && e.reason.message || e.reason),'err');
    showLogOnce();
    // The engine's file package failed to arrive: emscripten's loadPackage rejects with
