@@ -65,6 +65,7 @@ function M.install(opts)
 
   -- Inventory the identity scan reads. Mutable so a test can "pick something up".
   local inventory = {}
+  local active = {} -- Actor.activeSpells: { {id=, activeSpellId=, temporary=, effects={...}} }
   -- Enough of types.* for the identity scan to run end to end. Deliberately plain values: the
   -- point is to exercise the DIFF logic, and a stat that never changes is exactly what keeps
   -- an unrelated broadcast from muddying the assertion under test.
@@ -95,6 +96,7 @@ function M.install(opts)
       -- Stateful spellbook: an ARRAY of {id=...} (so pairs() yields spell records the way
       -- snapSpells expects) with add/clear on a metatable, kept off the array part.
       spells = function() return spellbook end,
+      activeSpells = function() return active end,
       stats = {
         dynamic = { health = function() return dyn.health end,
                     magicka = function() return dyn.magicka end,
@@ -159,6 +161,7 @@ function M.install(opts)
     advance = function(sec) realTime = realTime + sec end,
     now = function() return realTime end,
     setInventory = function(items) inventory = items end,
+    setActive = function(list) active = list end,
     dyn = dyn, -- the dynamic stats, mutable: a heal is `dyn.health.current = 100`
     spellbook = spellbook,
     world = world,
