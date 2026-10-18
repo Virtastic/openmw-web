@@ -1335,8 +1335,11 @@ function actors.tick(now)
                 -- yaw: the drawn facing, which the page compares with the server's for the same
                 -- NPC (telemetry npcFacing) -- "they do 180s as they walk" was invisible in
                 -- every position metric (prod 2026-10-14).
+                -- id/net: WHICH stream is this body's -- the page matches it to its own poses
+                -- (telemetry npcPath), not to whichever actor happens to stand nearest.
                 probe[rec] = { x = p.x, y = p.y, z = p.z, yaw = obj.rotation:getYaw(), dead = types.Actor.isDead(obj),
-                    guard = isGuard, hp = hp, n = probeN[rec] or 1, puppet = puppeted }
+                    guard = isGuard, hp = hp, n = probeN[rec] or 1, puppet = puppeted,
+                    id = obj.id, net = deps.netIdOf and deps.netIdOf(obj) or nil }
             end
         end
         mp.set('actorProbe', json.encode(probe))

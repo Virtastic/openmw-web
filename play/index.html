@@ -616,9 +616,15 @@ window.omw = (function(){
  (function omwTelemetry(){
    if (/[?&]clientlog=(0|off)/.test(location.search)) return;
    var session = Math.random().toString(36).slice(2, 10);
-   var frames = 0, worstGap = 0, lastFrame = 0;
+   var frames = 0, worstGap = 0, lastFrame = 0, wasHidden = false, shownAt = 0;
    function tick(t){ if (lastFrame) { var g = t - lastFrame; if (g > worstGap) worstGap = g; } lastFrame = t; frames++; requestAnimationFrame(tick); }
    requestAnimationFrame(tick);
+   // A BACKGROUND TAB IS NOT A HITCH. Frames stop while the tab is hidden, so the first one back
+   // measured the whole time away as ONE frame, and a window sent after the tab returned did not
+   // say hidden=1: prod 2026-10-16/18, 63 of 313 "visible hitch" windows had a worst frame longer
+   // than the 5 s window itself (up to 11 minutes). Any window the tab was hidden in is flagged,
+   // and the gap starts over when it shows.
+   document.addEventListener('visibilitychange', function(){ wasHidden = true; lastFrame = 0; if (!document.hidden) shownAt = Date.now(); });
    // Binary frames as the BROWSER receives them, by envelope type: tells "never arrived"
    // apart from "arrived and the engine dropped it" (the Lua counters only see the latter).
    var wsRx = {}, lastSeq = 0, dumped = false;
@@ -669,14 +675,29 @@ window.omw = (function(){
    var div = [], snaps = 0, lastSnap = '', prev = null, lastSent = Date.now();
    function st(){ return (window.omw && window.omw.state) || {}; }
    // NPC AGREEMENT, live: each alive actor this screen draws (the probe mirror, its own copy)
-   // against the nearest pose the server sent in the last second. The live half of the 64 u
+   // against its own newest pose from the server in the last second. The live half of the 64 u
    // bar -- a software-rendered harness client cannot run fast enough to judge it.
-   var npcGap = [], npcPath = [], npcFacingN = 0, npcFacingBad = 0, npcFacingWhy = [];
+   var npcGap = [], npcPath = [], npcFacingN = 0, npcFacingBad = 0, npcFacingWhy = [], npcNoPose = 0, npcNoPoseRec = {};
    var lastSfs = null;
    var sampleCell = '', cellChangedAt = 0;
+   // The key the 0x200 tap files a drawn actor's poses under: 'n<netId>' for a named runtime
+   // actor, else '<contentFile>:<index>' from its FormId string ('0x' + hex of cf << 24 | index,
+   // esm/formid.cpp) -- the same RefNum actors.lua puts on the wire. null: an older engine's
+   // probe, or a body only this engine made.
+   function tapKey(p){
+     if (p.net != null) return 'n' + p.net;
+     if (typeof p.id !== 'string' || !/^0x[0-9a-f]+$/i.test(p.id)) return null;
+     var v = parseInt(p.id, 16);
+     return Math.floor(v / 16777216) + ':' + (v % 16777216);
+   }
    setInterval(function(){
      var s = st();
      if (s.netstate !== 'Joined' || !s.actorProbe) return;
+     // NOT WHILE THE GAME IS PAUSED. A hidden tab runs no frames, so every puppet stands still
+     // while the socket keeps filing the server's poses: 363 of 1532 npcPath windows (prod
+     // 2026-10-16/18) were sampled in a background tab, and they alone took the p90 from 63 u
+     // to 92. The first 2 s back are the puppets catching up, as after an area change.
+     if (document.hidden || Date.now() - shownAt < 2000) return;
      var probe; try { probe = JSON.parse(s.actorProbe); } catch (e) { return; }
      // AN AREA CHANGE IS NOT A JUMP. For a moment after one, the probe holds the new area's NPCs
      // while the path history still holds the old area's: every NPC read as tens of thousands of
@@ -690,9 +711,18 @@ window.omw = (function(){
      for (var rec in probe) {
        var p = probe[rec];
        if (rec === 'player' || !p || p.dead || (p.n || 1) !== 1) continue;
+       // ITS OWN POSES, NOT THE NEAREST ACTOR'S. Matched by position alone, an NPC with no pose
+       // stream of its own was measured against whichever neighbour stood closest: 200-500 u "off
+       // its path" for 100 s at 180 fps with no snap (prod 2026-10-17, ar5tbvgs at Pelagiad: 20
+       // of the 29 visible over-300 u windows). A streamed puppet that far off is snapped within
+       // a second (puppet.lua), so that was never a path. Such an actor is counted apart
+       // (npcNoPose, with its record); an older engine's probe has no key: nearest, as before.
+       var own = tapKey(p), mine = own && actorTap.last[own];
+       if (own && !(mine && now - mine.t < 2000)) { npcNoPose++; npcNoPoseRec[rec.replace(/\s+/g, '_')] = 1; continue; }
+       var cand = own ? (now - mine.t < 1000 ? [mine] : []) : rx, candK = own ? [own] : rk;
        var best = Infinity, near = null, nearK = null;
-       for (var i = 0; i < rx.length; i++) { var dx = rx[i].x - p.x, dy = rx[i].y - p.y, dd = dx * dx + dy * dy; if (dd < best) { best = dd; near = rx[i]; nearK = rk[i]; } }
-       if (best < 1024 * 1024) npcGap.push(Math.sqrt(best)); // beyond that it is another actor
+       for (var i = 0; i < cand.length; i++) { var dx = cand[i].x - p.x, dy = cand[i].y - p.y, dd = dx * dx + dy * dy; if (dd < best) { best = dd; near = cand[i]; nearK = candK[i]; } }
+       if (best < 1024 * 1024 || (own && near)) npcGap.push(Math.sqrt(best)); // unmatched, beyond that it is another actor
        // npcFacing: a WALKING NPC (server speed over 20 u/s, server heading steady within 45
        // degrees over the last 2 s) drawn facing more than 120 degrees off that heading. Positions
        // can be right while it walks backwards or spins ("doing 180s as they walk", prod
@@ -722,9 +752,9 @@ window.omw = (function(){
        // npcGap compares with the NEWEST pose, so a running NPC drawn on purpose ~0.1-0.3 s in
        // the past (interp.lua's render delay) reads 20-100 u "off" while exactly on its path. A
        // path distance is what a jerk or a desync shows up in: the NPC drawn where it never was.
-       var bestPath = Infinity;
-       for (var hk in actorTap.hist) {
-         var hh = actorTap.hist[hk];
+       var bestPath = Infinity, hks = own ? [own] : Object.keys(actorTap.hist);
+       for (var hi = 0; hi < hks.length; hi++) {
+         var hh = actorTap.hist[hks[hi]] || [];
          for (var j = 0; j < hh.length; j++) {
            if (now - hh[j].t > 2000) continue;
            var a = hh[j], b = hh[j + 1] && now - hh[j + 1].t <= 2000 ? hh[j + 1] : a;
@@ -734,7 +764,7 @@ window.omw = (function(){
            if (dq < bestPath) bestPath = dq;
          }
        }
-       if (bestPath < 1024 * 1024) npcPath.push(Math.sqrt(bestPath));
+       if (bestPath < 1024 * 1024 || (own && bestPath < Infinity)) npcPath.push(Math.sqrt(bestPath));
      }
    }, 1000);
    setInterval(function(){
@@ -746,7 +776,7 @@ window.omw = (function(){
    }, 100);
    setInterval(function(){
      var s = st();
-     if (s.netstate !== 'Joined') { frames = 0; worstGap = 0; div = []; return; }
+     if (s.netstate !== 'Joined') { frames = 0; worstGap = 0; div = []; wasHidden = false; return; }
      var now = Date.now(), secs = (now - lastSent) / 1000; lastSent = now;
      var cur = { a: +s.actorBatchesIn || 0, m: +s.moveRx || 0 };
      // Rates are taken against the PREVIOUS reading, so it is captured before `prev` moves on
@@ -770,13 +800,14 @@ window.omw = (function(){
      var slowTop = sfs && sfs.slowBy ? Object.keys(sfs.slowBy).sort(function(x, y){ return sfs.slowBy[y] - sfs.slowBy[x]; }).slice(0, 2).map(function(k){ return k.replace(/\?.*$/, '') + ':' + sfs.slowBy[k]; }).join(',') : '';
      lastSfs = sfs ? { misses: sfs.misses, stallMs: sfs.stallMs, slow: sfs.slow || 0 } : null;
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
-       + (document.hidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + ' sfsSlow=' + sfsD.slow + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
+       + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + ' sfsSlow=' + sfsD.slow + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
        + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
        + ' cell=' + (s.cell || '?') + ' holder=' + (s.authorityHolder || '?') + ' actors=' + (s.actorCount || '?')
        + ' puppeted=' + (s.puppetedActors || '?')
        + ' npcGap p50=' + gq(0.5) + ' p95=' + gq(0.95) + ' n=' + npcGap.length
        + ' npcPath p50=' + pq(0.5) + ' p95=' + pq(0.95) + ' max=' + pq(1) + ' n=' + npcPath.length
+       + ' npcNoPose=' + npcNoPose + (npcNoPose ? ' noPoseRec=' + Object.keys(npcNoPoseRec).slice(0, 3).join(',') : '')
        + ' npcFacing bad=' + npcFacingBad + ' n=' + npcFacingN + (npcFacingWhy.length ? ' why=' + npcFacingWhy.join(',') : '')
        + ' wsRx=' + JSON.stringify(wsRx)
        + ' raw=' + JSON.stringify({ abi: s.actorBatchesIn, isHolder: s.isHolder, puppetRx: s.puppetRx,
@@ -793,6 +824,7 @@ window.omw = (function(){
        line += ' state=' + JSON.stringify(keep);
      }
      frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = []; npcFacingN = 0; npcFacingBad = 0; npcFacingWhy = [];
+     npcNoPose = 0; npcNoPoseRec = {}; wasHidden = false;
      fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
        body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
    }, 5000);
