@@ -1301,13 +1301,6 @@ export class Connection implements Peer {
       if (player.system === true && p.id !== player.id) continue;
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
     }
-    // A HUMAN LANDING SOMEWHERE NEW IS THE MOMENT THE ANCHOR SET IS WRONG. Waiting for the
-    // next 5s tick meant a player could arrive in a cell the peer does not hold and be handed
-    // control anyway — the loading screen had already cleared, because readiness only says a
-    // peer is IN THE WORLD, not that it holds this particular cell. That gap is the tail of
-    // the rubber-banding: up to five seconds of moving around an unsimulated cell before the
-    // peer catches up and corrects you.
-    if (player.system !== true) this.ctx.onPeerJoined?.();
     // M3: entering a cell always yields its delta doc (and its neighbours' -- they are loaded
     // too); the vacated cell may flush.
     this.ctx.world.sendCellStateAround(player, cellKey);
@@ -1329,6 +1322,19 @@ export class Connection implements Peer {
       this.ctx.quests.releaseDialogueLocks(player.id);
     }
     this.ctx.world.authorityEnter(player, cellKey);
+    // A HUMAN LANDING SOMEWHERE NEW IS THE MOMENT THE ANCHOR SET IS WRONG. Waiting for the
+    // next 5s tick meant a player could arrive in a cell the peer does not hold and be handed
+    // control anyway — the loading screen had already cleared, because readiness only says a
+    // peer is IN THE WORLD, not that it holds this particular cell. That gap is the tail of
+    // the rubber-banding: up to five seconds of moving around an unsimulated cell before the
+    // peer catches up and corrects you.
+    // ...AND THE PASS GOES AFTER THE PLAYER HAS LEFT. An interior's anchor goes the pass its last
+    // human leaves, and run first that pass queued the peer's release of the room while the
+    // player was still listed in it: the cell went dormant around them and they were told the
+    // holder was LOST -- which a client reads as the peer gone everywhere (actors.lua #295), so
+    // every NPC puppet it had dropped to degraded. Every door out of an interior did it (prod
+    // ar5tbvgs: 34 puppets to 1 at the Pelagiad fort door, and the town's NPCs froze for good).
+    if (player.system !== true) this.ctx.onPeerJoined?.();
     this.ctx.world.rebindFollows(player);
   }
 

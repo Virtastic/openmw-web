@@ -600,14 +600,23 @@ return {
             self:enableAI(false) -- the pose stream owns this actor, not the AI
             markPuppet(true)
         end,
+        -- NOT ONLY A SAVE GAME. The engine unloads an INACTIVE object's scripts a few hundred
+        -- frames after its cell goes out of view (ScriptTracker::unloadInactiveScripts) and
+        -- reloads them through onSave/onLoad. A degraded puppet in the exterior a player had
+        -- left came back with no key and its AI switched off: the next pose did not re-arm it,
+        -- and it stood 200-500 u from the peer's NPC with no snap until the session ended
+        -- (prod ar5tbvgs, Pelagiad, after a door hop between two interiors).
         onLoad = function(data)
             playerId = data and data.playerId
             actorKey = data and data.actorKey
+            degradedKey = data and data.degradedKey
+            degraded = degradedKey ~= nil
+            if not (playerId or actorKey) then return end -- not a live puppet: its AI stays as MP_Detach left it
             self:enableAI(false)
             markPuppet(true)
         end,
         onSave = function()
-            return { playerId = playerId, actorKey = actorKey }
+            return { playerId = playerId, actorKey = actorKey, degradedKey = degraded and degradedKey or nil }
         end,
         onUpdate = onUpdate,
     },
@@ -757,7 +766,8 @@ return {
         -- hit intercept) attached; the other cases have global.lua remove it right after.
         MP_Detach = function(data)
             degraded = data and data.degraded == true
-            degradedKey = degraded and actorKey or nil
+            -- A second outage before any pose re-armed it must not forget the address.
+            degradedKey = degraded and (actorKey or degradedKey) or nil
             actorKey = nil
             playerId = nil
             dead = false

@@ -278,3 +278,36 @@ test('on the wire: the cell a player reports in the instant after joining is not
     && ['0,0', '1,1', '-1,-1'].includes((e.value as { cellKey: string }).cellKey));
   assert.equal(blip.length, 0, `held around the join blip: ${blip.map((e) => (e.value as { cellKey: string }).cellKey)}`);
 });
+
+// An interior's anchor goes the pass its last human leaves, and a cell change runs a pass at
+// once. Run BEFORE the player's own leave, it released the room while the player was still
+// listed in it: dormant around them, and they were told the holder was LOST -- which a client
+// reads as the peer gone everywhere and drops every NPC puppet to degraded (prod ar5tbvgs: 34
+// puppets to 1 at the Pelagiad fort door; the town's NPCs never moved for that player again).
+test('on the wire: walking out of an anchored interior never tells the player its holder was lost', async (t) => {
+  const PEER_PASS = 'peer-secret-7';
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } } });
+  t.after(() => server.close());
+  server.config.simPeer.enabled = true;
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  await c.joinAsNew('DoorHopper');
+  await c.waitEvent('PlayerList');
+  const fort = 'pelagiad, fort pelagiad', wall = 'pelagiad, north wall';
+  type Info = { cellKey: string; holderId?: number };
+  const held = (cellKey: string) => c.waitEvent('ActorAuthorityInfo',
+    (v) => (v as Info).cellKey === cellKey && (v as Info).holderId !== undefined, 12_000)
+    .catch(() => assert.fail(`${cellKey} was never held`));
+  c.sendCellChange(fort, 10, 10, 0);
+  await held(fort);
+  c.sendCellChange(wall, 20, 20, 0); // a door between two rooms...
+  await held(wall);
+  c.sendCellChange('0,-7', 4937, -55453, 0); // ...and out into the street
+  await held('0,-7');
+  await new Promise((r) => setTimeout(r, 300));
+  const lost = c.inbox.events.filter((e) => e.name === 'ActorAuthorityInfo' && (e.value as Info).holderId === undefined);
+  assert.equal(lost.length, 0, `told the holder was lost for: ${lost.map((e) => (e.value as Info).cellKey)}`);
+});
