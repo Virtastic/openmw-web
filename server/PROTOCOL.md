@@ -94,6 +94,10 @@ signal exists or is needed (the peer-pose freshness window, **2 s** — `PEER_PO
   `PlayerInput` within the last 2 s (an input-less client keeps its own authority), and
   after a `PlayerCellChange` entries are ignored until the avatar's pose arrives within
   512 units of the declared spot (positional teleport grace, warned after 30 s).
+  An entry whose pose flags carry **bit 7** is the avatar's body as it stands, sent just
+  before the seq-matched entry for the same id: the server fans the body out (bit stripped)
+  and keeps the seq-matched pose for that player's own `0x0103`. A server that ignores the
+  bit applies both in order, so the seq-matched one wins.
 - **`0x0103` PlayerStateBatch (S→C).** Same entry layout as `0x0105`. Each player receives
   their OWN entry on the broadcast tick — pose + `lastInputSeq` — which is the anchor for
   client-side reconciliation (predict + smooth blend via capped physics offsets; hard snap

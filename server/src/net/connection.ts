@@ -20,7 +20,7 @@ import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { socketRttMs } from './ws';
 import { netDelayFromEnv } from './netdelay';
 import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
-import { MSG_PLAYER_INPUT, MSG_AVATAR_MOVE_BATCH, INPUT_PAYLOAD_BYTES, packInputForward, unpackAvatarMoveBatch } from '../proto/input';
+import { MSG_PLAYER_INPUT, MSG_AVATAR_MOVE_BATCH, INPUT_PAYLOAD_BYTES, POSE_OBSERVER_BIT, packInputForward, unpackAvatarMoveBatch, type AvatarMoveEntry } from '../proto/input';
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible, acceptPeerPose } from '../core/movement';
 
@@ -978,7 +978,15 @@ export class Connection implements Peer {
       return;
     }
     const now = Date.now();
+    // THE BODY FOR EVERYONE ELSE (global.lua POSE_OBSERVER_BIT): an entry with flag bit 7 is the
+    // avatar where it stands now, sent just before the seq-matched entry for the same player. That
+    // one stays the owner's reconcile pair; this one is what the world sees -- ~50 ms+ fresher.
+    const bodies = new Map<number, AvatarMoveEntry['pose']>();
     for (const e of entries) {
+      if ((e.pose.flags & POSE_OBSERVER_BIT) !== 0) bodies.set(e.id, { ...e.pose, flags: e.pose.flags & ~POSE_OBSERVER_BIT });
+    }
+    for (const e of entries) {
+      if ((e.pose.flags & POSE_OBSERVER_BIT) !== 0) continue;
       const p = this.ctx.roster.get(e.id);
       if (!p || p.system === true || !p.inWorld) continue;
       // ONLY a player actually driving the input tier is ruled by the peer's pose. A client
@@ -1048,15 +1056,16 @@ export class Connection implements Peer {
           id: e.id, name: p.name, x: Math.round(e.pose.x), y: Math.round(e.pose.y),
           z: Math.round(e.pose.z), lastInputSeq: e.lastInputSeq });
       }
-      acceptPeerPose(p, e.pose);
+      acceptPeerPose(p, bodies.get(e.id) ?? e.pose);
       p.lastPoseAt = now;
       p.peerPoseAt = now;
       p.lastInputSeq = e.lastInputSeq;
+      p.statePose = { ...e.pose, flags: p.pose!.flags }; // the edge bits acceptPeerPose carried over
       // The plausibility envelope (handleMove) measures client moves against moveAnchor,
       // which only accepted CLIENT moves refreshed -- so the first client move after a peer
       // outage was judged against wherever the client last authored, possibly long ago and
       // far away. The canonical pose is the honest baseline.
-      p.moveAnchor = { x: e.pose.x, y: e.pose.y, z: e.pose.z, at: now };
+      p.moveAnchor = { x: p.pose!.x, y: p.pose!.y, z: p.pose!.z, at: now };
     }
   }
 
@@ -1275,6 +1284,7 @@ export class Connection implements Peer {
       animVel: 0,
       counter: 0,
     };
+    player.statePose = undefined; // the owner's batch says the new spot until the peer's next pair, as before
     player.poseVersion++;
     // A CELL CHANGE IS A LEGITIMATE TELEPORT — a door, a silt strider, Recall, Divine
     // Intervention — so the speed envelope must not measure across one. The old per-frame

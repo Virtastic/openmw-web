@@ -292,7 +292,7 @@ export class MoveBroadcaster {
       if (!p.pose || p.lastInputSeq === undefined) continue;
       p.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH,
         nextBroadcastSeq(), packPlayerStateBatch([
-          { id: p.id, lastInputSeq: p.lastInputSeq, pose: p.pose },
+          { id: p.id, lastInputSeq: p.lastInputSeq, pose: p.statePose ?? p.pose },
         ])));
     }
 

@@ -84,6 +84,10 @@ export interface Player {
   // fresh, this player's canonical pose is the PEER's answer, not the client's claim.
   inputSeq?: number;
   lastInputSeq?: number;
+  // The peer's pose AS OF lastInputSeq, the pair the owner reconciles against (PlayerStateBatch).
+  // `pose` is the avatar's body as it stands, a frame or more ahead of that pair: what everyone
+  // else is shown (handleAvatarMoveBatch, POSE_OBSERVER_BIT).
+  statePose?: PlayerPose;
   // Wall-clock of the newest PlayerInput frame from this connection; the peer's avatar pose
   // only overrides the client-authored one while this is fresh (per-player degraded mode).
   lastInputAt?: number;

@@ -3624,5 +3624,90 @@ do
     tostring(first.token) .. ' / ' .. tostring(second.token) .. ' / ' .. tostring(third.token))
 end
 
+print('friend sync: a friend\'s puppet jumps on a slow client, and a teleport is not walked')
+do
+  -- The real puppet.lua, a friend (playerId), poses at the server's 66 ms tick.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.animation', 'scripts.mp.interp' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local a1 = math.atan
+  math.atan = function(y, x) if x then return math.atan2(y, x) end return a1(y) end
+  local now = 0
+  local function v3(x, y, z) return setmetatable({ x = x, y = y, z = z }, { __sub = function(p, q) return v3(p.x - q.x, p.y - q.y, p.z - q.z) end,
+    __index = { length = function(p) return math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) end } }) end
+  local me = { controls = {}, position = v3(0, 0, 0), object = {}, enableAI = function() end }
+  me.rotation = { getYaw = function() return 0 end, getPitch = function() return 0 end }
+  local snaps = {}
+  package.loaded['openmw.core'] = { getRealTime = function() return now end, sound = { playSound3d = function() end },
+    sendGlobalEvent = function(name, d) if name == 'mpSnapRequest' then snaps[#snaps + 1] = d end end }
+  package.loaded['openmw.self'] = me
+  package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 0 end,
+    setStance = function() end, getRunSpeed = function() return 250 end, getWalkSpeed = function() return 150 end } }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.animation'] = {}
+  local function friend()
+    package.loaded['scripts.mp.interp'] = nil
+    local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+    pup.engineHandlers.onInit({ playerId = 7 })
+    return pup
+  end
+  -- Jumps: one pose with bit 2 every 0.5 s, the friend standing still; the client at 9 fps (110 ms
+  -- frames, longer than the 66 ms a pose spans). Before: about two jumps in five were stepped over.
+  local pup, jumps, nextPose, n = friend(), 0, 0, 0
+  while now < 10 do
+    while nextPose <= now do
+      n = n + 1
+      pup.eventHandlers.MP_Pose({ x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = (n % 8 == 0) and 4 or 0, t = nextPose })
+      nextPose = nextPose + 0.066
+    end
+    pup.engineHandlers.onUpdate(0.11)
+    if me.controls.jump then jumps = jumps + 1 end
+    now = now + 0.11
+  end
+  local sent = math.floor(n / 8)
+  check('a 9 fps client plays every jump its friend made, once', jumps >= sent - 1 and jumps <= sent,
+    string.format('%d jumps played of %d sent', jumps, sent))
+  -- A respawn 3000 u away in the same cell. Before: the render-delayed target swept the line
+  -- between the two spots, the distance snap landed on it, and the cooldown held it there.
+  now, nextPose, snaps = 20, 20, {}
+  me.position = v3(0, 0, 0)
+  pup = friend()
+  local function run(seconds, y)
+    local t0 = now
+    while now < t0 + seconds do
+      while nextPose <= now do
+        pup.eventHandlers.MP_Pose({ x = 0, y = y, z = 0, yaw = 0, pitch = 0, flags = 0, t = nextPose })
+        nextPose = nextPose + 0.066
+      end
+      pup.engineHandlers.onUpdate(1 / 30)
+      if #snaps > 0 then local s = snaps[#snaps]; me.position = v3(s.x, s.y, s.z) end
+      now = now + 1 / 30
+    end
+  end
+  run(1, 0)
+  snaps = {}
+  run(1.5, 3000)
+  local bad = {}
+  for _, s in ipairs(snaps) do if math.abs(s.y - 3000) > 1 then bad[#bad + 1] = string.format('%.0f', s.y) end end
+  check('a friend who respawns 3000 u away is snapped there, never to a point between', #snaps >= 1 and #bad == 0,
+    string.format('%d snaps, off-target at y=%s', #snaps, table.concat(bad, ',')))
+  math.atan = a1
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+end
+
+print('friend sync: the peer streams the avatar\'s body to friends and keeps a quick click')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('a body entry (bit 7) precedes the seq-matched one, so an older server keeps today\'s pose',
+    g:find('flags = e.flags + POSE_OBSERVER_BIT', 1, true) ~= nil
+    and g:find('entries[#entries + 1] = e\n', 1, true) ~= nil
+    and g:find('POSE_OBSERVER_BIT', 1, true) < g:find('entries[#entries + 1] = e\n', 1, true))
+  check('a use press is latched until a stream entry carries it',
+    g:find('if avatarUsing[data.id] then usePending[data.id] = true end', 1, true) ~= nil
+    and g:find('((avatarUsing[id] or usePending[id]) and 8 or 0)', 1, true) ~= nil
+    and g:find('if ok then jumpPending[id] = nil; usePending[id] = nil end', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
