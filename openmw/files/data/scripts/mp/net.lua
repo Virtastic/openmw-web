@@ -584,6 +584,12 @@ dispatch.SessionWelcome = function(msg)
     if mp.setResumeToken and type(msg.sessionToken) == 'string' then
         mp.setResumeToken(msg.sessionToken)
     end
+    -- ...and the copy in memory too. onClose redials with `net.resumeToken or <stored>`, so the
+    -- token that got us HERE (the boot's stored one, or the one the last drop resumed with)
+    -- outranked the fresh one: every SECOND drop of a page presented a spent token, was refused
+    -- "resume token expired or unknown", fell to the spent boot ticket and a full page reboot.
+    -- Prod 2026-10-14/16/18: the first resume of each page worked, the second never did.
+    net.resumeToken = (type(msg.sessionToken) == 'string' and msg.sessionToken ~= '') and msg.sessionToken or nil
     net.authPath = authMode
     mp.set('authPath', authMode)
     net.motd = msg.motd
