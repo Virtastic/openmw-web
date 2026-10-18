@@ -199,7 +199,9 @@ export function accountNameProblem(name: string): string | null {
 
 export class AccountStore {
   private cache = new Map<string, Account>(); // key = nameLower
-  private dirty = new Set<string>();
+  // Queued FIELDS, not queued docs: flush() patches exactly these onto a fresh read of the row.
+  // Writing the whole cached doc back reverted whatever another process wrote since we read it.
+  private dirty = new Map<string, Partial<Account>>();
   private flushTimer: NodeJS.Timeout;
 
   private readonly db: DatabaseSync;
@@ -331,32 +333,30 @@ export class AccountStore {
     // THEIR copy while flush wrote a different one is how characters got lost.
     const row = this.db.prepare('SELECT doc FROM accounts WHERE key = ?').get(key) as
       { doc: string } | undefined;
-    if (row) {
-      try { Object.assign(account, JSON.parse(row.doc) as Account); } catch { /* keep ours */ }
-    }
+    // No row: the account was erased (possibly by another process). Writing would resurrect it.
+    if (!row) return undefined;
+    try { Object.assign(account, JSON.parse(row.doc) as Account); } catch { /* keep ours */ }
     const out = fn(account);
     if (out === undefined) return undefined; // the mutation declined; nothing to write
     this.writeNow(key, account); // keeps the cross-process character merge + tombstones
     this.cache.set(key, account); // this object is now THE cached one
-    this.dirty.delete(key); // written through: no queued copy may overwrite it later
     return out;
   }
 
   async get(name: string): Promise<Account | undefined> {
     const key = name.toLowerCase();
     const cached = this.cache.get(key);
-    // Pending writes win — a doc with queued mutations is the truth this process is about to
-    // flush, and replacing it would lose them. A CLEAN cached doc is only a first impression:
-    // the gateway and every world share accounts.db, and each used to serve whatever was true
-    // the first time it looked, forever. A long-running world then authenticated players
+    // Always read through, with this process's queued fields laid on top. A cached doc is only
+    // a first impression: the gateway and every world share accounts.db, and each used to
+    // serve whatever was true the first time it looked, forever. A long-running world then authenticated players
     // against a character list from another era — stale slots, stale completed flags — which
     // put one into a DELETED character's still-running world with inChargen wrongly false,
     // where the sim peer took the cell and froze the chargen guard. Third instance of the
-    // same never-re-read disease (PlayerStore had it twice); read through unless dirty.
-    if (cached && this.dirty.has(key)) return cached;
+    // same never-re-read disease (PlayerStore had it twice). Serving the dirty copy as-is also
+    // hid a ban made elsewhere from a player who rejoined within the 30 s flush window.
     const row = this.db.prepare('SELECT doc FROM accounts WHERE key = ?').get(key) as
       { doc: string } | undefined;
-    const loaded = row ? (JSON.parse(row.doc) as Account) : undefined;
+    const loaded = row ? { ...(JSON.parse(row.doc) as Account), ...this.dirty.get(key) } : undefined;
     if (loaded) this.cache.set(key, loaded);
     // Row gone but cached: deletion raced us; the delete path owns cache eviction.
     return loaded ?? cached;
@@ -649,11 +649,8 @@ export class AccountStore {
       { key: string; doc: string }[];
     const out: Account[] = [];
     for (const r of rows) {
-      // Pending writes win, exactly as get() does: a dirty cached doc is what this process is
-      // about to flush, so listing the disk copy would show a value we already superseded.
-      const cached = this.cache.get(r.key);
-      if (cached && this.dirty.has(r.key)) { out.push(cached); continue; }
-      try { out.push(JSON.parse(r.doc) as Account); } catch { /* unreadable row: skip */ }
+      // Queued fields win, exactly as get() does: they are what this process is about to flush.
+      try { out.push({ ...(JSON.parse(r.doc) as Account), ...this.dirty.get(r.key) }); } catch { /* unreadable row: skip */ }
     }
     return out;
   }
@@ -691,27 +688,33 @@ export class AccountStore {
   }
 
   // The one mutation that stays on the dirty queue on purpose: it fires on every join and
-  // carries nothing anyone would miss, so batching it is right. It is also the only writer
-  // left, which is what makes mutate()'s dirty.delete() harmless — there is no longer a queued
-  // copy holding a field that a write-through would silently roll back.
+  // carries nothing anyone would miss, so batching it is right. Only the field is queued.
   touchLastSeen(name: string): void {
     const key = name.toLowerCase();
     const account = this.cache.get(key);
     if (!account) return;
     account.lastSeenAt = new Date().toISOString();
-    this.dirty.add(key);
+    this.dirty.set(key, { ...this.dirty.get(key), lastSeenAt: account.lastSeenAt });
   }
 
+  // Patch the queued fields onto a FRESH read of the row, in one transaction. Never write the
+  // cached doc: the gateway and every world share this file, and a world's copy from join time
+  // reverted ranks, bans, dashboard roles and passwords set elsewhere since. A row that is gone
+  // was erased; writing it back would resurrect the account.
   async flush(): Promise<void> {
-    const keys = [...this.dirty];
+    const pending = [...this.dirty];
     this.dirty.clear();
-    for (const key of keys) {
-      const account = this.cache.get(key);
-      if (!account) continue;
+    for (const [key, patch] of pending) {
       try {
-        this.writeNow(key, account);
+        tx(this.db, () => {
+          const row = this.db.prepare('SELECT doc FROM accounts WHERE key = ?').get(key) as
+            { doc: string } | undefined;
+          if (!row) return;
+          this.db.prepare('UPDATE accounts SET doc = ? WHERE key = ?')
+            .run(JSON.stringify({ ...(JSON.parse(row.doc) as Account), ...patch }), key);
+        });
       } catch (err) {
-        this.dirty.add(key); // retry on the next flush
+        this.dirty.set(key, patch); // retry on the next flush
         log('error', 'accounts.flush_failed', { account: key, error: String(err) });
       }
     }
