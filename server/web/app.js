@@ -1851,7 +1851,7 @@ async function pageOverview() {
     view().innerHTML = html`
       <div class="row">
         ${raw(stat('Playing now', `${playing.length}`, 'bi-controller', 'primary'))}
-        ${raw(stat('Uptime', upText, 'bi-clock-history', 'secondary'))}
+        ${raw(stat('Server uptime', upText, 'bi-clock-history', 'secondary'))}
         ${raw(sysCards(o.system))}
       </div>
       <div class="card card-outline card-primary">
@@ -1883,7 +1883,7 @@ async function pageOverview() {
     <div class="row">
       ${raw(stat(`Players (of ${o.maxPlayers})`, `${o.players.length}`, 'bi-people', 'primary', '#console'))}
       ${raw(stat('World', o.world.id, 'bi-globe-americas', 'success', '#mods'))}
-      ${raw(stat('Uptime', upText, 'bi-clock-history', 'secondary'))}
+      ${raw(stat('Server uptime', upText, 'bi-clock-history', 'secondary'))}
       ${raw(stat('Your role', state.role, 'bi-person-badge', 'warning', '#security'))}
       ${raw(sysCards(o.system))}
     </div>
@@ -1975,7 +1975,7 @@ function renderPlatformOverview(o, stat, upText) {
       ${raw(stat('Playing now', `${players.length}`, 'bi-people', 'primary'))}
       ${raw(stat(h.capacity ? `Games running (of ${h.capacity})` : 'Games running', `${h.games ?? games.length}`, 'bi-collection-play', 'success'))}
       ${raw(stat('Sim peers', `${h.peers ?? 0}`, 'bi-cpu', 'info'))}
-      ${raw(stat('Uptime', upText, 'bi-clock-history', 'secondary'))}
+      ${raw(stat('Server uptime', upText, 'bi-clock-history', 'secondary'))}
       ${raw(sysCards(o.system))}
     </div>
     <div class="card card-outline card-primary mb-3">
@@ -1985,8 +1985,7 @@ function renderPlatformOverview(o, stat, upText) {
         <tbody>${raw(playerRows)}</tbody></table></div></div>
     <div class="card card-outline card-secondary mb-3">
       <div class="card-header"><h3 class="card-title">Games</h3>
-        <div class="card-tools small text-secondary">${h.capacityReason === 'memory'
-          ? 'Room for more is bound by memory.' : 'Room for more is bound by the game count.'}</div></div>
+        <div class="card-tools small text-secondary">${capacityText(h.capacityReason)}</div></div>
       <div class="table-responsive"><table class="table table-hover mb-0">
         <thead><tr><th>Game</th><th>Mode</th><th>Players</th><th>Status</th><th></th></tr></thead>
         <tbody>${raw(gameRows)}</tbody></table></div></div>
@@ -2048,6 +2047,19 @@ function ago(at) {
 }
 
 const mb = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Math.round(n / 1048576)} MB`);
+/** A transfer rate: mb() would round a quiet server's few hundred KB/s down to "0 MB/s". */
+const rate = (n) => (n < 1048576 ? `${Math.round(n / 1024)} KB/s` : `${(n / 1048576).toFixed(1)} MB/s`);
+
+/**
+ * Why the Games card cannot take more. The gateway says 'memory' for a cap derived from the
+ * memory budget, and 'mem' / 'cpu' when live pressure has frozen it at what is running.
+ */
+function capacityText(reason) {
+  if (reason === 'memory') return 'Room for more is bound by memory.';
+  if (reason === 'mem') return 'Memory is under pressure: no new games until some close.';
+  if (reason === 'cpu') return 'CPU load is high: no new games until it eases.';
+  return 'Room for more is bound by the game count.';
+}
 
 /**
  * Machine health, as the cards that replace the multiplayer ones.
@@ -2069,11 +2081,11 @@ function sysCards(sys) {
     </div>`;
   let out = '';
   if (sys.cpu && sys.cpu.percent !== null) {
-    out += box('CPU', `${sys.cpu.percent}%`, `${sys.cpu.cores} cores`, 'bi-cpu', 'info');
+    out += box('Server CPU', `${sys.cpu.percent}%`, `${sys.cpu.cores} cores`, 'bi-cpu', 'info');
   }
   if (sys.memory && sys.memory.totalBytes > 0) {
-    out += box('Memory', `${sys.memory.percent}%`,
-      `${mb(sys.memory.usedBytes)} of ${mb(sys.memory.totalBytes)}`, 'bi-memory', 'info');
+    out += box('Server memory', `${sys.memory.percent}%`,
+      `${mb(sys.memory.usedBytes)} of ${mb(sys.memory.totalBytes)} limit`, 'bi-memory', 'info');
   }
   if (sys.disk) {
     // Free space, not used: "how much room is left" is the question an operator uploading
@@ -2081,8 +2093,8 @@ function sysCards(sys) {
     out += box('Disk free', mb(sys.disk.freeBytes), `${sys.disk.percent}% used`, 'bi-hdd', 'success');
   }
   if (sys.network) {
-    out += box('Network', `${mb(sys.network.rxBytesPerSec)}/s`,
-      `up ${mb(sys.network.txBytesPerSec)}/s`, 'bi-activity', 'secondary');
+    out += box('Server network', rate(sys.network.rxBytesPerSec),
+      `up ${rate(sys.network.txBytesPerSec)}`, 'bi-activity', 'secondary');
   }
   return out;
 }
@@ -3742,6 +3754,7 @@ async function pageAccounts() {
         <td>${a.name}${raw(a.banned ? ' <span class="badge text-bg-danger">banned</span>' : '')}
           ${raw(a.twoFactor ? ' <span class="badge text-bg-success">2FA</span>' : '')}</td>
         <td class="text-secondary small">${a.username || '-'}</td>
+        <td>${a.characters ?? 0}</td>
         <td>${a.rank}</td>
         <td>
           ${raw(can('owner') ? html`
@@ -3761,10 +3774,14 @@ async function pageAccounts() {
           ${raw(can('owner')
             ? html`<button class="btn btn-sm btn-outline-danger" data-del="${a.name}">erase</button>` : '')}</td>
       </tr>
-      <tr class="vt-saves-row"><td colspan="6" class="pt-0">
-        <details data-saves="${a.name}"><summary class="small text-secondary">Savegames</summary>
+      <tr class="vt-saves-row"><td colspan="7" class="pt-0">
+        ${raw(a.characters ? html`<details><summary class="small text-secondary">Characters (${a.characters})</summary>
+          <ul class="mt-2 mb-2 small">${raw((a.characterList || []).map((c) => html`
+            <li>${c.name}: level ${c.level}${c.cell ? `, ${c.cell}` : ''}${c.lastPlayedAt
+              ? ` · last played ${c.lastPlayedAt.slice(0, 10)}` : ''}</li>`).join(''))}</ul></details>` : '')}
+        <details data-saves="${a.name}"><summary class="small text-secondary">Single-player saves</summary>
           <div class="mt-2 small" data-saves-for="${a.name}">Loading…</div></details></td></tr>`).join('');
-    $('#accBody').innerHTML = rows || html`<tr><td colspan="6" class="vt-empty">No accounts match.</td></tr>`;
+    $('#accBody').innerHTML = rows || html`<tr><td colspan="7" class="vt-empty">No accounts match.</td></tr>`;
 
     // SAVEGAMES, loaded when the row is opened rather than for every account up front: a
     // hundred accounts would be a hundred queries to answer a question nobody asked.
@@ -3872,9 +3889,9 @@ async function pageAccounts() {
       <input class="form-control" id="accQ" placeholder="Search accounts…" value="${q}">
     </div>
     <div class="table-responsive"><table class="table table-hover mb-0">
-      <thead><tr><th>Account</th><th>Handle</th><th>Rank</th><th style="width:11rem">Dashboard access</th>
+      <thead><tr><th>Account</th><th>Handle</th><th>Characters</th><th>Rank</th><th style="width:11rem">Dashboard access</th>
         <th>Last seen</th><th></th></tr></thead>
-      <tbody id="accBody"><tr><td colspan="6" class="vt-empty">Loading…</td></tr></tbody>
+      <tbody id="accBody"><tr><td colspan="7" class="vt-empty">Loading…</td></tr></tbody>
     </table></div></div>`;
   const na = $('#naGo');
   if (na) na.onclick = async () => {

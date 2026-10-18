@@ -77,6 +77,26 @@ test('a save imported through the dashboard is listed, and comes back byte for b
   assert.deepEqual(back, body, 'what came out is not what went in');
 });
 
+test('a display name with capitals finds the saves stored under the lowercase key', async (t) => {
+  // Sign-in issues the locker session lowercase, so that is where the game writes. The
+  // dashboard sends the account's display name, which on a real server mostly is not.
+  const { base, auth } = await boot(t);
+  const body = Buffer.from('OMWSAVE');
+  const got = await (await fetch(`${base}/admin/api/saves/upload-url`, jsonPost(auth,
+    { account: 'michael', scope: 'mp', name: 'Mine.omwsave', size: body.length })))
+    .json() as { url: string };
+  assert.ok((await fetch(`${base}${got.url}`, { method: 'PUT', body })).ok);
+  assert.equal((await fetch(`${base}/admin/api/saves/uploaded`, jsonPost(auth,
+    { account: 'michael', scope: 'mp', name: 'Mine.omwsave', size: body.length }))).status, 200);
+
+  const list = await (await fetch(`${base}/admin/api/saves?account=Michael`, { headers: auth }))
+    .json() as { saves: { name: string }[] };
+  assert.deepEqual(list.saves.map((s) => s.name), ['Mine.omwsave']);
+  const dl = await fetch(`${base}/admin/api/saves/file?account=MICHAEL&scope=mp&name=Mine.omwsave`,
+    { headers: auth });
+  assert.equal(dl.status, 200);
+});
+
 test('the recorded size comes from the bucket, not from the browser', async (t) => {
   // The declared size decides the quota check. Believing it afterwards would let a client leave
   // the table describing an object that is a different size, or one that never arrived at all.

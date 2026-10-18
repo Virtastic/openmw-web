@@ -37,6 +37,18 @@ async function cgroupNum(path: string): Promise<number | undefined> {
   }
 }
 
+/**
+ * Memory this cgroup is really using: memory.current minus the inactive file cache.
+ *
+ * memory.current counts page cache, which the kernel drops the moment anything needs the room,
+ * so on its own it overstates use several times over. docker stats and cAdvisor subtract
+ * inactive_file from memory.stat for the same reason. A missing stat file leaves current as is.
+ */
+export function cgroupUsedBytes(current: number, memoryStat: string | undefined): number {
+  const m = /^inactive_file (\d+)/m.exec(memoryStat ?? '');
+  return m ? Math.max(0, current - Number(m[1])) : current;
+}
+
 /** Cumulative CPU microseconds used by this cgroup, or by the whole host as a fallback. */
 async function cpuMicros(): Promise<{ used: number; cores: number } | undefined> {
   const cores = cpus().length || 1;
@@ -113,7 +125,9 @@ export function createSysInfo(diskPath: string): () => Promise<SysInfo> {
 
     // --- memory
     const limit = await cgroupNum('/sys/fs/cgroup/memory.max');
-    const current = await cgroupNum('/sys/fs/cgroup/memory.current');
+    const raw = await cgroupNum('/sys/fs/cgroup/memory.current');
+    const current = raw === undefined ? undefined
+      : cgroupUsedBytes(raw, await readFile('/sys/fs/cgroup/memory.stat', 'utf8').catch(() => undefined));
     let usedBytes: number;
     let totalBytes: number;
     if (limit !== undefined && current !== undefined) {

@@ -6,9 +6,10 @@
 // plus a 45 s staggered sweep. Position coords are refreshed from the live pose at flush
 // time so move frames never dirty the doc.
 
+import { existsSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { checkpoint, openDb, tx } from './sqlite';
 
 const PLAYER_MIGRATIONS = [
@@ -141,6 +142,39 @@ function mostRecentPosition(
     if (!best || (p.at ?? '') >= (best.at ?? '')) best = p;
   }
   return best;
+}
+
+/**
+ * Name, level and last cell of each character, for the dashboard's account list.
+ *
+ * Straight off disk and never through a PlayerStore: the worlds write these docs from other
+ * processes, and a second store's cache and sweep could write a stale copy back. json_extract
+ * keeps inventories and journals in SQLite rather than parsing every doc whole.
+ */
+export function readCharacterCards(dataDir: string, keys: string[]):
+  Map<string, { name?: string; level?: number; cell?: string }> {
+  const out = new Map<string, { name?: string; level?: number; cell?: string }>();
+  const path = join(dataDir, 'players.db');
+  if (keys.length === 0 || !existsSync(path)) return out;
+  const db = new DatabaseSync(path);
+  try {
+    db.exec('PRAGMA busy_timeout = 5000');
+    const q = db.prepare(`SELECT json_extract(doc, '$.appearance.name') AS name,
+      json_extract(doc, '$.stats.level') AS level, json_extract(doc, '$.positions') AS positions,
+      json_extract(doc, '$.position.cellKey') AS cell FROM players WHERE key = ?`);
+    for (const key of keys) {
+      const r = q.get(key) as { name: string | null; level: number | null; positions: string | null;
+        cell: string | null } | undefined;
+      if (!r) continue;
+      const latest = r.positions ? mostRecentPosition(JSON.parse(r.positions)) : undefined;
+      out.set(key, { name: r.name ?? undefined, level: r.level ?? undefined, cell: latest?.cellKey ?? r.cell ?? undefined });
+    }
+  } catch (err) {
+    log('warn', 'playerstore.cards_failed', { error: String(err) });
+  } finally {
+    db.close();
+  }
+  return out;
 }
 
 export class PlayerStore {
