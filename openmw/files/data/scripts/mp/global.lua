@@ -577,7 +577,18 @@ local avatarUsing = {} -- id -> the use bit of the newest routed input (mirrors 
 -- slower, so it is latched until the next stream entry carries it.
 local lastInputFlags = {} -- id -> flags of the newest routed input
 local jumpPending = {} -- id -> true until the next avatar stream entry has carried the edge
+-- THE SAME FOR A CLICK. Two inputs often land in one peer frame (30 Hz against 20 fps), and a
+-- quick click -- use on one input, off on the next -- left avatarUsing false at the stream: the
+-- avatar swung (avatar.lua latches it, #198) and the friend saw the damage with no swing.
+local usePending = {} -- id -> true until the next avatar stream entry has carried a use press
 local avatarStreamAt = 0
+-- THE FRIEND'S POSE IS THE BODY, NOT THE OWNER'S RECONCILE POINT. appliedPose is where the body
+-- stood when the owner's last fully played input ended (avatar.lua), a frame old by the time its
+-- event lands here: the right pair for the owner's reconciliation, but ~50 ms + the unfinished
+-- segment behind the body for everyone else. Each such entry is preceded by one carrying the body
+-- itself with this bit set; the server fans that one out and keeps the seq-matched one for the
+-- owner (connection.ts). A server that predates the bit lets the second entry win: today's pose.
+local POSE_OBSERVER_BIT = 128
 -- Under the peer's 50 ms frame, not equal to it: at 0.05 a 49.9 ms frame missed the gate and
 -- every other frame went unsent (s172 #158: 83 ms median between poses, not 50).
 local AVATAR_STREAM_EVERY = 0.04
@@ -798,10 +809,12 @@ local function avatarStreamTick(now)
                 -- The seq-matched pose while inputs are flowing; the body's own position once they
                 -- stop (the avatar coasts, falls, is shoved, and nothing re-stamps it then).
                 local ap = appliedPose[id]
-                local pos = (ap and now - ap.at < APPLIED_POSE_FRESH_S) and ap or p.obj.position
+                local body = p.obj.position
+                local matched = ap and now - ap.at < APPLIED_POSE_FRESH_S
+                local pos = matched and ap or body
                 local walkSpeed = types.Actor.getWalkSpeed(p.obj)
                 local animVel = walkSpeed > 0 and (types.Actor.getCurrentSpeed(p.obj) / walkSpeed) or 0
-                entries[#entries + 1] = {
+                local e = {
                     id = id,
                     lastInputSeq = appliedSeq[id] or 0,
                     x = pos.x, y = pos.y, z = pos.z,
@@ -813,7 +826,7 @@ local function avatarStreamTick(now)
                     -- bit 4: weapon drawn, so every observer's puppet shows the same posture.
                     flags = (lastInputFlags[id] or 0) % 4 -- bits 0-1: run, sneak (owner's input)
                         + (jumpPending[id] and 4 or 0) -- bit 2: a latched jump edge
-                        + (avatarUsing[id] and 8 or 0)
+                        + ((avatarUsing[id] or usePending[id]) and 8 or 0)
                         + (types.Actor.getStance(p.obj) == types.Actor.STANCE.Weapon and 16 or 0)
                         -- bit 5 from the OWNER's input: the avatar deliberately never enters
                         -- the spell stance (avatar.lua -- it must never cast), so its own
@@ -821,10 +834,15 @@ local function avatarStreamTick(now)
                         + (math.floor((lastInputFlags[id] or 0) / 32) % 2 == 1 and 32 or 0),
                     animVel = animVel,
                 }
+                if matched and #entries < 254 then
+                    entries[#entries + 1] = { id = id, lastInputSeq = e.lastInputSeq, x = body.x, y = body.y, z = body.z,
+                        yaw = e.yaw, pitch = e.pitch, flags = e.flags + POSE_OBSERVER_BIT, animVel = animVel }
+                end
+                entries[#entries + 1] = e
             end)
             -- On a throw the entry was never appended (the constructor is what threw), so
             -- `entries[#entries] = nil` used to delete the PREVIOUS player's pose instead.
-            if ok then jumpPending[id] = nil end
+            if ok then jumpPending[id] = nil; usePending[id] = nil end
         end
     end
     if #entries > 0 and mp.sendAvatarMoveBatch then mp.sendAvatarMoveBatch(entries) end
@@ -1364,6 +1382,7 @@ local function despawnPuppet(id)
     pushAvatarPolicyQueued = true
     avatarStatsSentAt[id] = nil
     avatarUsing[id] = nil
+    usePending[id] = nil
     lastInputFlags[id] = nil
     jumpPending[id] = nil
     lastFlags[id] = nil
@@ -2349,6 +2368,7 @@ local eventHandlers = {
         if data.seq then lastInputSeq[data.id] = data.seq end
         local f = data.flags or 0
         avatarUsing[data.id] = math.floor(f / 8) % 2 == 1
+        if avatarUsing[data.id] then usePending[data.id] = true end
         lastInputFlags[data.id] = f
         if math.floor(f / 4) % 2 == 1 then jumpPending[data.id] = true end
         p.obj:sendEvent('mpAvatarInput', data)

@@ -93,6 +93,38 @@ test('the peer\'s AvatarMoveBatch is the pose everyone sees, and the owner recon
   assert.equal(Math.round(mine.pose.x), 512);
 });
 
+test('friends see the avatar\'s body (bit-7 entry); the owner still gets the seq-matched pose', async (t) => {
+  const { server, peer, a } = await world(t);
+  let inputSeq = 0;
+  a.sendInput({ move: 1 }, ++inputSeq);
+  const inputTimer = setInterval(() => a.sendInput({ move: 1 }, ++inputSeq), 100);
+  t.after(() => clearInterval(inputTimer));
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Watcher');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('0,0', 0, 0, 0);
+  // global.lua's order: the body (bit 7) first, then the pose as of the input it has played.
+  const pose = (x: number, flags: number) => ({ x, y: 640, z: 10, yaw: 0, pitch: 128, flags, animVel: 0, counter: 0 });
+  const streamTimer = setInterval(() => peer.sendAvatarMoveBatch([
+    { id: a.playerId, lastInputSeq: 77, pose: pose(530, 128 | 16) },
+    { id: a.playerId, lastInputSeq: 77, pose: pose(512, 16) },
+  ]), 60);
+  t.after(() => clearInterval(streamTimer));
+
+  const seen = await b.waitBatch(
+    (bt) => bt.entries.some((e) => e.id === a.playerId && Math.round(e.pose.x) === 530), 8000);
+  const theirs = seen.entries.find((e) => e.id === a.playerId)!;
+  assert.equal(theirs.pose.flags, 16, 'bit 7 is never relayed');
+  const state = await poll(() => {
+    const i = a.inbox.stateBatches.findIndex((sb) => sb.entries.some((e) => e.id === a.playerId));
+    return i === -1 ? undefined : a.inbox.stateBatches.splice(i, 1)[0];
+  }, 8000, 'player state batch');
+  const mine = state.entries.find((e) => e.id === a.playerId)!;
+  assert.equal(mine.lastInputSeq, 77);
+  assert.equal(Math.round(mine.pose.x), 512, 'the owner reconciles against the seq-matched pose, not the body');
+});
+
 test('no reconciliation during character creation; it resumes once creation is done', async (t) => {
   // The peer's world is past chargen, so correcting a creating player against it pinned them
   // on the Seyda Neen dock (dev box, 2026-09-23). Their own engine rules until ChargenComplete.

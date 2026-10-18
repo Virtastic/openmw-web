@@ -40,6 +40,12 @@ export const INPUT_SNEAK = 1 << 1;
 export const INPUT_JUMP = 1 << 2; // edge: pressed this frame
 export const INPUT_USE = 1 << 3; // attack/use held
 
+// AvatarMoveBatch pose flag bit 7: this entry is the avatar's body where it stands NOW, for
+// everyone else; the entry for the same id without it is the seq-matched pose the owner
+// reconciles against. Never relayed (the server strips it). global.lua sends it first, so a
+// server that does not know the bit lets the seq-matched entry win, as before.
+export const POSE_OBSERVER_BIT = 1 << 7;
+
 export interface PlayerInput {
   seq: number; // u32, client-monotonic; echoed back as lastInputSeq
   move: number; // i8 quantized -1..1 (forward/back)
