@@ -194,6 +194,7 @@ local posRing = {} -- [seq % POS_RING_N] = {seq, x, y, z, cx, cy, cz}
 local corrX, corrY, corrZ = 0, 0, 0
 local corrPath = 0 -- every correction's length, summed: the rubber band as one number (s191)
 local airSince = nil
+local rubberSaidAt = 0
 local HOP_S = 1.5
 -- The total as of the START of this frame: an entry recorded later in the frame (inputTick
 -- runs after selfReconcileTick) was taken before this frame's correction lands, since the
@@ -408,6 +409,16 @@ local function selfReconcileTick()
     -- Once both stand again the samples are compared as usual, so an avatar that really fell off
     -- the rock still brings us down with it, and the hard snap below is never skipped.
     if pos.air and dist <= SNAP_DIST then return end
+    -- WHERE A REAL RUBBER BAND HAPPENS (shipped by clientlog). Prod 2026-10-17/18: 2-4% of
+    -- windows in long sessions pulled 50-200 u on ordinary frames, no stall, no snap -- an NPC
+    -- body in the avatar's path, a door, a ledge? One line per 2 s at most says which.
+    if dist > 64 and core.getRealTime() - rubberSaidAt >= 2 then
+        rubberSaidAt = core.getRealTime()
+        local okg, grounded = pcall(types.Actor.isOnGround, self)
+        print(string.format('[mp] rubber: d=%.0f me=%.0f,%.0f,%.0f avatar=%.0f,%.0f,%.0f cell=%s ground=%s seq=%s',
+            dist, pos.x, pos.y, pos.z, e.x, e.y, e.z, tostring(self.cell and (self.cell.isExterior and (self.cell.gridX .. ',' .. self.cell.gridY) or self.cell.name)),
+            tostring(okg and grounded), tostring(e.lastInputSeq)))
+    end
     if dist > SNAP_DIST then
         local now = core.getRealTime()
         if now - lastSnapAt >= SNAP_COOLDOWN_S then

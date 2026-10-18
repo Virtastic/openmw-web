@@ -2,6 +2,14 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.5.7
+
+**Fewer stalls when something new comes into view.** The game's files stream in as you play and
+are kept on your computer for next time, filled in quietly in the background. That background
+fill skipped the main game archive for most returning players (it judged the whole file against
+the free space, not counting the parts already stored), so new areas kept waiting on the network.
+It now fills in whatever is missing, as far as the space allows.
+
 ## 1.5.6
 
 **A failed download says so instead of hanging.** If a game file would not download while the game
