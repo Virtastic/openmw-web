@@ -396,7 +396,11 @@ function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'at
   // #369: refused, not counted -- the server's copy stands and the next declaration is
   // measured against it. The first declaration (no baseline) is accepted as chargen's.
   const had = ctx.store.getCached(player.charId)?.stats?.[field];
-  if (had && !ctx.harness) {
+  // ...and chargen keeps being chargen after that first declaration: a page reloaded mid-
+  // creation reopens the baseline on the race step, and the class pick in the census office
+  // (+10 favoured attributes, +15..25 major skills) is a raise no window allows. Refused, it
+  // never landed: prod Arf/Kovroi kept race-only stats and lost the class on the next login.
+  if (had && !ctx.harness && player.inChargen !== true) {
     for (const [k, v] of Object.entries(map)) {
       // #393: a key the previous declaration omitted is a raise FROM ZERO, not a free pass --
       // dropping Long Blade and re-adding it at 100 was measured against nothing. Damage keys

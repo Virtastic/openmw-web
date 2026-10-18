@@ -409,10 +409,11 @@ test('a far enable persists for a real exterior, is refused past the world bound
   host.sendEvent('ObjectEnabled', { ref, cellKey: '17,-9', enabled: false });
   host.sendEvent('ObjectEnabled', { ref, cellKey: 'ilunibi, soul\'s rattle', enabled: false }); // never visited
   host.sendEvent('ObjectEnabled', { ref, cellKey: '9999,0', enabled: false }); // outside the world
-  // Two bursts under the 60 msg/s session bucket, so every enable reaches the cap check.
-  for (let i = 0; i < 35; i++) host.sendEvent('ObjectEnabled', { ref, cellKey: `far interior ${i}`, enabled: false });
-  await new Promise((r) => setTimeout(r, 1100));
-  for (let i = 35; i < 70; i++) host.sendEvent('ObjectEnabled', { ref, cellKey: `far interior ${i}`, enabled: false });
+  // Bursts under the 60 msg/s session bucket, so every enable reaches the cap check.
+  for (let i = 0; i < 140; i++) {
+    host.sendEvent('ObjectEnabled', { ref, cellKey: `far interior ${i}`, enabled: false });
+    if (i % 35 === 34) await new Promise((r) => setTimeout(r, 1100));
+  }
   await new Promise((r) => setTimeout(r, 300));
   await server.flush();
   const store = new CellStore(dataDir);
@@ -421,7 +422,9 @@ test('a far enable persists for a real exterior, is refused past the world bound
   assert.deepEqual((await store.get('17,-9')).enabled, { 'c:4242:0': false }, 'a legitimate far exterior persists');
   assert.deepEqual((await store.get('ilunibi, soul\'s rattle')).enabled, { 'c:4242:0': false }, 'an unvisited interior persists (384)');
   assert.ok(!stored.includes('9999,0'), 'an exterior past the world bound must not create a doc');
-  assert.equal(stored.filter((k) => k.startsWith('far interior ')).length, 64 - 2, 'the 64-per-session cap bounds the doc count');
+  // 128, not 64: a new game's own Startup names 77 new cells, and a quest enable after it
+  // must still have room (prod: "balmora, guild of mages" refused after chargen).
+  assert.equal(stored.filter((k) => k.startsWith('far interior ')).length, 128 - 2, 'the 128-per-session cap bounds the doc count');
 });
 
 // Backlog 368: a far DISABLE hides a door, an NPC or a quest trigger for every entrant, and it
@@ -439,7 +442,7 @@ test('a far disable stream is capped past the free burst; far enables never are'
   host.sendCellChange('0,0', 0, 0, 0);
   await host.waitEvent('PlayerCellChange');
   const ref = (i: number) => ({ __refnum: { index: 5000 + i, contentFile: 0 } });
-  // ONE far cell throughout, so the 64-distinct-cell cap of the test above cannot be what
+  // ONE far cell throughout, so the 128-distinct-cell cap of the test above cannot be what
   // refuses anything here: this is the per-session disable budget alone.
   const cell = "ilunibi, soul's rattle";
   // The free burst: 256 disables (FAR_DISABLE_FREE), sent under the session message bucket.

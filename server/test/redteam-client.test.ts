@@ -462,3 +462,40 @@ test('a follow claim with no conversation is dropped and recorded; one inside th
   await peer.waitEvent('ActorAI', (v) => (v as { follow?: number }).follow === c.playerId);
   assert.equal((await anomaliesOf(server.port, TOKEN, 'recruiter')).follow_claim, 1, 'a recruit inside the conversation is not a flag');
 });
+
+// The prison ship's guard escorts every new character on that character's own engine; nobody
+// holds a chargen cell. Its follow report is neither relayed nor stored nor a moderation flag
+// (prod: one per new character, c:397568:1).
+test('the chargen escort is no follow claim: nothing stored, nothing flagged', async (t) => {
+  const { server } = await boot(t);
+  const { c } = await join(t, server, 'Newcomer', 'imperial prison ship');
+  const { c: w } = await join(t, server, 'Watcher', 'imperial prison ship');
+  w.inbox.events.length = 0;
+  c.sendEvent('ActorAI', { cellKey: 'imperial prison ship', ref: NPC_REF, follow: c.playerId });
+  await fence(c, w);
+  assert.equal(w.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'the chargen escort was relayed');
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'newcomer')).follow_claim ?? 0, 0, 'the chargen escort was flagged');
+});
+
+// A page reloaded mid-creation reopens the baseline on the RACE step; the class picked after
+// it (+10 favoured attributes, a major skill +15..25) is not a level-up. Refused, the class
+// never reached the doc and the next login restored the race-only character (prod Arf, Kovroi).
+test('#369 does not apply in chargen: the class pick after a mid-creation reload lands', async (t) => {
+  const { server, dataDir } = await boot(t);
+  const { c, charId } = await join(t, server, 'Recruit');
+  server.roster.get(c.playerId!)!.inChargen = true;
+  c.sendEvent('PlayerAttributes', { strength: 40, endurance: 40 }); // the race step
+  c.sendEvent('PlayerSkills', { axe: 5 });
+  await settle();
+  c.sendEvent('PlayerAttributes', { strength: 50, endurance: 50 }); // Warrior, in the census office
+  c.sendEvent('PlayerSkills', { axe: 30 });
+  await settle();
+  server.roster.get(c.playerId!)!.inChargen = false;
+  const refused = c.waitEvent('StateRefused');
+  c.sendEvent('PlayerAttributes', { strength: 60, endurance: 50 }); // past creation the window is back
+  assert.equal(((await refused).value as { kind: string }).kind, 'PlayerAttributes');
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId) as { stats?: { attributes?: Record<string, number>; skills?: Record<string, number> } };
+  assert.deepEqual(doc.stats?.attributes, { strength: 50, endurance: 50 }, 'the class attributes were refused');
+  assert.deepEqual(doc.stats?.skills, { axe: 30 }, 'the class skills were refused');
+});

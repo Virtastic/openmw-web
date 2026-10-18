@@ -148,6 +148,28 @@ identity.tick(11.2)
 local okOrder, why = creditBeforeDeclaration('Generated:0x0')
 check('the credit precedes the declaration (else the logout fold doubles it)', okOrder, why)
 
+-- An active effect is judged against the book and the inventory (#359), so it waits behind the
+-- same gate: a chargen cast / Fargoth's ring used in the census office went out first, was
+-- refused as active_spell_unknown on prod, and the diff cache never sent it again.
+print('identity.lua — active effects wait for the baseline, then follow the inventory')
+fresh()
+env = stubs.install({})
+identity = require('scripts.mp.identity')
+env.setInventory({ { recordId = 'ring_keley', count = 1 } })
+env.setActive({ { id = 'ring_keley', activeSpellId = 7, temporary = true,
+  effects = { { index = 0, magnitudeThisFrame = 5, minMagnitude = 5 } } } })
+local function firstOf(name)
+  for i, c in ipairs(env.calls.events) do if c.name == name then return i end end
+end
+identity.tick(0)
+identity.tick(1.0)
+check('no active effect goes out before the baseline', firstOf('mpActiveSpellsOut') == nil)
+identity.markBaselineReady()
+identity.tick(2.0)
+local inv, act = firstOf('mpInventoryOut'), firstOf('mpActiveSpellsOut')
+check('the running effect goes out once the gate opens, after the inventory that sources it',
+  inv ~= nil and act ~= nil and inv < act, tostring(inv) .. ' vs ' .. tostring(act))
+
 -- ------------------------------------------------------------ identity.lua: a heal sticks
 -- While the peer reports our bars, a potion raises the local bar between two reports and the
 -- next report puts it back; the 4 Hz diff seldom saw it. The per-frame gain is claimed on

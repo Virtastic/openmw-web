@@ -691,7 +691,13 @@ function identity.tick(now)
         end)
     end
 
-    if now >= nextAt.active then
+    -- Behind the baseline like the book and the inventory it is judged against (#359: an add
+    -- needs a spell or item the server knows). Ungated, a chargen cast or Fargoth's ring used
+    -- in the census office went out before either had been declared: refused as
+    -- active_spell_unknown, and the diff cache said it was sent, so the avatar never got it.
+    -- The first pass after the gate opens sends every running effect, after the book and the
+    -- inventory of the same tick.
+    if baselineReady and now >= nextAt.active then
         nextAt.active = now + INTERVALS.active
         local active, cured = snapActive()
         if active then
