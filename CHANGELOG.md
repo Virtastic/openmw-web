@@ -2,13 +2,40 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
-## 1.5.7
+## 1.6.0
+
+A multiplayer smoothness and reliability release.
 
 **Fewer stalls when something new comes into view.** The game's files stream in as you play and
 are kept on your computer for next time, filled in quietly in the background. That background
-fill skipped the main game archive for most returning players (it judged the whole file against
-the free space, not counting the parts already stored), so new areas kept waiting on the network.
-It now fills in whatever is missing, as far as the space allows.
+fill skipped the main game archive for most returning players, so new areas kept waiting on the
+network. It now fills in whatever is missing, as far as the space allows.
+
+**Getting in on a slow connection.** A game file that was still arriving, just slowly, was
+abandoned and restarted from the beginning after 12 seconds -- four times, and then the game gave
+up. That was the most common reason players never got into a game. A download now only gives up
+after 12 seconds of nothing arriving at all.
+
+**Dropping out twice no longer kicks you to the start.** After a second connection drop in the
+same visit, the game tried to rejoin with an already-used pass and was refused. It now rejoins
+quietly every time.
+
+**Town NPCs no longer freeze after you leave a building.** Walking out of a building could leave
+the people outside standing still, out of place, for the rest of the session.
+
+**Your friends look closer to where they really are,** and their quick attacks, jumps (even on a
+slow computer) and respawns or door trips now show properly on your screen.
+
+**Character creation is safer.** Reloading the page partway through no longer loses your class's
+starting bonuses; spells and enchanted items used before you finish now take effect; and a
+quest change made far away early on no longer stays on one screen only.
+
+**Server fixes.** An account change made by an administrator (a rank, a ban, a role) could be
+silently undone a little later, and a deleted account could reappear; both are fixed.
+
+**Admin dashboard.** Each account now lists its multiplayer characters (name, level, where, last
+played) beside its single-player saves, and saves are found again for names with capital letters.
+The server memory and network readings are correct, and the cards say what they measure.
 
 ## 1.5.6
 
