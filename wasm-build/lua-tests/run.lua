@@ -2637,6 +2637,57 @@ do
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
 
+print('ar5tbvgs a degraded puppet unloaded with its inactive cell re-arms on the peer\'s next pose')
+do
+  -- The real puppet.lua. The engine unloads an inactive object's scripts through onSave and
+  -- reloads them through onLoad (ScriptTracker). Before the fix a degraded puppet (a holder-lost
+  -- Info while the player was indoors) came back keyless with AI off; poses never re-armed it.
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.animation', 'scripts.mp.interp' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  local now, ai, snap = 10, nil, nil
+  local vec = function(x, y, z) return { x = x, y = y, z = z } end
+  package.loaded['openmw.core'] = { getRealTime = function() return now end, sound = { playSound3d = function() end },
+    sendGlobalEvent = function(name, d) if name == 'mpSnapRequest' then snap = d end end }
+  package.loaded['openmw.self'] = { object = {}, controls = {}, position = vec(0, 0, 0),
+    rotation = { getYaw = function() return 0 end, getPitch = function() return 0 end }, enableAI = function(_, on) ai = on end }
+  package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 0 end } }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.animation'] = {}
+  local pose = function() return { x = 300, y = 0, z = 0, yaw = 0, pitch = 0, flags = 0, t = now } end
+  local function reload(pup)
+    local state = pup.engineHandlers.onSave()
+    package.loaded['scripts.mp.interp'] = nil
+    local fresh = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+    fresh.engineHandlers.onLoad(state)
+    return fresh
+  end
+  package.loaded['scripts.mp.interp'] = nil
+  local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+  pup.engineHandlers.onInit({ actorKey = 'o:guard' })
+  pup.eventHandlers.MP_Detach({ degraded = true })
+  pup.eventHandlers.MP_Detach({ degraded = true }) -- a second outage before any pose
+  pup = reload(pup)
+  check('a degraded puppet reloaded keeps its own AI on', ai == true, tostring(ai))
+  pup.eventHandlers.MP_Pose(pose())
+  now = now + 0.5; pup.engineHandlers.onUpdate(0.5)
+  check('...and the next pose re-arms it under its own key', ai == false and snap ~= nil and snap.actorKey == 'o:guard',
+    'ai=' .. tostring(ai) .. ' snap=' .. tostring(snap and snap.actorKey))
+  -- A live puppet still reloads live; a detached script (no key, not degraded) leaves the AI alone.
+  snap = nil
+  pup = reload(pup)
+  pup.eventHandlers.MP_Pose(pose())
+  now = now + 0.5; pup.engineHandlers.onUpdate(0.5)
+  check('a live puppet reloads driving the same actor', ai == false and snap ~= nil and snap.actorKey == 'o:guard',
+    'ai=' .. tostring(ai) .. ' snap=' .. tostring(snap and snap.actorKey))
+  pup.eventHandlers.MP_Detach({})
+  ai = nil
+  reload(pup)
+  check('a detached script never switches the AI off on reload', ai == nil, tostring(ai))
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+end
+
 print('s171 a charging creature\'s puppet keeps up with it and arrives with it')
 do
   -- The real puppet.lua against a stub character controller (movement x walk/run speed, yaw
