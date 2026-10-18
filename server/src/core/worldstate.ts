@@ -30,7 +30,11 @@ const MAX_FIRST_OPEN_GOLD = 50_000;
 // Backlog 337: a far ObjectEnabled may name an exterior this many cells from the origin
 // (MAX_ABS_COORD / 8192), or an interior the session has been sent, up to this many distinct.
 const MAX_FAR_CELL_COORD = Math.floor(MAX_ABS_COORD / 8192);
-const MAX_FAR_ENABLE_CELLS = 64;
+// A new game's own Startup enables/disables refs in 77 distinct cells (prod, every new
+// character since 2026-10-10: 64 accepted + the same 13 refused), so 64 left a new character
+// no budget at all: a later quest enable into a new far cell ("balmora, guild of mages")
+// was refused for the rest of the session. 128 is Startup plus room for play.
+const MAX_FAR_ENABLE_CELLS = 128;
 // Backlog 368. A far ENABLE reveals a quest ref; a far DISABLE hides a door, an NPC or a
 // quest trigger for every entrant, and it persists in the cell doc. Both come from the same
 // client message, and the server cannot tell a script's disable from a hand-written one --
@@ -737,6 +741,11 @@ export class WorldState {
       log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follow claim from afar' });
       return;
     }
+    // THE CHARGEN ESCORT IS LOCAL. The prison ship's guard follows each new character on
+    // that character's own engine; nobody holds a chargen cell, so there is no one to relay
+    // to, and a stored claim there would outlive the opening. Not a forged claim either: it
+    // was a moderation note on every new character (prod, 16 in 72 h, all c:397568:1).
+    if (isChargenCell(cellKey)) return;
     // #363: RECRUITING IS A CONVERSATION, like travel: the player who holds (or just held,
     // 5 s) this NPC's dialogue lock may say it follows them. A claim already theirs may be
     // updated or dismissed without one (a scripted escort ends by script, not by talking).
