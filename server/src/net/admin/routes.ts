@@ -72,6 +72,7 @@ import { engineStatus, resolveLatestRelease, startEngineUpdate } from './update-
 import { requestServerUpdate, updateStatus } from './update-server';
 import { listSaves, saveDownload, saveUploadUrl, saveUploaded, type SavesDeps } from './api-saves';
 import type { LogEntry } from '../../log';
+import { readCharacterCards } from '../../persist/playerstore';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -933,9 +934,13 @@ export function adminRoutes(deps: AdminDeps) {
     // Reading is moderator, because "how much storage is this account using" is a support
     // question. Downloading and importing are owner: one takes a copy of somebody's character
     // off the server, the other writes into their account.
+    //
+    // The account is lowercased here, once: every sign-in path issues the locker session under
+    // the lowercased key, so that is where the saves are, while the dashboard sends the display
+    // name. Without it, "Michael" reads as having no saves.
     if (method === 'GET' && path === '/admin/api/saves') {
       if (!await gate(req, res, auth, 'moderator')) return true;
-      const r = listSaves(savesDeps(), url.searchParams.get('account') ?? '');
+      const r = listSaves(savesDeps(), (url.searchParams.get('account') ?? '').toLowerCase());
       if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
       json(res, 200, (r as { body: unknown }).body);
       return true;
@@ -943,7 +948,7 @@ export function adminRoutes(deps: AdminDeps) {
     if (method === 'GET' && path === '/admin/api/saves/file') {
       const ctx = await gate(req, res, auth, 'owner');
       if (!ctx) return true;
-      const r = await saveDownload(savesDeps(), url.searchParams.get('account') ?? '',
+      const r = await saveDownload(savesDeps(), (url.searchParams.get('account') ?? '').toLowerCase(),
         url.searchParams.get('scope'), url.searchParams.get('name') ?? '');
       if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
       // The presigned URL as JSON, not a 302. Admin auth is a Bearer token in a header, so a
@@ -958,7 +963,7 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       const body = await readJson<{ account?: string; scope?: string; name?: string; size?: number }>(req, res);
       if (body === undefined) return true;
-      const r = await saveUploadUrl(savesDeps(), String(body.account ?? ''), body.scope ?? null,
+      const r = await saveUploadUrl(savesDeps(), String(body.account ?? '').toLowerCase(), body.scope ?? null,
         String(body.name ?? ''), Number(body.size ?? 0));
       if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
       json(res, 200, (r as { body: unknown }).body);
@@ -969,7 +974,7 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       const body = await readJson<{ account?: string; scope?: string; name?: string; size?: number }>(req, res);
       if (body === undefined) return true;
-      const r = await saveUploaded(savesDeps(), String(body.account ?? ''), body.scope ?? null,
+      const r = await saveUploaded(savesDeps(), String(body.account ?? '').toLowerCase(), body.scope ?? null,
         String(body.name ?? ''), Number(body.size ?? 0));
       if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
       log('info', 'admin.save_import', { by: ctx.accountKey, account: body.account, name: body.name });
@@ -997,8 +1002,14 @@ export function adminRoutes(deps: AdminDeps) {
       const all = deps.accounts.listAll()
         .filter((a) => q === '' || a.name.toLowerCase().includes(q) || (a.username ?? '').toLowerCase().includes(q))
         .sort((a, b) => a.name.localeCompare(b.name))
-        .slice(0, 500)
-        .map((a) => ({
+        .slice(0, 500);
+      // Multiplayer characters live in players.db, never in the save locker, so they are listed
+      // here rather than counted as saves. Capped per account, and only the card fields: an
+      // inventory has no business in a list of 500 accounts.
+      const listed = all.map((a) => [...(a.characters ?? [])]
+        .sort((x, y) => (y.lastPlayedAt ?? '').localeCompare(x.lastPlayedAt ?? '')).slice(0, 20));
+      const cards = readCharacterCards(deps.sharedDir ?? deps.dataDir, listed.flat().map((c) => c.id));
+      const out = all.map((a, i) => ({
           name: a.name,
           username: a.username ?? null,
           rank: a.rank,
@@ -1007,10 +1018,17 @@ export function adminRoutes(deps: AdminDeps) {
           twoFactor: !!a.totpSecret,
           createdAt: a.createdAt,
           lastSeenAt: a.lastSeenAt,
+          characters: (a.characters ?? []).length,
+          // The name typed in Morrowind's chargen wins over the slot label, as on the launcher.
+          characterList: listed[i]!.map((c) => {
+            const card = cards.get(c.id);
+            return { name: card?.name || c.name, level: card?.level ?? 1, cell: card?.cell ?? null,
+              lastPlayedAt: c.lastPlayedAt ?? null };
+          }),
           // Email is contact data. A moderator listing does not need it and this response
           // travels to a browser, so it stays out of the payload entirely.
         }));
-      json(res, 200, { accounts: all });
+      json(res, 200, { accounts: out });
       return true;
     }
     // Create an account with dashboard access in one step, the wizard's "anyone else
