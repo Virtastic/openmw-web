@@ -30,6 +30,11 @@ slow computer) and respawns or door trips now show properly on your screen.
 starting bonuses; spells and enchanted items used before you finish now take effect; and a
 quest change made far away early on no longer stays on one screen only.
 
+**Playing together, tightened up.** Two players grabbing the last item from a chest at the same
+moment can no longer both keep it. Looting a body no longer leaves its owner "talking to" you for
+everyone else. A looted unique NPC stays looted. Dropped items appear where they belong. A potion
+you just picked up works on the server straight away when you drink it.
+
 **Server fixes.** An account change made by an administrator (a rank, a ban, a role) could be
 silently undone a little later, and a deleted account could reappear; both are fixed.
 
