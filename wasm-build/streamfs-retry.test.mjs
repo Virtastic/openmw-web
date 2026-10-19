@@ -61,6 +61,17 @@ rf = load(async () => { calls++; throw new TypeError('Failed to fetch'); }, 1000
 await assert.rejects(rf('u', 0, 2), /Failed to fetch/);
 assert.equal(calls, 4);
 
+// THE PREFETCH GETS ONE DEADLINED ATTEMPT. It used a bare fetch with no deadline: stalled, it held
+// the read of the same chunk (which waits on it) past the main thread's 60 s timeout.
+calls = 0;
+rf = load(async () => { calls++; throw new TypeError('Failed to fetch'); }, 1000);
+await assert.rejects(rf('u', 0, 2, 1), /Failed to fetch/);
+assert.equal(calls, 1, 'tries=1 is one attempt');
+{
+  const pre = src.slice(src.indexOf('SEQUENTIAL PREFETCH'), src.indexOf('} catch (err) {', src.indexOf('SEQUENTIAL PREFETCH')));
+  assert.ok(/rangeFetch\(m\.url, m\.next\.start, m\.next\.end, 1, 10000\)/.test(pre) && !/await fetch\(/.test(pre), 'the prefetch goes through rangeFetch');
+}
+
 // A 200 IS THE WHOLE FILE (the Range was ignored): only the requested slice comes back.
 rf = load(async () => new Response(Uint8Array.from({ length: 64 }, (_, i) => i), { status: 200 }), 1000);
 assert.deepEqual([...(await rf('u', 8, 12))], [8, 9, 10, 11], 'a 200 is sliced to the range');
@@ -73,6 +84,19 @@ rf = load(async (url, opts) => { calls++; let k = 0; return new Response(new Rea
 }), { status: 206 }); }, 50);
 assert.equal((await rf('u', 0, 10)).length, 10);
 assert.equal(calls, 1, 'one attempt, not restarted at the deadline');
+
+// ...BUT THE WHOLE READ HAS A BUDGET: a trickle that would outlast the page's 60 s ceiling is
+// cut at the budget, and no retry starts past it.
+calls = 0;
+rf = load(async (url, opts) => { calls++; return new Response(new ReadableStream({
+  async pull(c) { await new Promise((r) => setTimeout(r, 30)); if (opts.signal.aborted) return c.error(new Error('aborted')); c.enqueue(new Uint8Array(1)); },
+}), { status: 206 }); }, 1000);
+{
+  const t0 = Date.now();
+  await assert.rejects(rf('u', 0, 1000, 4, 200), /aborted/);
+  assert.ok(Date.now() - t0 < 900, 'the budget, not four silence deadlines, ended the read');
+  assert.equal(calls, 1, 'no retry past the budget');
+}
 
 // The failure says what each attempt saw: status, ranges, bytes, ms.
 rf = load(async () => new Response(new Uint8Array(3), { status: 206, headers: { 'content-range': 'bytes 0-2/9' } }), 1000);
