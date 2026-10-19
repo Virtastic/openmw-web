@@ -76,10 +76,14 @@ local jumpLatch, useLatch = false, false
 -- the engine ignored the jump outright. Hopping rock to rock the owner made each jump, the avatar
 -- walked off the rock and fell (prod 2026-10-16: "fell 60" while the owner stood on the rocks),
 -- and the owner was dragged back down: rubber-banding. Now the jump is due when its segment
--- starts playing and waits up to JUMP_HOLD_S for the body to be on the ground; past that it
--- fires anyway (a jump in water or mid-air did the same before).
+-- starts playing and waits up to JUMP_HOLD_S for the body to be on the ground (or swimming);
+-- past that it fires anyway.
+-- 1.5 s, not 0.6: a chained hop keeps the body airborne longer than 0.6 s (the arc plus the
+-- drop onto a lower rock), so the hold ran out mid-air, the engine ignored the jump, and the
+-- avatar missed a hop the owner made (s191, Jenkins #232: 13 take-offs, 12 landings, a 263 u
+-- self snap). Matches player.lua's HOP_S, the longest the owner treats as a hop.
 local jumpDue, segJumpPrev = nil, false
-local JUMP_HOLD_S = 0.6
+local JUMP_HOLD_S = 1.5
 local useWasOn, useProbeAt = false, nil
 local useOnSince, useHeldSaidAt = nil, nil
 local ownerSlots = {} -- slot -> record the owner holds there (MP_Equip); see rebindAmmo
@@ -393,7 +397,8 @@ return {
             self.controls.sneak = bit(ctl.flags, 1)
             if timed then
                 local okg, onGround = pcall(types.Actor.isOnGround, self)
-                local fire = jumpDue ~= nil and ((okg and onGround) or now - jumpDue >= JUMP_HOLD_S)
+                local okw, swimming = pcall(types.Actor.isSwimming, self)
+                local fire = jumpDue ~= nil and ((okg and onGround) or (okw and swimming) or now - jumpDue >= JUMP_HOLD_S)
                 self.controls.jump = fire
                 if fire then jumpDue = nil end
                 jumpLatch, prevJump = false, false

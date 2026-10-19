@@ -679,7 +679,9 @@ do
   -- plays, and waits for the body to be on the ground instead of being lost mid-air.
   check('avatar.lua fires a timed jump with its segment, once the body is on the ground',
     av:find('if j and not segJumpPrev then jumpDue = jumpDue or now end', 1, true) ~= nil
-    and av:find('local fire = jumpDue ~= nil and ((okg and onGround) or now - jumpDue >= JUMP_HOLD_S)', 1, true) ~= nil)
+    and av:find('local fire = jumpDue ~= nil and ((okg and onGround) or (okw and swimming) or now - jumpDue >= JUMP_HOLD_S)', 1, true) ~= nil
+    -- Jenkins #232: a 0.6 s hold ran out mid-hop and the avatar missed a jump the owner made.
+    and av:find('local JUMP_HOLD_S = 1.5', 1, true) ~= nil)
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   check('puppet.lua runs to close a gap a walk cannot (s190)',
     pp:find('or (steering and dist2d > 48)', 1, true) ~= nil)
