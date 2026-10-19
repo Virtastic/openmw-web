@@ -137,3 +137,26 @@ test('a stale flush does not resurrect an erased account', async () => {
 
   assert.equal(await new AccountStore(dir).get('someone'), undefined, 'the erased account came back');
 });
+
+// A FIELD REMOVED ELSEWHERE STAYS REMOVED. mutate() folded the disk doc over the caller's object
+// with Object.assign, which never deletes: a dashboard role revoked (or a 2FA secret reset) in the
+// gateway while a world still held the account came back the next time that world wrote it.
+test('a field another process removed is not written back by a held account', async () => {
+  const dir = tmpDataDir();
+  const world = new AccountStore(dir);
+  const gateway = new AccountStore(dir);
+  await newAccount(world, 'someone');
+  assert.equal(await gateway.setDashboardRole('someone', 'moderator'), true);
+  assert.equal(await gateway.setTotpSecret('someone', 'SECRET'), true);
+  const held = await world.get('someone'); // the world's connection holds this object
+  assert.equal(held?.dashboardRole, 'moderator');
+
+  assert.equal(await gateway.setDashboardRole('someone', undefined), true);
+  assert.equal(await gateway.setTotpSecret('someone', undefined), true);
+  world.createCharacter(held!, 'Someone'); // any write-through from the world
+
+  const back = await new AccountStore(dir).get('someone');
+  assert.equal(back?.dashboardRole, undefined, 'the revoked dashboard role came back');
+  assert.equal(back?.totpSecret, undefined, 'the reset 2FA secret came back');
+  assert.equal(back?.characters?.length, 1, 'the write itself still landed');
+});

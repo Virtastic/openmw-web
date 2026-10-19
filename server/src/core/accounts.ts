@@ -335,7 +335,14 @@ export class AccountStore {
       { doc: string } | undefined;
     // No row: the account was erased (possibly by another process). Writing would resurrect it.
     if (!row) return undefined;
-    try { Object.assign(account, JSON.parse(row.doc) as Account); } catch { /* keep ours */ }
+    // REPLACE, not overlay: Object.assign never deletes, so a key another process removed
+    // (a revoked dashboardRole, a reset totpSecret, an unban) survived on a held object and
+    // was written straight back.
+    try {
+      const disk = JSON.parse(row.doc) as Account;
+      for (const k of Object.keys(account)) if (!(k in disk)) delete (account as unknown as Record<string, unknown>)[k];
+      Object.assign(account, disk);
+    } catch { /* keep ours */ }
     const out = fn(account);
     if (out === undefined) return undefined; // the mutation declined; nothing to write
     this.writeNow(key, account); // keeps the cross-process character merge + tombstones
