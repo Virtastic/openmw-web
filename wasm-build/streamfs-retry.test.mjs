@@ -113,14 +113,16 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   const run = new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response',
     body.slice(0, body.indexOf('let fg = 0')) + warmSrc + '; return warm;');
   const fetchFake = async (url, opts) => ok(2);
-  let warm = run(fetchFake, AbortController, (f) => setTimeout(f, 0), clearTimeout, fakeCaches, (m) => msgs.push(m), class { constructor(b) { this.b = b; } });
+  // Naps run at once; the cache deadline (CACHE_MS) never fires, as for a healthy store.
+  const fastTimers = (f, ms) => (ms >= 3000 ? 0 : setTimeout(f, 0));
+  let warm = run(fetchFake, AbortController, fastTimers, clearTimeout, fakeCaches, (m) => msgs.push(m), class { constructor(b) { this.b = b; } });
   // 4 chunks of 2 bytes, 2 cached, budget 10 bytes: the 2 missing chunks are fetched (4 bytes).
   await warm([{ url: 'u', pkey: 'big', size: 8 }], 2, 10);
   assert.deepEqual(puts, ['https://sfs.chunk/big/4', 'https://sfs.chunk/big/6'], 'only the missing chunks are fetched');
   assert.deepEqual(msgs.at(-1), { warmed: 0, done: true, err: null }, 'finished within budget');
   // A budget smaller than what is missing stops with 'budget', after what fits.
   stored.clear(); puts.length = 0; msgs.length = 0;
-  warm = run(fetchFake, AbortController, (f) => setTimeout(f, 0), clearTimeout, fakeCaches, (m) => msgs.push(m), class { constructor(b) { this.b = b; } });
+  warm = run(fetchFake, AbortController, fastTimers, clearTimeout, fakeCaches, (m) => msgs.push(m), class { constructor(b) { this.b = b; } });
   await warm([{ url: 'u', pkey: 'big', size: 8 }], 2, 5);
   assert.equal(puts.length, 2, 'two chunks fit a 5-byte budget');
   assert.equal(msgs.at(-1).err, 'budget');
@@ -137,6 +139,26 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(pkeyOf('https://h/data/openmw-web-assets.bsa'), '/data/openmw-web-assets.bsa@10@2');
   assert.equal(pkeyOf('https://h/locker/x.bsa?X-Amz-Signature=abc&v=2'), null, 'presigned is not persisted');
   assert.equal(pkeyOf('https://s3.example/x.bsa'), null, 'cross-origin is not persisted');
+}
+
+// A STALLED CACHE API (prod 2026-10-19: four boots died on "read timeout", the network never
+// asked): a lookup that never answers gives up at the deadline, says so once, and later lookups
+// skip the store. Real timers here, with the deadline cut to 50 ms.
+{
+  const src2 = body.slice(0, body.indexOf('async function warm')).replace(/CACHE_MS = \d+/, 'CACHE_MS = 50');
+  const msgs = [];
+  let opens = 0;
+  const hung = { open: () => { opens++; return new Promise(() => {}); } };
+  const mk = new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response',
+    src2 + '; return { cacheMatch, dead: () => cacheDead };');
+  const c = mk(async () => ok(1), AbortController, setTimeout, clearTimeout, hung, (m) => msgs.push(m), Response);
+  const t0 = Date.now();
+  assert.equal(await c.cacheMatch('k'), undefined, 'a stalled lookup is a miss, not a hang');
+  assert.ok(Date.now() - t0 < 1000, 'gave up at the deadline');
+  assert.ok(c.dead(), 'the store is skipped from now on');
+  assert.deepEqual(msgs, [{ cacheSlow: 1 }], 'said so once');
+  assert.equal(await c.cacheMatch('k2'), undefined);
+  assert.equal(opens, 1, 'no second lookup against a dead store');
 }
 
 console.log('streamfs retry: ok');

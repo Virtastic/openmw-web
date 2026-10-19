@@ -150,6 +150,23 @@
       // has not asked for anything for 1.5 s: it never competes with a read the game is waiting on.
       let fg = 0, lastFg = 0, warming = false;
       const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+      // A CACHE LOOKUP HAS A DEADLINE. Every read awaits caches.match before the network, and a
+      // Cache API that stalls (a busy or broken storage backend in that browser) never answers:
+      // the read waited the main thread's full 60 s and the game died on "read timeout" with the
+      // network never asked (prod 2026-10-19: 4 sessions on Morrowind.bsa/.esm at boot, since
+      // 1.6.2 put the base game through this path; the asset pack had it before). Past 3 s the
+      // read goes to the network, and the store is skipped for the rest of the page.
+      let cacheDead = false;
+      const CACHE_MS = 3000;
+      const cacheGiveUp = () => { if (!cacheDead) { cacheDead = true; postMessage({ cacheSlow: 1 }); } };
+      const cacheMatch = (key) => cacheDead ? Promise.resolve(undefined) : Promise.race([
+        caches.open('mwdata-chunks-v1').then((c) => c.match(key)),
+        nap(CACHE_MS).then(() => { cacheGiveUp(); return undefined; }),
+      ]);
+      const cachePut = (key, buf) => cacheDead ? Promise.resolve() : Promise.race([
+        caches.open('mwdata-chunks-v1').then((c) => c.put(key, new Response(buf))),
+        nap(CACHE_MS),
+      ]);
       async function warm(files, chunk, budget) {
         if (warming) return;
         warming = true;
@@ -163,7 +180,8 @@
             for (let s = 0; s < f.size; s += chunk) {
               while (fg > 0 || Date.now() - lastFg < 1500) await nap(250);
               const ckey = 'https://sfs.chunk/' + encodeURIComponent(f.pkey) + '/' + s;
-              if (await c.match(ckey)) continue;
+              if (cacheDead) { stop = 'cache slow'; break outer; } // nothing would be stored
+              if (await cacheMatch(ckey)) continue;
               // STOP ON A FULL STORE. A put that fails is almost always the origin's quota: every
               // later chunk would be downloaded and thrown away (prod 2026-10-15: warm-up stuck at
               // 38 chunks for two hours, every retry a 2 MB download for nothing).
@@ -214,7 +232,7 @@
                 // A prefetch of exactly this chunk may be in flight (backlog 389): wait for it
                 // rather than fetching the same bytes twice.
                 if (prefetch && prefetch.ckey === ckey) await prefetch.done;
-                const hit = await (await caches.open('mwdata-chunks-v1')).match(ckey);
+                const hit = await cacheMatch(ckey);
                 if (hit) buf = new Uint8Array(await hit.arrayBuffer());
               } catch (e) { /* Cache API unavailable: fall through to the network */ }
             }
@@ -223,7 +241,7 @@
               if (ckey) {
                 // Not awaited: the copy into the shared buffer below reads buf, the put keeps
                 // its own reference, and nothing mutates buf afterwards.
-                caches.open('mwdata-chunks-v1').then((c) => c.put(ckey, new Response(buf))).catch(() => {});
+                cachePut(ckey, buf).catch(() => {});
               }
             }
           }
@@ -242,13 +260,13 @@
             const nkey = 'https://sfs.chunk/' + encodeURIComponent(m.pkey) + '/' + m.next.start;
             prefetch = { ckey: nkey, done: (async () => {
               try {
-                const c = await caches.open('mwdata-chunks-v1');
-                if (await c.match(nkey)) return;
+                // The read path awaits this, so every cache call here has the deadline too.
+                if (await cacheMatch(nkey)) return;
                 // ONE rangeFetch attempt, not a bare fetch: a bare fetch had no deadline, so a stalled
                 // prefetch held the read of this very chunk (which awaits it above) past the 60 s
                 // main-thread timeout -- the game died on "read timeout" -- and a 200 stored the
                 // whole file as this chunk.
-                await c.put(nkey, new Response(await rangeFetch(m.url, m.next.start, m.next.end, 1, 10000)));
+                await cachePut(nkey, await rangeFetch(m.url, m.next.start, m.next.end, 1, 10000));
               } catch (e) { /* best effort: the read path fetches it itself */ }
               finally { prefetch = null; }
             })() };
@@ -372,7 +390,7 @@
       S.data = new Uint8Array(dataBuf);
       S.worker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
       S.worker.postMessage({ init: 1, ctrl: ctrlBuf, data: dataBuf });
-      S.worker.onmessage = (e) => { if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
+      S.worker.onmessage = (e) => { if (e.data && e.data.cacheSlow) ST.cacheSlow = 1; if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
       try { Object.defineProperty(window, '__streamfsStats', { get: () => window.StreamFS.stats() }); } catch (e) {}
     },
 

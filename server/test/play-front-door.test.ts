@@ -207,7 +207,10 @@ const sfsOpts = sfs === '' ? { skip: 'play/streamfs.js is not part of the server
 
 test('fetched chunks persist in the Cache API', sfsOpts, () => {
   assert.ok(sfs.includes("caches.open('mwdata-chunks-v1')"), 'no persistent chunk cache');
-  assert.ok(sfs.includes('.match(ckey)'), 'chunks are written but never read back');
+  // Read back through cacheMatch, which has a deadline: a stalled Cache API must not hang the
+  // read (prod 2026-10-19; behaviour pinned in wasm-build/streamfs-retry.test.mjs).
+  assert.ok(sfs.includes('const hit = await cacheMatch(ckey);'), 'chunks are written but never read back');
+  assert.ok(sfs.includes("caches.open('mwdata-chunks-v1').then((c) => c.match(key))"), 'cacheMatch must read the chunk store');
 });
 
 test('the persistent key survives presigned-URL renewal and rejects expiring URLs', sfsOpts, () => {

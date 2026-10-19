@@ -800,7 +800,7 @@ window.omw = (function(){
      var slowTop = sfs && sfs.slowBy ? Object.keys(sfs.slowBy).sort(function(x, y){ return sfs.slowBy[y] - sfs.slowBy[x]; }).slice(0, 2).map(function(k){ return k.replace(/\?.*$/, '') + ':' + sfs.slowBy[k]; }).join(',') : '';
      lastSfs = sfs ? { misses: sfs.misses, stallMs: sfs.stallMs, slow: sfs.slow || 0 } : null;
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
-       + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + ' sfsSlow=' + sfsD.slow + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
+       + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + (sfs.cacheSlow ? ' sfsCacheSlow=1' : '') + ' sfsSlow=' + sfsD.slow + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
        + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
        + ' cell=' + (s.cell || '?') + ' holder=' + (s.authorityHolder || '?') + ' actors=' + (s.actorCount || '?')
@@ -1822,6 +1822,30 @@ window.omw = (function(){
                  history.replaceState(null, '', location.pathname + location.search);
                }
              } catch(e){ append('[mp sso err] ' + e, 'err'); }
+             // A RELOAD BOOTS WITH A TICKET. F5 restores the fragment minus the single-use ticket
+             // (see the launcher check at the top) and counts on the parked resume token -- but a
+             // page with none (dropped in chargen, a world that forgot it) dialled with nothing,
+             // was refused ("this server uses single sign-on"), and only THEN asked for a fresh
+             // ticket, which reboots the whole engine: a minute of loading per round, and players
+             // left (prod 2026-10-19: 13 refusals in 4 h, one player through three boots). Mint it
+             // now instead, before the engine starts; tickets live 15 minutes, which covers the
+             // menu. The ladder still tries a parked resume token first, so this costs nothing.
+             try {
+               if (!ENV.OPENMW_MP_TICKET && window.__omwLockerToken && ENV.OPENMW_MP_URL) {
+                 var tkU = new URL(ENV.OPENMW_MP_URL);
+                 var tkBase = (tkU.protocol === 'wss:' ? 'https:' : 'http:') + '//' + tkU.host;
+                 addRunDependency('mp-ticket');
+                 fetch(tkBase + '/auth/ticket', { method: 'POST',
+                     headers: { authorization: 'Bearer ' + window.__omwLockerToken }, signal: AbortSignal.timeout(8000) })
+                   .then(function(r){ return r.ok ? r.json() : null; })
+                   .then(function(d){
+                     if (d && d.ticket) { ENV.OPENMW_MP_TICKET = d.ticket; append('[mp] reload: fresh login ticket'); }
+                     else append('[mp] reload: no fresh ticket (the page will ask again if the join needs one)', 'err');
+                   })
+                   .catch(function(e){ append('[mp] reload: ticket mint failed: ' + e, 'err'); })
+                   .then(function(){ removeRunDependency('mp-ticket'); });
+               }
+             } catch(e){ append('[mp] reload ticket err ' + e, 'err'); }
              // SessionHello engineHash: the 12-hex wasm content hash stamped by
              // version-engine.sh; unstamped local dev sends '' (server may not pin).
              if (/^[0-9a-f]{12}$/.test(__ENGINE_VER)) ENV.OPENMW_MP_ENGINEHASH = __ENGINE_VER;
