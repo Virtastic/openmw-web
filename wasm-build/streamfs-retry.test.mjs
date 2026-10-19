@@ -7,6 +7,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const src = readFileSync(new URL('../play/streamfs.js', import.meta.url), 'utf8');
+// THE FILE ITSELF MUST PARSE. The worker's code is a template literal inside streamfs.js, and this
+// test reads it out of the source -- so a backtick in a worker comment ended the template, broke
+// every page load (Jenkins #228: 74 of 75 scenarios, "Unexpected identifier 'end'"), and this test
+// still passed. Compile the real file, and the worker source as the page builds it.
+{
+  const vm = await import('node:vm');
+  new vm.Script(src, { filename: 'play/streamfs.js' });
+  const tpl = src.slice(src.indexOf('return `') + 'return `'.length);
+  assert.ok(!tpl.slice(0, tpl.indexOf('`;')).includes('${'), 'no interpolation inside the worker source');
+}
 const body = src.slice(src.indexOf('const ATTEMPTS'), src.indexOf('onmessage = async'));
 assert.ok(body.includes('async function rangeFetch'), 'rangeFetch is where this test expects it');
 

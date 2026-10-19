@@ -94,7 +94,7 @@
       // restarts on every piece received; only 12 s of nothing aborts.
       // A 200 is the WHOLE FILE (the Range was ignored): it used to be returned whole, so a read at
       // any offset but 0 got the file's first bytes, and the main thread was told the chunk was
-      // hundreds of MB. Read only up to `end`, cancel the rest, and slice.
+      // hundreds of MB. Read only up to end, cancel the rest, and slice.
       // ponytail: a 200 at a deep offset still downloads everything before it; ranges are honoured today.
       // Each attempt's outcome rides the error (status, ranges, bytes, ms): the page ships it.
       const ATTEMPTS = 4, ATTEMPT_MS = 12000;
