@@ -686,6 +686,8 @@ do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
   check('actors.lua sets the run bit from how fast the body actually moved (s190: root-motion creatures)',
     ac:find('math.max(speed, actualSpeed(obj, pos) / 1.2)', 1, true) ~= nil)
+  check('actors.lua prunes movedFrom (one entry per actor id ever streamed, for the life of the world)',
+    ac:find('if now - old.t > 10 then movedFrom[k] = nil end', 1, true) ~= nil)
   check('player.lua does not reconcile against a hop in the air (s191), but never skips the hard snap',
     pl:find('if pos.air and dist <= SNAP_DIST then return end', 1, true) ~= nil
     and pl:find('air = air and now - airSince < HOP_S }', 1, true) ~= nil)
@@ -809,7 +811,7 @@ do
   -- 162: the dialogue lock survives Dialogue -> Barter/Training/... -> Dialogue.
   check('player.lua releases the dialogue lock only when leaving every talking mode',
     p:find("local function talking(m) return m == 'Dialogue' or GOLD_SERVICE_MODES[m] ~= nil end", 1, true) ~= nil
-    and p:find('if talking(data.oldMode) and not talking(data.newMode) then', 1, true) ~= nil,
+    and p:find("if (talking(data.oldMode) or data.oldMode == 'Container') and not talking(data.newMode) then", 1, true) ~= nil,
     'Dialogue -> Barter fires mpDialogueClosed and a second player can open the merchant mid-trade')
   check('player.lua no longer releases on the bare Dialogue edge',
     p:find("if data.oldMode == 'Dialogue' and data.newMode ~= 'Dialogue' then", 1, true) == nil)
@@ -1526,6 +1528,12 @@ do
   -- #330: the peer's per-player tables shrink on leave.
   check('global.lua drops avatarDocs and remoteIdentity on MP_PlayerLeaveWorld (330)',
     g:find('avatarDocs[data.id] = nil', 1, true) ~= nil and g:find('remoteIdentity[data.id] = nil', 1, true) ~= nil)
+  -- Ids are reused: the next player's seqs start at 1, and a stale appliedSeq refused them all.
+  local leave = g:match('MP_PlayerLeaveWorld = function%(data%)(.-)\n    end,') or ''
+  local despawn = g:match('local function despawnPuppet%(id%)(.-)\nend') or ''
+  check('global.lua drops appliedSeq/lastInputSeq on leave, not on a despawn (a rebuild keeps them)',
+    leave:find('appliedSeq[data.id] = nil', 1, true) ~= nil and leave:find('lastInputSeq[data.id] = nil', 1, true) ~= nil
+    and despawn ~= '' and despawn:find('appliedSeq[', 1, true) == nil)
 end
 
 print('global.lua -- a stored cell that no longer exists falls back to the Welcome respawn (backlog 317)')
@@ -3707,6 +3715,87 @@ do
     g:find('if avatarUsing[data.id] then usePending[data.id] = true end', 1, true) ~= nil
     and g:find('((avatarUsing[id] or usePending[id]) and 8 or 0)', 1, true) ~= nil
     and g:find('if ok then jumpPending[id] = nil; usePending[id] = nil end', 1, true) ~= nil)
+end
+
+-- A LOST CONTAINER RACE MUST BE UNDONE. Two players take the last item at once; the winner's
+-- Update (no byId, sent to the whole cell) reaches the loser BEFORE the loser's own refusal. It
+-- was consumed as the loser's echo, the refusal then found no pending op, and the undo never ran:
+-- the loser kept a copy of an item the server gave to somebody else.
+print('objects.lua -- only an answered op consumes a ContainerUpdate echo')
+do
+  package.loaded['scripts.mp.objects'] = nil
+  package.loaded['scripts.mp.world'] = nil
+  env = stubs.install({})
+  local ty = package.loaded['openmw.types']
+  ty.Weapon = ty.Weapon or {}
+  ty.Weapon.TYPE = ty.Weapon.TYPE or { Arrow = 12, Bolt = 13, MarksmanThrown = 11 }
+  local objects = require('scripts.mp.objects')
+  local said = {}
+  objects.init({ playerFn = function() return nil end, ownCellKeyFn = function() return '0,0' end,
+    noticeFn = function(t) said[#said + 1] = t end })
+  local mine = objects.sendContainerOpByNet(7, 'take', 'iron dagger', 1, '0,0')
+  objects.handlers.MP_ContainerUpdate({ net = 7, delta = { itemId = 'iron dagger', dn = -1 } }) -- the winner's
+  objects.handlers.MP_ContainerOpResult({ opId = mine, ok = false, reason = 'gone' })
+  local resync = 0
+  for _, c in ipairs(env.calls.events) do if c.name == 'ResyncRequest' then resync = resync + 1 end end
+  check('the refusal after another player\'s Update still undoes the take', resync == 1 and #said == 1,
+    'resync=' .. resync .. ' notices=' .. #said)
+  -- Our own success still consumes its echo: Result first, then the Update.
+  local ok = objects.sendContainerOpByNet(7, 'take', 'iron dagger', 1, '0,0')
+  objects.handlers.MP_ContainerOpResult({ opId = ok, ok = true })
+  objects.handlers.MP_ContainerUpdate({ net = 7, delta = { itemId = 'iron dagger', dn = -1 } })
+  objects.handlers.MP_ContainerOpResult({ opId = ok, ok = false, reason = 'gone' }) -- would undo if still pending
+  check('an answered op still consumes its own echo', #said == 1, 'notices=' .. #said)
+  -- Placements go into the cell the server names, not the receiver's own (the peer's dummy
+  -- holds many cells; a client past a door still gets the old cell's late updates).
+  local o = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  local _, n = o:gsub('cellArgFor%(data%.cellKey%)', '')
+  check('ObjectPlace, ObjectMove and WorldCellState moves teleport into the named cell', n == 3, n .. ' of 3')
+end
+
+-- A corpse's loot window and a pickpocket's Container window held the dialogue lock until the
+-- looter left the cell: nobody else could loot or talk to that NPC ("talking to <them>").
+print('quests.lua / player.lua -- a corpse takes no dialogue lock, a Container close releases one')
+do
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  local pl = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local act = q:sub((q:find('function quests.onNpcActivate', 1, true)))
+  check('onNpcActivate lets a dead NPC through before asking for a lock',
+    act:find('if okDead and dead then return end', 1, true) ~= nil
+    and act:find('if okDead and dead then return end', 1, true) < act:find('requestLock(obj)', 1, true))
+  check('leaving a Container window releases the lock like leaving Dialogue',
+    pl:find("if (talking(data.oldMode) or data.oldMode == 'Container') and not talking(data.newMode) then", 1, true) ~= nil)
+end
+
+-- A JUMP AFTER A PAUSE PLAYS. interp.lua stamps a sample that follows a pause at last.t + mean,
+-- pulled toward arrival -- behind render time already scanned. The 1.6.0 scan (t > last scanned
+-- render time) stepped over it: a friend who stood still for 0.3 s and jumped never left the
+-- ground. Runs puppet.lua's own scan against the real interp.lua.
+print('puppet.lua -- a late-stamped jump sample still plays')
+do
+  package.loaded['scripts.mp.interp'] = nil
+  local Interp = require('scripts.mp.interp')
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  local a = pp:find('    local rt, jumped = now - interp:delay(), false', 1, true)
+  local b = select(2, pp:find('    jumpPrimed = true', a, true))
+  local scan = a and b and loadstring('local interp, now, bit, jumpPrimed = ...\n' .. pp:sub(a, b) .. '\nreturn jumped, jumpPrimed')
+  check('the jump scan is where this test expects it', scan ~= nil)
+  if scan then
+    local function bit(f, n) return math.floor((f or 0) / 2 ^ n) % 2 >= 1 end
+    local it, primed, played = Interp.new(), false, 0
+    local function frame(now)
+      it:target(now)
+      local j; j, primed = scan(it, now, bit, primed)
+      if j then played = played + 1 end
+    end
+    local t = 0
+    for i = 1, 10 do t = i * 0.05; it:push({ t = t, x = 0, y = 0, z = 0, flags = 0 }); frame(t) end
+    for k = 1, 6 do frame(t + k * 0.05) end -- standing still: no poses for 0.3 s
+    t = t + 0.3
+    it:push({ t = t, x = 0, y = 0, z = 0, flags = 4 }) -- the jump
+    for k = 1, 10 do frame(t + k * 0.05) end
+    check('a jump that follows a pause is played exactly once', played == 1, 'played ' .. played)
+  end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

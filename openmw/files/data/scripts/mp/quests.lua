@@ -591,6 +591,10 @@ function quests.onNpcActivate(obj, actor)
     -- that nothing on the wire backs. Player-to-player exchange is a drop and a pickup.
     if deps.isMpPuppetFn and deps.isMpPuppetFn(obj) then return false end
     if not npcAddr(obj) then return end -- no portable ref: cannot be arbitrated
+    -- A CORPSE IS LOOTED, NOT TALKED TO. Locked like a conversation, the loot window held the
+    -- lock until the looter left the cell, and everyone else was told "talking to <them>".
+    local okDead, dead = pcall(types.Actor.isDead, obj)
+    if okDead and dead then return end
     if lockAllowOnce == obj.id then
         lockAllowOnce = nil
         return -- granted: let the engine open the dialogue window

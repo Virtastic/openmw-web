@@ -2588,6 +2588,11 @@ local eventHandlers = {
         -- are re-sent on the next join, so nothing is lost by dropping them here.
         avatarDocs[data.id] = nil
         remoteIdentity[data.id] = nil
+        -- The input seqs too, here and NOT in despawnPuppet (a rebuild keeps its stream): ids are
+        -- reused, the next player's inputs count from 1 again, and mpAvatarApplied refused every
+        -- seq under the stale one -- no reconciliation and no teleport gate for that player.
+        appliedSeq[data.id] = nil
+        lastInputSeq[data.id] = nil
         mirrorRoster()
     end,
 

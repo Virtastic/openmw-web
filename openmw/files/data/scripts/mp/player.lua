@@ -1571,7 +1571,10 @@ local script = {
             -- the same conversation: releasing on the Dialogue->Barter edge let a second player
             -- open the merchant mid-trade and lost the bribe/admire made after the trade.
             local function talking(m) return m == 'Dialogue' or GOLD_SERVICE_MODES[m] ~= nil end
-            if talking(data.oldMode) and not talking(data.newMode) then
+            -- ...and so does a pickpocket's Container window, which the lock opened too: no
+            -- other edge released it, and the NPC stayed "talking to" the thief for everyone
+            -- until they left the cell. A chest's close finds no lock: a no-op.
+            if (talking(data.oldMode) or data.oldMode == 'Container') and not talking(data.newMode) then
                 core.sendGlobalEvent('mpDialogueClosed', {})
             end
             -- A window that opened with no activation behind it (a script's ForceGreeting, a

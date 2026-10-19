@@ -125,7 +125,11 @@ local lastProgressPos = nil
 -- EVERY JUMP THE RENDER TIME PASSED, not the one sample a frame lands on. A jump rides ONE pose
 -- (bit 2, ~66 ms of render time); read off the target once a frame, a client under 15 fps (9%
 -- of prod telemetry windows, 2026-10) stepped over it and the friend never left the ground.
-local jumpRt = nil -- the render time the previous frame scanned up to
+-- Each sample is marked once render time has passed it, NOT compared with the last scanned time:
+-- interp.lua stamps a sample after a pause at last.t + mean (pulled toward arrival), which can be
+-- BEHIND what was already scanned -- a friend who stood still for 0.3 s and jumped never left
+-- the ground.
+local jumpPrimed = false -- the first scan only marks: history is not played late
 -- The use bit's edges AS RECEIVED, latched until a frame plays them (s171). A creature's bite
 -- holds the bit for ONE peer frame (50 ms); read off the render-delayed target once per client
 -- frame, that pulse fell between frames on any client under 20 fps and the rat bit the player
@@ -444,9 +448,12 @@ local function onUpdate(dt)
     -- dropped (as it always was), never played late.
     local rt, jumped = now - interp:delay(), false
     for _, s in ipairs(interp.buf) do
-        if s.t > (jumpRt or rt) and s.t <= rt and bit(s.flags, 2) then jumped = true end
+        if not s.jumpSeen and s.t <= rt then
+            s.jumpSeen = true
+            if jumpPrimed and bit(s.flags, 2) then jumped = true end
+        end
     end
-    jumpRt = rt
+    jumpPrimed = true
 
     local pos = self.position
     local dx, dy = target.x - pos.x, target.y - pos.y
