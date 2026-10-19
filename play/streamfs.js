@@ -442,7 +442,7 @@
       const files = [];
       for (const [path, src] of S.urlSrcs) if (src.pkey && src.size && re.test(path)) files.push({ path, url: src.url, pkey: src.pkey, size: src.size });
       const rank = (p) => { const i = (first || []).findIndex((r) => r.test(p)); return i < 0 ? 99 : i; };
-      files.sort((a, b) => rank(a.path) - rank(b.path));
+      files.sort((a, b) => rank(a.path) - rank(b.path) || a.size - b.size); // smallest first within a group: most files local soonest
       // ONLY WHAT FITS -- COUNTED IN NEW BYTES. Warming past the origin's quota downloads chunks
       // only to fail storing them, so the worker gets a budget of 80% of what is free and spends
       // it only on chunks it actually adds. It used to drop any WHOLE FILE larger than the free

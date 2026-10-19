@@ -833,6 +833,9 @@ window.omw = (function(){
  // log lines (game-data download / local mount phases), and hidden on the first engine frame.
  window.__omwLoading = (function(){
    var el, titleEl, st, fill, det, done=false, inited=false, warmQueued=false;
+   // What the background warm-up fills, and in which order (see finish()).
+   var WARM_RE = /\.bsa$|^\/mwdata\/(sound\/(fx|cr)|music)\//i;
+   var WARM_FIRST = [/^\/mwdata\/sound\/fx\//i, /morrowind\.bsa$/i, /openmw-web-assets\.bsa$/i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
    function E(){
      if (inited) return el; inited=true;
      el=document.getElementById('loading'); titleEl=document.getElementById('ld-title');
@@ -887,9 +890,15 @@ window.omw = (function(){
      done=true;
      // In the world: start filling the chunk cache from the game archives in the background, so
      // something new coming into view is a local read rather than a network stall (streamfs warm).
+     // LOOSE AUDIO TOO. Sound/ and Music/ are loose files, not in any BSA, and the engine decodes a
+     // sound whole on its first play (SoundBufferPool -> OpenALOutput::loadSound) and pumps music on
+     // the main thread: each new sound's first play was a network miss with the game blocked on it
+     // (prod 2026-10-19: lone 1-miss windows, sfsStallMs ~ worstFrameMs ~ 0.45-0.8 s, walkr_lt.wav
+     // and mx_explore_*.mp3 in sfsSlowTop; players: "each new sound, just the first time").
+     // Fx first (footsteps, hits, doors: heard in every session, 44 MB), then the archives, then
+     // creatures and music. Sound/Vo is left out: 6,400 files / 128 MB of mostly once-heard lines.
      if (!warmQueued) { warmQueued = true; setTimeout(function(){
-       try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(/\.bsa$/i,
-         [/morrowind\.bsa$/i, /openmw-web-assets\.bsa$/i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i]); } catch (e) {}
+       try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(WARM_RE, WARM_FIRST); } catch (e) {}
      }, 20000); }
      el.classList.remove('indet'); fill.style.width='100%'; el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);

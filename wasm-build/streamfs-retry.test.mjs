@@ -190,4 +190,32 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.ok(!f.dead(), 'a timely answer resets the count');
 }
 
+// LOOSE AUDIO IS WARMED (prod 2026-10-19: "each new sound, just the first time"). Sound/ and Music/
+// are loose files the engine reads with the main thread blocked; index.html's warm-up list must
+// queue Fx first, smallest first, then the archives, creatures and music -- and never Sound/Vo.
+// The real streamfs.js runs in a sandbox with the patterns index.html passes.
+{
+  const html = readFileSync(new URL('../play/index.html', import.meta.url), 'utf8');
+  const re = html.match(/var WARM_RE = (\/.*\/i);/), first = html.match(/var WARM_FIRST = (\[.*\]);/);
+  assert.ok(re && first && /StreamFS\.warm\(WARM_RE, WARM_FIRST\)/.test(html), 'index.html warms WARM_RE in WARM_FIRST order');
+  const vm = await import('node:vm');
+  const posted = [];
+  const ctx = {
+    URL, Blob, SharedArrayBuffer, Int32Array, Uint8Array, Map, location: { href: 'https://h/', origin: 'https://h', search: '' },
+    navigator: {}, self: { crossOriginIsolated: true }, Worker: class { postMessage(m) { posted.push(m); } },
+    FS: { createFile: () => ({ node_ops: {}, stream_ops: {} }) },
+  };
+  ctx.window = ctx; ctx.URL = class extends URL { static createObjectURL() { return 'blob:x'; } };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+  vm.runInContext('StreamFS.init()', ctx);
+  const mounts = [['Music/Explore/mx_explore_7.mp3', 3e6], ['Morrowind.bsa', 3e8], ['Sound/Vo/a/f/hlo_001.mp3', 2e4],
+    ['Sound/Fx/foot/walkr_lt.wav', 9e3], ['Sound/Fx/item/bookpag1.wav', 4e3], ['Sound/Cr/rat/roar.wav', 5e4], ['Tribunal.bsa', 7e7], ['Splash/Splash_Netch.tga', 3e6]];
+  for (const [p, s] of mounts) ctx.StreamFS.mount('/mwdata/' + p, 'mwdata/' + p + '?v=2', s);
+  assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 6, 'six files queued');
+  const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/mwdata\/|\?v=2$/g, ''));
+  assert.deepEqual(order, ['Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav', 'Morrowind.bsa',
+    'Sound/Cr/rat/roar.wav', 'Music/Explore/mx_explore_7.mp3', 'Tribunal.bsa'], 'Fx smallest first, then archives, creatures, music; no Vo, no Splash');
+}
+
 console.log('streamfs retry: ok');
