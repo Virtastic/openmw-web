@@ -212,11 +212,13 @@ test('fetched chunks persist in the Cache API', sfsOpts, () => {
 
 test('the persistent key survives presigned-URL renewal and rejects expiring URLs', sfsOpts, () => {
   // Keyed by pathname+size, not the full URL: a locker URL is re-signed hourly and would never
-  // hit twice, so query-carrying and cross-origin URLs must opt out entirely.
-  assert.ok(sfs.includes("u.origin === location.origin && !u.search"), 'presigned URLs must not persist');
+  // hit twice, so query-carrying and cross-origin URLs must opt out entirely -- except a bare
+  // ?v= version tag, which is how index.html mounts the hosted base game (behaviour pinned in
+  // wasm-build/streamfs-retry.test.mjs).
+  assert.ok(sfs.includes("u.origin === location.origin && (!u.search || /^\\?v=[\\w.-]+$/.test(u.search))"), 'presigned URLs must not persist');
   // Backlog 306: the mod manifest's mtime joins the key when given, so a re-installed file of
   // the same size does not serve the old chunks; retail (no mtime passed) keys as before.
-  assert.ok(sfs.includes("u.pathname + '@' + size + (mtime ? '@' + mtime : '') + '@' + CHUNK"),
+  assert.ok(sfs.includes("u.pathname + u.search + '@' + size + (mtime ? '@' + mtime : '') + '@' + CHUNK"),
     'the key must be pathname, size, optional mtime, and chunk granularity');
   assert.ok(index.includes("StreamFS.mount(dest, 'mwdata/mods/' + mod.slug + '/' + f.p, f.s, f.m)"),
     'mod mounts pass the manifest mtime through');
@@ -256,4 +258,13 @@ test('pages name their /admin/static assets by content hash (an edge cache canno
   assert.equal(m[1], createHash('sha256').update(readWebFile('play.js')!.body).digest('hex').slice(0, 12));
   assert.equal(versionAssetUrls('<script src="/admin/static/nope.js"></script>'), '<script src="/admin/static/nope.js"></script>',
     'a missing file is left alone');
+});
+
+test('a refused invite says where to get one', () => {
+  // The refusal note REPLACES the invite form's note (note() sets innerHTML), so the Discord
+  // link the form showed vanished exactly when a player needed it (prod 2026-10-19: 36 refusals).
+  assert.match(play, /note\(said \? esc\(said\) \+ \(code === 'invite_required' \? helpLink : ''\)/,
+    'the invite_required refusal must carry the invite help link');
+  assert.ok(play.indexOf('const helpLink') < play.indexOf("const err = /[#&]mperror="),
+    'helpLink is defined before the refusal note uses it');
 });

@@ -138,6 +138,12 @@
     }
   }
 
+  // WHERE TO GET A CODE: shown on the invite form AND on a refused sign-in. The refusal note
+  // replaces the form's note, so it carried no link at all (prod 2026-10-19: 36 refused sign-ins
+  // from ~24 people, every one told only to ask "whoever runs it").
+  const helpLink = typeof auth.inviteHelpUrl === 'string' && /^https:\/\//.test(auth.inviteHelpUrl)
+    ? ` <a href="${esc(auth.inviteHelpUrl)}" rel="noopener">Join our Discord to get the invite code.</a>` : '';
+  const help = helpLink || ' Ask whoever runs it for the invite code.';
   if (auth.allowRegistration === false) {
     note('This server is not taking new players: sign-in works for existing accounts, but new '
       + 'ones cannot be created here.');
@@ -145,9 +151,6 @@
     // NEW PLAYERS TYPE THE CODE. An invite link is not always how a code travels (a Discord
     // post, a friend reading it out), so the code can also be typed here; it then rides on
     // every provider link exactly as an invite link's would. Returning players ignore it.
-    const help = typeof auth.inviteHelpUrl === 'string' && /^https:\/\//.test(auth.inviteHelpUrl)
-      ? ` <a href="${esc(auth.inviteHelpUrl)}" rel="noopener">Join our Discord to get the invite code.</a>`
-      : ' Ask whoever runs it for the invite code.';
     const form = document.createElement('form');
     form.id = 'inviteForm';
     form.innerHTML = '<label class="fld"><span>Invite code (new players only)</span>'
@@ -268,6 +271,6 @@
       invite_locked: 'Too many attempts with a wrong invite. Wait a while before trying again.',
       registration_disabled: 'This server is not taking new players.',
     }[code];
-    note(said ? esc(said) : `Sign-in did not finish (${esc(code)}). Try again.`, 'err');
+    note(said ? esc(said) + (code === 'invite_required' ? helpLink : '') : `Sign-in did not finish (${esc(code)}). Try again.`, 'err');
   }
 })();
