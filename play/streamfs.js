@@ -150,23 +150,32 @@
       // has not asked for anything for 1.5 s: it never competes with a read the game is waiting on.
       let fg = 0, lastFg = 0, warming = false;
       const nap = (ms) => new Promise((r) => setTimeout(r, ms));
-      // A CACHE LOOKUP HAS A DEADLINE. Every read awaits caches.match before the network, and a
-      // Cache API that stalls (a busy or broken storage backend in that browser) never answers:
-      // the read waited the main thread's full 60 s and the game died on "read timeout" with the
-      // network never asked (prod 2026-10-19: 4 sessions on Morrowind.bsa/.esm at boot, since
-      // 1.6.2 put the base game through this path; the asset pack had it before). Past 3 s the
-      // read goes to the network, and the store is skipped for the rest of the page.
-      let cacheDead = false;
+      // EVERY CACHE STEP HAS A DEADLINE. Every read awaits the chunk store before the network, and
+      // a Cache API that stalls never answers: the read waited the main thread's full timeout and
+      // the game died on "read timeout" with the network never asked (prod 2026-10-19). The
+      // lookup alone was not enough: after the first deadline shipped, boots in the same browsers
+      // still died, every one on the FIRST chunk (Morrowind.bsa@0) with no read failure at all --
+      // an entry whose lookup answers but whose BODY never arrives (a put cut off when the page
+      // died). So the body read has the deadline too, and such an entry is deleted.
+      // ...AND ONE SLOW ANSWER IS NOT A DEAD STORE. A single late lookup used to switch the store
+      // off for the page: a busy cache (the boot's own unawaited writes queue ahead of it) lost
+      // every warmed chunk and stopped the warm-up (prod: 3 of 3 sessions, one with 428 MB warmed).
+      // Three in a row now; any answer in time resets the count.
+      let cacheDead = false, cacheStrikes = 0;
       const CACHE_MS = 3000;
-      const cacheGiveUp = () => { if (!cacheDead) { cacheDead = true; postMessage({ cacheSlow: 1 }); } };
-      const cacheMatch = (key) => cacheDead ? Promise.resolve(undefined) : Promise.race([
-        caches.open('mwdata-chunks-v1').then((c) => c.match(key)),
-        nap(CACHE_MS).then(() => { cacheGiveUp(); return undefined; }),
-      ]);
-      const cachePut = (key, buf) => cacheDead ? Promise.resolve() : Promise.race([
-        caches.open('mwdata-chunks-v1').then((c) => c.put(key, new Response(buf))),
-        nap(CACHE_MS),
-      ]);
+      const cacheLate = () => { if (++cacheStrikes >= 3 && !cacheDead) { cacheDead = true; postMessage({ cacheSlow: 1 }); } };
+      const cacheOk = (v) => { cacheStrikes = 0; return v; };
+      const store = () => caches.open('mwdata-chunks-v1');
+      const inTime = (p, late) => Promise.race([p, nap(CACHE_MS).then(() => { late(); return undefined; })]);
+      // Is the chunk stored? (the warm-up: no body needed)
+      const cacheMatch = (key) => cacheDead ? Promise.resolve(undefined)
+        : inTime(store().then((c) => c.match(key)).then(cacheOk), cacheLate);
+      // The chunk's bytes, or undefined: lookup AND body inside one deadline.
+      const cacheRead = (key) => cacheDead ? Promise.resolve(undefined)
+        : inTime(store().then((c) => c.match(key)).then((r) => r ? r.arrayBuffer().then((b) => cacheOk(new Uint8Array(b))) : cacheOk(undefined)),
+          () => { cacheLate(); store().then((c) => c.delete(key)).catch(() => {}); });
+      const cachePut = (key, buf) => cacheDead ? Promise.resolve()
+        : Promise.race([store().then((c) => c.put(key, new Response(buf))), nap(CACHE_MS)]);
       async function warm(files, chunk, budget) {
         if (warming) return;
         warming = true;
@@ -231,9 +240,10 @@
               try {
                 // A prefetch of exactly this chunk may be in flight (backlog 389): wait for it
                 // rather than fetching the same bytes twice.
-                if (prefetch && prefetch.ckey === ckey) await prefetch.done;
-                const hit = await cacheMatch(ckey);
-                if (hit) buf = new Uint8Array(await hit.arrayBuffer());
+                // ...but no longer than a cache step: the prefetch has its own 10 s fetch and two
+                // cache steps, and stacking them under this read ran the worker past the page's limit.
+                if (prefetch && prefetch.ckey === ckey) await Promise.race([prefetch.done, nap(CACHE_MS)]);
+                buf = await cacheRead(ckey);
               } catch (e) { /* Cache API unavailable: fall through to the network */ }
             }
             if (!buf) {
@@ -309,9 +319,11 @@
     // eviction-thrashing working set shows up as misses climbing without bytes growing.
     const t0 = performance.now();
     while (Atomics.load(S.ctrl, 0) !== gen) {
-      // Above the worker's whole budget (a prefetch it waits on, 10 s, plus its own read, 48 s),
+      // Above the worker's whole budget (a prefetch wait, 3 s, a cache read, 3 s, its own fetch,
+      // 48 s, plus the backoff between attempts, ~6 s): a slow network fails as "read failed" with
+      // the reason, never as a bare timeout here.
       // so a read that is still being retried is never abandoned here first.
-      if (performance.now() - t0 > 60000) throw new Error('streamfs: read timeout ' + cacheKey + '@' + start);
+      if (performance.now() - t0 > 70000) throw new Error('streamfs: read timeout ' + cacheKey + '@' + start);
     }
     const waited = performance.now() - t0;
     ST.misses++; ST.stallMs += waited;
