@@ -2,6 +2,14 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.1
+
+**Server restarts finish cleanly.** Stopping or restarting the multiplayer server while players
+were connected waited for every player's connection to close before stopping the games, but those
+connections only close when their game stops, so the games were left running until they were
+killed. The server now stops the games first. (Also fixes the test harness leaving game processes
+running between scenarios, which made some results flaky.)
+
 ## 1.6.0
 
 A multiplayer smoothness and reliability release.
