@@ -327,7 +327,12 @@ async function shutdown(signal: string, code = 0): Promise<void> {
   log('info', 'gateway.shutdown', { signal });
   // Directory first: stop accepting new joins before tearing worlds down, so nobody is
   // handed a port that is about to disappear.
-  await directory.close();
+  // NOT awaited. server.close() stops listening at once, but its promise waits for every open
+  // connection to end, and a spliced game socket ends only when its world closes it -- which
+  // is below. Awaited, a SIGTERM with anyone playing never reached stopAll(): the gateway sat
+  // here until it was KILLed, and every world (its own process group) and its sim peer lived
+  // on (the harness's gateway scenarios leaked two peers each that way).
+  void directory.close();
   unhookNotifier();
   await frontDoor.close(); // drain the CRM queue; a redeploy is when signups cluster
   // Drain the account store's write-behind queue, which a world does on its way out and this
