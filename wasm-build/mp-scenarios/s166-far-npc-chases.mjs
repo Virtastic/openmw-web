@@ -49,11 +49,16 @@ export default async function run(ctx) {
   const tried = new Set();
   let victim, p0, stung, hurt = false;
   for (let attempt = 1; attempt <= 3; attempt++) {
-  // One a provoking blow cannot kill and that is alone under its record (#178: the 8 hp scrib
-  // died to the sting, and 'n' was 2 -- the probe's one position for 'scrib' could be either).
+  // ONLY A MARK THAT MUST CHASE: alive, alone under its record (#178: with 'n' 2 the probe's one
+  // position could be either) and with the health to outlive the sting. Every 20+ hp creature
+  // rolled here fights back (Morrowind.esm AIDT: rat Fight 85 / Flee 30, kwama forager 85 / 20;
+  // at half health their flee rating is ~30 of the 100 that makes the engine run). The old
+  // fallback to ANY live mark picked the 8 hp scrib (Fight 50), which every sting kills (#223,
+  // #230), and then failed for want of a mark: not a measurement of the chase at all.
   ({ found: victim } = await pickUntil(ctx, async () => [Object.values(await netObjs(b)).filter((r) => !tried.has(r)), JSON.parse(await b.eval('window.omw.state.actorProbe||"{}"'))],
-    (names, pr) => { probe = pr; const live = (r) => pr[r] && !pr[r].dead; const ok = (r) => live(r) && (pr[r].n ?? 1) === 1; return names.filter((r) => ok(r) && !(pr[r].hp >= 0 && pr[r].hp < 20)).sort((x, y) => Math.hypot(pr[x].x - me.x, pr[x].y - me.y) - Math.hypot(pr[y].x - me.x, pr[y].y - me.y))[0] ?? names.filter(ok)[0] ?? (tried.size === 0 ? names.find(live) : undefined); })); // last resort, FIRST pick only: a duplicated record (#179: the cell held only rats, n > 1). Never on a retry: #209 re-picked a scrib with n=2 and measured the one it never hit.
-  assert.ok(victim, `no living named creature in the probe: ${JSON.stringify(Object.keys(probe))} (already tried: ${[...tried].join(', ')})`);
+    (names, pr) => { probe = pr; const fit = (r) => pr[r] && !pr[r].dead && !(pr[r].hp >= 0 && pr[r].hp < 20); const ok = (r) => fit(r) && (pr[r].n ?? 1) === 1; return names.filter(ok).sort((x, y) => Math.hypot(pr[x].x - me.x, pr[x].y - me.y) - Math.hypot(pr[y].x - me.x, pr[y].y - me.y))[0] ?? (tried.size === 0 ? names.find(fit) : undefined); })); // last resort, FIRST pick only: a duplicated record (#179: the cell held only rats, n > 1). Never on a retry: #209 re-picked a scrib with n=2 and measured the one it never hit.
+  // No such mark is a roll of the peer's spawns, not the AI under test: say so, do not FAIL.
+  if (!victim) { ctx.log(`SKIP: no creature in -2,-7 that can outlive a sting and chase (probe: ${JSON.stringify(Object.keys(probe))}, already tried: ${[...tried].join(', ') || 'none'})`); return; }
   tried.add(victim);
 
   // Provoke it with ONE STING, not a spell that kills it. A Fire Bite is 15-30 damage and the
@@ -73,7 +78,7 @@ export default async function run(ctx) {
     const q = await probeOf(b, victim);
     hurt = !!q && Number(q.hp) < Number(p0.hp);
     return hurt;
-  }, { maxSwings: 15, budgetMs: 120_000 });
+  }, { maxSwings: 15, budgetMs: 120_000, holdMs: 400 }); // quick swings: with 1.5 s holds a second ~14-point blow was often already landing when the first wound showed, and two kill a 23 hp forager (builder 2026-10-19: 2 foragers killed in 17 runs; none in 6 at 400 ms)
   await ctx.sleep(2_000); // the blows still in flight land
   stung = await probeOf(b, victim);
   ctx.log(`the mark: the peer's "${victim}" hp ${p0.hp} -> ${(stung || {}).hp} (hurt=${hurt}); B retreats ${RETREAT} u`);
@@ -81,7 +86,7 @@ export default async function run(ctx) {
   if (attempt < 3) ctx.log(`  the sting ${hurt ? 'killed' : 'never hurt'} the ${victim}: another mark`);
   }
   assert.ok(hurt, `the ${victim} was never hurt by the sting; nothing to provoke a chase with`);
-  assert.ok(stung && !stung.dead && Number(stung.hp) > 0, `the sting killed the ${victim} (${JSON.stringify(stung)}); a corpse cannot chase`);
+  if (!(stung && !stung.dead && Number(stung.hp) > 0)) { ctx.log(`SKIP: the sting killed every mark (${[...tried].join(', ')}; last ${JSON.stringify(stung)}): a corpse cannot chase`); return; }
 
   // Retreat: 450 u east of the creature, and the chase must close the gap.
   const p1 = (await probeOf(b, victim)) || p0;
@@ -133,6 +138,6 @@ export default async function run(ctx) {
   // slowest crawlers in the game (#115 6 u/s, #116 8 u/s with the anchor navmesh in), and
   // 30 s is not enough for them to reach melee range from 450 u. A frozen AI closes NOTHING;
   // a crawler closes a few hundred units. That is the difference this scenario exists for.
-  assert.ok(gap >= 0 && gap0 - gap >= 150, `the ${victim} never chased: gap ${gap0.toFixed(0)} -> ${gap.toFixed(0)} u in 30 s (-1 = it died or left the probe): the peer's AI is frozen two cells from its dummy`);
+  assert.ok(gap >= 0 && gap0 - gap >= 150, `the ${victim} never chased: gap ${gap0.toFixed(0)} -> ${gap.toFixed(0)} u in 30 s (-1 = it died or left the probe): the peer's AI is frozen two cells from its dummy (the pathTo gate, 285) or flee-idle with no navmesh tile under it (479/483)`);
   ctx.log(`PASS: the peer's ${victim} chased the avatar ${gap0.toFixed(0)} -> ${gap.toFixed(0)} u two cells from the dummy`);
 }
