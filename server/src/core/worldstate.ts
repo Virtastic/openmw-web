@@ -745,7 +745,9 @@ export class WorldState {
     // that character's own engine; nobody holds a chargen cell, so there is no one to relay
     // to, and a stored claim there would outlive the opening. Not a forged claim either: it
     // was a moderation note on every new character (prod, 16 in 72 h, all c:397568:1).
-    if (isChargenCell(cellKey)) return;
+    // Only DURING creation: the census office is an ordinary room afterwards, and a finished
+    // character's claim there must not vanish (a dismissal swallowed left the companion following).
+    if (player.inChargen === true && isChargenCell(cellKey)) return;
     // #363: RECRUITING IS A CONVERSATION, like travel: the player who holds (or just held,
     // 5 s) this NPC's dialogue lock may say it follows them. A claim already theirs may be
     // updated or dismissed without one (a scripted escort ends by script, not by talking).
@@ -1015,6 +1017,10 @@ export class WorldState {
     // per-player view) so no client can opt out of the rule by ignoring it.
     if (this.noDrop && killedRecordId && this.uniqueActors.has(killedRecordId.toLowerCase())) {
       this.relayCell(cellKey, 'ActorStripLoot', { ...objRefToJs(ref), cellKey, reason: 'unique' });
+      // The canonical corpse is empty too. The holder snapshots the fresh corpse before its own
+      // strip lands, and that first open became the contents: the next looter's ContainerState
+      // recreated every unique the strip had removed.
+      doc.containers[ref.key] = { items: [], stateSeq: (doc.containers[ref.key]?.stateSeq ?? 0) + 1, origin: [] };
       log('info', 'world.unique_no_drop', { refId: killedRecordId, cellKey });
     }
     if (killedRecordId) {

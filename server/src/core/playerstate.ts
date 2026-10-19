@@ -1029,7 +1029,10 @@ function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolea
   // ...or an item the last inventory diff just took away: the last potion of a kind is drunk
   // before the 2 s inventory diff lands, and the 0.5 s active diff may lose that race.
   const known = (id: string) => doc?.spells?.includes(id) === true || doc?.inventory?.some((i) => i.id === id) === true
-    || (player.recentlyUsed?.get(id) ?? 0) > nowMs - ACTIVE_MAG_WINDOW_MS;
+    || (player.recentlyUsed?.get(id) ?? 0) > nowMs - ACTIVE_MAG_WINDOW_MS
+    // ...or one credited since the last snapshot: looted or bought and drunk inside one diff,
+    // it was never in the doc at all.
+    || (player.pendingAcquired?.get(id) ?? 0) > 0;
   const unknown = add.find((op) => !known(op.id));
   if (unknown) {
     noteGain(ctx, player, 'active_spell_unknown', { id: unknown.id });

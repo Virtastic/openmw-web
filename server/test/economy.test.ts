@@ -117,6 +117,14 @@ test('public no-drop: a unique NPC corpse is stripped for the whole cell', async
   });
   const strip = await b.waitEvent('ActorStripLoot');
   assert.equal((strip.value as { reason: string }).reason, 'unique');
+  // ...and the server's copy of the corpse is empty too. The holder snapshots a fresh corpse
+  // (ContainerOpen) before its own strip has landed; that full inventory used to become the
+  // canonical contents, and the next looter's ContainerState put the uniques back.
+  a.sendEvent('ContainerOpen', { ref: { __refnum: { index: 5, contentFile: 0 } }, cellKey: '0,0',
+    contents: [{ id: 'vivec_artifact', n: 1 }] });
+  b.sendEvent('ContainerOpen', { ref: { __refnum: { index: 5, contentFile: 0 } }, cellKey: '0,0' });
+  const state = await b.waitEvent('ContainerState');
+  assert.deepEqual((state.value as { items: unknown[] }).items, [], 'the stripped corpse came back full');
 
   // An ordinary creature is untouched — the rule targets farmable uniques only.
   a.sendEvent('ActorDeath', {
