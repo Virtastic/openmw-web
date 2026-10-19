@@ -388,8 +388,12 @@
       // CHUNK is part of the key: chunks are cached at fetch granularity, and a ?chunk= retune
       // would otherwise hit a cached chunk shorter than the read loop expects — a short read
       // the engine treats as EOF mid-file.
-      const pkey = u.origin === location.origin && !u.search
-        ? u.pathname + '@' + size + (mtime ? '@' + mtime : '') + '@' + CHUNK : null;
+      // A bare version tag (?v=2, index.html's base-game mounts) is NOT a signature: it is part of
+      // the key, not a reason to skip it. Treating any query as presigned left Morrowind.bsa and
+      // every hosted base file with no key from 2026-10-14 on: never persisted, never warmed
+      // (prod 2026-10-19: sfsWarm stuck at the asset pack's 38 chunks, ~250 ms per new-area read).
+      const pkey = u.origin === location.origin && (!u.search || /^\?v=[\w.-]+$/.test(u.search))
+        ? u.pathname + u.search + '@' + size + (mtime ? '@' + mtime : '') + '@' + CHUNK : null;
       const src = { url: abs, pkey, size };
       // Registered so the URL can be refreshed later (presigned locker URLs expire): the cache
       // key stays `abs` (stable across renewals — the bytes are the same file), only src.url

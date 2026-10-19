@@ -126,4 +126,17 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(msgs.at(-1).err, 'budget');
 }
 
+// The persistent key: a same-origin file with a bare version tag (?v=2, how index.html mounts the
+// hosted base game) is persisted and warmed; a presigned or cross-origin URL is not.
+{
+  const m = src.match(/const pkey = (u\.origin[\s\S]*?: null);/);
+  assert.ok(m, 'pkey expression is where this test expects it');
+  const pkeyOf = (href) => new Function('u', 'location', 'size', 'mtime', 'CHUNK', 'return ' + m[1])(
+    new URL(href), { origin: 'https://h' }, 10, 0, 2);
+  assert.equal(pkeyOf('https://h/mwdata/Morrowind.bsa?v=2'), '/mwdata/Morrowind.bsa?v=2@10@2', 'versioned base game is persisted');
+  assert.equal(pkeyOf('https://h/data/openmw-web-assets.bsa'), '/data/openmw-web-assets.bsa@10@2');
+  assert.equal(pkeyOf('https://h/locker/x.bsa?X-Amz-Signature=abc&v=2'), null, 'presigned is not persisted');
+  assert.equal(pkeyOf('https://s3.example/x.bsa'), null, 'cross-origin is not persisted');
+}
+
 console.log('streamfs retry: ok');
