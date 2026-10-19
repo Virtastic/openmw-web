@@ -97,15 +97,22 @@
       // hundreds of MB. Read only up to end, cancel the rest, and slice.
       // ponytail: a 200 at a deep offset still downloads everything before it; ranges are honoured today.
       // Each attempt's outcome rides the error (status, ranges, bytes, ms): the page ships it.
-      const ATTEMPTS = 4, ATTEMPT_MS = 12000;
-      async function rangeFetch(url, start, end) {
+      // AND THE WHOLE READ HAS A BUDGET under the main thread's 60 s ceiling (fetchChunkSync).
+      // With the silence clock restarting on every piece, one trickling attempt could outlast
+      // that ceiling: the page threw "read timeout" with a retry still to come, and the worker
+      // went on writing into the shared buffer after the page had given up on it.
+      const ATTEMPTS = 4, ATTEMPT_MS = 12000, BUDGET_MS = 48000;
+      async function rangeFetch(url, start, end, tries = ATTEMPTS, budget = BUDGET_MS) {
         let last;
         const seen = [];
         const fail = (err) => new Error(String(err && err.message || err) + ' [' + seen.join('; ') + ']');
-        for (let i = 0; i < ATTEMPTS; i++) {
+        const begun = Date.now();
+        const clock = () => Math.max(0, Math.min(ATTEMPT_MS, budget - (Date.now() - begun)));
+        for (let i = 0; i < tries; i++) {
           if (i) await new Promise((r) => setTimeout(r, 400 * i * i));
+          if (Date.now() - begun >= budget) break;
           const ac = new AbortController();
-          let t = setTimeout(() => ac.abort(), ATTEMPT_MS);
+          let t = setTimeout(() => ac.abort(), clock());
           const t0 = Date.now();
           let what = '', got = 0;
           try {
@@ -117,7 +124,7 @@
               while (got < want) {
                 const { done, value } = await rd.read();
                 if (done) break;
-                clearTimeout(t); t = setTimeout(() => ac.abort(), ATTEMPT_MS);
+                clearTimeout(t); t = setTimeout(() => ac.abort(), clock());
                 const n = Math.min(value.length, want - got);
                 buf.set(value.subarray(0, n), got); got += n;
               }
@@ -237,8 +244,11 @@
               try {
                 const c = await caches.open('mwdata-chunks-v1');
                 if (await c.match(nkey)) return;
-                const r = await fetch(m.url, { headers: { Range: 'bytes=' + m.next.start + '-' + (m.next.end - 1) } });
-                if (r.ok || r.status === 206) await c.put(nkey, new Response(await r.arrayBuffer()));
+                // ONE rangeFetch attempt, not a bare fetch: a bare fetch had no deadline, so a stalled
+                // prefetch held the read of this very chunk (which awaits it above) past the 60 s
+                // main-thread timeout -- the game died on "read timeout" -- and a 200 stored the
+                // whole file as this chunk.
+                await c.put(nkey, new Response(await rangeFetch(m.url, m.next.start, m.next.end, 1, 10000)));
               } catch (e) { /* best effort: the read path fetches it itself */ }
               finally { prefetch = null; }
             })() };
@@ -281,8 +291,8 @@
     // eviction-thrashing working set shows up as misses climbing without bytes growing.
     const t0 = performance.now();
     while (Atomics.load(S.ctrl, 0) !== gen) {
-      // Above the worker's whole retry budget (4 x 12 s + 0.4/1.6/3.6 s backoff = 53.6 s), so a
-      // read that is still being retried is never abandoned here first.
+      // Above the worker's whole budget (a prefetch it waits on, 10 s, plus its own read, 48 s),
+      // so a read that is still being retried is never abandoned here first.
       if (performance.now() - t0 > 60000) throw new Error('streamfs: read timeout ' + cacheKey + '@' + start);
     }
     const waited = performance.now() - t0;
