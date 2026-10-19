@@ -180,10 +180,23 @@ export async function startGatewayAndClient(ctx, opts = {}) {
     detached: true,
   });
   ctx.watchChild('gateway', gw);
-  const stop = () => {
-    try { process.kill(-gw.pid, 'SIGKILL'); } catch { /* group already gone */ }
-    try { gw.kill('SIGKILL'); } catch { /* already gone */ }
-  };
+  // TERM, and the group KILL only once the gateway is gone. The group does NOT hold the worlds:
+  // worlds.ts spawns each one detached, leading its own group, so a straight group KILL
+  // orphaned every world and the sim peer it ran (#230: two peers left behind after each of
+  // s128, s130, s133, s143; three after s174). A TERM is the gateway's shutdown -- it stops its
+  // worlds, they SIGKILL their peers, and it exits once they have. The timer is the backstop
+  // for a gateway that never exits; the harness's teardown waits for this exit.
+  const stop = () => new Promise((resolve) => {
+    const kill = () => {
+      try { process.kill(-gw.pid, 'SIGKILL'); } catch { /* group already gone */ }
+      try { gw.kill('SIGKILL'); } catch { /* already gone */ }
+      resolve();
+    };
+    if (gw.exitCode !== null || gw.signalCode !== null) return kill();
+    const t = setTimeout(kill, 30_000);
+    gw.once('exit', () => { clearTimeout(t); kill(); });
+    try { gw.kill('SIGTERM'); } catch { kill(); }
+  });
 
   try {
     assert.ok(await waitHttp(`http://127.0.0.1:${gwPort}/healthz`, 30_000), 'the gateway must come up');

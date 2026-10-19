@@ -10,9 +10,10 @@
 //
 // Each scenario gets a FRESH server (ephemeral port, throwaway data dir) so account state can
 // never leak between runs; account names are additionally suffixed with a per-run id. Teardown
-// kills ONLY the PIDs this harness spawned — never any pkill pattern (repo hard rule: the
-// user's real Chrome must be untouchable; every client runs in a throwaway --user-data-dir).
-import { spawn, execSync } from 'node:child_process';
+// kills ONLY what this harness spawned — the between-scenario reap matches only this checkout's
+// server/dist and its own throwaway --user-data-dir (repo hard rule: the user's real Chrome must
+// be untouchable).
+import { spawn, execSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import net from 'node:net';
@@ -1036,6 +1037,7 @@ for (const file of files) {
   const clients = []; // everything launched by this scenario, closed no matter what
   let torndown = false; // a client that finishes booting AFTER teardown must not leak
   const ownedChildren = []; // processes a scenario spawned through ctx (sim peers, gateways)
+  const supervisors = []; // the watchChild ones (gateways): they exit only once their worlds have
   let bootQueue = Promise.resolve(); // serializes client boots (see launchClient below)
   let server = null;
   let err = null;
@@ -1090,6 +1092,7 @@ for (const file of files) {
       // stdio: ['ignore','pipe','pipe'] for this to have anything to read.
       watchChild: (label, proc) => {
         ownedChildren.push(proc); // reaped in the finally: a scenario that throws never reaches peer.stop()
+        supervisors.push(proc);
         const buf = [];
         proc.stdout?.on('data', (d) => buf.push(String(d)));
         proc.stderr?.on('data', (d) => buf.push(String(d)));
@@ -1218,6 +1221,11 @@ for (const file of files) {
     // the backstop for anything that ignored it (the headless engine ignores TERM).
     for (const p of ownedChildren) { try { p.kill('SIGTERM'); } catch { /* gone */ } }
     if (ownedChildren.length) await sleep(3000);
+    // ...and a gateway for as long as its own shutdown takes (stopAll, then allExited: bounded
+    // by the worlds' 20 s stop grace). Its worlds lead their OWN groups, so the group KILL below
+    // never reaches them: KILLed mid-drain, the gateway orphaned every world and its peer.
+    const running = (p) => p.exitCode === null && p.signalCode === null;
+    for (const by = Date.now() + 27_000; Date.now() < by && supervisors.some(running); ) await sleep(250);
     for (const p of ownedChildren) {
       try { process.kill(-p.pid, 'SIGKILL'); } catch { /* not a group leader, or gone */ }
       try { p.kill('SIGKILL'); } catch { /* already gone */ }
@@ -1278,7 +1286,8 @@ for (const file of files) {
     // A moment for the SIGKILLs above to be reaped, or every scenario reports the corpse
     // of its own last client as a leak.
     await sleep(1500);
-    const count = (pat) => Number(execSync(`pgrep -c -f ${pat} || true`, { encoding: 'utf8' }).trim()) || 0;
+    // NO SHELL. `sh -c "pgrep -f chrome"` counted its own sh (every baseline read 1 for nothing).
+    const count = (pat) => Number(spawnSync('pgrep', ['-c', '-f', pat], { encoding: 'utf8' }).stdout?.trim()) || 0;
     const live = { chrome: count('chrome'), peers: count('openmw') };
     if (live.chrome > (harnessLive.chrome ?? 0) || live.peers > (harnessLive.peers ?? 0)) {
       console.error(`[harness] LEAK after ${file}: chrome ${harnessLive.chrome ?? 0} -> ${live.chrome},`
@@ -1291,12 +1300,15 @@ for (const file of files) {
   // on I/O), and s130's guest never finished booting -- the sweep hung for 35 minutes. Every
   // scenario starts its own servers, peers and browsers, so none may outlive it. The play server
   // (server.py) is the harness's own and stays.
-  try {
-    for (const pat of ['dist/testhost.mjs', 'dist/gateway.mjs', 'dist/server.mjs', '/usr/local/bin/openmw', 'chrome']) {
-      execSync(`pkill -9 -f ${JSON.stringify(pat)} || true`, { stdio: 'ignore' });
-    }
-    harnessLive = { chrome: 0, peers: 0 };
-  } catch { /* nothing to reap */ }
+  // NO SHELL here either: `sh -c 'pkill -9 -f "dist/testhost.mjs" || true'` matched and KILLED
+  // its own sh, execSync threw on the first pattern, and the catch skipped the reap entirely --
+  // it never ran once. spawnSync never throws on pkill's "nothing matched" exit. Every pattern is
+  // the harness's own: this checkout's servers, the peer binary, and Chrome by its omw-mpharness-
+  // profile dir, never the bare word (the user's real Chrome).
+  for (const pat of [join(ROOT, 'server', 'dist') + '/', '/usr/local/bin/openmw', 'omw-mpharness-']) {
+    spawnSync('pkill', ['-9', '-f', pat], { stdio: 'ignore' });
+  }
+  harnessLive = { chrome: 0, peers: 0 };
   if (err) {
     console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
     const srv = server?.logTail?.();
