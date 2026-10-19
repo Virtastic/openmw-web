@@ -138,6 +138,17 @@ local function addrOf(obj)
     return nil
 end
 
+-- The teleport cell for a placement the server names: ITS cell, not ours. The peer holds many
+-- cells from one parked dummy, and a client that just took a door still gets the old cell's
+-- late updates; with our own cell, those items landed in the wrong room at the right coords.
+local function cellArgFor(cellKey)
+    if type(cellKey) == 'string' and cellKey ~= '' then
+        return cellKey:match('^%-?%d+,%-?%d+$') and '' or cellKey
+    end
+    local player = deps.playerFn()
+    return (player and player.cell and not player.cell.isExterior) and player.cell.name or ''
+end
+
 local function resolveBody(data)
     if data.net then return netToObj[data.net] end
     if data.ref then
@@ -903,8 +914,7 @@ handlers.MP_ObjectPlace = function(data)
         if not placeholder then return end
         obj = world.createObject(placeholder, data.count or 1)
     end
-    local player = deps.playerFn()
-    local cellArg = (player and player.cell and not player.cell.isExterior) and player.cell.name or ''
+    local cellArg = cellArgFor(data.cellKey)
     obj:teleport(cellArg, util.vector3(data.x, data.y, data.z),
         { rotation = util.transform.rotateZ(data.rotZ or 0) })
     if ok then applyItemState(obj, data.state) end -- the dropper's wear/charge/soul, not a fresh copy's
@@ -973,8 +983,7 @@ handlers.MP_ObjectMove = function(data)
     if isOwnEcho(data) then return end
     local obj = resolveBody(data)
     if not obj then return end
-    local player = deps.playerFn()
-    local cellArg = (player and player.cell and not player.cell.isExterior) and player.cell.name or ''
+    local cellArg = cellArgFor(data.cellKey)
     pcall(function()
         obj:teleport(cellArg, util.vector3(data.x, data.y, data.z),
             { rotation = util.transform.rotateZ(data.rotZ or 0) })
@@ -1088,8 +1097,11 @@ handlers.MP_ContainerUpdate = function(data)
     end
     -- Our own committed op comes back as an Update too (single apply path server-side);
     -- the native transfer already happened locally — consume instead of double-applying.
+    -- ONLY AN ANSWERED OP: our Result always precedes our own Update (worldstate.ts containerOp),
+    -- so an unanswered one is somebody else's win. Consumed, it ate the op that our "gone"
+    -- needed to undo the local take, and the loser of the race kept a duplicate.
     for opId, op in pairs(pendingOps) do
-        if op.key == key and op.itemId == delta.itemId
+        if op.resolved and op.key == key and op.itemId == delta.itemId
             and ((op.op == 'take' and (delta.dn or 0) < 0) or (op.op == 'put' and (delta.dn or 0) > 0)) then
             pendingOps[opId] = nil
             return
@@ -1196,8 +1208,7 @@ handlers.MP_WorldCellState = function(data)
     for refKey, m in pairs(data.moved or {}) do
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() then
-            local player = deps.playerFn()
-            local cellArg = (player and player.cell and not player.cell.isExterior) and player.cell.name or ''
+            local cellArg = cellArgFor(data.cellKey)
             pcall(function()
                 obj:teleport(cellArg, util.vector3(m.x, m.y, m.z),
                     { rotation = util.transform.rotateZ(m.rotZ or 0) })

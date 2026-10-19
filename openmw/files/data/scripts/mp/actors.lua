@@ -173,9 +173,18 @@ end
 -- walked it at 28, and it fell behind into a far-gap teleport every few seconds (s190, prod
 -- 2026-10-16 "enemies teleport side to side"). Measured over at least 0.2 s between samples.
 local movedFrom = {}
+-- Pruned, or the peer kept one entry per actor it ever streamed (every summon and respawn is a
+-- new id) for the life of the world. An entry not sampled for 10 s is only a stale baseline.
+local movedPrunedAt = 0
 local function actualSpeed(obj, pos)
     local key = obj.id
     local now = core.getRealTime()
+    if now - movedPrunedAt > 30 then
+        movedPrunedAt = now
+        for k, old in pairs(movedFrom) do
+            if now - old.t > 10 then movedFrom[k] = nil end
+        end
+    end
     local m = movedFrom[key]
     if not m then movedFrom[key] = { x = pos.x, y = pos.y, t = now, v = 0 }; return 0 end
     local dt = now - m.t
