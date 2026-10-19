@@ -2,6 +2,17 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.2
+
+**New areas load without stalls.** Since mid-October the game files a server hosts were never kept in
+the browser's cache or pre-loaded in the background, so every new place you walked into waited
+on a download (a freeze of up to a second at a time, longer on mobile connections), and coming
+back the next day downloaded it all again. They are cached and pre-loaded again.
+
+**A refused invite says where to get one.** On an invite-only server, a sign-in without an
+invite now shows the server's "where to get an invite" link (set with `[login].inviteHelpUrl`;
+off unless you set it) instead of only "ask whoever runs it".
+
 ## 1.6.1
 
 **Server restarts finish cleanly.** Stopping or restarting the multiplayer server while players
