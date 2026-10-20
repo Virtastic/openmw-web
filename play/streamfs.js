@@ -166,7 +166,16 @@
       const cacheLate = () => { if (++cacheStrikes >= 3 && !cacheDead) { cacheDead = true; postMessage({ cacheSlow: 1 }); } };
       const cacheOk = (v) => { cacheStrikes = 0; return v; };
       const store = () => caches.open('mwdata-chunks-v1');
-      const inTime = (p, late) => Promise.race([p, nap(CACHE_MS).then(() => { late(); return undefined; })]);
+      // LATE MEANS STILL UNANSWERED AT THE DEADLINE. race() does not cancel the losing timer, so
+      // late() used to run 3 s after EVERY cache step, answered or not: a healthy store was
+      // declared dead within seconds of boot and every chunk read back from it was deleted
+      // (prod 2026-10-20: sfsCacheSlow=1 and sfsWarm=0 in every session since the hotfix, up to a
+      // 29 s freeze stepping off the boat into Seyda Neen, every reload downloading again).
+      const inTime = (p, late) => {
+        let settled = false;
+        const q = p.then((v) => { settled = true; return v; }, (e) => { settled = true; throw e; });
+        return Promise.race([q, nap(CACHE_MS).then(() => { if (!settled) late(); return undefined; })]);
+      };
       // Is the chunk stored? (the warm-up: no body needed)
       const cacheMatch = (key) => cacheDead ? Promise.resolve(undefined)
         : inTime(store().then((c) => c.match(key)).then(cacheOk), cacheLate);

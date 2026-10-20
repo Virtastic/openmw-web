@@ -188,6 +188,20 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.deepEqual([...(await f.cacheRead('x'))], [7, 8], 'bytes from a timely answer');
   await f.cacheRead('x'); await f.cacheRead('x');
   assert.ok(!f.dead(), 'a timely answer resets the count');
+
+  // AN ANSWERED STEP IS NEVER LATE (prod 2026-10-20). The deadline timer outlives the race, and
+  // it used to strike and delete regardless: three instant reads killed a healthy store and
+  // erased the three chunks they had just read. Wait past the deadline before looking.
+  const gone = [];
+  const fine = { open: async () => ({ match: async () => ({ arrayBuffer: async () => new Uint8Array([1]).buffer }),
+    delete: async (k) => { gone.push(k); } }) };
+  const hmsgs = [];
+  const h = mk(fine, hmsgs);
+  for (const k of ['a', 'b', 'c', 'd']) { await h.cacheRead(k); await h.cacheMatch(k); }
+  await new Promise((r) => setTimeout(r, 120));
+  assert.ok(!h.dead(), 'a store that answers in time stays on');
+  assert.deepEqual(hmsgs, [], 'no cacheSlow for a healthy store');
+  assert.deepEqual(gone, [], 'chunks read back in time are kept');
 }
 
 // LOOSE AUDIO IS WARMED (prod 2026-10-19: "each new sound, just the first time"). Sound/ and Music/
