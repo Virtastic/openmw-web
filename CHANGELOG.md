@@ -14,12 +14,21 @@ is installed, and the game page tells you how to fix it instead of only offering
 hang the loading screen until it timed out; it now gives up after a few seconds and downloads
 instead. A reload (F5) no longer needs extra boots to sign back in.
 
+**A game that starts right after another one no longer hangs.** Switching worlds or reloading
+could ask the browser for the game's memory before it had freed the last page's, and the loading
+screen just sat there; it now waits a moment and tries again, and says so if memory is really short.
+
 **Sounds and music no longer stall on their first play**: they are pre-loaded in the background
 along with the game archives.
 
 **Multiplayer feels better**: a jump pressed mid-hop is no longer lost on the server, so chained
 rock hops stop rubber-banding you back, and a friend whose body got stuck on a ledge or bobbing in
 the water on your screen is put back where they really are.
+
+**Flying is no longer treated as cheating.** Reading a Scroll of Icarian Flight (or anything else
+that moves you fast in one area) had the server refuse every step of the flight as a teleport, pull
+you back after landing, and count it against your account as an anomaly. Fast motion the engine can
+really produce is now accepted; jumping through walls from a standstill is still refused.
 
 ## 1.6.2
 
