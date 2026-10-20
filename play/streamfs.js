@@ -222,6 +222,35 @@
         warming = false;
         postMessage({ warmed: 0, done: true, err: stop });
       }
+      // HEDGED READ. The store answers in milliseconds when it is idle, but under load -- the
+      // warm-up writing, the boot's own puts -- a read took 0.3 to 3 s, slower than the network,
+      // which serves a 2 MB chunk in about 0.1 s (prod 2026-10-20: 594 chunks warmed on the ship,
+      // then 91 reads and a 28 s freeze stepping onto the Seyda Neen dock; a 1.6.1 player with no
+      // store at all fetched the same burst at 0.09 s a chunk). Past HEDGE_MS without an answer,
+      // ask the network too and take whichever arrives first. A network failure still waits for
+      // the store. Returns { buf, net } -- net: the bytes came from the network (worth storing).
+      const HEDGE_MS = 150;
+      async function readChunk(url, start, end, ckey) {
+        if (ckey) {
+          let settled = false;
+          const fromStore = Promise.resolve().then(() => cacheRead(ckey))
+            .then((b) => { settled = true; return b; }, () => { settled = true; return undefined; });
+          const early = await Promise.race([fromStore, nap(HEDGE_MS).then(() => undefined)]);
+          if (early) return { buf: early, net: false };
+          if (settled) {
+            const v = await fromStore; // answered just as the hedge timer fired
+            if (v) return { buf: v, net: false };
+          } else {
+            const fromNet = rangeFetch(url, start, end).then((b) => ({ b }), (err) => ({ err }));
+            const first = await Promise.race([fromStore.then((b) => (b ? { b, store: true } : fromNet)), fromNet]);
+            if (first.b) return { buf: first.b, net: !first.store };
+            const late = await fromStore; // the network failed: the store is the last chance
+            if (late) return { buf: late, net: false };
+            throw first.err;
+          }
+        }
+        return { buf: await rangeFetch(url, start, end), net: true };
+      }
       onmessage = async (e) => {
         const m = e.data;
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
@@ -245,24 +274,18 @@
             // still hits, and a re-uploaded file of a new size misses. pkey is null for URLs
             // that should not persist (cross-origin or query-carrying, i.e. presigned S3).
             const ckey = m.pkey ? 'https://sfs.chunk/' + encodeURIComponent(m.pkey) + '/' + m.start : null;
-            if (ckey) {
-              try {
-                // A prefetch of exactly this chunk may be in flight (backlog 389): wait for it
-                // rather than fetching the same bytes twice.
-                // ...but no longer than a cache step: the prefetch has its own 10 s fetch and two
-                // cache steps, and stacking them under this read ran the worker past the page's limit.
-                if (prefetch && prefetch.ckey === ckey) await Promise.race([prefetch.done, nap(CACHE_MS)]);
-                buf = await cacheRead(ckey);
-              } catch (e) { /* Cache API unavailable: fall through to the network */ }
+            if (ckey && prefetch && prefetch.ckey === ckey) {
+              // A prefetch of exactly this chunk may be in flight (backlog 389): wait for it
+              // rather than fetching the same bytes twice -- but no longer than a cache step: the
+              // prefetch has its own 10 s fetch and two cache steps, and stacking them under this
+              // read ran the worker past the page's limit.
+              try { await Promise.race([prefetch.done, nap(CACHE_MS)]); } catch (e) { /* best effort */ }
             }
-            if (!buf) {
-              buf = await rangeFetch(m.url, m.start, m.end);
-              if (ckey) {
-                // Not awaited: the copy into the shared buffer below reads buf, the put keeps
-                // its own reference, and nothing mutates buf afterwards.
-                cachePut(ckey, buf).catch(() => {});
-              }
-            }
+            const got = await readChunk(m.url, m.start, m.end, ckey);
+            buf = got.buf;
+            // Not awaited: the copy into the shared buffer below reads buf, the put keeps its own
+            // reference, and nothing mutates buf afterwards.
+            if (got.net && ckey) cachePut(ckey, buf).catch(() => {});
           }
           data.set(buf.subarray(0, Math.min(buf.length, data.length)), 0);
           ctrl[1] = buf.length;         // bytes delivered

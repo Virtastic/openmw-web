@@ -234,4 +234,44 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
     'Sound/Cr/rat/roar.wav', 'Music/Explore/mx_explore_7.mp3', 'Tribunal.bsa'], 'archives first, then Fx smallest first, creatures, music; no Vo, no Splash');
 }
 
+// HEDGED READ (prod 2026-10-20: a busy store answered in 0.3-3 s, the network in ~0.1 s; 91 reads
+// froze the Seyda Neen dock for 28 s). Real timers; the store's slowness is simulated.
+{
+  const src3 = body.slice(0, body.indexOf('onmessage = async'));
+  const mk = (caches, fetchImpl) => new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response',
+    src3 + '; return readChunk;')(fetchImpl, AbortController, setTimeout, clearTimeout, caches, () => {}, Response);
+  const bytes = (v) => ({ arrayBuffer: async () => new Uint8Array([v, v]).buffer });
+  const later = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
+  let fetches = 0;
+  const net = async () => { fetches++; return ok(2); };
+  const failNet = async () => { fetches++; throw new TypeError('Failed to fetch'); };
+
+  // A fast hit: the store's bytes, no network.
+  fetches = 0;
+  let r = await mk({ open: async () => ({ match: async () => bytes(1) }) }, net)('u', 0, 2, 'k');
+  assert.deepEqual([...r.buf], [1, 1]); assert.equal(r.net, false); assert.equal(fetches, 0, 'a hit asks no network');
+
+  // A fast miss: straight to the network, worth storing.
+  fetches = 0;
+  r = await mk({ open: async () => ({ match: async () => undefined }) }, net)('u', 0, 2, 'k');
+  assert.equal(r.net, true); assert.equal(fetches, 1);
+
+  // A busy store (answers in 1 s): the network is asked at the hedge and wins.
+  fetches = 0;
+  let t0 = Date.now();
+  r = await mk({ open: async () => ({ match: () => later(1000, bytes(1)) }) }, net)('u', 0, 2, 'k');
+  assert.ok(Date.now() - t0 < 700, 'did not wait for the slow store: ' + (Date.now() - t0) + ' ms');
+  assert.equal(r.net, true, 'the network bytes'); assert.equal(fetches, 1);
+
+  // A busy store and a dead network: the store's late answer is used, not an error.
+  t0 = Date.now();
+  r = await mk({ open: async () => ({ match: () => later(800, bytes(3)) }) }, failNet)('u', 0, 2, 'k');
+  assert.deepEqual([...r.buf], [3, 3], 'fell back to the store'); assert.equal(r.net, false);
+
+  // No store at all (pkey null): the network.
+  fetches = 0;
+  r = await mk({ open: async () => { throw new Error('no store'); } }, net)('u', 0, 2, null);
+  assert.equal(r.net, true); assert.equal(fetches, 1);
+}
+
 console.log('streamfs retry: ok');

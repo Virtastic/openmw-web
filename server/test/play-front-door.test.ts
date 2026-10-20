@@ -209,7 +209,7 @@ test('fetched chunks persist in the Cache API', sfsOpts, () => {
   assert.ok(sfs.includes("caches.open('mwdata-chunks-v1')"), 'no persistent chunk cache');
   // Read back through cacheMatch, which has a deadline: a stalled Cache API must not hang the
   // read (prod 2026-10-19; behaviour pinned in wasm-build/streamfs-retry.test.mjs).
-  assert.ok(sfs.includes('buf = await cacheRead(ckey);'), 'chunks are written but never read back');
+  assert.ok(sfs.includes('Promise.resolve().then(() => cacheRead(ckey))'), 'chunks are written but never read back');
   assert.ok(sfs.includes("const store = () => caches.open('mwdata-chunks-v1');"), 'cacheRead must read the chunk store');
 });
 
@@ -250,7 +250,7 @@ test('streamfs prefetches the next chunk after a sequential miss', sfsOpts, () =
   assert.ok(sfs.includes('if (m.next && m.pkey && !prefetch)'), 'one outstanding prefetch, persistable URLs only');
   // Waits for it -- bounded by a cache step, so a stalled prefetch cannot run the read past the
   // page's timeout (prod 2026-10-19).
-  assert.ok(sfs.includes('if (prefetch && prefetch.ckey === ckey) await Promise.race([prefetch.done, nap(CACHE_MS)]);'), 'a read of the chunk in flight must wait for it, not refetch');
+  assert.ok(sfs.includes('try { await Promise.race([prefetch.done, nap(CACHE_MS)]); }'), 'a read of the chunk in flight must wait for it, not refetch');
   assert.ok(sfs.includes('S.lastMiss.end === start'), 'sequential = this miss starts where the last one ended');
 });
 
