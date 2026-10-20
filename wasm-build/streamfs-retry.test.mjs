@@ -228,8 +228,10 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   for (const [p, s] of mounts) ctx.StreamFS.mount('/mwdata/' + p, 'mwdata/' + p + '?v=2', s);
   assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 6, 'six files queued');
   const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/mwdata\/|\?v=2$/g, ''));
-  assert.deepEqual(order, ['Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav', 'Morrowind.bsa',
-    'Sound/Cr/rat/roar.wav', 'Music/Explore/mx_explore_7.mp3', 'Tribunal.bsa'], 'Fx smallest first, then archives, creatures, music; no Vo, no Splash');
+  // Archives first: the next town comes out of them (prod 2026-10-20: Fx-first left Morrowind.bsa
+  // cold at the Seyda Neen dock, a 26.5 s freeze). Then Fx smallest first, creatures, music.
+  assert.deepEqual(order, ['Morrowind.bsa', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
+    'Sound/Cr/rat/roar.wav', 'Music/Explore/mx_explore_7.mp3', 'Tribunal.bsa'], 'archives first, then Fx smallest first, creatures, music; no Vo, no Splash');
 }
 
 console.log('streamfs retry: ok');

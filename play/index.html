@@ -835,7 +835,7 @@ window.omw = (function(){
    var el, titleEl, st, fill, det, done=false, inited=false, warmQueued=false;
    // What the background warm-up fills, and in which order (see finish()).
    var WARM_RE = /\.bsa$|^\/mwdata\/(sound\/(fx|cr)|music)\//i;
-   var WARM_FIRST = [/^\/mwdata\/sound\/fx\//i, /morrowind\.bsa$/i, /openmw-web-assets\.bsa$/i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
+   var WARM_FIRST = [/morrowind\.bsa$/i, /openmw-web-assets\.bsa$/i, /^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
    function E(){
      if (inited) return el; inited=true;
      el=document.getElementById('loading'); titleEl=document.getElementById('ld-title');
@@ -895,8 +895,13 @@ window.omw = (function(){
      // the main thread: each new sound's first play was a network miss with the game blocked on it
      // (prod 2026-10-19: lone 1-miss windows, sfsStallMs ~ worstFrameMs ~ 0.45-0.8 s, walkr_lt.wav
      // and mx_explore_*.mp3 in sfsSlowTop; players: "each new sound, just the first time").
-     // Fx first (footsteps, hits, doors: heard in every session, 44 MB), then the archives, then
-     // creatures and music. Sound/Vo is left out: 6,400 files / 128 MB of mostly once-heard lines.
+     // ARCHIVES FIRST, then Fx (footsteps, hits, doors), creatures and music. Fx went first for a
+     // day and the ship stage spent its 2.5 minutes on ~440 sound files: the player stepped onto
+     // the Seyda Neen dock with Morrowind.bsa and the asset pack still cold -- 68 misses, a 26.5 s
+     // freeze (prod 2026-10-20 0vdmuiof, 505 chunks warmed, almost none of them the town). The two
+     // archives are ~200 chunks, about a minute; a sound's first-play hitch is a fraction of a
+     // second, a town that has not arrived is the whole screen. Sound/Vo is left out: 6,400 files /
+     // 128 MB of mostly once-heard lines.
      if (!warmQueued) { warmQueued = true; setTimeout(function(){
        try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(WARM_RE, WARM_FIRST); } catch (e) {}
      }, 20000); }
