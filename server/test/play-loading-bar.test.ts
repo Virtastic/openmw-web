@@ -7,11 +7,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const html = readFileSync(join(process.cwd(), '..', 'play', 'index.html'), 'utf8');
-const src = /window\.__omwLoading = (\(function\(\)\{[\s\S]*?\n \}\)\(\));/.exec(html)![1];
+const indexPath = join(process.cwd(), '..', 'play', 'index.html');
+const html = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : '';
+const opts = html === '' ? { skip: 'play/index.html is not part of the server image' } : {};
+const src = /window\.__omwLoading = (\(function\(\)\{[\s\S]*?\n \}\)\(\));/.exec(html)?.[1] ?? '';
 
 function boot() {
   const node = () => {
@@ -31,7 +33,7 @@ function boot() {
   return { ld, els, lines, p };
 }
 
-test('one forward-only bar: download, mount, creep, then the steps after the engine returns', () => {
+test('one forward-only bar: download, mount, creep, then the steps after the engine returns', opts, () => {
   const { ld, els, lines, p } = boot();
   ld.set(50, 'Downloading the game engine', '16 MB received.');
   assert.equal(p(), 0.1, 'the engine download is the first fifth');
