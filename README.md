@@ -54,9 +54,10 @@ release). `./setup.sh --update` or the dashboard's Update button pulls the next 
 back, set `OPENMW_WEB_TAG` in `.env` to the previous tag and `docker compose pull && docker
 compose up -d`.
 
-1. Grab the latest `openmw-web-*.zip` from
-   [Releases](https://github.com/Virtastic/openmw-web/releases) and unzip it into `play/`
-   (the game engine is too big for git - the script reminds you).
+1. The script also installs the game engine: it is too big for git, so it downloads the same
+   release's `openmw-web-*.zip` (about 150 MB), checks it against the release's `SHA256SUMS`,
+   and unpacks it into `play/`. Running `docker compose up` by hand instead? Unzip it into
+   `play/` yourself, or sign-in works and the game page then cannot load the engine.
 2. Your browser opens **http://localhost/admin**. Create your admin account, answer the
    wizard.
 3. Drag your Morrowind `Data Files` folder in when it asks. Play at **http://localhost**.

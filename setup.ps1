@@ -165,24 +165,6 @@ if (-not (Get-ChildItem 'gamedata' -ErrorAction SilentlyContinue)) {
   Write-Host "   wait - the server starts and tells you what is missing."
 }
 
-# THE ENGINE IS NOT IN THE REPOSITORY. play/ carries the game page and its scripts, but
-# openmw.js/.wasm/.data are build outputs (~500 MB of them) and are gitignored, so a fresh
-# clone serves a page with no engine behind it: the dashboard works, the game does not, and
-# the failure is a boot screen that never finishes - nothing anywhere says why. Say it here,
-# where it can still be fixed before anyone is confused.
-# Two layouts count as "the engine is here": openmw.wasm at the root (a developer's own
-# build) and e\<hash>\openmw.wasm (a release zip, whose engine is content-hashed so it can
-# be cached forever). Checking only the root would warn at somebody who had just done the
-# right thing with the release.
-if (-not (Test-Path 'play\openmw.wasm') -and -not (Test-Path 'play\e\*\openmw.wasm')) {
-  Write-Warn "The game engine is not in .\play (no openmw.wasm found)."
-  Write-Host "   The admin dashboard will work, but nobody can PLAY until it is there."
-  Write-Host "   Download openmw-web-<version>.zip from:"
-  Write-Host "     https://github.com/Virtastic/openmw-web/releases"
-  Write-Host "   and unzip its contents into .\play (it is the same layout). Then reload the page -"
-  Write-Host "   no restart needed, the folder is read live."
-}
-
 # ---------------------------------------------------------------------------------------
 if ($Update) { Write-Step "Updating" } else { Write-Step "Choosing the release" }
 # Same flow as the dashboard's Update button, on a first install too: deployments run
@@ -211,6 +193,44 @@ $checkedOut = ($LASTEXITCODE -eq 0)
 foreach ($f in $held) { Copy-Item -LiteralPath (Join-Path $heldDir $f) -Destination $f -Force }
 Remove-Item -Recurse -Force -LiteralPath $heldDir -ErrorAction SilentlyContinue
 if (-not $checkedOut) { Write-Fail "Could not check out $tag (local changes in the way?)" }
+
+# THE ENGINE IS NOT IN THE REPOSITORY (same as setup.sh). It lives in the GitHub release, so a
+# fresh clone serves a game page with no engine: sign-in works, then "Could not load the game
+# engine (openmw.js)". This used to be a warning that scrolled away; real installs missed it.
+# So install the zip of the SAME release just checked out, verified against its SHA256SUMS,
+# into play\ (same layout). Only when missing: updates are the dashboard's Updates card.
+function Test-Engine { (Test-Path 'play\openmw.wasm') -or (Test-Path 'play\e\*\openmw.wasm') }
+if (-not (Test-Engine)) {
+  Write-Step "Installing the game engine ($tag)"
+  $zip = "openmw-web-$tag.zip"
+  $base = "https://github.com/Virtastic/openmw-web/releases/download/$tag"
+  $tmp = Join-Path ([IO.Path]::GetTempPath()) ('omw-engine-' + [guid]::NewGuid())
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  $manual = "Re-run .\setup.ps1, or download $zip from https://github.com/Virtastic/openmw-web/releases/tag/$tag and unzip its contents into .\play."
+  try {
+    Write-Host "Downloading $zip (about 150 MB)..."
+    $ProgressPreference = 'SilentlyContinue'   # the progress bar makes Invoke-WebRequest crawl
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/$zip" -OutFile (Join-Path $tmp $zip)
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile (Join-Path $tmp 'SHA256SUMS')
+  } catch {
+    Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+    Write-Fail "The game engine download from GitHub failed, so nobody could play. $manual"
+  }
+  $want = ''
+  foreach ($line in Get-Content (Join-Path $tmp 'SHA256SUMS')) {
+    if ($line -match '^([0-9a-f]{64})\s+\*?(.+?)\s*$' -and $Matches[2] -eq $zip) { $want = $Matches[1] }
+  }
+  $got = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $tmp $zip)).Hash.ToLower()
+  if (-not $want -or $want -ne $got) {
+    Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+    Write-Fail "The game engine download did not match the release checksum. $manual"
+  }
+  Expand-Archive -LiteralPath (Join-Path $tmp $zip) -DestinationPath 'play' -Force
+  Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+  # The same marker the dashboard's engine update writes, so its Updates card knows the version.
+  Set-Content -LiteralPath 'play\.release-tag' -Value $tag -NoNewline
+  if (-not (Test-Engine)) { Write-Fail "$zip unpacked, but no engine turned up in .\play. $manual" }
+}
 Set-EnvValue 'OPENMW_WEB_TAG' $tag 'The release whose server image runs (ghcr.io/virtastic/openmw-web-server). Managed by setup.ps1; set an older tag and re-run to roll back.'
 
 Write-Step "Pulling the server image"

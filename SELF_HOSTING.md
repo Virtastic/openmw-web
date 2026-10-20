@@ -11,9 +11,11 @@ cd openmw-web
 ./setup.sh        # Windows: .\setup.ps1
 ```
 
-1. Unzip the latest `openmw-web-*.zip` from
-   [Releases](https://github.com/Virtastic/openmw-web/releases) into `play/` (the engine is
-   too big for git; the script reminds you if it is missing).
+1. The script installs the game engine into `play/` for you: the engine is too big for git, so
+   it downloads the same release's `openmw-web-*.zip` from
+   [Releases](https://github.com/Virtastic/openmw-web/releases) and checks it against the
+   release's `SHA256SUMS`. Starting it with `docker compose up` yourself? Unzip that zip into
+   `play/` first, or sign-in works and the game page then cannot load the engine.
 2. Your browser opens **http://localhost/admin**: create the admin account, answer the
    wizard, drag your `Data Files` folder in when it asks.
 3. Play at **http://localhost**.

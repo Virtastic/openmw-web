@@ -162,24 +162,6 @@ if [ -z "$(ls -A gamedata 2>/dev/null)" ]; then
   say "   wait — the server starts and tells you what is missing."
 fi
 
-# THE ENGINE IS NOT IN THE REPOSITORY. play/ carries the game page and its scripts, but
-# openmw.js/.wasm/.data are build outputs (~500 MB of them) and are gitignored, so a fresh
-# clone serves a page with no engine behind it: the dashboard works, the game does not, and
-# the failure is a boot screen that never finishes — nothing anywhere says why. Say it here,
-# where it can still be fixed before anyone is confused.
-# Two layouts count as "the engine is here": openmw.wasm at the root (a developer's own
-# build) and e/<hash>/openmw.wasm (a release zip, whose engine is content-hashed so it can
-# be cached forever). Checking only the root would warn at somebody who had just done the
-# right thing with the release.
-if [ ! -f play/openmw.wasm ] && ! ls play/e/*/openmw.wasm >/dev/null 2>&1; then
-  warn "The game engine is not in ./play (no openmw.wasm found)."
-  say "   The admin dashboard will work, but nobody can PLAY until it is there."
-  say "   Download openmw-web-<version>.zip from:"
-  say "     https://github.com/Virtastic/openmw-web/releases"
-  say "   and unzip its contents into ./play (it is the same layout). Then reload the page —"
-  say "   no restart needed, the folder is read live."
-fi
-
 # ---------------------------------------------------------------------------------------
 if [ "$MODE" = update ]; then step "Updating"; else step "Choosing the release"; fi
 # Same flow as the dashboard's Update button, on a first install too: deployments run
@@ -208,6 +190,45 @@ checkout_release() { # $1 = repo dir, $2 = tag
   return $rc
 }
 checkout_release . "$TAG" || die "Could not check out $TAG (local changes in the way?)"
+
+# THE ENGINE IS NOT IN THE REPOSITORY. play/ carries the game page and its scripts, but
+# openmw.js/.wasm/.data are build outputs (~150 MB zipped) that live in the GitHub release, so
+# a fresh clone serves a page with no engine behind it: the dashboard works, sign-in works,
+# and then the game page dies on "Could not load the game engine (openmw.js)". This used to
+# be a warning here, which scrolled away under the startup output; real installs missed it
+# (2026-10-19). So install it: the zip of the SAME release just checked out, verified against
+# that release's SHA256SUMS, unpacked into play/ (the zip has the same layout). Only when it
+# is missing: updating an existing engine is the dashboard's Updates card, not this script.
+# Two layouts count as "the engine is here": openmw.wasm at the root (a developer's own
+# build) and e/<hash>/openmw.wasm (a release zip, whose engine is content-hashed).
+engine_present() { [ -f play/openmw.wasm ] || ls play/e/*/openmw.wasm >/dev/null 2>&1; }
+install_engine() { # $1 = tag. Prints why on failure; returns non-zero.
+  zip="openmw-web-$1.zip"
+  base="https://github.com/Virtastic/openmw-web/releases/download/$1"
+  for t in curl unzip; do
+    command -v "$t" >/dev/null 2>&1 || { warn "Needs '$t' to download the game engine."; return 1; }
+  done
+  tmp=$(mktemp -d)
+  say "Downloading $zip (about 150 MB)..."
+  if ! curl -fL --retry 3 --progress-bar -o "$tmp/$zip" "$base/$zip" \
+     || ! curl -fsSL --retry 3 -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"; then
+    rm -rf "$tmp"; warn "The download from GitHub failed."; return 1
+  fi
+  want=$(awk -v f="$zip" '{ n = $2; sub(/^\*/, "", n) } n == f { print $1 }' "$tmp/SHA256SUMS")
+  got=$( (sha256sum "$tmp/$zip" 2>/dev/null || shasum -a 256 "$tmp/$zip") | cut -d' ' -f1)
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then
+    rm -rf "$tmp"; warn "The download did not match the release checksum."; return 1
+  fi
+  unzip -oq "$tmp/$zip" -d play || { rm -rf "$tmp"; warn "Could not unpack $zip into ./play."; return 1; }
+  rm -rf "$tmp"
+  # The same marker the dashboard's engine update writes, so its Updates card knows the version.
+  printf '%s\n' "$1" > play/.release-tag
+  engine_present || { warn "$zip unpacked, but no engine turned up in ./play."; return 1; }
+}
+if ! engine_present; then
+  step "Installing the game engine ($TAG)"
+  install_engine "$TAG" || die "The game engine is not installed, so nobody could play. Fix the problem above and re-run ./setup.sh, or download openmw-web-$TAG.zip from https://github.com/Virtastic/openmw-web/releases/tag/$TAG and unzip its contents into ./play."
+fi
 env_set OPENMW_WEB_TAG "$TAG" "The release whose server image runs (ghcr.io/virtastic/openmw-web-server). Managed by setup.sh; set an older tag and re-run to roll back."
 
 step "Pulling the server image"

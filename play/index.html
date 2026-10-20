@@ -4184,8 +4184,15 @@ window.omw = (function(){
   (function(){
     var s = document.createElement('script');
     s.src = __ENGINE_DIR + 'openmw.js';
+    // An UNSTAMPED page (__ENGINE_DIR === '') is the copy git ships, which no release replaced:
+    // the engine was never installed on this server, and "Reload" can never fix that. Say so,
+    // and say who can (2026-10-19: a self-hoster reloaded for an evening).
     s.onerror = function(){ if (typeof fatalOverlay === 'function') fatalOverlay('Engine failed to load',
-      'Could not load the game engine (' + __ENGINE_DIR + 'openmw.js). Reload to try again.'); };
+      __ENGINE_DIR === ''
+        ? 'The game engine is not installed on this server, so the game cannot start. If you run this server: '
+          + 'run ./setup.sh (Windows: .\\setup.ps1) in its folder, or unzip the openmw-web release zip into its '
+          + '"play" folder, then reload. Otherwise, let whoever runs it know.'
+        : 'Could not load the game engine (' + __ENGINE_DIR + 'openmw.js). Reload to try again.'); };
     document.body.appendChild(s);
   })();
 </script>

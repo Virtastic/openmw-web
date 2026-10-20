@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 
-import { engineStatus, installEngineZip, shaFor, startEngineUpdate } from '../src/net/admin/update-engine';
+import { enginePresent, engineStatus, installEngineZip, shaFor, startEngineUpdate } from '../src/net/admin/update-engine';
 import { getInstallProgress } from '../src/net/admin/mod-install';
 import { crc32 } from '../src/core/zip';
 
@@ -169,6 +169,22 @@ test('engineStatus on an empty writable dir: writable, no tag, not present', () 
   assert.deepEqual(engineStatus(dir), { writable: true, tag: null, present: false });
   writeFileSync(join(dir, '.release-tag'), 'not a tag $(rm -rf)\n');
   assert.equal(engineStatus(dir).tag, null, 'a mangled tag file reads as unknown');
+});
+
+test('a game page without an engine is NOT an installed client', () => {
+  // Every git clone ships play/index.html. Counting that as "installed" hid a missing engine
+  // on real servers: sign-in worked, then "Could not load the game engine" (2026-10-19).
+  const dir = tmp();
+  writeFileSync(join(dir, 'index.html'), '<html></html>');
+  assert.equal(enginePresent(dir), false, 'index.html alone is not an engine');
+  assert.equal(engineStatus(dir).present, false);
+  mkdirSync(join(dir, 'e', '153c433662bd'), { recursive: true });
+  assert.equal(enginePresent(dir), false, 'an empty engine folder is not an engine either');
+  writeFileSync(join(dir, 'e', '153c433662bd', 'openmw.wasm'), '');
+  assert.equal(enginePresent(dir), true, 'a release layout: e/<hash>/openmw.wasm');
+  const dev = tmp();
+  writeFileSync(join(dev, 'openmw.wasm'), '');
+  assert.equal(enginePresent(dev), true, "a developer's own build at the root");
 });
 
 test('startEngineUpdate hands back a pollable token and a terminal error frame', async () => {

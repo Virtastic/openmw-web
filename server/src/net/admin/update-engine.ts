@@ -49,8 +49,21 @@ export function engineStatus(clientDir: string): { writable: boolean; tag: strin
     const t = readFileSync(join(clientDir, '.release-tag'), 'utf8').trim();
     if (/^v[0-9A-Za-z.\-]{1,32}$/.test(t)) tag = t;
   } catch { /* never updated from here: unknown, which the UI says honestly */ }
-  const present = existsSync(join(clientDir, 'index.html'));
-  return { writable, tag, present };
+  return { writable, tag, present: enginePresent(clientDir) };
+}
+
+/**
+ * Is there an ENGINE in the client folder, not just a game page? index.html is tracked in git,
+ * so every fresh clone has one, and testing for it reported "installed" on servers with no
+ * engine at all: sign-in worked, then the game page died on "Could not load the game engine
+ * (openmw.js)" and nothing said why (2026-10-19). Same two layouts setup.sh accepts:
+ * openmw.wasm at the root (a developer's own build) or e/<hash>/openmw.wasm (a release zip).
+ */
+export function enginePresent(clientDir: string): boolean {
+  if (existsSync(join(clientDir, 'openmw.wasm'))) return true;
+  try {
+    return readdirSync(join(clientDir, 'e')).some((h) => existsSync(join(clientDir, 'e', h, 'openmw.wasm')));
+  } catch { return false; }
 }
 
 /** Resolve the newest release and its two assets. Shapes only; nothing is downloaded. */

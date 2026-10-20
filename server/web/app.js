@@ -1811,12 +1811,22 @@ function pageReset(token) {
 // ---------------------------------------------------------------------------------------
 // overview
 // ---------------------------------------------------------------------------------------
-/** Is the player-facing web app staged? Served by the proxy from ./client, not by this
- *  server, so the only way to know is to ask for it the way a player's browser would. */
+/** Is the game ENGINE installed, not just the game page? Served by the proxy from ./play, not
+ *  by this server, so ask the way a player's browser does: read the engine version stamped
+ *  into index.html and fetch that engine. This used to ask for launcher.html, which git
+ *  tracks, so every fresh clone "had" a client and the item never showed on servers where
+ *  sign-in worked and the game page then died on "Could not load the game engine" (2026-10-19). */
 let clientStaged = null;
 async function checkClientStaged() {
-  try { clientStaged = (await fetch('/launcher.html', { method: 'HEAD' })).ok; }
-  catch { clientStaged = null; } // unknown: say nothing rather than guess
+  try {
+    const page = await fetch('/index.html', { cache: 'no-store' });
+    if (!page.ok) { clientStaged = false; return; }
+    const ver = (/var __ENGINE_VER = "([^"]*)"/.exec(await page.text()) || [])[1];
+    if (ver === undefined) { clientStaged = null; return; } // a page this check does not know
+    // Unstamped (the placeholder git ships) means the root layout, exactly as index.html reads it.
+    const engine = ver.charAt(0) === '_' ? '/openmw.wasm' : `/e/${encodeURIComponent(ver)}/openmw.wasm`;
+    clientStaged = (await fetch(engine, { method: 'HEAD', cache: 'no-store' })).ok;
+  } catch { clientStaged = null; } // unknown: say nothing rather than guess
 }
 
 async function pageOverview() {
@@ -2200,9 +2210,10 @@ function setupChecklist() {
     // have no way for anyone to play, because the player-facing app ships separately and no
     // screen mentioned it. Derived from a live check, so it clears itself once staged.
     ...(clientStaged === false
-      ? [{ done: false, label: 'Add the player app: unpack an openmw-web release into the '
-             + '"client" folder next to docker-compose.yml. Your Morrowind files are separate '
-             + 'and are not what this is about.' }]
+      ? [{ done: false, hash: '#updates',
+           label: 'Install the game engine, or nobody can play: run ./setup.sh (Windows: '
+             + '.\\setup.ps1), or unzip the openmw-web release zip into the "play" folder of '
+             + 'your checkout. Your Morrowind files are separate and are not what this is about.' }]
       : []),
     // Only shown when there IS an unfinished provider, so it is a live problem rather than
     // a permanent nag: a sign-in button the operator chose and cannot see.
@@ -4381,13 +4392,25 @@ async function pageUpdates() {
   const eng = $('#updEng');
   const e = r.engine || { writable: false, tag: null, present: false };
   if (!e.writable) {
-    eng.innerHTML = html`
-      <p class="small mb-1">This deployment does not give the dashboard write access to the
-        game client folder, so updating it stays a manual step: unzip the release into
-        <span class="vt-mono">./play</span>.</p>
-      <p class="small text-secondary mb-0">The bundled Docker setup gains the access with a
-        one-time <span class="vt-mono">./setup.sh --update</span>; on bare Linux also run
-        <span class="vt-mono">chown -R 1000:1000 ./play</span>.</p>`;
+    // NOT WRITABLE IS THE NORMAL DOCKER CASE: play/ belongs to whoever cloned the repo, and the
+    // server runs as its own user. This used to promise that `./setup.sh --update` grants the
+    // access (it changes no ownership) and to suggest `chown 1000:1000` (the wrong uid for the
+    // multiplayer image), so a server with NO engine sent its owner in circles (2026-10-19).
+    // Say what is true: whether players can play, and the one step that fixes it.
+    eng.innerHTML = e.present
+      ? html`<p class="small mb-0">The dashboard cannot write to the game client folder on this
+          deployment, so client updates are a manual step: unzip
+          <span class="vt-mono">openmw-web-${latestTag}.zip</span> from the
+          <a href="https://github.com/Virtastic/openmw-web/releases" target="_blank" rel="noopener">releases page</a>
+          into <span class="vt-mono">./play</span>, overwriting what is there.</p>`
+      : html`<p class="mb-1 text-warning"><i class="bi bi-exclamation-triangle me-1"></i><strong>No game
+          engine is installed, so nobody can play.</strong> Sign-in works, then the game page
+          fails with "Could not load the game engine".</p>
+        <p class="small mb-0">Fix: run <span class="vt-mono">./setup.sh</span> (Windows:
+          <span class="vt-mono">.\\setup.ps1</span>) in the checkout, which installs it, or unzip
+          <span class="vt-mono">openmw-web-${latestTag}.zip</span> from the
+          <a href="https://github.com/Virtastic/openmw-web/releases" target="_blank" rel="noopener">releases page</a>
+          into <span class="vt-mono">./play</span>. Reload the game page afterwards; no restart needed.</p>`;
   } else if (e.tag === latestTag) {
     eng.innerHTML = html`<div class="text-success">
       <i class="bi bi-check-circle me-1"></i>Players get ${latestTag}, the newest release.</div>`;
