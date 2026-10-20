@@ -168,13 +168,17 @@ export class Quests {
   // Otherwise the write is relayed live (the other clients' scripts stay in step for the
   // session) but not persisted, and counted. The host's own writes are unchanged.
   private static readonly GUEST_WRITE_GRACE_MS = 10_000;
+  holdsDialogue(playerId: number): boolean {
+    for (const held of this.dialogueLocks.values()) if (held.playerId === playerId) return true;
+    return false;
+  }
   private guestWriteUnbacked(player: Player, name: string): boolean {
     if (player.system === true) return false;
     const owner = this.ctx.ownerCharId();
     if (owner === undefined || owner === player.charId) return false;
     const nowMs = Date.now();
     if (player.lastDialogueAt !== undefined && nowMs - player.lastDialogueAt <= Quests.GUEST_WRITE_GRACE_MS) return false;
-    for (const held of this.dialogueLocks.values()) if (held.playerId === player.id) return false;
+    if (this.holdsDialogue(player.id)) return false;
     log('warn', 'quest.guest_write_unbacked', { from: player.name, name });
     this.ctx.noteAnomaly?.(player.accountKey, 'guest_quest_write');
     return true;

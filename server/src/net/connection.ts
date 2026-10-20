@@ -1226,7 +1226,9 @@ export class Connection implements Peer {
         const fromLast = last === undefined ? Infinity : Math.hypot(x - last.x, y - last.y, z - last.z);
         const moving = sinceLast <= 5_000 && fromLast <= SAME_CELL_JUMP + MAX_PLAUSIBLE_SPEED * sinceLast / 1000;
         const explained = moving || player.inChargen === true || recent(player.lastCastAt) || recent(player.lastDoorAt)
-          || recent(player.lastDialogueAt) || recent(player.resurrectedAt, 15_000) || recent(player.joinedWorldAt, 15_000);
+          // Travel (silt strider, boat, guild guide) fires from a conversation that may have been
+          // open far longer than 5 s: an open one explains the jump too (prod 2026-10-20, 53 ku).
+          || recent(player.lastDialogueAt) || this.ctx.quests.holdsDialogue(player.id) || recent(player.resurrectedAt, 15_000) || recent(player.joinedWorldAt, 15_000);
         if (!explained) {
           metrics.cellChangeRefused.inc();
           this.ctx.moderation.noteAnomaly(player.accountKey, 'cell_jump');

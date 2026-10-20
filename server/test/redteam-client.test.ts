@@ -158,6 +158,13 @@ test('#361 (past the join grace) the jump is refused unless a cast, door or conv
   await a.waitEvent('DialogueLockResult');
   a.sendCellChange('0,0', 0, 0, 3000);
   await b.waitEvent('PlayerCellChange', (v) => (v as { id?: number; z?: number }).id === a.playerId && (v as { z?: number }).z === 3000);
+  // Prod 2026-10-20: a silt strider picked after a long look at the destinations. The window is
+  // still open but was opened well past 5 s ago: the open conversation explains the jump.
+  me.lastDialogueAt = Date.now() - 60_000;
+  me.lastCastAt = undefined; me.lastDoorAt = undefined;
+  me.lastDeclared = { x: 0, y: 0, z: 3000, at: Date.now() - 60_000 };
+  a.sendCellChange('0,0', 4000, 4000, 3000);
+  await b.waitEvent('PlayerCellChange', (v) => (v as { id?: number; x?: number }).id === a.playerId && (v as { x?: number }).x === 4000);
 });
 
 // Prod 2026-10-20: an honest Icarian Flight (~8000 u/s) declares a same-cell jump every frame,
