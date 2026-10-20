@@ -53,6 +53,21 @@ local SNAP_DISTANCE = 256 -- near-tier divergence before asking for a teleport (
 local RUN_HOLD_S = 0.3 -- keep the run flag this long after the target stops advancing (#211: anim popping per burst)
 local runUntil = 0
 local STUCK_SECONDS = 0.7 -- commanded to move but no progress this long -> snap
+-- WEDGED, NOT FROZEN. "No progress" used to mean "moved under 1 unit", and a body that is
+-- swimming (it bobs) or scraping along a ledge moves a few units every frame without ever
+-- arriving: a friend's copy ran in place at a shoreline 130-250 u from where they really
+-- stood, for 20 s, under the 256 u snap and exempt from the far-gap snap (players are), while
+-- their own screen had them at the mudcrab (two-browser capture, 2026-10-19). Judged over a
+-- window instead: steering more than WEDGE_GAP off and covering under WEDGE_MIN_MOVE in
+-- WEDGE_S (a steered puppet that far off runs at well over 150 u/s), or -- the target standing
+-- -- not closing the gap by WEDGE_MIN_CLOSE in that time. Either is a body that cannot get
+-- there by walking; it is put there. (Player puppets: NPCs and creatures have the far-gap snap.)
+local WEDGE_GAP = 48
+local WEDGE_S = 1.0
+local WEDGE_MIN_MOVE = 24
+local WEDGE_MIN_CLOSE = 16
+local wedgeAt, wedgePos, wedgeGap = nil, nil, nil
+local wedgeSeen = nil -- last frame the check ran: a skipped frame (parked, far tier, snapped) restarts the window
 -- A GAP THAT WILL NOT CLOSE IS A SNAP, moving or not (s120/s157 #175-#179: a fighting NPC's puppet sat
 -- 260 u from the peer's real NPC, under the 256 u distance snap, swaying enough that the stuck detector
 -- (which only sees a body that does not move) never fired; the player swung at where they saw her and
@@ -542,6 +557,28 @@ local function onUpdate(dt)
     else
         stuckSince = nil
         lastProgressPos = pos
+    end
+
+    -- Wedged (see WEDGE_GAP): the window restarts whenever the body is not steering a real gap.
+    if wedgeSeen and now - wedgeSeen > 0.25 then wedgeAt = nil end
+    wedgeSeen = now
+    -- PLAYERS: NPC and creature puppets have the far-gap snap above (128 u for 2 s); a friend's
+    -- copy is exempt from it, and that exemption is exactly where a wedged body was left alone.
+    if actorKey == nil and steering and dist2d > WEDGE_GAP then
+        if not wedgeAt then
+            wedgeAt, wedgePos, wedgeGap = now, pos, dist2d
+        elseif now - wedgeAt >= WEDGE_S then
+            local moved = (pos - wedgePos):length()
+            local closed = wedgeGap - dist2d
+            if moved < WEDGE_MIN_MOVE or (tgtV < 20 and closed < WEDGE_MIN_CLOSE) then
+                print(string.format('[mp] puppet wedged: %.0f u off, moved %.0f u, closed %.0f u in %.1f s (%s)',
+                    dist2d, moved, closed, now - wedgeAt, tostring(actorKey or playerId)))
+                requestSnap(target, 'wedged')
+            end
+            wedgeAt, wedgePos, wedgeGap = now, pos, dist2d
+        end
+    else
+        wedgeAt, wedgePos, wedgeGap = nil, nil, nil
     end
 
     local curYaw = self.rotation:getYaw()

@@ -683,6 +683,13 @@ do
     -- Jenkins #232: a 0.6 s hold ran out mid-hop and the avatar missed a jump the owner made.
     and av:find('local JUMP_HOLD_S = 1.5', 1, true) ~= nil)
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  -- 2026-10-19 two-browser capture: a friend's copy ran in place at a shoreline 130-250 u off for
+  -- 20 s (swimming bob reset the 1-unit stuck clock; players are exempt from the far-gap snap).
+  check('puppet.lua snaps a friend body that steers but does not arrive (wedged)',
+    pp:find("if moved < WEDGE_MIN_MOVE or (tgtV < 20 and closed < WEDGE_MIN_CLOSE) then", 1, true) ~= nil
+    and pp:find("requestSnap(target, 'wedged')", 1, true) ~= nil
+    and pp:find("if wedgeSeen and now - wedgeSeen > 0.25 then wedgeAt = nil end", 1, true) ~= nil
+    and pp:find("if actorKey == nil and steering and dist2d > WEDGE_GAP then", 1, true) ~= nil)
   check('puppet.lua runs to close a gap a walk cannot (s190)',
     pp:find('or (steering and dist2d > 48)', 1, true) ~= nil)
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
@@ -2215,6 +2222,32 @@ do
     local n = 0; for _, d in ipairs(snaps) do if d.why == 'far' then n = n + 1 end end
     check('a friend puppet 200 u off for 4 s is not far-snapped', n == 0, 'far snaps: ' .. n)
   end
+  -- ...BUT A FRIEND'S BODY THAT CANNOT GET THERE IS PUT THERE (2026-10-19 capture: a copy ran in
+  -- place at a shoreline 130-250 u off for 20 s). Blocked (never moves) -> 'wedged' within ~1 s;
+  -- chasing a friend who runs ahead (moving, not arriving) -> never.
+  local function friendRun(seconds, blocked, targetY)
+    package.loaded['scripts.mp.interp'] = nil
+    local fr = dofile('./openmw/files/data/scripts/mp/puppet.lua')
+    fr.engineHandlers.onInit({ playerId = 8 })
+    snaps = {}
+    me.position = v3(0, 0, 0)
+    local t0 = now
+    while now < t0 + seconds do
+      while nextPose <= now - 0.05 do
+        fr.eventHandlers.MP_Pose({ x = 0, y = targetY(now - t0), z = 0, yaw = 0, pitch = 0, flags = 1, t = now })
+        nextPose = nextPose + 0.05
+      end
+      fr.engineHandlers.onUpdate(dt)
+      if not blocked then me.position = v3(0, me.position.y + (me.controls.movement or 0) * 250 * dt, 0) end
+      now = now + dt
+    end
+    local w = 0; for _, d in ipairs(snaps) do if d.why == 'wedged' then w = w + 1 end end
+    return w
+  end
+  local wedgedBlocked = friendRun(1.6, true, function() return 200 end)
+  check('a friend puppet wedged 200 u off is snapped within ~1 s', wedgedBlocked >= 1, 'wedged snaps: ' .. wedgedBlocked)
+  local wedgedChasing = friendRun(4, false, function(t) return 150 + 200 * t end)
+  check('a friend puppet chasing a friend who runs ahead is not snapped as wedged', wedgedChasing == 0, 'wedged snaps: ' .. wedgedChasing)
   -- and one that closes the gap in time is left alone (after a settle on the mark, which resets the timer)
   me.position = v3(0, 0, 0)
   run(0.5, false, 0)
