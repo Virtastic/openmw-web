@@ -158,15 +158,21 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(await c.cacheMatch('k'), undefined, 'a stalled lookup is a miss, not a hang');
   assert.ok(Date.now() - t0 < 1000, 'gave up at the deadline');
   assert.ok(!c.dead(), 'one slow answer is not a dead store');
-  await c.cacheMatch('k'); await c.cacheRead('k');
-  assert.ok(c.dead(), 'three in a row is');
+  await c.cacheRead('k'); await c.cacheRead('k');
+  assert.ok(!c.dead(), 'late READS are not strikes: the hedged read already served the game');
+  await c.cacheMatch('k', false);
+  assert.ok(!c.dead(), 'nor is the read-ahead');
+  await c.cacheMatch('k'); await c.cacheMatch('k');
+  assert.ok(c.dead(), "three of the warm-up's lookups in a row are");
   assert.deepEqual(msgs, [{ cacheSlow: 1 }], 'said so once');
   const before = opens;
   assert.equal(await c.cacheRead('k2'), undefined);
   assert.equal(opens, before, 'no lookup against a dead store');
 
   // A POISONED ENTRY: the lookup answers, the body never does (the case that still killed every
-  // boot after the first deadline). The read is a miss at the deadline and the entry is deleted.
+  // boot after the first deadline). The read is a miss at the deadline. The entry is NOT deleted:
+  // a busy store's late answers looked the same and lost good chunks; the network copy's put
+  // overwrites a poisoned one.
   const deleted = [];
   const poisoned = { open: async () => ({ match: async () => ({ arrayBuffer: () => new Promise(() => {}) }), delete: async (k) => { deleted.push(k); } }) };
   const p = mk(poisoned, []);
@@ -174,7 +180,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(await p.cacheRead('bsa@0'), undefined, 'a body that never arrives is a miss, not a hang');
   assert.ok(Date.now() - t1 < 1000, 'gave up at the deadline');
   await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(deleted, ['bsa@0'], 'the poisoned entry is removed');
+  assert.deepEqual(deleted, [], 'nothing is deleted on lateness');
 
   // A healthy store answers in time and the bytes come back; a slow answer in between does not
   // count against it once a timely one follows.

@@ -176,13 +176,22 @@
         const q = p.then((v) => { settled = true; return v; }, (e) => { settled = true; throw e; });
         return Promise.race([q, nap(CACHE_MS).then(() => { if (!settled) late(); return undefined; })]);
       };
-      // Is the chunk stored? (the warm-up: no body needed)
-      const cacheMatch = (key) => cacheDead ? Promise.resolve(undefined)
-        : inTime(store().then((c) => c.match(key)).then(cacheOk), cacheLate);
+      // Is the chunk stored? (no body needed). Only the warm-up's lateness strikes: it is the one
+      // caller that would otherwise download everything into a store that keeps nothing. The
+      // read-ahead's late answer is a miss it simply fetches (see cacheRead).
+      const cacheMatch = (key, strike = true) => cacheDead ? Promise.resolve(undefined)
+        : inTime(store().then((c) => c.match(key)).then(cacheOk), strike ? cacheLate : () => {});
       // The chunk's bytes, or undefined: lookup AND body inside one deadline.
+      // A LATE READ IS NOT A STRIKE, AND NOTHING IS DELETED. Reads are hedged (readChunk): past
+      // HEDGE_MS the network serves the game, so a slow store costs the player nothing -- but it
+      // still struck out and deleted the chunk, and a store merely busy with the boot's own writes
+      // was switched off for the session: nothing saved, no warm-up, the next visit downloading
+      // everything again (prod 2026-10-20 after the hedge shipped: cacheSlow in 5 of 13 sessions,
+      // 4 of them with nothing warmed, up to 13 s stepping onto the Seyda Neen dock). A poisoned
+      // entry -- a body that never arrives -- is overwritten by the network copy's put instead.
       const cacheRead = (key) => cacheDead ? Promise.resolve(undefined)
         : inTime(store().then((c) => c.match(key)).then((r) => r ? r.arrayBuffer().then((b) => cacheOk(new Uint8Array(b))) : cacheOk(undefined)),
-          () => { cacheLate(); store().then((c) => c.delete(key)).catch(() => {}); });
+          () => {});
       const cachePut = (key, buf) => cacheDead ? Promise.resolve()
         : Promise.race([store().then((c) => c.put(key, new Response(buf))), nap(CACHE_MS)]);
       async function warm(files, chunk, budget) {
@@ -303,7 +312,7 @@
             prefetch = { ckey: nkey, done: (async () => {
               try {
                 // The read path awaits this, so every cache call here has the deadline too.
-                if (await cacheMatch(nkey)) return;
+                if (await cacheMatch(nkey, false)) return;
                 // ONE rangeFetch attempt, not a bare fetch: a bare fetch had no deadline, so a stalled
                 // prefetch held the read of this very chunk (which awaits it above) past the 60 s
                 // main-thread timeout -- the game died on "read timeout" -- and a 200 stored the
