@@ -118,9 +118,17 @@ window.omw = (function(){
  #loading .ld-status{margin:0 0 22px;font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;
    font-weight:600;color:#c69a52}
  #loading .ld-bar{position:relative;height:4px;border-radius:3px;overflow:hidden;background:rgba(138,104,56,.28)}
- #loading .ld-fill{height:100%;width:0;border-radius:3px;
-   background:linear-gradient(90deg,#8a6838,#d3a84e,#eecb78);transition:width .3s ease}
- #loading.indet .ld-fill{width:34%;animation:ldSlide 1.25s ease-in-out infinite}
+ #loading .ld-fill{height:100%;width:100%;border-radius:3px;transform-origin:0 50%;transform:scaleX(var(--p,0));
+   background:linear-gradient(90deg,#8a6838,#d3a84e,#eecb78);transition:transform .3s ease}
+ #loading.indet .ld-fill{width:34%;transform:none;animation:ldSlide 1.25s ease-in-out infinite}
+ /* THE BAR THAT MOVES WHILE THE PAGE CANNOT. Reading the game data and loading the first area run
+    in one blocking engine call (prod: median ~60 s, worst ~4 min) in which nothing repaints. A
+    transform animation runs on the compositor anyway, so the bar creeps from where the downloads
+    left it toward 90% over the measured typical length, fast then slowing; the first event after
+    the engine returns jumps it to the real step. Not turned off for reduced motion: it is the
+    progress itself, not decoration, and a still bar for a minute reads as a hang. */
+ #loading.creep .ld-fill{animation:ldCreep 80s cubic-bezier(.2,.7,.3,1) forwards}
+ @keyframes ldCreep{from{transform:scaleX(.24)}to{transform:scaleX(.9)}}
  @keyframes ldSlide{0%{transform:translateX(-110%)}100%{transform:translateX(330%)}}
  #loading .ld-detail{margin-top:13px;min-height:16px;font:12px/1.4 ui-monospace,Menlo,monospace;color:#7c705c}
  #loading .ld-credit{margin-top:26px;font-size:11px;letter-spacing:.08em;color:#6a5f4d}
@@ -848,8 +856,40 @@ window.omw = (function(){
      if (done || !E()) return;
      if (label) st.textContent = label;
      if (detail != null) det.textContent = detail;
-     if (typeof pct === 'number'){ el.classList.remove('indet'); fill.style.width = Math.max(0,Math.min(100,pct)) + '%'; }
+     // ONE BAR FOR THE WHOLE BOOT. Each phase used to own the bar: the engine download filled it,
+     // then every later step was the sliding stripe, so 0-100% meant "this one file" and the
+     // remaining minute had no progress at all. During boot the bar only moves forward: downloads
+     // are the first fifth, the blocking engine start creeps (creep()), and the steps after it are
+     // fixed points (BOOT_AT). Later uses of this screen (doors, world switch) behave as before.
+     if (boot){
+       var at = label && BOOT_AT[label];
+       if (at) { bootAt(at); return; }
+       if (typeof pct === 'number') { bootAt(Math.round(Math.max(0, Math.min(100, pct)) * 0.2)); return; }
+       if (bootPct > 0) return; // keep the bar (and any creep) where it is
+     }
+     if (typeof pct === 'number'){ el.classList.remove('indet', 'creep'); fill.style.setProperty('--p', Math.max(0,Math.min(100,pct)) / 100); }
      else el.classList.add('indet');
+   }
+   var boot = true, bootPct = 0;
+   var BOOT_AT = { 'Connecting to the server': 91, 'Signing in': 93, 'Starting your world': 93,
+                   'Placing you where you left off': 95, 'Almost there': 97 };
+   function bootAt(p){
+     if (!E() || p <= bootPct) return; // only forward: a late per-file % never pulls the bar back
+     bootPct = Math.max(bootPct, p);
+     el.classList.remove('indet', 'creep');
+     fill.style.setProperty('--p', bootPct / 100);
+   }
+   // Called with one frame to spare before the engine's blocking start (see 'ld-paint').
+   function creep(){
+     if (!boot || done || !E() || el.classList.contains('creep')) return;
+     bootPct = Math.max(bootPct, 24);
+     // The words go out in the same painted frame: set at 'Running...', they never reached the screen.
+     st.textContent = 'Loading Morrowind';
+     det.textContent = 'Reading the game data and building the first area. The first visit takes a minute or two.';
+     el.classList.remove('indet');
+     fill.style.setProperty('--p', 0.24);
+     el.classList.add('creep');
+     if (window.__omwMark) window.__omwMark('engineStart');
    }
    function fromLog(t){
      var m;
@@ -857,8 +897,8 @@ window.omw = (function(){
      if ((m = /^\[dl\]\s+(\S+)\s+(\d+)%/.exec(t)))      set(+m[2], 'Downloading', m[1] + ' ' + m[2] + '%');
      else if (/^\[dl\]/.test(t))                        set(null, 'Downloading', t.replace(/^\[dl\]\s*/, ''));
      else if (/^\[local\] scanning/.test(t))            set(null, 'Loading');
-     else if ((m = /^\[local\] mounted (\d+) files/.exec(t))) set(null, 'Loading', m[1] + ' files');
-     else if (/^\[(local|mw)\] READY/.test(t))          set(null, 'Entering the world');
+     else if ((m = /^\[(local|mw)\] mounted (\d+) files/.exec(t))) { if (boot) bootAt(20); set(null, 'Preparing game files', m[2] + ' files ready'); }
+     else if (/^\[(local|mw)\] READY/.test(t))          { if (boot) bootAt(22); set(null, 'Starting the game engine', ''); }
      else if (/SKIPPED \(nomw\)/.test(t))               set(null, 'Loading');
      else if (/^\[mw\] loading Morrowind/.test(t))      set(null, 'Preparing game files');
    }
@@ -870,8 +910,10 @@ window.omw = (function(){
                Authing: 'Signing in', Joining: 'Joining your world' };
    var OWNED = /^(Loading Morrowind|Running|Connecting to the server|Signing in|Joining your world|Placing you where you left off)$/;
    setInterval(function(){
-     if (done || !E() || !st || !OWNED.test(st.textContent)) return;
+     if (done || !E() || !st) return;
      var s = (window.omw && window.omw.state) || {}, n = s.state || '';
+     if (window.__omwMark && (n === 'Connecting' || n === 'Authing' || n === 'Joined')) window.__omwMark('net' + n);
+     if (!OWNED.test(st.textContent)) return;
      if (NET[n]) set(null, NET[n], '');
      else if (n === 'Joined' && window.__omwAwaitRestore && window.__omwAwaitRestore())
        set(null, 'Placing you where you left off', '');
@@ -888,6 +930,12 @@ window.omw = (function(){
        return;
      }
      done=true;
+     if (boot) {
+       boot = false;
+       // Where this player's boot went, once per page: ms from navigation start (see __omwMark).
+       try { if (window.__omwMark) window.__omwMark('released');
+         var B = window.__omwBoot || {}; append('[boot] ' + Object.keys(B).map(function(k){ return k + '=' + B[k]; }).join(' ')); } catch (e) {}
+     }
      // In the world: start filling the chunk cache from the game archives in the background, so
      // something new coming into view is a local read rather than a network stall (streamfs warm).
      // LOOSE AUDIO TOO. Sound/ and Music/ are loose files, not in any BSA, and the engine decodes a
@@ -933,7 +981,7 @@ window.omw = (function(){
      if (locked) return;
      done = true; el.classList.add('hide'); el.style.display = 'none';
    }
-   return { set:set, fromLog:fromLog, done:finish, show:show, withdraw:withdraw,
+   return { set:set, fromLog:fromLog, done:finish, creep:creep, show:show, withdraw:withdraw,
             hide: function(){ if (!locked) finish(); },
             lock:lock, unlock:unlock };
  })();
@@ -1620,7 +1668,21 @@ window.omw = (function(){
      } catch (e) {}
      return [];
    })(),
+   // ONE PAINTED FRAME BEFORE THE ENGINE BLOCKS. main() starts in the task that releases the last
+   // run dependency, so a creep started there never reached the compositor and the bar sat still.
+   // 'ld-paint' is held until every other dependency is gone, then released a frame later (or after
+   // 100 ms: a hidden tab gets no frames and must not stall its boot).
+   monitorRunDependencies: function(left){
+     window.__omwDepsLeft = left;
+     if (left !== 1 || !window.__omwPaintArmed || window.__omwPaintGo) return;
+     window.__omwPaintGo = true;
+     try { if (window.__omwLoading) window.__omwLoading.creep(); } catch (e) {}
+     var gone = false, go = function(){ if (gone) return; gone = true; removeRunDependency('ld-paint'); };
+     requestAnimationFrame(function(){ setTimeout(go, 0); });
+     setTimeout(go, 100);
+   },
    preRun: [function(){
+     addRunDependency('ld-paint');
      try {
        ENV.HOME='/home/web_user'; ENV.USER='player'; ENV.LOGNAME='player';
        // ?nomw boots the free example-suite: enable its compat shims (chargen auto-confirm,
@@ -4022,6 +4084,10 @@ window.omw = (function(){
 
        append('[preRun] env + user dirs ready');
      } catch(e){ append('[preRun error] '+e,'err'); }
+     // Armed after every synchronous dependency is in (and even if preRun threw: never hold the
+     // boot); if the async ones already finished, go now.
+     window.__omwPaintArmed = true;
+     if (window.__omwDepsLeft === 1) Module.monitorRunDependencies(1);
    }],
    print: (t)=>{ console.log(t); append(t); },
    printErr: (t)=>{ console.warn(t); append(t,'err'); },
@@ -4050,7 +4116,7 @@ window.omw = (function(){
          // only the CSS animations keep moving. Say what is happening and that it is expected,
          // or a first visit reads as a hang (prod 2026-10-15, player report).
          else if (/^Running/.test(t)) window.__omwLoading.set(null, 'Loading Morrowind',
-           'Reading the game data. The first visit can take a minute.');
+           'Reading the game data and building the first area. The first visit takes a minute or two.');
          else window.__omwLoading.set(null, t.replace(/\.\.\.$/, ''));
        }
      } catch(e){}
