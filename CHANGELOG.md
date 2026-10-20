@@ -2,6 +2,25 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.4
+
+These fixes were already live on the hosted server; this release brings them to self-hosted ones.
+
+**Seyda Neen no longer freezes when you step off the ship.** A bug in 1.6.3's file-cache timeouts
+switched off the game's file cache in every session, so nothing was kept between visits and walking
+into town could freeze the game for up to half a minute on the first visit. The cache stays on now,
+and the background pre-load fills the main game archives before sounds and music, so the town is
+ready when you get there.
+
+**Pressing F2 no longer stops the game.** F2 opens OpenMW's post-processing panel, which the browser
+version can't use, and closing it could crash the game for good. In the browser it now just says the
+panel isn't available.
+
+**Setup checks what it needs before it starts.** `./setup.sh` now checks for git, curl and unzip up
+front and prints the command to install them on your system (it used to stop halfway, at the engine
+download). A Docker "permission denied" now says how to add yourself to the docker group instead of
+saying Docker isn't running.
+
 ## 1.6.3
 
 **Setup installs the game engine.** The engine is too big for git, and a fresh install never got
