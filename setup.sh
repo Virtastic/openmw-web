@@ -9,9 +9,9 @@
 #   ./setup.sh --update   pull a newer version and restart
 #   ./setup.sh --stop     stop everything (your data is kept)
 #
-# Plain POSIX sh on purpose: it runs on whatever a fresh mac or a bare Debian box already
-# has, with nothing to install first. The whole point is that the FIRST thing an operator
-# does cannot itself require setting something up.
+# Plain POSIX sh on purpose (dash on Debian). Beyond Docker it needs git, curl and unzip; a
+# minimal Linux install lacks the last two, so the script checks first and prints the one
+# command that installs them.
 set -eu
 
 # ---------------------------------------------------------------------------------------
@@ -57,8 +57,15 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! docker info >/dev/null 2>&1; then
-  die "Docker is installed but not running. Start Docker Desktop (or the docker service) and try again."
+if ! dinfo=$(docker info 2>&1); then
+  # NOT RUNNING, OR NOT YOURS. On Linux the usual reason is permission, not a stopped daemon: a
+  # user outside the docker group gets "permission denied" on the socket, and being told to
+  # "start Docker" sends them to fix the wrong thing (Debian trixie test, 2026-10-20).
+  case "$dinfo" in
+    *"permission denied"*|*"Permission denied"*)
+      die "Docker is running, but this user may not use it. Run:  sudo usermod -aG docker \$USER  then log out and back in (or run ./setup.sh with sudo)." ;;
+  esac
+  die "Docker is installed but not running. Start Docker Desktop (or the docker service: sudo systemctl start docker) and try again."
 fi
 
 # Compose ships two ways: the v2 plugin (`docker compose`) and the older standalone binary
@@ -72,6 +79,24 @@ else
   die "Docker Compose is missing. Update Docker Desktop, or install the compose plugin."
 fi
 say "Docker is ready ($DC)."
+
+# WHAT A MINIMAL LINUX INSTALL LACKS. A fresh Debian (trixie) or Ubuntu server has no curl and no
+# unzip, and the script needs both: curl to fetch the game engine and to wait for the dashboard,
+# unzip to install the engine. Without them it got halfway (the release checked out) and then
+# stopped on "Needs 'curl'" with no word on how to get it (Debian trixie test, 2026-10-20). Ask
+# for everything up front, with the command for this system.
+need=''
+for t in git curl unzip; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+if [ -n "$need" ]; then
+  warn "Missing:$need"
+  if command -v apt-get >/dev/null 2>&1; then say "   Install them with:  sudo apt-get install -y$need"
+  elif command -v dnf >/dev/null 2>&1; then say "   Install them with:  sudo dnf install -y$need"
+  elif command -v pacman >/dev/null 2>&1; then say "   Install them with:  sudo pacman -S$need"
+  elif command -v apk >/dev/null 2>&1; then say "   Install them with:  sudo apk add$need"
+  elif command -v brew >/dev/null 2>&1; then say "   Install them with:  brew install$need"
+  fi
+  die "Install the tools above, then run ./setup.sh again."
+fi
 
 # ---------------------------------------------------------------------------------------
 if [ "$MODE" = stop ]; then
