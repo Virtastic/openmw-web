@@ -141,6 +141,7 @@ test('#361 (past the join grace) the jump is refused unless a cast, door or conv
   // roster rather than sleeping 15 s.
   const me = server.roster.get(a.playerId)!;
   me.joinedWorldAt = Date.now() - 60_000;
+  me.lastDeclared = { x: 0, y: 0, z: 0, at: Date.now() - 60_000 }; // ...and has stood there since
   b.inbox.events.length = 0;
   a.sendCellChange('0,0', 3000, 0, 0); // through the walls
   await fence(a, b);
@@ -157,6 +158,47 @@ test('#361 (past the join grace) the jump is refused unless a cast, door or conv
   await a.waitEvent('DialogueLockResult');
   a.sendCellChange('0,0', 0, 0, 3000);
   await b.waitEvent('PlayerCellChange', (v) => (v as { id?: number; z?: number }).id === a.playerId && (v as { z?: number }).z === 3000);
+});
+
+// Prod 2026-10-20: an honest Icarian Flight (~8000 u/s) declares a same-cell jump every frame,
+// and the peer's avatar (which does not fly) overwrote player.pose between them -- every later
+// frame was refused against that stuck spot, 81 times in two flights. A stream of declarations
+// no faster than the engine moves is motion; a hop from standing still is not.
+test('a same-cell jump stream at flight speed is accepted; a jump from standing still is not', async (t) => {
+  const { server } = await boot(t);
+  const { c: a } = await join(t, server, 'Flyer');
+  const { c: b } = await join(t, server, 'Watcher');
+  const me = server.roster.get(a.playerId)!;
+  me.joinedWorldAt = Date.now() - 60_000;
+  const relayed = (x: number) => b.waitEvent('PlayerCellChange', (v) => (v as { id?: number; x?: number }).id === a.playerId && (v as { x?: number }).x === x);
+  a.sendCellChange('0,0', 100, 0, 0); // the take-off frame, beside where they stood
+  await relayed(100);
+  for (const x of [600, 1100, 1600]) { // ~500 u a frame
+    a.sendCellChange('0,0', x, 0, 0);
+    await relayed(x);
+    // the avatar did not fly: between frames the peer's pose drags player.pose back to the start
+    me.pose = { ...me.pose!, x: 0, y: 0, z: 0 };
+  }
+  await new Promise((r) => setTimeout(r, 300)); // a 300 ms hitch mid-flight: 2,500 u in one frame
+  a.sendCellChange('0,0', 4100, 0, 0);
+  await relayed(4100);
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'flyer')).cell_jump ?? 0, 0, 'an honest flight was flagged');
+
+  // Landed, and stood for a minute: a jump from here is a teleport again.
+  me.lastDeclared = { ...me.lastDeclared!, at: Date.now() - 60_000 };
+  me.pose = { ...me.pose!, x: 4100, y: 0, z: 0 };
+  b.inbox.events.length = 0;
+  a.sendCellChange('0,0', 4100, 3000, 0);
+  await fence(a, b);
+  assert.equal(b.inbox.events.filter((e) => e.name === 'PlayerCellChange' && (e.value as { id?: number }).id === a.playerId).length, 0,
+    'a jump from standing was relayed');
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'flyer')).cell_jump, 1);
+  // ...and faster than the engine moves is not a flight either: 20,000 u straight after a frame.
+  a.sendCellChange('0,0', 4100, 0, 0); // where they stand (0 u: accepted, and a fresh baseline)
+  await relayed(4100);
+  a.sendCellChange('0,0', 4100, 0, 20_000);
+  await fence(a, b);
+  assert.equal((await anomaliesOf(server.port, TOKEN, 'flyer')).cell_jump, 2, 'a hop past engine speed was accepted');
 });
 
 // #362 spellbook half: pins playerstate.ts handleSpellbook's byAccount check (commit 56e147e1) --

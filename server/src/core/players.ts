@@ -162,6 +162,9 @@ export interface Player {
   // `rebase`: a cross-cell move whose avatar may still be moved ONCE to where the client
   // walked while the peer loaded the cell (connection.ts, the door-snap fix).
   teleportPose?: { x: number; y: number; z: number; at: number; seq: number; armedAt?: number; rebase?: boolean };
+  // The last ACCEPTED PlayerCellChange position: the baseline a stream of same-cell
+  // declarations (fast motion) is measured from (connection.ts handleCellChange).
+  lastDeclared?: { x: number; y: number; z: number; at: number };
   avatarPoseLogged?: boolean;
   statsDropLogged?: boolean; // one simpeer.avatar_stats_gated log per streak // simpeer.avatar_first_pose emitted for this session
   peerPoseAt?: number;

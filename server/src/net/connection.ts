@@ -32,6 +32,9 @@ const MAX_CELLS_PER_SESSION = 4096;
 // #361: a same-cell PlayerCellChange further than this from the last pose, with nothing
 // seen that explains a teleport, is refused. A room is smaller; a Recall is explained.
 const SAME_CELL_JUMP = 1024;
+// Units/second no honest client exceeds: vanilla sprint is ~600, Icarian Flight (Jump 1000)
+// measured ~8000 on prod 2026-10-20; beyond this is console speed. Shared by the move envelope.
+const MAX_PLAUSIBLE_SPEED = 12000;
 // The door-snap rebase (handleAvatarMoveBatch): the client's hard-snap distance
 // (player.lua SNAP_DIST), and how far past a door a player can have walked while the peer
 // loaded the cell -- a sprint with room to spare, capped at a large interior's span.
@@ -1116,7 +1119,7 @@ export class Connection implements Peer {
       // Units/second. Vanilla sprint is ~600; levitate + fortify speed reaches a few
       // thousand. 12000 is beyond anything the engine produces without console commands.
       // dt < 5: a longer gap is a load screen or an AFK, where displacement says nothing.
-      if (speed > 12000 && dt < 5) {
+      if (speed > MAX_PLAUSIBLE_SPEED && dt < 5) {
         const run = (player.implausibleRun ?? 0) + 1;
         player.implausibleRun = run;
         metrics.implausibleMoves.inc();
@@ -1210,7 +1213,19 @@ export class Connection implements Peer {
       if (dx * dx + dy * dy + dz * dz > SAME_CELL_JUMP * SAME_CELL_JUMP) {
         const now = Date.now();
         const recent = (t: number | undefined, ms = 5_000) => t !== undefined && now - t <= ms;
-        const explained = player.inChargen === true || recent(player.lastCastAt) || recent(player.lastDoorAt)
+        // A STREAM OF DECLARATIONS IS MOTION, NOT A TELEPORT. Anything faster than 256 u a frame
+        // declares every frame (Icarian Flight, a hitch mid-sprint), and between two of them the
+        // peer's avatar -- which does not fly -- overwrites player.pose, so the next frame was
+        // judged against a body thousands of units back and every later one against the same
+        // stuck spot: 81 refusals and cell_jump anomalies from one honest flyer in two flights
+        // (prod 2026-10-20). So a hop is also measured from the last ACCEPTED declaration, at a
+        // speed the engine can produce. A jump from standing (nothing declared for 5 s) is
+        // judged exactly as before.
+        const last = player.lastDeclared;
+        const sinceLast = last === undefined ? Infinity : now - last.at;
+        const fromLast = last === undefined ? Infinity : Math.hypot(x - last.x, y - last.y, z - last.z);
+        const moving = sinceLast <= 5_000 && fromLast <= SAME_CELL_JUMP + MAX_PLAUSIBLE_SPEED * sinceLast / 1000;
+        const explained = moving || player.inChargen === true || recent(player.lastCastAt) || recent(player.lastDoorAt)
           || recent(player.lastDialogueAt) || recent(player.resurrectedAt, 15_000) || recent(player.joinedWorldAt, 15_000);
         if (!explained) {
           metrics.cellChangeRefused.inc();
@@ -1272,6 +1287,7 @@ export class Connection implements Peer {
         else player.peer.sendEvent('QuestSpawn', body);
       }
     });
+    player.lastDeclared = { x, y, z, at: Date.now() };
     player.teleportPose = { x, y, z, at: Date.now(), seq: player.inputSeq ?? 0, armedAt: Date.now(), // peer poses ignored until the avatar arrives (players.ts)
       rebase: oldCell !== undefined && oldCell !== cellKey };
     player.cellKey = cellKey;
