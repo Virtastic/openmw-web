@@ -214,11 +214,21 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     // step of that size per stat per window, so ramping the maximum 50 points a tick to
     // 2000 and "healing" to it is refused at the second step.
     const MAX_BASE = 2000, MAX_BASE_STEP = 60, BASE_STEP_WINDOW_MS = 10_000;
+    // MAGICKA IS INTELLIGENCE TIMES A MULTIPLIER, and the multiplier jumps: a Breton Atronach is
+    // 3.5x, a High Elf Atronach 4.5x, and the client reports the bare 1x for a moment after a
+    // cell change, before the race and birthsign abilities are back on. Both edges were refused
+    // as implausible (prod 2026-10-20, GoldFish: 50 -> 175 refused, then 175 -> 50 twice), and
+    // the avatar -- the body that casts -- kept the wrong maximum. Anything up to 5x intelligence
+    // is a real character; the step rule still guards the range above it.
+    const intel = ctx.store.getCached(player.charId)?.stats?.attributes?.intelligence;
+    const MP_MULT_MAX = 5;
     const newBase = (k: 'hp' | 'mp' | 'ft', v: DynamicStatDoc): number | undefined => {
       const have = cur?.[k]; if (have === undefined) return undefined;
       if (Math.abs(v.b - have.b) < 0.5) return undefined;
       const nowMs = Date.now();
       const steps = (player.baseStepAt ??= {});
+      const racialMagicka = k === 'mp' && typeof intel === 'number' && v.b >= 1 && v.b <= Math.min(MAX_BASE, intel * MP_MULT_MAX);
+      if (racialMagicka) return v.b;
       if (v.b < 1 || v.b > MAX_BASE || Math.abs(v.b - have.b) > MAX_BASE_STEP
         || (steps[k] !== undefined && nowMs - steps[k] < BASE_STEP_WINDOW_MS)) {
         noteGain(ctx, player, 'base_step', { stat: k, from: have.b, to: v.b });

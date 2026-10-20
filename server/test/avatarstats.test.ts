@@ -224,6 +224,35 @@ test('a client heal reaches the peer, and sustained fake healing is refused', as
     `sustained fake magicka refills were accepted ${refills} times -- casting would be free`);
 });
 
+// MAGICKA IS INTELLIGENCE TIMES A MULTIPLIER (prod 2026-10-20, a Breton Atronach): the client's
+// maximum goes 50 -> 175 when the race and birthsign abilities apply and back to 50 for a moment
+// after a cell change. Both edges were refused as implausible steps and the avatar kept the wrong
+// pool. Up to 5x intelligence is a real character, in either direction; past it the step rule holds.
+test('a racial or birthsign magicka maximum reaches the avatar; a pool past 5x intelligence does not', async (t) => {
+  const { peer, a } = await world(t);
+  let seq = 0;
+  a.sendInput({ move: 1 }, ++seq);
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(100) }] }), 150);
+  t.after(() => clearInterval(reporter));
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 100);
+  a.sendEvent('PlayerAttributes', { intelligence: 50 });
+  const mpBase = (b: number) => peer.waitEvent('AvatarRestore',
+    (v) => (v as { id?: number; mp?: { b?: number } })?.id === a.playerId && (v as { mp?: { b?: number } }).mp?.b === b);
+  a.sendEvent('PlayerStatsDynamic', { ...bars(100), mp: { c: 50, b: 175 } });
+  await mpBase(175);
+  a.sendEvent('PlayerStatsDynamic', { ...bars(100), mp: { c: 50, b: 50 } });
+  await mpBase(50);
+  a.sendEvent('PlayerStatsDynamic', { ...bars(100), mp: { c: 50, b: 175 } });
+  await mpBase(175);
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { ...bars(100), mp: { c: 50, b: 400 } });
+  await new Promise((r) => setTimeout(r, 400));
+  assert.ok(!peer.inbox.events.some((e) => e.name === 'AvatarRestore' && (e.value as { mp?: { b?: number } })?.mp?.b === 400),
+    'a 400-point pool on 50 intelligence was forwarded to the avatar');
+});
+
 // THE GAIN, NOT THE BAR (backlog 461, s165 +6..+10 of 50; s150 +0). The client's `c` is
 // `last peer report + what it healed since`, and that report is a round trip stale after every
 // raise this handler applies: the next claim computed `old report + small gain`, sat BELOW the
