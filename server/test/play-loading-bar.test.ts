@@ -54,7 +54,10 @@ test('one forward-only bar: download, mount, creep, then the steps after the eng
   assert.ok(!els.loading.cls.has('creep'));
   ld.show('Almost there', 'Settling the world…');
   assert.equal(p(), 0.97, 'the settle hold is a step, not the stripe');
+  ld.creep(); // (a fast boot can still be creeping when the world is ready)
   ld.done();
+  assert.equal(p(), 1, 'the bar fills as the screen fades');
+  assert.ok(!els.loading.cls.has('creep'));
   assert.match(lines.join('\n'), /^\[boot\] scriptStart=5/m, 'the boot timeline is reported once');
   ld.show('Loading', 'Entering a new area…');
   assert.ok(els.loading.cls.has('indet'), 'after boot, a door load is the stripe as before');

@@ -953,7 +953,7 @@ window.omw = (function(){
      if (!warmQueued) { warmQueued = true; setTimeout(function(){
        try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(WARM_RE, WARM_FIRST); } catch (e) {}
      }, 20000); }
-     el.classList.remove('indet'); fill.style.width='100%'; el.classList.add('hide');
+     el.classList.remove('indet', 'creep'); fill.style.setProperty('--p', 1); el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);
    }
    // The SAME screen, reused for every later wait (world switch, reconnect, cell load) instead
