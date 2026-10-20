@@ -33,6 +33,15 @@ function boot() {
   return { ld, els, lines, p };
 }
 
+// WRITTEN IS NOT SENT. The page ships only warnings, errors and a list of prefixes to the server;
+// the [boot] line was written on every boot and dropped there (prod 2026-10-20: none arrived).
+test('the boot timeline line is one the page ships to the server', opts, () => {
+  const want = /function want\(text, cls\)\{[\s\S]*?\n   \}/.exec(html)?.[0] ?? '';
+  const keep = new Function('mode', `${want}; return want;`)('default');
+  assert.equal(keep('[boot] scriptStart=5 released=40000'), true);
+  assert.equal(keep('[status] Running...'), false, 'the filter still filters');
+});
+
 test('one forward-only bar: download, mount, creep, then the steps after the engine returns', opts, () => {
   const { ld, els, lines, p } = boot();
   ld.set(50, 'Downloading the game engine', '16 MB received.');

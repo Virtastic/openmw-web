@@ -565,6 +565,8 @@ window.omw = (function(){
      // client mounted. Weather meshes "not found" in every prod session while present in the
      // BSAs and loading fine in the harness were undiagnosable without it.
      if (/^\[(mw|assets|data)\] |Adding BSA archive|Adding data directory|Loading content file/.test(text)) return true;
+     // One line per page: where this boot's seconds went (__omwLoading, the boot timeline).
+     if (/^\[boot\] /.test(text)) return true;
      // HOW FAR THE JOIN GOT. Sessions that sat on the loading screen until the 5-minute settle
      // ceiling with no error shipped at all (prod 2026-10-18: 4 of 6) -- the game was running and
      // never joined, and nothing said where the session stopped. A handful of lines per boot.
