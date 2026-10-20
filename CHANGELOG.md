@@ -2,6 +2,25 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.3
+
+**Setup installs the game engine.** The engine is too big for git, and a fresh install never got
+one: sign-in worked, then the game page failed with "Could not load the game engine". `./setup.sh`
+(and `.\setup.ps1`) now download the matching release's engine, check it against the release's
+checksums and install it. The dashboard's Overview and Updates pages now say plainly when no engine
+is installed, and the game page tells you how to fix it instead of only offering Reload.
+
+**Getting into the game is more reliable.** In some browsers the game's file cache could stall and
+hang the loading screen until it timed out; it now gives up after a few seconds and downloads
+instead. A reload (F5) no longer needs extra boots to sign back in.
+
+**Sounds and music no longer stall on their first play**: they are pre-loaded in the background
+along with the game archives.
+
+**Multiplayer feels better**: a jump pressed mid-hop is no longer lost on the server, so chained
+rock hops stop rubber-banding you back, and a friend whose body got stuck on a ledge or bobbing in
+the water on your screen is put back where they really are.
+
 ## 1.6.2
 
 **New areas load without stalls.** Since mid-October the game files a server hosts were never kept in
