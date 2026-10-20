@@ -9,6 +9,8 @@
 
 export const W = { key: 'w', code: 'KeyW', keyCode: 87 };
 export const S = { key: 's', code: 'KeyS', keyCode: 83 };
+const SPACE = { key: ' ', code: 'Space', keyCode: 32, text: ' ' };
+const LOCK = "(function(){var c=document.querySelector('canvas'); try { var p=c.requestPointerLock(); return p&&p.then?p.then(function(){return 'locked'},function(e){return 'rejected:'+e}):'requested'; } catch(e){ return 'threw:'+e; }})()";
 export const WEAPON = 'iron longsword';
 
 export const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
@@ -20,8 +22,25 @@ const flat = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
 export async function focus(c) {
   await c.mouseHold(60);
   await c.dismissTour(3000).catch(() => {});
-  await c.evalGesture("(function(){var c=document.querySelector('canvas'); try { var p=c.requestPointerLock(); return p&&p.then?p.then(function(){return 'locked'},function(e){return 'rejected:'+e}):'requested'; } catch(e){ return 'threw:'+e; }})()");
+  c.lockHeld = (await c.evalGesture(LOCK)) === 'locked';
   await c.eval("(function(){var c=document.querySelector('canvas'); if(c) c.focus(); return 1;})()");
+}
+
+// A MESSAGE BOX THE GAME OPENED, CLOSED THE WAY A PLAYER CLOSES IT. Morrowind's tutorial boxes
+// ("You're on your own now. Good luck.", CharGenJournalMessage on the census-office door, within
+// 300 u -- Fargoth stands ~250 u from it) are engine windows, not a Lua UI mode: uiMode stays
+// 'none', but the engine takes the mouse back (the pointer lock goes) and pauses the local world,
+// so playercontrols never sets controls.use and no press ever reaches the avatar. #236 s128: 110
+// swings each, 0 presses on the peer, the mark untouched. Space presses the box's focused OK
+// (keyboardnavigation.cpp accept). Not Enter: with no UI mode mirrored the page takes Enter as
+// open-chat (index.html Enter-to-chat), and the chat's Interface mode then held the mouse instead.
+async function closeEngineBox(ctx, c) {
+  if (!c.lockHeld || String(await c.eval("document.pointerLockElement ? 'locked' : String(window.omw.state.uiMode)")) !== 'none') return false;
+  ctx.log('  (the game opened a message box -- the mouse is free, no UI mode: pressing Space on its OK)');
+  await c.key(SPACE);
+  await ctx.sleep(500);
+  await c.evalGesture(LOCK); // the mouse back to the game, as the player's next click would
+  return true;
 }
 
 // The sword, the skill to land it (a fresh character misses most swings; the miss is not the
@@ -107,6 +126,7 @@ export async function swingUntil(ctx, c, getTarget, done, { reach = 110, closeIn
       ctx.log(`  the swinger died after ${swings} swing(s)`);
       return { done: false, swings, snaps, died: true };
     }
+    if (await closeEngineBox(ctx, c)) continue;
     const [t, me] = [await getTarget(), await poseOf(c)];
     if (!t || !me) { await ctx.sleep(500); continue; }
     const d = flat(t, me);
