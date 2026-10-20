@@ -273,3 +273,11 @@ test('a refused invite says where to get one', () => {
   assert.ok(play.indexOf('const helpLink') < play.indexOf("const err = /[#&]mperror="),
     'helpLink is defined before the refusal note uses it');
 });
+
+test('a boot that cannot get its memory yet retries, then says so', clientOpts, () => {
+  // prod 2026-10-20: "WebAssembly.Memory(): could not allocate memory" right after the same
+  // browser's previous game ended; the boot screen just sat there.
+  assert.ok(index.includes('WebAssembly\.Memory\(\): could not allocate memory'), 'the allocation failure is recognised');
+  assert.ok(index.includes("var MKEY = 'omw-mem-retries'"), 'retries are bounded per tab');
+  assert.ok(index.includes("fatalOverlay('Not enough memory to start the game'"), 'past the retries it says what to do');
+});

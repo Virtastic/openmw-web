@@ -4141,7 +4141,30 @@ window.omw = (function(){
      } catch(e){ append('[pump error] '+e,'err'); }
    },
  };
- window.addEventListener('error', function(e){ append('window error: '+e.message,'err'); if(e.error&&e.error.stack) append('STACK:\n'+e.error.stack,'err'); showLogOnce(); });
+ window.addEventListener('error', function(e){ append('window error: '+e.message,'err'); if(e.error&&e.error.stack) append('STACK:\n'+e.error.stack,'err'); showLogOnce();
+   // THE LAST GAME HAS NOT LET GO OF ITS MEMORY YET. The engine reserves one large shared memory
+   // at startup (wasm64 + threads), and a page that navigates into the next game -- a world
+   // switch, the sign-in rescue, a quick reload -- can ask for it before the browser has freed
+   // the previous page's: "WebAssembly.Memory(): could not allocate memory", and the boot screen
+   // just sat there (prod 2026-10-20: 3 boots, two of them 6-7 s after the same browser's last
+   // game ended). Wait a moment and try again, twice at most; past that it is a real shortage.
+   if (/WebAssembly\.Memory\(\): could not allocate memory|Out of memory/i.test(String(e.message))
+       && !(window.Module && window.Module.__omwRunning !== undefined)) {
+     var MKEY = 'omw-mem-retries', now = Date.now(), tries = [];
+     try { tries = JSON.parse(sessionStorage.getItem(MKEY) || '[]').filter(function(t){ return now - t < 120000; }); } catch (x) {}
+     if (tries.length < 2) {
+       tries.push(now);
+       try { sessionStorage.setItem(MKEY, JSON.stringify(tries)); } catch (x) {}
+       append('[boot] memory not free yet -- retrying in 3 s (' + tries.length + '/2)', 'err');
+       try { if (window.__omwLoading) window.__omwLoading.show('Getting the game ready', 'Freeing memory from the last session…'); } catch (x) {}
+       setTimeout(function(){ window.__omwAllowLeave = true; location.reload(); }, 3000);
+     } else {
+       fatalOverlay('Not enough memory to start the game',
+         'Your browser could not set aside the memory the game needs. Close other tabs running the game '
+         + '(and any other heavy tabs), then reload.');
+     }
+   }
+ });
  // Pointer-lock re-requests are browser rate-limited ("cannot be acquired immediately after the
  // user has exited the lock"). SDL's own requestPointerLock() promise has no .catch, so that
  // rejection surfaces as console noise right when the game grabs the mouse (e.g. new-game start).
