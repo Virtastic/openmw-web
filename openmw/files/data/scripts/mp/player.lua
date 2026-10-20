@@ -454,7 +454,12 @@ end
 -- the engine opened by itself -- an arrest, s126 -- was invisible to the scenarios).
 local lastUiModeSaid = nil
 local function uiModeMirrorTick()
-    local ok, mode = pcall(function() return tostring(I.UI.getMode() or 'none') end)
+    local ok, mode = pcall(function()
+        local m = I.UI.getMode()
+        -- A tutorial popup has no UI mode: report one so the page leaves Enter to the engine.
+        if m == nil and ui._isInteractiveMessageBoxActive and ui._isInteractiveMessageBoxActive() then m = 'MessageBox' end
+        return tostring(m or 'none')
+    end)
     if ok and mode ~= lastUiModeSaid then
         lastUiModeSaid = mode
         mp.set('uiMode', mode)

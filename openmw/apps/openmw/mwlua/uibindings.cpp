@@ -77,6 +77,10 @@ namespace MWLua
             luaManager->addAction([state] { MWBase::Environment::get().getWindowManager()->setHudVisibility(state); });
         };
         api["_isHudVisible"] = []() -> bool { return MWBase::Environment::get().getWindowManager()->isHudVisible(); };
+        // mp: an interactive message box (a tutorial popup) pushes no GuiMode, so getMode() reads
+        // nil and the browser's Enter-to-chat took the Enter that should have closed it.
+        api["_isInteractiveMessageBoxActive"]
+            = []() -> bool { return MWBase::Environment::get().getWindowManager()->isInteractiveMessageBoxActive(); };
         api["_getDefaultFontSize"] = []() -> int { return Settings::gui().mFontSize; };
         api["showMessage"]
             = [luaManager = context.mLuaManager](std::string_view message, const sol::optional<sol::table>& options) {
