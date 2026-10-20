@@ -2553,6 +2553,13 @@ namespace MWGui
 
     void WindowManager::togglePostProcessorHud()
     {
+#ifdef __EMSCRIPTEN__
+        // NOT IN THE BROWSER. The post-processing panel is a shader-authoring tool, and closing it
+        // stopped the browser engine mid-session (prod 2026-10-20: F2 pressed twice, the game
+        // froze for good). Nothing in the web build needs it; say so instead of opening it.
+        messageBox("Post-processing settings are not available in the browser.");
+        return;
+#endif
         if (!MWBase::Environment::get().getWorld()->getPostProcessor()->isEnabled())
         {
             messageBox("#{OMWEngine:PostProcessingIsNotEnabled}");

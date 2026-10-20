@@ -17,6 +17,7 @@
 #include <MyGUI_WidgetInput.h>
 #include <MyGUI_Window.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/files/configurationmanager.hpp>
 #include <components/fx/technique.hpp>
 #include <components/fx/widgets.hpp>
@@ -245,8 +246,35 @@ namespace MWGui
 
     void PostProcessorHud::onClose()
     {
-        Settings::ShaderManager::get().save();
-        Settings::Manager::saveUser(mCfgMgr.getUserConfigPath() / "settings.cfg");
+        // CLOSING A PANEL MUST NOT STOP THE GAME. Both saves write files, and in the browser build
+        // a write can throw (no such directory on the virtual filesystem, a full or read-only
+        // store): the exception left the frame and the engine stopped for good, mid-session, on
+        // a player pressing F2 twice (prod 2026-10-20, two crashes, one minutes after the
+        // player finished character creation). Log a failed save and carry on.
+        try
+        {
+            Settings::ShaderManager::get().save();
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "Post-processing settings were not saved: " << e.what();
+        }
+        catch (...)
+        {
+            Log(Debug::Warning) << "Post-processing settings were not saved";
+        }
+        try
+        {
+            Settings::Manager::saveUser(mCfgMgr.getUserConfigPath() / "settings.cfg");
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "User settings were not saved: " << e.what();
+        }
+        catch (...)
+        {
+            Log(Debug::Warning) << "User settings were not saved";
+        }
         toggleMode(Settings::ShaderManager::Mode::Normal);
     }
 
