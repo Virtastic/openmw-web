@@ -36,6 +36,7 @@ def lines():
 ev = Counter(); warn = Counter(); sso_fail = Counter(); drops = Counter(); reaped = Counter()
 client_err = Counter(); peer_err = Counter(); accounts = set(); joined = set()
 path95, path_max, snaps, first_unheld = [], [], 0, 0
+slow_reads = Counter()
 no_pose = Counter()  # windows with a drawn NPC that has no pose stream of its own (npcNoPose), by record
 facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
 hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
@@ -51,7 +52,11 @@ for e in lines():
     elif name == 'auth.sso_failed': sso_fail[e.get('code', '?')] += 1
     elif name == 'player.join_world': joined.add(e.get('name'))
     elif name == 'world.reaped': reaped[(e.get('reason') or 'idle') + ('' if e.get('played') is None else f" played={e.get('played')}")] += 1
-    elif name in ('combat.dropped', 'actor.dropped', 'object.dropped', 'object.out_of_reach', 'state.dropped'):
+    # A PLAYER's refused action only. The sim peer's own late frames after a hand-off (a burst of
+    # ActorEquip / ActorDisposition when a new player takes Seyda Neen, 2026-10-21) are dropped by
+    # design and read as a scripting fault here; they stay in the raw warning counts below.
+    elif name in ('combat.dropped', 'actor.dropped', 'object.dropped', 'object.out_of_reach', 'state.dropped') \
+            and not str(e.get('from', '')).startswith('simpeer'):
         drops[f"{name}: {e.get('why') or e.get('name', '')}" + (f" [{e['spellId']}]" if e.get('spellId') else '')] += 1
     elif name == 'simpeer.output':
         t = e.get('text', '')
@@ -81,7 +86,10 @@ for e in lines():
             np = f(t, 'npcNoPose')
             if np and np.isdigit() and int(np):
                 for rec in (f(t, 'noPoseRec') or '?').split(','): no_pose[rec] += 1
-        elif re.match(r'\[(mw|assets|data)\] |\[[\d:.]+ I\] ', t):
+        elif t.startswith('[sfs] slow read '):
+            # The streamed files a player waited on, by name (index.html, 2026-10-21): what to warm next.
+            slow_reads[t.split()[3].split('@')[0]] += 1
+        elif re.match(r'\[(mw|assets|data|boot)\] |\[[\d:.]+ I\] ', t):
             data_setup[s] = data_setup.get(s, 0) + 1  # info, not an error (#139 ships the boot's data setup)
         elif not t.startswith('[locker]'):
             if 'Lua error' in t: lua_errors += 1
@@ -105,6 +113,7 @@ print(f"facing: walking NPCs drawn turned round (>120 deg off the server) {facin
 print(f'Lua errors (peer + clients): {lua_errors}')
 print(f"sim peer start failures: {ev['simpeer.start_timeout']}   peer errors:\n{top(peer_err, 8)}")
 print(f"refused player actions (a thing a player did that did nothing):\n{top(drops)}")
+print(f"streamed files the game waited on (>300 ms), by file:\n{top(slow_reads)}")
 # Ranked by how many SESSIONS hit it: one tab left open logged 2,986 copies of one error.
 print('browser errors, by sessions that hit them [lines]:')
 print('\n'.join(f'  {len(v):4d} sessions [{client_err[k]:5d}]  {k}'
