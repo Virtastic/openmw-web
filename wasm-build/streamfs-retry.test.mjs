@@ -321,7 +321,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(fetches, 3, 'every chunk of the file, once');
   assert.equal(stored.size, 3);
   assert.deepEqual(msgs.at(-1), { preload: 7, end: true, done: 3, total: 3, bytes: 5 });
-  assert.equal(msgs.filter((m) => !m.end).length, 3, 'one progress message per chunk');
+  assert.equal(msgs.filter((m) => m.preload !== undefined && !m.end).length, 3, 'one progress message per chunk');
   // Each chunk's bytes go to the page for its in-memory LRU (prod 2026-10-21: stored-only chunks
   // were fetched again by the engine when the store answered late), with where they belong.
   assert.deepEqual(msgs.filter((m) => m.buf).map((m) => [m.fi, m.s, m.buf.length]), [[0, 0, 2], [0, 2, 2], [0, 4, 1]]);
@@ -335,6 +335,67 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   await mk({ open: async () => ({ match: async () => undefined, put: async () => {} }) },
     async () => status(404), failed)([{ url: 'u', pkey: 'x', size: 4, offs: [0, 2] }], 2, 9);
   assert.deepEqual(failed.at(-1), { preload: 9, end: true, done: 2, total: 2, bytes: 0 }, 'a failed chunk is skipped, the run ends');
+}
+
+// THE FILE STORE (prod 2026-10-19..21: a Cache API read cost ~224 ms on mid-tier machines, as much
+// as the network). A fake origin-private file system: files are growable byte arrays that outlive
+// a worker, so a second worker over the same "disk" is a reload.
+{
+  const disk = new Map();
+  const handle = (name) => {
+    if (!disk.has(name)) disk.set(name, new Uint8Array(0));
+    return {
+      getSize: () => disk.get(name).length,
+      read: (b, { at }) => { const d = disk.get(name); const n = Math.max(0, Math.min(b.length, d.length - at)); b.set(d.subarray(at, at + n)); return n; },
+      write: (b, { at }) => { let d = disk.get(name); if (at + b.length > d.length) { const g = new Uint8Array(at + b.length); g.set(d); d = g; disk.set(name, d); } d.set(b, at); return b.length; },
+      flush() {}, close() {},
+    };
+  };
+  const fsNav = { storage: { getDirectory: async () => ({ getDirectoryHandle: async () => ({
+    getFileHandle: async (n) => ({ createSyncAccessHandle: async () => handle(n) }),
+  }) }) } };
+  const stored = new Map();
+  const cacheOf = (m) => ({ open: async () => ({ match: async (k) => m.get(k), put: async (k, r) => { m.set(k, r); }, delete: async (k) => { m.delete(k); } }) });
+  const mk = (nav, caches, fetchImpl, msgs = []) => new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response', 'navigator',
+    body + '; return { opfsGet, opfsPut, opfsHas, preload };')(fetchImpl, AbortController, setTimeout, clearTimeout, caches, (m) => msgs.push(m), Response, nav);
+
+  // Stored, read back, and still there for the next page.
+  let w = mk(fsNav, cacheOf(stored), async () => ok(2));
+  assert.equal(await w.opfsPut('Morrowind.bsa@9', 4, new Uint8Array([5, 6]), 2), true);
+  assert.deepEqual([...await w.opfsGet('Morrowind.bsa@9', 4, 6, 2)], [5, 6]);
+  assert.equal(await w.opfsHas('Morrowind.bsa@9', 2, 2), false, 'a chunk never written is absent');
+  w = mk(fsNav, cacheOf(stored), async () => ok(2));
+  assert.deepEqual([...await w.opfsGet('Morrowind.bsa@9', 4, 6, 2)], [5, 6], 'a reload reads it back');
+  // Bytes that landed without their flag (a write cut short) read as absent, never as data.
+  const dat = [...disk.keys()].find((k) => k.endsWith('.dat'));
+  disk.get(dat).set([9, 9], 0);
+  assert.equal(await w.opfsGet('Morrowind.bsa@9', 0, 2, 2), undefined);
+
+  // No file system at all: every call says no, and the Cache API path stands.
+  const off = mk({}, cacheOf(new Map()), async () => ok(2));
+  assert.equal(await off.opfsPut('x@1', 0, new Uint8Array([1]), 2), false);
+  assert.equal(await off.opfsGet('x@1', 0, 1, 2), undefined);
+
+  // Preload stores to the file, not the Cache API; a second preload fetches nothing.
+  const cache2 = new Map();
+  let fetches = 0;
+  const msgs = [];
+  w = mk(fsNav, cacheOf(cache2), async () => { fetches++; return ok(2); }, msgs);
+  await w.preload([{ url: 'u', pkey: 'Tribunal.esm@4', size: 4 }], 2, 1);
+  assert.equal(fetches, 2);
+  assert.equal(cache2.size, 0, 'nothing written to the Cache API while the file store is up');
+  fetches = 0;
+  await mk(fsNav, cacheOf(cache2), async () => { fetches++; return ok(2); }).preload([{ url: 'u', pkey: 'Tribunal.esm@4', size: 4 }], 2, 2);
+  assert.equal(fetches, 0, 'stored chunks come from the file');
+
+  // An old Cache API chunk moves across: read from the cache, written to the file, deleted there.
+  const cache3 = new Map([['https://sfs.chunk/' + encodeURIComponent('Bloodmoon.esm@2') + '/0', new Response(new Uint8Array([7, 8]))]]);
+  fetches = 0;
+  await mk(fsNav, cacheOf(cache3), async () => { fetches++; return ok(2); }).preload([{ url: 'u', pkey: 'Bloodmoon.esm@2', size: 2 }], 2, 3);
+  assert.equal(fetches, 0, 'the old copy was used, not the network');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(cache3.size, 0, 'and removed from the Cache API');
+  assert.deepEqual([...await mk(fsNav, cacheOf(new Map()), async () => ok(2)).opfsGet('Bloodmoon.esm@2', 0, 2, 2)], [7, 8], 'it is in the file now');
 }
 
 console.log('streamfs retry: ok');

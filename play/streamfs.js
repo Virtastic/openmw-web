@@ -194,6 +194,78 @@
           () => {});
       const cachePut = (key, buf) => cacheDead ? Promise.resolve()
         : Promise.race([store().then((c) => c.put(key, new Response(buf))), nap(CACHE_MS)]);
+      // THE CHUNK STORE IS A FILE, NOT A CACHE. The Cache API keeps every chunk as its own HTTP
+      // response, and on mid-tier machines reading one back cost about what the network did:
+      // 224 ms a miss with the area warmed (prod 2026-10-19..21, lru=96 devices; 13 ms on high-tier
+      // ones), so cell loads stalled even for players who had it all. The origin-private file
+      // system with a synchronous handle in this worker reads a chunk in a few ms: one sparse file
+      // per source file (chunk at its own offset) plus a flag byte per chunk, the flag written only
+      // after the data is flushed, so a write cut short reads as absent, never as wrong bytes.
+      // Where it is not available (another tab holds the handles, an old browser) every call
+      // answers "no" and the Cache API path below runs exactly as before. A chunk found there is
+      // moved across as it is read (opfsAdopt).
+      let opfsRoot = null, opfsOff = false, opfsSaid = false;
+      const opfsFiles = new Map(); // pkey -> Promise<{h, m, flags}|null>
+      const opfsName = (pkey) => {
+        let h = 2166136261;
+        for (let i = 0; i < pkey.length; i++) { h ^= pkey.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+        return pkey.replace(/[^A-Za-z0-9_.-]+/g, '_').slice(-80) + '.' + h.toString(16); // no backslash: this is a template literal
+      };
+      function opfsFile(pkey) {
+        if (opfsOff || !pkey) return Promise.resolve(null);
+        let f = opfsFiles.get(pkey);
+        if (f) return f;
+        f = (async () => {
+          if (!opfsRoot) opfsRoot = await (await navigator.storage.getDirectory()).getDirectoryHandle('sfs-chunks-v1', { create: true });
+          const name = opfsName(pkey);
+          const h = await (await opfsRoot.getFileHandle(name + '.dat', { create: true })).createSyncAccessHandle();
+          let m;
+          try { m = await (await opfsRoot.getFileHandle(name + '.map', { create: true })).createSyncAccessHandle(); }
+          catch (err) { h.close(); throw err; }
+          const flags = new Uint8Array(Math.max(64, m.getSize()));
+          m.read(flags.subarray(0, m.getSize()), { at: 0 });
+          if (!opfsSaid) { opfsSaid = true; postMessage({ store: 'file' }); }
+          return { h, m, flags };
+        })().catch((err) => {
+          // No OPFS at all (no API, or blocked): off for the page. One file held by another tab:
+          // only that file falls back.
+          if (!(err && err.name === 'NoModificationAllowedError')) { if (!opfsOff) postMessage({ store: 'cache' }); opfsOff = true; }
+          return null;
+        });
+        opfsFiles.set(pkey, f);
+        return f;
+      }
+      async function opfsGet(pkey, start, end, chunk) {
+        const f = await opfsFile(pkey);
+        const i = start / chunk;
+        if (!f || i >= f.flags.length || !f.flags[i]) return undefined;
+        const b = new Uint8Array(end - start);
+        try { if (f.h.read(b, { at: start }) === b.length) return b; } catch (err) { /* a miss */ }
+        return undefined;
+      }
+      async function opfsHas(pkey, start, chunk) {
+        const f = await opfsFile(pkey);
+        const i = start / chunk;
+        return !!(f && i < f.flags.length && f.flags[i]);
+      }
+      // True when stored here (the caller then skips the Cache API put).
+      async function opfsPut(pkey, start, buf, chunk) {
+        const f = await opfsFile(pkey);
+        if (!f) return false;
+        try {
+          const i = start / chunk;
+          if (i >= f.flags.length) { const g = new Uint8Array(Math.max(i + 1, f.flags.length * 2)); g.set(f.flags); f.flags = g; }
+          if (f.h.write(buf, { at: start }) !== buf.length) return false;
+          f.h.flush();
+          f.flags[i] = 1;
+          f.m.write(f.flags.subarray(i, i + 1), { at: i });
+          f.m.flush();
+          return true;
+        } catch (err) { return false; } // full, or the handle went away: the Cache API takes it
+      }
+      // A chunk read from the Cache API moves to the file store and out of the cache.
+      const opfsAdopt = (pkey, ckey, start, buf, chunk) => opfsPut(pkey, start, buf, chunk)
+        .then((ok) => { if (ok && !cacheDead) store().then((c) => c.delete(ckey)).catch(() => {}); return ok; });
       async function warm(files, chunk, budget) {
         if (warming) return;
         warming = true;
@@ -207,6 +279,25 @@
             for (let s = 0; s < f.size; s += chunk) {
               while (fg > 0 || Date.now() - lastFg < 1500) await nap(250);
               const ckey = 'https://sfs.chunk/' + encodeURIComponent(f.pkey) + '/' + s;
+              if (await opfsHas(f.pkey, s, chunk)) continue;
+              if (await opfsFile(f.pkey)) {
+                // The file store is up: an old Cache API copy moves across, else the network.
+                const old = cacheDead ? undefined : await cacheRead(ckey);
+                if (old) { await opfsAdopt(f.pkey, ckey, s, old, chunk); continue; }
+                let nb;
+                try { nb = await rangeFetch(f.url, s, Math.min(s + chunk, f.size)); }
+                catch (err) {
+                  if (++fetchFails >= 5) { stop = 'fetch: ' + String(err && err.message || err).slice(0, 60); break outer; }
+                  await nap(5000); continue;
+                }
+                fetchFails = 0;
+                if (nb.length > left) { stop = 'budget'; break outer; }
+                if (!(await opfsPut(f.pkey, s, nb, chunk))) { stop = 'store: file store full'; break outer; }
+                left -= nb.length;
+                fetched++; postMessage({ warmed: 1 });
+                await nap(30);
+                continue;
+              }
               if (cacheDead) { stop = 'cache slow'; break outer; } // nothing would be stored
               if (await cacheMatch(ckey)) continue;
               // STOP ON A FULL STORE. A put that fails is almost always the origin's quota: every
@@ -281,11 +372,16 @@
           const ckey = 'https://sfs.chunk/' + encodeURIComponent(j.f.pkey) + '/' + j.s;
           let buf;
           try {
-            buf = await cacheRead(ckey);
+            const end = Math.min(j.s + chunk, j.f.size);
+            buf = await opfsGet(j.f.pkey, j.s, end, chunk);
             if (!buf) {
-              buf = await rangeFetch(j.f.url, j.s, Math.min(j.s + chunk, j.f.size));
+              buf = await cacheRead(ckey);
+              if (buf) await opfsAdopt(j.f.pkey, ckey, j.s, buf, chunk);
+            }
+            if (!buf) {
+              buf = await rangeFetch(j.f.url, j.s, end);
               bytes += buf.length;
-              await cachePut(ckey, buf);
+              if (!(await opfsPut(j.f.pkey, j.s, buf, chunk))) await cachePut(ckey, buf);
             }
           } catch (err) { buf = undefined; /* the engine's own read fetches it */ }
           done++;
@@ -293,7 +389,7 @@
           const copy = buf.slice(); // its own buffer, transferred; the store keeps the original
           postMessage({ preload: id, done, total, bytes, fi: j.fi, s: j.s, buf: copy }, [copy.buffer]);
         };
-        const lane = async () => { while (next < jobs.length && !cacheDead) await one(jobs[next++]); };
+        const lane = async () => { while (next < jobs.length) await one(jobs[next++]); };
         await Promise.all([lane(), lane(), lane(), lane()]);
         postMessage({ preload: id, end: true, done, total, bytes });
       }
@@ -328,11 +424,16 @@
               // read ran the worker past the page's limit.
               try { await Promise.race([prefetch.done, nap(CACHE_MS)]); } catch (e) { /* best effort */ }
             }
-            const got = await readChunk(m.url, m.start, m.end, ckey);
+            const fromFile = ckey ? await opfsGet(m.pkey, m.start, m.end, m.chunk) : undefined;
+            const got = fromFile ? { buf: fromFile, net: false, file: true } : await readChunk(m.url, m.start, m.end, ckey);
             buf = got.buf;
-            // Not awaited: the copy into the shared buffer below reads buf, the put keeps its own
-            // reference, and nothing mutates buf afterwards.
-            if (got.net && ckey) cachePut(ckey, buf).catch(() => {});
+            // Not awaited: the copy into the shared buffer below reads buf, the store keeps its own
+            // reference, and nothing mutates buf afterwards. A chunk from the network or the old
+            // Cache API goes to the file store; the Cache API takes it only where that is off.
+            if (ckey && !got.file) {
+              const keep = got.net ? opfsPut(m.pkey, m.start, buf, m.chunk) : opfsAdopt(m.pkey, ckey, m.start, buf, m.chunk);
+              keep.then((ok) => { if (!ok && got.net) return cachePut(ckey, buf); }).catch(() => {});
+            }
           }
           data.set(buf.subarray(0, Math.min(buf.length, data.length)), 0);
           ctrl[1] = buf.length;         // bytes delivered
@@ -388,7 +489,7 @@
     const seq = S.lastMiss && S.lastMiss.key === cacheKey.slice(0, cacheKey.lastIndexOf(':')) && S.lastMiss.end === start;
     S.lastMiss = { key: cacheKey.slice(0, cacheKey.lastIndexOf(':')), end };
     const next = seq && src.url && end - start === CHUNK && end < size ? { start: end, end: Math.min(end + CHUNK, size) } : null;
-    S.worker.postMessage(Object.assign({ start, end, gen, next }, src));
+    S.worker.postMessage(Object.assign({ start, end, gen, next, chunk: CHUNK }, src));
     // Spin until the worker signals completion. The worker thread runs independently, so
     // this terminates; local reads complete in ~1-5ms. (Atomics.wait is disallowed on
     // the main thread, so poll.)
@@ -488,7 +589,7 @@
       S.data = new Uint8Array(dataBuf);
       S.worker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
       S.worker.postMessage({ init: 1, ctrl: ctrlBuf, data: dataBuf });
-      S.worker.onmessage = (e) => { if (e.data && e.data.preload !== undefined) { const p = S.preloads.get(e.data.preload); if (p) p(e.data); return; } if (e.data && e.data.cacheSlow) ST.cacheSlow = 1; if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
+      S.worker.onmessage = (e) => { if (e.data && e.data.preload !== undefined) { const p = S.preloads.get(e.data.preload); if (p) p(e.data); return; } if (e.data && e.data.cacheSlow) ST.cacheSlow = 1; if (e.data && e.data.store && ST.store !== 'file') ST.store = e.data.store; if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
       try { Object.defineProperty(window, '__streamfsStats', { get: () => window.StreamFS.stats() }); } catch (e) {}
     },
 
