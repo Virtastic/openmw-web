@@ -173,6 +173,25 @@ local SWING_GROUP_OF_TYPE = {
 -- (mwlua/animationbindings.cpp); playBlendedAnimation is the I.AnimationController wrapper's
 -- name, and on the package it is nil. Every call here threw inside its pcall: no swing, bite,
 -- cast pose or flinch ever played on a puppet, and the swish/blood after them never ran.
+-- WHAT A FRIEND'S SWING LOOKS LIKE ON THIS SCREEN, measured. The clients could not report their
+-- animation, so every fight scenario checked the use bit and the damage and none checked the
+-- picture: the launch video (2026-10-20) shows a friend's sword held overhead through a whole
+-- fight, the wind-up never followed by the blow, with every scenario green. One console line a
+-- fixed time after each half: the group played, what the right arm is running and how far in,
+-- and where the wind-up stops -- a blow that played is past that point, then back to idle.
+local swingGroup, swingKind = nil, 'chop'
+local swingProbes = {}
+local function probeSwing(label)
+    pcall(function()
+        local anim = require('openmw.animation')
+        local active = anim.getActiveGroup(self, anim.BONE_GROUP.RightArm)
+        local t = active and anim.getCurrentTime(self, active)
+        local stop = swingGroup and anim.getTextKeyTime(self, swingGroup .. ': ' .. swingKind .. ' min attack')
+        print(string.format('[mp] swing probe %s group=%s active=%s time=%s windupStop=%s', label,
+            tostring(swingGroup), tostring(active), t and string.format('%.3f', t) or 'nil',
+            stop and string.format('%.3f', stop) or 'nil'))
+    end)
+end
 local function showSwing(release, full)
     pcall(function()
         local anim = require('openmw.animation')
@@ -216,6 +235,7 @@ local function showSwing(release, full)
         end
         local ranged = group == 'bowandarrow' or group == 'crossbow' or group == 'throwweapon'
         local kind = ranged and 'shoot' or 'chop'
+        swingGroup, swingKind = group, kind
         if release then
             anim.playBlended(self, group, {
                 priority = pri,
@@ -424,11 +444,17 @@ local function onUpdate(dt)
         return
     end
     -- The swing first: nothing below (a snap, a far tier, a parked puppet) may swallow it.
+    local now = core.getRealTime()
     if pressLatch or releaseLatch then
         showSwing(releaseLatch, pressLatch and releaseLatch)
+        if releaseLatch then
+            swingProbes = { { at = now + 0.25, label = 'blow+0.25' }, { at = now + 1.5, label = 'blow+1.5' } }
+        else
+            swingProbes = { { at = now + 0.4, label = 'windup+0.4' } }
+        end
         pressLatch, releaseLatch = false, false
     end
-    local now = core.getRealTime()
+    while swingProbes[1] and now >= swingProbes[1].at do probeSwing(table.remove(swingProbes, 1).label) end
     equipTick(now)
     -- IDLE MEANS "NOTHING NEW TO CHASE", NOT "STOP WHERE YOU STAND".
     --
