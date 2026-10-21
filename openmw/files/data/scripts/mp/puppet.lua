@@ -181,6 +181,13 @@ local SWING_GROUP_OF_TYPE = {
 -- and where the wind-up stops -- a blow that played is past that point, then back to idle.
 local swingGroup, swingKind = nil, 'chop'
 local swingProbes = {}
+-- THE BLOW IS TWO SECTIONS, NOT ONE RANGE. A weapon group keeps chop, slash and thrust one after
+-- another, and each attack's three follow-throughs (large, medium, small) back to back: in
+-- WeaponOneHand, Chop Max Attack 316.333, Chop Hit 316.733, then Large/Medium/Small Follow
+-- 316.8-317.933 (xbase_anim.kf). Played as one range to Small Follow Stop, a friend's blow ran 1.6 s
+-- through all three recoveries (s194, Jenkins #254). The engine strikes to the hit, then jumps to
+-- one follow section (character.cpp); so does this: the follow is queued for when the strike ends.
+local followAt, followGroup = nil, nil
 local function probeSwing(label)
     pcall(function()
         local anim = require('openmw.animation')
@@ -247,17 +254,20 @@ local function showSwing(release, full)
         local kind = ranged and 'shoot' or 'chop'
         swingGroup, swingKind = group, kind
         if release then
-            playFresh(anim, group, {
-                priority = pri,
-                startKey = kind .. (full and ' start' or ' max attack'),
-                -- SMALL follow stop: the follow sections exist as small/medium/large only
-                -- (character.cpp picks one by attack strength); a size-less one is not a key in
-                -- any retail weapon group, Animation::reset refused it silently, and the blow
-                -- never played: the wind-up above stayed held (s172, keys read off the .bsa).
-                stopKey = ranged and 'shoot release' or 'chop small follow stop',
-            })
+            local startKey = kind .. (full and ' start' or ' max attack')
+            if ranged then
+                playFresh(anim, group, { priority = pri, startKey = startKey, stopKey = 'shoot release' })
+            else
+                playFresh(anim, group, { priority = pri, startKey = startKey, stopKey = 'chop hit' })
+                -- The follow section once the strike has run, timed off the group's own keys.
+                local a = anim.getTextKeyTime and anim.getTextKeyTime(self, group .. ': ' .. startKey)
+                local b = anim.getTextKeyTime and anim.getTextKeyTime(self, group .. ': chop hit')
+                followAt = core.getRealTime() + ((a and b and b > a) and (b - a) or (full and 0.8 or 0.4))
+                followGroup = group
+            end
             core.sound.playSound3d('Weapon Swish', self)
         else
+            followAt = nil -- a new wind-up: the last blow's recovery is not played over it
             playFresh(anim, group, {
                 priority = pri,
                 startKey = kind .. ' start',
@@ -463,6 +473,18 @@ local function onUpdate(dt)
             swingProbes = { { at = now + 0.4, label = 'windup+0.4' } }
         end
         pressLatch, releaseLatch = false, false
+    end
+    if followAt and now >= followAt then
+        followAt = nil
+        pcall(function()
+            local anim = require('openmw.animation')
+            local P, G = anim.PRIORITY, anim.BONE_GROUP
+            -- SMALL follow: the sections exist as small/medium/large only (character.cpp picks one
+            -- by attack strength); a size-less key is in no retail weapon group (s172).
+            playFresh(anim, followGroup, {
+                priority = { [G.LowerBody] = P.WeaponLowerBody, [G.Torso] = P.Weapon, [G.LeftArm] = P.Weapon, [G.RightArm] = P.Weapon },
+                startKey = 'chop small follow start', stopKey = 'chop small follow stop' })
+        end)
     end
     while swingProbes[1] and now >= swingProbes[1].at do probeSwing(table.remove(swingProbes, 1).label) end
     equipTick(now)

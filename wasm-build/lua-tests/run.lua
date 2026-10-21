@@ -2910,11 +2910,20 @@ do
   pup.eventHandlers.MP_Pose(pose(16)); pup.engineHandlers.onUpdate(0.05)
   now = now + 0.05; pup.eventHandlers.MP_Pose(pose(24)); pup.engineHandlers.onUpdate(0.05)
   now = now + 0.5; pup.eventHandlers.MP_Pose(pose(16)); pup.engineHandlers.onUpdate(0.05)
-  check('a friend\'s swing: wind-up to min attack on the press, the blow to SMALL follow stop on the release',
-    played[1] == 'handtohand:chop start>chop min attack' and played[2] == 'handtohand:chop max attack>chop small follow stop', table.concat(played, ' '))
+  check('a friend\'s swing: wind-up to min attack on the press, the strike to the hit on the release',
+    played[1] == 'handtohand:chop start>chop min attack' and played[2] == 'handtohand:chop max attack>chop hit', table.concat(played, ' '))
+  -- THE FOLLOW IS ONE SECTION, after the strike: played as one range to Small Follow Stop the blow
+  -- ran through the large, medium and small recoveries back to back (s194, Jenkins #254).
+  now = now + 0.5; pup.engineHandlers.onUpdate(0.05)
+  check('...then ONE follow section once the strike has run', played[3] == 'handtohand:chop small follow start>chop small follow stop' and #played == 3, table.concat(played, ' '))
   -- ...and the NEXT swing winds up again rather than finding its group still running.
   now = now + 0.5; pup.eventHandlers.MP_Pose(pose(24)); pup.engineHandlers.onUpdate(0.05)
-  check('a second swing winds up again', played[3] == 'handtohand:chop start>chop min attack', table.concat(played, ' '))
+  check('a second swing winds up again', played[4] == 'handtohand:chop start>chop min attack', table.concat(played, ' '))
+  -- A new wind-up before the last blow's recovery: the recovery is dropped, not played over it.
+  now = now + 0.5; pup.eventHandlers.MP_Pose(pose(16)); pup.engineHandlers.onUpdate(0.05)
+  now = now + 0.05; pup.eventHandlers.MP_Pose(pose(24)); pup.engineHandlers.onUpdate(0.05)
+  now = now + 1.0; pup.engineHandlers.onUpdate(0.05)
+  check('a wind-up drops a pending recovery', played[6] == 'handtohand:chop start>chop min attack' and #played == 6, table.concat(played, ' '))
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
   local cpp = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('character.cpp does not smooth a puppet\'s speed a second time (the peer already did)',
