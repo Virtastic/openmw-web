@@ -128,7 +128,7 @@ window.omw = (function(){
     the engine returns jumps it to the real step. Not turned off for reduced motion: it is the
     progress itself, not decoration, and a still bar for a minute reads as a hang. */
  #loading.creep .ld-fill{animation:ldCreep 80s cubic-bezier(.2,.7,.3,1) forwards}
- @keyframes ldCreep{from{transform:scaleX(.24)}to{transform:scaleX(.9)}}
+ @keyframes ldCreep{from{transform:scaleX(.45)}to{transform:scaleX(.9)}}
  @keyframes ldSlide{0%{transform:translateX(-110%)}100%{transform:translateX(330%)}}
  #loading .ld-detail{margin-top:13px;min-height:16px;font:12px/1.4 ui-monospace,Menlo,monospace;color:#7c705c}
  #loading .ld-credit{margin-top:26px;font-size:11px;letter-spacing:.08em;color:#6a5f4d}
@@ -884,12 +884,12 @@ window.omw = (function(){
    // Called with one frame to spare before the engine's blocking start (see 'ld-paint').
    function creep(){
      if (!boot || done || !E() || el.classList.contains('creep')) return;
-     bootPct = Math.max(bootPct, 24);
+     bootPct = Math.max(bootPct, 45);
      // The words go out in the same painted frame: set at 'Running...', they never reached the screen.
      st.textContent = 'Loading Morrowind';
      det.textContent = 'Reading the game data and building the first area. The first visit takes a minute or two.';
      el.classList.remove('indet');
-     fill.style.setProperty('--p', 0.24);
+     fill.style.setProperty('--p', 0.45);
      el.classList.add('creep');
      if (window.__omwMark) window.__omwMark('engineStart');
    }
@@ -935,6 +935,7 @@ window.omw = (function(){
      if (boot) {
        boot = false;
        // Where this player's boot went, once per page: ms from navigation start (see __omwMark).
+       try { if (window.StreamFS && window.StreamFS.record) window.StreamFS.record(false); } catch (e) {}
        try { if (window.__omwMark) window.__omwMark('released');
          var B = window.__omwBoot || {}; append('[boot] ' + Object.keys(B).map(function(k){ return k + '=' + B[k]; }).join(' ')); } catch (e) {}
      }
@@ -983,7 +984,7 @@ window.omw = (function(){
      if (locked) return;
      done = true; el.classList.add('hide'); el.style.display = 'none';
    }
-   return { set:set, fromLog:fromLog, done:finish, creep:creep, show:show, withdraw:withdraw,
+   return { set:set, fromLog:fromLog, done:finish, creep:creep, step:function(p){ if (boot) bootAt(p); }, show:show, withdraw:withdraw,
             hide: function(){ if (!locked) finish(); },
             lock:lock, unlock:unlock };
  })();
@@ -4069,7 +4070,24 @@ window.omw = (function(){
                           'fallback=Movies_New_Game,mw_intro.bik');
                FS.writeFile('/openmw.cfg', cfg.join('\n'));
                append('[mw] READY -> Morrowind GOTY (base+Tribunal+Bloodmoon, audio+voice+video)');
-               removeRunDependency('mw-data');
+               // THE CONTENT FILES BEFORE THE ENGINE, WHERE IT CAN BE SHOWN. The engine reads every
+               // byte of Morrowind.esm, Tribunal.esm, Bloodmoon.esm and any plugin inside its one
+               // blocking start, a 2 MB chunk at a time (prod 2026-10-20: 12 s median, 130 s worst,
+               // a frozen screen throughout). Fetched here in parallel into the store with a real
+               // MB count on the bar; the engine then reads them back locally. Capped at 3 minutes:
+               // the boot never waits on this longer, the engine fetches whatever is left itself.
+               var released = false, release = function(){ if (released) return; released = true; removeRunDependency('mw-data'); };
+               try {
+                 var LD = window.__omwLoading, pre = StreamFS.mounted(/\.(esm|esp)$/i).map(function(p){ return { path: p }; });
+                 StreamFS.preload(pre, function(d){
+                   if (!LD || !d.total) return;
+                   LD.set(null, 'Downloading the game data', Math.round(d.bytes / 1048576) + ' MB · ' + Math.round(d.done * 100 / d.total) + '%');
+                   LD.step(22 + Math.floor(23 * d.done / d.total));
+                 }, 180000).then(function(d){
+                   if (d) append('[mw] preloaded ' + d.done + '/' + d.total + ' chunks, ' + Math.round(d.bytes / 1048576) + ' MB fetched');
+                   release();
+                 }, release);
+               } catch (e) { release(); }
              } else { setTimeout(waitCfg, 25); }
            })();
          }).catch(function(e){

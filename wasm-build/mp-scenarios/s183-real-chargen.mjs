@@ -76,6 +76,9 @@ export default async function run(ctx) {
   await a.dismissTour(15_000); // the first-join tour sits over the canvas and takes every click
   const cell0 = String(await a.eval('window.omw.state.cell||""'));
   ctx.log(`a new game starts in "${cell0}", chargenDone=${await a.eval('window.omw.state.chargenDone')}`);
+  // WHAT A NEW GAME READS TO GET HERE: every chunk the engine touched before the loading screen
+  // let go (StreamFS records them through the boot). The list play/ preloads for a first visit.
+  ctx.log('[bootset] ' + await a.eval('JSON.stringify(window.StreamFS && StreamFS.bootSet ? StreamFS.bootSet() : null)'));
   assert.notEqual(await a.eval('window.omw.state.chargenDone'), '1', 'a fresh slot must start IN character creation');
   const before = await whoami(a);
   ctx.log(`template: ${JSON.stringify(before)}`);

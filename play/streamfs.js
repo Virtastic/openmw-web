@@ -67,7 +67,7 @@
 
   // cache is a Map used as an LRU: insertion order IS the recency order (delete+set moves to end),
   // so eviction pops the first (oldest) key. No separate order array → O(1) hit path, no linear scan.
-  const S = { worker: null, ctrl: null, data: null, cache: new Map(), nextId: 1, urlSrcs: new Map() };
+  const S = { worker: null, ctrl: null, data: null, cache: new Map(), nextId: 1, urlSrcs: new Map(), preloads: new Map(), rec: new Set(), recDone: null };
 
   // Streaming cost counters, exposed as window.__streamfsStats. Chunk misses block the main thread
   // (see fetchChunkSync), so this is the only place the stall is observable. Two adds per read —
@@ -260,8 +260,38 @@
         }
         return { buf: await rangeFetch(url, start, end), net: true };
       }
+      // BEFORE THE ENGINE STARTS (index.html, boot): fill the store with what the engine is about to
+      // read in one blocking call, while the page can still show it. Four lanes in parallel, every
+      // chunk already stored skipped, one progress message per chunk. Best effort throughout: a
+      // chunk that fails here is read by the engine itself, as before.
+      async function preload(files, chunk, id) {
+        const jobs = [];
+        for (const f of files) {
+          const offs = f.offs || [];
+          if (!f.offs) for (let s = 0; s < f.size; s += chunk) offs.push(s);
+          for (const s of offs) if (s < f.size) jobs.push({ f, s });
+        }
+        let done = 0, bytes = 0, next = 0;
+        const total = jobs.length;
+        const one = async (j) => {
+          const ckey = 'https://sfs.chunk/' + encodeURIComponent(j.f.pkey) + '/' + j.s;
+          try {
+            if (!(await cacheMatch(ckey, false))) {
+              const buf = await rangeFetch(j.f.url, j.s, Math.min(j.s + chunk, j.f.size));
+              await cachePut(ckey, buf);
+              bytes += buf.length;
+            }
+          } catch (err) { /* the engine's own read fetches it */ }
+          done++;
+          postMessage({ preload: id, done, total, bytes });
+        };
+        const lane = async () => { while (next < jobs.length && !cacheDead) await one(jobs[next++]); };
+        await Promise.all([lane(), lane(), lane(), lane()]);
+        postMessage({ preload: id, end: true, done, total, bytes });
+      }
       onmessage = async (e) => {
         const m = e.data;
+        if (m.preload) { preload(m.preload, m.chunk, m.id); return; }
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
         if (m.warm) { warm(m.warm, m.chunk, m.budget); return; }
         if (m.mountLocal) { handles.set(m.mountLocal.id, m.mountLocal.handle); return; }
@@ -337,6 +367,7 @@
   // src: {url} for a range-fetched URL, or {id} for a local file handle. cacheKey uniquely
   // identifies the (source, offset) chunk across both modes.
   function fetchChunkSync(src, cacheKey, start, end, size) {
+    if (S.rec) S.rec.add(cacheKey);
     const hit = S.cache.get(cacheKey);
     if (hit) {
       S.cache.delete(cacheKey); S.cache.set(cacheKey, hit); // move-to-end (most-recently-used)
@@ -443,7 +474,7 @@
       S.data = new Uint8Array(dataBuf);
       S.worker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
       S.worker.postMessage({ init: 1, ctrl: ctrlBuf, data: dataBuf });
-      S.worker.onmessage = (e) => { if (e.data && e.data.cacheSlow) ST.cacheSlow = 1; if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
+      S.worker.onmessage = (e) => { if (e.data && e.data.preload !== undefined) { const p = S.preloads.get(e.data.preload); if (p) p(e.data); return; } if (e.data && e.data.cacheSlow) ST.cacheSlow = 1; if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
       try { Object.defineProperty(window, '__streamfsStats', { get: () => window.StreamFS.stats() }); } catch (e) {}
     },
 
@@ -501,6 +532,42 @@
         }, () => send(undefined));
       } else send(undefined);
       return files.length;
+    },
+
+    // Fill the persistent store with `items` ([{path, offs?}]: offs = chunk offsets, or every chunk
+    // when absent) before the engine reads them. onProgress({done, total, bytes}) per chunk. Resolves
+    // when finished, or after maxMs regardless: a boot never waits on this longer than that.
+    // Persistable files only (same origin, unsigned); nothing on Save-Data or without a store.
+    preload(items, onProgress, maxMs) {
+      const files = [];
+      for (const it of items) {
+        const src = S.urlSrcs.get(it.path);
+        if (src && src.pkey && src.size) files.push({ url: src.url, pkey: src.pkey, size: src.size, offs: it.offs || null });
+      }
+      if (!S.worker || !files.length || typeof caches === 'undefined' || (navigator.connection && navigator.connection.saveData)) return Promise.resolve(null);
+      const id = ++S.nextId;
+      return new Promise((resolve) => {
+        const end = (v) => { S.preloads.delete(id); resolve(v); };
+        const timer = setTimeout(() => end(null), maxMs || 180000);
+        S.preloads.set(id, (d) => { if (onProgress) try { onProgress(d); } catch (e) {} if (d.end) { clearTimeout(timer); end(d); } });
+        S.worker.postMessage({ preload: files, chunk: CHUNK, id });
+      });
+    },
+    // Which chunks the engine read while recording, as [{path, offs}] -- the list preload() takes.
+    // Recording starts at init and ends with record(false) (index.html: when the boot is released).
+    mounted(re) { return [...S.urlSrcs.keys()].filter((p) => re.test(p)); },
+    record(on) { if (on) S.rec = S.rec || new Set(); else if (S.rec) { S.recDone = S.rec; S.rec = null; } },
+    bootSet() {
+      const byUrl = new Map();
+      for (const [path, src] of S.urlSrcs) byUrl.set(new URL(src.url).origin + new URL(src.url).pathname, path);
+      const out = new Map();
+      for (const k of (S.rec || S.recDone || [])) {
+        const i = k.lastIndexOf(':'), u = new URL(k.slice(0, i)), path = byUrl.get(u.origin + u.pathname);
+        if (!path) continue;
+        if (!out.has(path)) out.set(path, []);
+        out.get(path).push(+k.slice(i + 1));
+      }
+      return [...out].map(([path, offs]) => ({ path, offs: offs.sort((a, b) => a - b) }));
     },
 
     // Swap in a freshly-signed URL for an already-mounted path. The read path is synchronous

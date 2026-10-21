@@ -280,4 +280,32 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(r.net, true); assert.equal(fetches, 1);
 }
 
+// PRELOAD BEFORE THE ENGINE (prod 2026-10-20: the content files were read a chunk at a time inside
+// the engine's blocking start, 12 s median, 130 s worst, a frozen screen). Every chunk of the file
+// is fetched and stored with one progress message each; a second run fetches nothing; a chunk that
+// fails is skipped (the engine reads it itself) and the run still ends.
+{
+  const mk = (caches, fetchImpl, msgs) => new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response',
+    body + '; return preload;')(fetchImpl, AbortController, setTimeout, clearTimeout, caches, (m) => msgs.push(m), Response);
+  const stored = new Map();
+  const store = { open: async () => ({ match: async (k) => stored.get(k), put: async (k, r) => { stored.set(k, r); } }) };
+  let fetches = 0;
+  const msgs = [];
+  const files = [{ url: 'u', pkey: 'Morrowind.esm@5', size: 5 }];
+  await mk(store, async () => { fetches++; return ok(2); }, msgs)(files, 2, 7);
+  assert.equal(fetches, 3, 'every chunk of the file, once');
+  assert.equal(stored.size, 3);
+  assert.deepEqual(msgs.at(-1), { preload: 7, end: true, done: 3, total: 3, bytes: 5 });
+  assert.equal(msgs.filter((m) => !m.end).length, 3, 'one progress message per chunk');
+  const again = [];
+  fetches = 0;
+  await mk(store, async () => { fetches++; return ok(2); }, again)(files, 2, 8);
+  assert.equal(fetches, 0, 'stored chunks are not fetched again');
+  assert.equal(again.at(-1).bytes, 0);
+  const failed = [];
+  await mk({ open: async () => ({ match: async () => undefined, put: async () => {} }) },
+    async () => status(404), failed)([{ url: 'u', pkey: 'x', size: 4, offs: [0, 2] }], 2, 9);
+  assert.deepEqual(failed.at(-1), { preload: 9, end: true, done: 2, total: 2, bytes: 0 }, 'a failed chunk is skipped, the run ends');
+}
+
 console.log('streamfs retry: ok');
