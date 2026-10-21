@@ -264,26 +264,34 @@
       // read in one blocking call, while the page can still show it. Four lanes in parallel, every
       // chunk already stored skipped, one progress message per chunk. Best effort throughout: a
       // chunk that fails here is read by the engine itself, as before.
+      // EVERY CHUNK ALSO GOES TO THE PAGE, for its in-memory LRU. Stored was not enough: right after
+      // 241 MB of writes the store answered slower than the hedge, so the engine fetched the whole
+      // of Morrowind.esm again, a chunk at a time (prod 2026-10-21: 126/126 preloaded, then 21 slow
+      // reads of 0.4-5.6 s and a 117 s engine start). A memory hit has no store and no worker in it.
       async function preload(files, chunk, id) {
         const jobs = [];
-        for (const f of files) {
+        files.forEach((f, fi) => {
           const offs = f.offs || [];
           if (!f.offs) for (let s = 0; s < f.size; s += chunk) offs.push(s);
-          for (const s of offs) if (s < f.size) jobs.push({ f, s });
-        }
+          for (const s of offs) if (s < f.size) jobs.push({ f, s, fi });
+        });
         let done = 0, bytes = 0, next = 0;
         const total = jobs.length;
         const one = async (j) => {
           const ckey = 'https://sfs.chunk/' + encodeURIComponent(j.f.pkey) + '/' + j.s;
+          let buf;
           try {
-            if (!(await cacheMatch(ckey, false))) {
-              const buf = await rangeFetch(j.f.url, j.s, Math.min(j.s + chunk, j.f.size));
-              await cachePut(ckey, buf);
+            buf = await cacheRead(ckey);
+            if (!buf) {
+              buf = await rangeFetch(j.f.url, j.s, Math.min(j.s + chunk, j.f.size));
               bytes += buf.length;
+              await cachePut(ckey, buf);
             }
-          } catch (err) { /* the engine's own read fetches it */ }
+          } catch (err) { buf = undefined; /* the engine's own read fetches it */ }
           done++;
-          postMessage({ preload: id, done, total, bytes });
+          if (!buf) { postMessage({ preload: id, done, total, bytes }); return; }
+          const copy = buf.slice(); // its own buffer, transferred; the store keeps the original
+          postMessage({ preload: id, done, total, bytes, fi: j.fi, s: j.s, buf: copy }, [copy.buffer]);
         };
         const lane = async () => { while (next < jobs.length && !cacheDead) await one(jobs[next++]); };
         await Promise.all([lane(), lane(), lane(), lane()]);
@@ -502,7 +510,7 @@
       // (prod 2026-10-19: sfsWarm stuck at the asset pack's 38 chunks, ~250 ms per new-area read).
       const pkey = u.origin === location.origin && (!u.search || /^\?v=[\w.-]+$/.test(u.search))
         ? u.pathname + u.search + '@' + size + (mtime ? '@' + mtime : '') + '@' + CHUNK : null;
-      const src = { url: abs, pkey, size };
+      const src = { url: abs, pkey, size, key: abs }; // key: the LRU prefix readSync uses
       // Registered so the URL can be refreshed later (presigned locker URLs expire): the cache
       // key stays `abs` (stable across renewals — the bytes are the same file), only src.url
       // changes, so a re-signed URL is used for future Range fetches without dropping the cache.
@@ -548,15 +556,20 @@
       const files = [];
       for (const it of items) {
         const src = S.urlSrcs.get(it.path);
-        if (src && src.pkey && src.size) files.push({ url: src.url, pkey: src.pkey, size: src.size, offs: it.offs || null });
+        if (src && src.pkey && src.size) files.push({ url: src.url, pkey: src.pkey, size: src.size, offs: it.offs || null, key: src.key });
       }
       if (!S.worker || !files.length || typeof caches === 'undefined' || (navigator.connection && navigator.connection.saveData)) return Promise.resolve(null);
       const id = ++S.nextId;
       return new Promise((resolve) => {
         const end = (v) => { S.preloads.delete(id); resolve(v); };
         const timer = setTimeout(() => end(null), maxMs || 180000);
-        S.preloads.set(id, (d) => { if (onProgress) try { onProgress(d); } catch (e) {} if (d.end) { clearTimeout(timer); end(d); } });
-        S.worker.postMessage({ preload: files, chunk: CHUNK, id });
+        // Into the LRU in arrival order while it has room (the content files come first in `items`),
+        // under the key readSync looks up. What does not fit stays in the store.
+        S.preloads.set(id, (d) => {
+          if (d.buf && S.cache.size < LRU_MAX - 8) { S.cache.set(files[d.fi].key + ':' + d.s, d.buf); ST.preMem = (ST.preMem || 0) + 1; }
+          delete d.buf;
+          if (onProgress) try { onProgress(d); } catch (e) {} if (d.end) { clearTimeout(timer); end(d); } });
+        S.worker.postMessage({ preload: files.map(({ url, pkey, size, offs }) => ({ url, pkey, size, offs })), chunk: CHUNK, id });
       });
     },
     // Which chunks the engine read while recording, as [{path, offs}] -- the list preload() takes.

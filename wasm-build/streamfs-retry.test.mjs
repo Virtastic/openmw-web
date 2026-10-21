@@ -222,7 +222,8 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   const posted = [];
   const ctx = {
     URL, Blob, SharedArrayBuffer, Int32Array, Uint8Array, Map, location: { href: 'https://h/', origin: 'https://h', search: '' },
-    navigator: {}, self: { crossOriginIsolated: true }, Worker: class { postMessage(m) { posted.push(m); } },
+    navigator: {}, self: { crossOriginIsolated: true }, Worker: class { constructor() { ctx.worker = this; } postMessage(m) { posted.push(m); } },
+    caches: {}, setTimeout, clearTimeout, Promise,
     FS: { createFile: () => ({ node_ops: {}, stream_ops: {} }) },
   };
   ctx.window = ctx; ctx.URL = class extends URL { static createObjectURL() { return 'blob:x'; } };
@@ -230,17 +231,38 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   vm.runInContext(src, ctx);
   vm.runInContext('StreamFS.init()', ctx);
   const mounts = [['Music/Explore/mx_explore_7.mp3', 3e6], ['Morrowind.bsa', 3e8], ['Sound/Vo/a/f/hlo_001.mp3', 2e4],
-    ['Sound/Fx/foot/walkr_lt.wav', 9e3], ['Sound/Fx/item/bookpag1.wav', 4e3], ['Sound/Cr/rat/roar.wav', 5e4], ['Tribunal.bsa', 7e7], ['Splash/Splash_Netch.tga', 3e6]];
+    ['Sound/Fx/foot/walkr_lt.wav', 9e3], ['Sound/Fx/item/bookpag1.wav', 4e3], ['Sound/Cr/rat/roar.wav', 5e4], ['Tribunal.bsa', 7e7], ['Splash/Splash_Netch.tga', 3e6],
+    ['Sound/Vo/i/m/Hlo_IM064.mp3', 2e4]];
   for (const [p, s] of mounts) ctx.StreamFS.mount('/mwdata/' + p, 'mwdata/' + p + '?v=2', s);
   ctx.StreamFS.mount('/mods/openmw-web-assets.bsa', 'mods/openmw-web-assets.bsa', 1.1e8);
-  assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 7, 'seven files queued');
+  assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 8, 'eight files queued');
   const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/(mwdata|mods)\/|\?v=2$/g, ''));
   // Archives first: the next town comes out of them (prod 2026-10-20: Fx-first left Morrowind.bsa
   // cold at the Seyda Neen dock, a 26.5 s freeze). Then Fx smallest first, creatures, music.
   // The asset pack ahead of Morrowind.bsa (prod 2026-10-21: the pack's chunks were 20 of 26 slow
   // reads stepping onto the dock).
-  assert.deepEqual(order, ['openmw-web-assets.bsa', 'Morrowind.bsa', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
+  // Then Seyda Neen's greetings (prod 2026-10-21: Hlo_IM064.mp3, Idl_DF006.mp3 walking through town);
+  // a/f (an Ashlander's) and the rest of Sound/Vo stay on demand.
+  assert.deepEqual(order, ['openmw-web-assets.bsa', 'Morrowind.bsa', 'Sound/Vo/i/m/Hlo_IM064.mp3', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
     'Sound/Cr/rat/roar.wav', 'Music/Explore/mx_explore_7.mp3', 'Tribunal.bsa'], 'archives first, then Fx smallest first, creatures, music; no Vo, no Splash');
+
+  // A PRELOADED CHUNK LANDS IN THE LRU under the key the engine's read looks up, so the read is a
+  // memory hit (prod 2026-10-21: stored-only chunks were fetched again when the store was busy).
+  const esm = ctx.StreamFS.mount('/mwdata/Morrowind.esm', 'mwdata/Morrowind.esm?v=2', 5);
+  const done = vm.runInContext("StreamFS.preload([{ path: '/mwdata/Morrowind.esm' }])", ctx);
+  const msg = posted.at(-1);
+  assert.equal(msg.preload[0].size, 5);
+  const before = ctx.StreamFS.stats().cached;
+  ctx.worker.onmessage({ data: { preload: msg.id, done: 1, total: 1, bytes: 5, fi: 0, s: 0, buf: new Uint8Array([1, 2, 3, 4, 5]) } });
+  ctx.worker.onmessage({ data: { preload: msg.id, end: true, done: 1, total: 1, bytes: 5 } });
+  assert.equal((await done).done, 1);
+  assert.equal(ctx.StreamFS.stats().cached, before + 1, 'the chunk is in the LRU');
+  assert.equal(ctx.StreamFS.stats().preMem, 1);
+  // The engine's read of those bytes: served from memory, nothing sent to the worker.
+  const sent = posted.length, out = new Uint8Array(5);
+  assert.equal(esm.stream_ops.read({}, out, 0, 5, 0), 5);
+  assert.deepEqual([...out], [1, 2, 3, 4, 5]);
+  assert.equal(posted.length, sent, 'a preloaded chunk does not go back to the worker');
 }
 
 // HEDGED READ (prod 2026-10-20: a busy store answered in 0.3-3 s, the network in ~0.1 s; 91 reads
@@ -300,11 +322,15 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(stored.size, 3);
   assert.deepEqual(msgs.at(-1), { preload: 7, end: true, done: 3, total: 3, bytes: 5 });
   assert.equal(msgs.filter((m) => !m.end).length, 3, 'one progress message per chunk');
+  // Each chunk's bytes go to the page for its in-memory LRU (prod 2026-10-21: stored-only chunks
+  // were fetched again by the engine when the store answered late), with where they belong.
+  assert.deepEqual(msgs.filter((m) => m.buf).map((m) => [m.fi, m.s, m.buf.length]), [[0, 0, 2], [0, 2, 2], [0, 4, 1]]);
   const again = [];
   fetches = 0;
   await mk(store, async () => { fetches++; return ok(2); }, again)(files, 2, 8);
   assert.equal(fetches, 0, 'stored chunks are not fetched again');
   assert.equal(again.at(-1).bytes, 0);
+  assert.equal(again.filter((m) => m.buf).length, 3, 'stored chunks are still handed to the page');
   const failed = [];
   await mk({ open: async () => ({ match: async () => undefined, put: async () => {} }) },
     async () => status(404), failed)([{ url: 'u', pkey: 'x', size: 4, offs: [0, 2] }], 2, 9);

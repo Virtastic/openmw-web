@@ -845,12 +845,15 @@ window.omw = (function(){
  window.__omwLoading = (function(){
    var el, titleEl, st, fill, det, done=false, inited=false, warmQueued=false;
    // What the background warm-up fills, and in which order (see finish()).
-   var WARM_RE = /\.bsa$|^\/mwdata\/(sound\/(fx|cr)|music)\//i;
+   // + the greetings and idle lines of Seyda Neen's people (Imperials, Dunmer): each was a 0.3-0.6 s
+   // miss walking through town (prod 2026-10-21, [sfs] slow read Hlo_IM064.mp3, Idl_DF006.mp3).
+   // ~850 small files, 16 MB; the rest of Sound/Vo (6,400 files) stays on demand.
+   var WARM_RE = /\.bsa$|^\/mwdata\/(sound\/(fx|cr)|music)\/|^\/mwdata\/sound\/vo\/[id]\/[mf]\/(hlo|idl)_/i;
    // THE ASSET PACK FIRST: its meshes and textures replace vanilla ones, so nearly every model the
    // next town loads is read from it -- and Morrowind.bsa ahead of it (~150 chunks) left it cold
    // at the Seyda Neen dock: 20 of 26 slow reads, a 10.9 s freeze with ~100 chunks warmed (prod
    // 2026-10-21). 57 chunks, about a minute of the boat.
-   var WARM_FIRST = [/openmw-web-assets\.bsa$/i, /morrowind\.bsa$/i, /^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
+   var WARM_FIRST = [/openmw-web-assets\.bsa$/i, /morrowind\.bsa$/i, /^\/mwdata\/sound\/vo\//i, /^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
    function E(){
      if (inited) return el; inited=true;
      el=document.getElementById('loading'); titleEl=document.getElementById('ld-title');
@@ -4119,13 +4122,17 @@ window.omw = (function(){
                    ['/mwdata/Sound/Fx/envrn/boat_waves.wav', [0]],
                    ['/mwdata/Sound/Vo/Misc/chargenname1.mp3', [0]]
                  ].forEach(function(f){ pre.push({ path: f[0], offs: f[1].map(function(i){ return i * StreamFS.chunk; }) }); });
+                 // ...and every line the chargen guide speaks on the boat, the dock and in the census
+                 // office: 35 files, 1.9 MB, each a 0.4-0.6 s stall when it played cold (prod
+                 // 2026-10-21, [sfs] slow read CharGen Class2.mp3, chargenboat1.mp3, ...).
+                 if (window.__omwNewGame) StreamFS.mounted(/\/Sound\/Vo\/Misc\/chargen/i).forEach(function(p){ pre.push({ path: p }); });
                  StreamFS.preload(pre, function(d){
                    if (!LD || !d.total) return;
                    LD.set(null, 'Downloading the game data', Math.round(d.bytes / 1048576) + ' MB · ' + Math.round(d.done * 100 / d.total) + '%');
                    LD.step(22 + Math.floor(23 * d.done / d.total));
                  }, 180000).then(function(d){
                    window.__omwPreload = d;
-                   if (d) append('[mw] preloaded ' + d.done + '/' + d.total + ' chunks, ' + Math.round(d.bytes / 1048576) + ' MB fetched');
+                   if (d) append('[mw] preloaded ' + d.done + '/' + d.total + ' chunks, ' + Math.round(d.bytes / 1048576) + ' MB fetched, ' + (StreamFS.stats().preMem || 0) + ' in memory');
                    release();
                  }, release);
                } catch (e) { release(); }
