@@ -156,6 +156,14 @@ namespace MWWorld
         void requestChangeCellGrid(const osg::Vec3f& position, const osg::Vec2i& cell, bool changeEvent = true);
 
         void preloadCells(float dt);
+#ifdef __EMSCRIPTEN__
+        // The browser build's preloader runs inline (no worker threads), so it is off. Instead the
+        // page is told which model files the nearby door destinations and exterior cells will need,
+        // and fetches their bytes in the background; the cell is still built when it is entered.
+        std::set<ESM::RefId> mPrefetchedCells;
+        void prefetchNearbyFiles(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos);
+        void prefetchCellFiles(CellStore& cell);
+#endif
         void preloadTeleportDoorDestinations(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos);
         void preloadExteriorGrid(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos);
         void preloadFastTravelDestinations(

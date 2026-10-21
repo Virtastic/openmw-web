@@ -398,4 +398,76 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.deepEqual([...await mk(fsNav, cacheOf(new Map()), async () => ok(2)).opfsGet('Bloodmoon.esm@2', 0, 2, 2)], [7, 8], 'it is in the file now');
 }
 
+// THE NEXT CELL'S FILES (prod 2026-10-19..21: entering an exterior waited on ~40 chunk downloads,
+// 2.9 s median). The engine names model paths; the page resolves them through the archives the
+// way the engine's VFS does and asks the worker for exactly those chunks, plus a texture pass.
+{
+  const vm = await import('node:vm');
+  const bsa = (files) => { // a TES3 BSA: header, {size, offset}[], nameOffset[], names, hashes, data
+    const n = files.length, names = files.map((f) => Buffer.from(f.name + '\0', 'latin1'));
+    const namesLen = names.reduce((a, b) => a + b.length, 0), hashOff = n * 12 + namesLen;
+    const dataStart = 12 + hashOff + n * 8, out = Buffer.alloc(dataStart + files.reduce((a, f) => a + f.data.length, 0));
+    out.writeUInt32LE(0x100, 0); out.writeUInt32LE(hashOff, 4); out.writeUInt32LE(n, 8);
+    let no = 0, d = 0;
+    files.forEach((f, i) => {
+      out.writeUInt32LE(f.data.length, 12 + i * 8); out.writeUInt32LE(d, 12 + i * 8 + 4);
+      out.writeUInt32LE(no, 12 + n * 8 + i * 4); names[i].copy(out, 12 + n * 12 + no); no += names[i].length;
+      f.data.copy(out, dataStart + d); d += f.data.length;
+    });
+    return { bytes: new Uint8Array(out), dataStart };
+  };
+  const nif = Buffer.concat([Buffer.from([1, 2, 3, 0x0b, 0, 0, 0]), Buffer.from('tx_wood.tga', 'latin1'), Buffer.from([0, 0])]);
+  const mw = bsa([{ name: 'meshes\\a.nif', data: nif }, { name: 'meshes\\b.nif', data: Buffer.from('BBBB') }, { name: 'textures\\tx_wood.dds', data: Buffer.from('DDS ') }]);
+  const pack = bsa([{ name: 'meshes\\b.nif', data: Buffer.from('PACKB') }]);
+  const posted = [];
+  const ctx = {
+    URL, Blob, SharedArrayBuffer, Int32Array, Uint8Array, DataView, Map, Set, location: { href: 'https://h/', origin: 'https://h', search: '' },
+    navigator: {}, self: { crossOriginIsolated: true }, caches: {}, setTimeout, clearTimeout, Promise,
+    Worker: class { constructor() { ctx.worker = this; } postMessage(m) { posted.push(m); } },
+    FS: { createFile: () => ({ node_ops: {}, stream_ops: {} }) },
+  };
+  ctx.window = ctx; ctx.URL = class extends URL { static createObjectURL() { return 'blob:x'; } };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+  vm.runInContext('StreamFS.init()', ctx);
+  ctx.StreamFS.mount('/mwdata/Morrowind.bsa', 'mwdata/Morrowind.bsa?v=2', mw.bytes.length);
+  ctx.StreamFS.mount('/mods/openmw-web-assets.bsa', 'mods/openmw-web-assets.bsa', pack.bytes.length);
+  ctx.StreamFS.mount('/mwdata/Meshes/loose.nif', 'mwdata/Meshes/loose.nif?v=2', 9);
+  // The archives' directories are already in memory (the engine read them at boot): hand chunk 0
+  // of each to the page's LRU the way a preload does.
+  for (const [path, bytes] of [['/mwdata/Morrowind.bsa', mw.bytes], ['/mods/openmw-web-assets.bsa', pack.bytes]]) {
+    const done = ctx.StreamFS.preload([{ path, offs: [0] }]);
+    const m = posted.at(-1);
+    ctx.worker.onmessage({ data: { preload: m.id, done: 1, total: 1, bytes: 0, fi: 0, s: 0, buf: bytes } });
+    ctx.worker.onmessage({ data: { preload: m.id, end: true, done: 1, total: 1, bytes: 0 } });
+    await done;
+  }
+  posted.length = 0;
+  const n = ctx.StreamFS.prefetchPaths(['meshes/a.nif', 'meshes/b.nif', 'meshes/loose.nif', 'meshes/missing.nif']);
+  const req = posted.at(-1);
+  assert.ok(req && req.prefetch, 'a prefetch request went to the worker');
+  const urls = req.files.map((f) => f.url.replace(/^https:\/\/h\//, ''));
+  const scanOf = (url) => JSON.parse(JSON.stringify(req.meshes.filter(([fi]) => urls[fi] === url).map(([, off, size]) => [off, size])));
+  // a.nif from Morrowind.bsa; b.nif from the asset pack, which overrides it; the loose file; missing.nif nowhere.
+  assert.deepEqual(scanOf('mwdata/Morrowind.bsa?v=2'), [[mw.dataStart, nif.length]]);
+  assert.deepEqual(scanOf('mods/openmw-web-assets.bsa'), [[pack.dataStart, 5]], 'the asset pack copy, not Morrowind.bsa\'s');
+  assert.deepEqual(scanOf('mwdata/Meshes/loose.nif?v=2'), [[0, 9]]);
+  // Only the loose file's chunk is fetched: both archives' chunk 0 is already in memory.
+  assert.equal(n, 1);
+  assert.equal(JSON.stringify(req.files.map((f) => f.offs)), JSON.stringify(urls.map((u) => (u.startsWith('mwdata/Meshes') ? [0] : []))));
+  // The worker's answer: the texture a.nif named. textures/tx_wood.dds exists, so .dds is asked for.
+  posted.length = 0;
+  ctx.worker.onmessage({ data: { prefetched: req.id, fetched: 2, chunks: 2, tex: ['tx_wood.tga'] } });
+  assert.equal(posted.length, 0, 'the texture is in chunk 0 too: nothing more to fetch');
+  assert.equal(ctx.StreamFS.stats().pfFetched, 2);
+  // Asking again for the same paths fetches nothing twice.
+  assert.equal(ctx.StreamFS.prefetchPaths(['meshes/b.nif']), 0);
+
+  // The worker's texture scan finds the names a model carries, and only those.
+  const w = new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response', 'navigator',
+    body + '; return textureNames;')(async () => ok(1), AbortController, setTimeout, clearTimeout, {}, () => {}, Response, {});
+  assert.deepEqual(w(new Uint8Array(Buffer.concat([nif, Buffer.from([0, 5, 0, 0, 0]), Buffer.from('Bip01'), Buffer.from([0, 9, 0, 0, 0]), Buffer.from('Textures\\Tx_Rock.DDS', 'latin1')])))
+    .sort(), ['textures\\tx_rock.dds', 'tx_wood.tga']);
+}
+
 console.log('streamfs retry: ok');

@@ -27,6 +27,10 @@
 #include <components/settings/values.hpp>
 #include <components/terrain/terraingrid.hpp>
 #include <components/vfs/pathutil.hpp>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <set>
+#endif
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
@@ -1323,6 +1327,10 @@ namespace MWWorld
 
         mLastPlayerPos = playerPos;
 
+#ifdef __EMSCRIPTEN__
+        prefetchNearbyFiles(playerPos, predictedPos);
+#endif
+
         if (mPreloadEnabled)
         {
             if (mPreloadDoors)
@@ -1373,6 +1381,101 @@ namespace MWWorld
             }
         }
     }
+
+#ifdef __EMSCRIPTEN__
+    // CELL LOADS WAITED ON THE NETWORK. Entering an exterior read ~40 missing 2 MB chunks one at a
+    // time with the game blocked: 2.9 s median, 15 s at the 90th percentile; the engine's own work
+    // was ~0.3 s (prod 2026-10-19..21, 188 cell changes). The same targets the preloader would pick
+    // -- teleport doors within reach, the ring of exterior cells past the loaded grid -- are named
+    // to the page once per cell, as model paths; it fetches their bytes (and the textures those
+    // models name) into the chunk store without blocking anything.
+    void Scene::prefetchNearbyFiles(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos)
+    {
+        // Further than the preloader's reach: a download needs more lead time than a parse.
+        const float reach = std::max(mPreloadDistance, 3000.f);
+        for (const MWWorld::CellStore* cellStore : mActiveCells)
+        {
+            for (const auto& door : cellStore->getReadOnlyDoors().mList)
+            {
+                if (!door.mRef.getTeleport())
+                    continue;
+                const MWWorld::ConstPtr ptr(&door, cellStore);
+                const osg::Vec3f pos = ptr.getRefData().getPosition().asVec3();
+                const float d2 = std::min((playerPos - pos).length2(), (predictedPos - pos).length2());
+                if (d2 >= reach * reach)
+                    continue;
+                const ESM::RefId dest = ptr.getCellRef().getDestCell();
+                if (dest.empty() || mPrefetchedCells.count(dest))
+                    continue;
+                try
+                {
+                    prefetchCellFiles(mWorld.getWorldModel().getCell(dest));
+                }
+                catch (const std::exception&)
+                {
+                    mPrefetchedCells.insert(dest);
+                }
+            }
+        }
+
+        if (!mWorld.isCellExterior())
+            return;
+        const int ring = mHalfGridSize + 1;
+        const ESM::RefId worldspace = mWorld.getCurrentWorldspace();
+        const int cellSize = ESM::getCellSize(worldspace);
+        const float loadDist = cellSize / 2 + cellSize - mCellLoadingThreshold + reach;
+        for (int dx = -ring; dx <= ring; ++dx)
+        {
+            for (int dy = -ring; dy <= ring; ++dy)
+            {
+                if (dy != ring && dy != -ring && dx != ring && dx != -ring)
+                    continue; // the loaded grid is already in memory
+                const ESM::ExteriorCellLocation index(
+                    mCurrentGridCenter.x() + dx, mCurrentGridCenter.y() + dy, worldspace);
+                const osg::Vec2f center = ESM::indexToPosition(index, true);
+                const float dist = std::min(
+                    std::max(std::abs(center.x() - playerPos.x()), std::abs(center.y() - playerPos.y())),
+                    std::max(std::abs(center.x() - predictedPos.x()), std::abs(center.y() - predictedPos.y())));
+                if (dist >= loadDist)
+                    continue;
+                try
+                {
+                    prefetchCellFiles(mWorld.getWorldModel().getExterior(index));
+                }
+                catch (const std::exception&)
+                {
+                }
+            }
+        }
+    }
+
+    void Scene::prefetchCellFiles(CellStore& cell)
+    {
+        if (!mPrefetchedCells.insert(cell.getCell()->getId()).second)
+            return;
+        std::vector<std::string_view> models;
+        cell.forEachConst([&](const MWWorld::ConstPtr& ptr) {
+            ptr.getClass().getModelsToPreload(ptr, models);
+            return true;
+        });
+        const VFS::Manager* vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        std::set<std::string> seen;
+        std::string out;
+        for (std::string_view model : models)
+        {
+            if (model.empty())
+                continue;
+            VFS::Path::Normalized mesh = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(model));
+            mesh = Misc::ResourceHelpers::correctActorModelPath(mesh, vfs);
+            if (!seen.insert(mesh.value()).second)
+                continue;
+            out += mesh.value();
+            out += '\n';
+        }
+        if (!out.empty())
+            EM_ASM({ if (Module.__omwPrefetch) Module.__omwPrefetch(UTF8ToString($0)); }, out.c_str());
+    }
+#endif
 
     void Scene::preloadExteriorGrid(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos)
     {

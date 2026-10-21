@@ -67,7 +67,7 @@
 
   // cache is a Map used as an LRU: insertion order IS the recency order (delete+set moves to end),
   // so eviction pops the first (oldest) key. No separate order array → O(1) hit path, no linear scan.
-  const S = { worker: null, ctrl: null, data: null, cache: new Map(), nextId: 1, urlSrcs: new Map(), preloads: new Map(), rec: new Set(), recDone: null };
+  const S = { worker: null, ctrl: null, data: null, cache: new Map(), nextId: 1, urlSrcs: new Map(), preloads: new Map(), rec: new Set(), recDone: null, pfQueue: [], pfBusy: false, pfSeen: new Set() };
 
   // Streaming cost counters, exposed as window.__streamfsStats. Chunk misses block the main thread
   // (see fetchChunkSync), so this is the only place the stall is observable. Two adds per read —
@@ -393,8 +393,68 @@
         await Promise.all([lane(), lane(), lane(), lane()]);
         postMessage({ preload: id, end: true, done, total, bytes });
       }
+      // THE NEXT CELL'S FILES, BEFORE IT IS ENTERED (Scene::prefetchNearbyFiles via the page).
+      // Two lanes, standing aside while the game waits on a read of its own. Every chunk lands in
+      // the store (file, else Cache API); none is handed to the page's memory. The models' own
+      // bytes are then scanned for the texture names they carry (NIF strings are length-prefixed
+      // runs of printable bytes): the page resolves and fetches those next.
+      // No regex and no backslash here: this is a template literal.
+      const TEX_ENDS = ['.dds', '.tga', '.bmp'];
+      function textureNames(bytes) {
+        const out = new Set();
+        let run = '';
+        for (let i = 0; i <= bytes.length; i++) {
+          const c = i < bytes.length ? bytes[i] : 0;
+          if (c >= 32 && c < 127) { if (run.length < 200) run += String.fromCharCode(c); continue; }
+          const low = run.toLowerCase();
+          if (run.length > 4 && TEX_ENDS.some((x) => low.endsWith(x))) out.add(low);
+          run = '';
+        }
+        return [...out];
+      }
+      async function prefetchFiles(m) {
+        const chunk = m.chunk, jobs = [], keep = new Map(), want = new Set();
+        m.files.forEach((f, fi) => { for (const s of f.offs) jobs.push({ f, fi, s }); });
+        for (const [fi, off, size] of m.meshes || []) for (let s = Math.floor(off / chunk) * chunk; s < off + size; s += chunk) want.add(fi + ':' + s);
+        let next = 0, fetched = 0;
+        const one = async (j) => {
+          while (fg > 0) await nap(25); // the game is waiting on a read: it goes first
+          const end = Math.min(j.s + chunk, j.f.size);
+          const ckey = 'https://sfs.chunk/' + encodeURIComponent(j.f.pkey) + '/' + j.s;
+          let buf;
+          try {
+            buf = await opfsGet(j.f.pkey, j.s, end, chunk);
+            if (!buf) {
+              buf = cacheDead ? undefined : await cacheRead(ckey);
+              if (buf) await opfsAdopt(j.f.pkey, ckey, j.s, buf, chunk);
+            }
+            if (!buf) {
+              buf = await rangeFetch(j.f.url, j.s, end, 2, 20000);
+              fetched++;
+              if (!(await opfsPut(j.f.pkey, j.s, buf, chunk))) await cachePut(ckey, buf);
+            }
+          } catch (err) { buf = undefined; /* the engine reads it itself on entry */ }
+          if (buf && want.has(j.fi + ':' + j.s)) keep.set(j.fi + ':' + j.s, buf);
+        };
+        const lane = async () => { while (next < jobs.length) await one(jobs[next++]); };
+        await Promise.all([lane(), lane()]);
+        const tex = new Set();
+        for (const [fi, off, size] of m.meshes || []) {
+          const bytes = new Uint8Array(size);
+          let ok = true;
+          for (let s = Math.floor(off / chunk) * chunk; s < off + size && ok; s += chunk) {
+            const b = keep.get(fi + ':' + s);
+            if (!b) { ok = false; break; }
+            const from = Math.max(off, s), to = Math.min(off + size, s + b.length);
+            bytes.set(b.subarray(from - s, to - s), from - off);
+          }
+          if (ok) for (const t of textureNames(bytes)) tex.add(t);
+        }
+        postMessage({ prefetched: m.id, fetched, chunks: jobs.length, tex: [...tex] });
+      }
       onmessage = async (e) => {
         const m = e.data;
+        if (m.prefetch) { prefetchFiles(m); return; }
         if (m.preload) { preload(m.preload, m.chunk, m.id); return; }
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
         if (m.warm) { warm(m.warm, m.chunk, m.budget); return; }
@@ -572,6 +632,82 @@
     return node;
   }
 
+  // ---- prefetch: archive directories and VFS path resolution (main thread) ----
+  // A TES3 BSA: a 12-byte header (0x100, hash-table offset, file count), then per file
+  // {size, offset}, then per file a name offset, then the names, then the hashes; file data
+  // starts after the hashes. The directory sits in the archive's first chunk(s), which the
+  // engine read at boot, so this is a local read.
+  const bsaDirs = new Map();
+  function bsaDir(path) {
+    if (bsaDirs.has(path)) return bsaDirs.get(path);
+    let dir = null;
+    try {
+      const src = S.urlSrcs.get(path), h = new Uint8Array(12);
+      readSync(src, src.key, src.size, h, 0, 12, 0);
+      const dv = new DataView(h.buffer);
+      if (dv.getUint32(0, true) === 0x100) {
+        const hashOff = dv.getUint32(4, true), n = dv.getUint32(8, true);
+        const b = new Uint8Array(hashOff);
+        readSync(src, src.key, src.size, b, 0, hashOff, 12);
+        const v = new DataView(b.buffer), namesAt = n * 12, dataStart = 12 + hashOff + n * 8;
+        dir = new Map();
+        for (let i = 0; i < n; i++) {
+          let p = namesAt + v.getUint32(n * 8 + i * 4, true), name = '';
+          while (p < b.length && b[p]) name += String.fromCharCode(b[p++]);
+          dir.set(name.toLowerCase().replace(/\\/g, '/'), [dataStart + v.getUint32(i * 8 + 4, true), v.getUint32(i * 8, true)]);
+        }
+      }
+    } catch (e) { dir = null; }
+    bsaDirs.set(path, dir);
+    return dir;
+  }
+  const archiveRank = (p) => (/morrowind\.bsa$/i.test(p) ? 0 : /tribunal\.bsa$/i.test(p) ? 1 : /bloodmoon\.bsa$/i.test(p) ? 2 : 3);
+  let looseIdx = null;
+  function resolveVfs(raw) {
+    const v = String(raw).toLowerCase().replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!looseIdx) {
+      looseIdx = new Map();
+      for (const [p, src] of S.urlSrcs) {
+        const m = /^\/mwdata\/(.+)$/i.exec(p);
+        if (m && !/\.(bsa|esm|esp|omwaddon)$/i.test(p)) looseIdx.set(m[1].toLowerCase(), src);
+      }
+    }
+    const loose = looseIdx.get(v);
+    if (loose) return { src: loose, off: 0, size: loose.size };
+    const archives = [...S.urlSrcs.keys()].filter((p) => /\.bsa$/i.test(p)).sort((a, b) => archiveRank(b) - archiveRank(a));
+    for (const a of archives) {
+      const d = bsaDir(a), e = d && d.get(v);
+      if (e) return { src: S.urlSrcs.get(a), off: e[0], size: e[1] };
+    }
+    return null;
+  }
+  // The worker named the textures its models carry: the engine's texture lookup is textures/<name>
+  // with .dds preferred over the name's own extension.
+  function texturePaths(names) {
+    const out = [];
+    for (let t of names) {
+      t = t.replace(/\\/g, '/').replace(/^data files\//, '');
+      if (!t.startsWith('textures/')) t = 'textures/' + t;
+      const dds = t.replace(/\.[^./]+$/, '.dds');
+      out.push(resolveVfs(dds) ? dds : t);
+    }
+    return out;
+  }
+  function pfNext() {
+    if (S.pfBusy || !S.pfQueue.length) return;
+    S.pfBusy = true;
+    const m = S.pfQueue.shift();
+    m.id = ++S.nextId;
+    S.preloads.set(m.id, (d) => {
+      S.preloads.delete(m.id);
+      ST.pfFetched = (ST.pfFetched || 0) + (d.fetched || 0);
+      S.pfBusy = false;
+      if (d.tex && d.tex.length) window.StreamFS.prefetchPaths(texturePaths(d.tex), false);
+      pfNext();
+    });
+    S.worker.postMessage(m);
+  }
+
   window.StreamFS = {
     // Live streaming cost: misses each blocked the main thread for a worker round-trip.
     // High misses + high evictions = the working set exceeds LRU_MAX and is thrashing.
@@ -589,7 +725,7 @@
       S.data = new Uint8Array(dataBuf);
       S.worker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
       S.worker.postMessage({ init: 1, ctrl: ctrlBuf, data: dataBuf });
-      S.worker.onmessage = (e) => { if (e.data && e.data.preload !== undefined) { const p = S.preloads.get(e.data.preload); if (p) p(e.data); return; } if (e.data && e.data.cacheSlow) ST.cacheSlow = 1; if (e.data && e.data.store && ST.store !== 'file') ST.store = e.data.store; if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
+      S.worker.onmessage = (e) => { if (e.data && e.data.prefetched !== undefined) { const p = S.preloads.get(e.data.prefetched); if (p) p(e.data); return; } if (e.data && e.data.preload !== undefined) { const p = S.preloads.get(e.data.preload); if (p) p(e.data); return; } if (e.data && e.data.cacheSlow) ST.cacheSlow = 1; if (e.data && e.data.store && ST.store !== 'file') ST.store = e.data.store; if (e.data && e.data.warmed !== undefined) { ST.warmed = (ST.warmed || 0) + e.data.warmed; if (e.data.done) { ST.warmDone = true; if (e.data.err) ST.warmErr = e.data.err; } } };
       try { Object.defineProperty(window, '__streamfsStats', { get: () => window.StreamFS.stats() }); } catch (e) {}
     },
 
@@ -673,6 +809,38 @@
         S.worker.postMessage({ preload: files.map(({ url, pkey, size, offs }) => ({ url, pkey, size, offs })), chunk: CHUNK, id });
       });
     },
+    // A FILE THE ENGINE WILL ASK FOR, BY ITS VFS PATH ("meshes/x/ex_hlaalu_b_01.nif"): fetch its
+    // bytes into the store in the background (Scene::prefetchNearbyFiles names the nearby door
+    // destinations' and exterior cells' models; their textures follow from the worker's scan).
+    // Resolution follows the engine's VFS: a loose file over any archive, a later archive over an
+    // earlier one (the asset pack over Bloodmoon over Tribunal over Morrowind). Persistable sources
+    // only; one request in flight, the rest queued.
+    prefetchPaths(paths, meshes) {
+      if (!S.worker || !paths || !paths.length) return 0;
+      const files = [], at = new Map(), scan = [];
+      const add = (src, off, size, isMesh) => {
+        let fi = at.get(src.key);
+        if (fi === undefined) { fi = files.length; at.set(src.key, fi); files.push({ url: src.url, pkey: src.pkey, size: src.size, offs: [] }); }
+        for (let s = Math.floor(off / CHUNK) * CHUNK; s < off + size; s += CHUNK) {
+          const k = src.key + ':' + s;
+          if (S.cache.has(k) || S.pfSeen.has(k)) continue;
+          S.pfSeen.add(k);
+          files[fi].offs.push(s);
+        }
+        if (isMesh) scan.push([fi, off, size]);
+      };
+      for (const raw of paths) {
+        const hit = resolveVfs(raw);
+        if (hit && hit.src.pkey) add(hit.src, hit.off, hit.size, meshes !== false && /\.nif$/i.test(raw));
+      }
+      const live = files.filter((f) => f.offs.length);
+      if (!live.length && !scan.length) return 0;
+      ST.pfFiles = (ST.pfFiles || 0) + paths.length;
+      S.pfQueue.push({ prefetch: 1, files, chunk: CHUNK, meshes: scan });
+      pfNext();
+      return live.reduce((n, f) => n + f.offs.length, 0);
+    },
+
     // Which chunks the engine read while recording, as [{path, offs}] -- the list preload() takes.
     // Recording starts at init and ends with record(false) (index.html: when the boot is released).
     get chunk() { return CHUNK; },
