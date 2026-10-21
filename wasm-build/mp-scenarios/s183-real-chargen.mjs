@@ -78,6 +78,7 @@ export default async function run(ctx) {
   ctx.log(`a new game starts in "${cell0}", chargenDone=${await a.eval('window.omw.state.chargenDone')}`);
   // WHAT A NEW GAME READS TO GET HERE: every chunk the engine touched before the loading screen
   // let go (StreamFS records them through the boot). The list play/ preloads for a first visit.
+  ctx.log('[preload] ' + await a.eval('JSON.stringify(window.__omwPreload || null)'));
   ctx.log('[bootset] ' + await a.eval('JSON.stringify(window.StreamFS && StreamFS.bootSet ? StreamFS.bootSet() : null)'));
   assert.notEqual(await a.eval('window.omw.state.chargenDone'), '1', 'a fresh slot must start IN character creation');
   const before = await whoami(a);

@@ -1663,7 +1663,7 @@ window.omw = (function(){
        //                           restores position/stats/inventory on auth (M2 record).
        // Hash read here works: this IIFE runs at script parse, before preRun scrubs it.
        if (bootParam('mp')) {
-         if (/[#&]mpnew=1/.test(location.hash || '')) return ['--skip-menu', '--new-game'];
+         if (/[#&]mpnew=1/.test(location.hash || '')) { window.__omwNewGame = true; return ['--skip-menu', '--new-game']; }
          // Returning character: the default start, behind __omwAwaitRestore's held loading
          // screen until the server's record has teleported us (no --start: backlog 406).
          return ['--skip-menu'];
@@ -4079,11 +4079,24 @@ window.omw = (function(){
                var released = false, release = function(){ if (released) return; released = true; removeRunDependency('mw-data'); };
                try {
                  var LD = window.__omwLoading, pre = StreamFS.mounted(/\.(esm|esp)$/i).map(function(p){ return { path: p }; });
+                 // A NEW CHARACTER'S FIRST AREA, too: the archive chunks the prison ship and its
+                 // opening read inside the same blocking start (recorded by s183's StreamFS.bootSet,
+                 // Jenkins #245: 79 chunks; the random splash screens and explore music left out).
+                 // Chunk indices; a list gone stale with a new asset pack only fetches a few extra.
+                 if (window.__omwNewGame) [
+                   ['/mwdata/Morrowind.bsa', [0,2,3,4,5,7,11,12,13,52,53,54,90,91,94,96,98,100,101,103,105,106,107,109,112,113,114,115,117,118,119,120,121,122,123,124,127,128,129,130,132,134,136,141,143,144,146,147,148]],
+                   ['/mwdata/Tribunal.bsa', [0,25,26,30]],
+                   ['/mwdata/Bloodmoon.bsa', [0,41,46,49,53,56]],
+                   ['/mods/openmw-web-assets.bsa', [0,2,4,5,7,8,9,11,12,13,14,24,39,40,43,48,53,55]],
+                   ['/mwdata/Sound/Fx/envrn/boat_waves.wav', [0]],
+                   ['/mwdata/Sound/Vo/Misc/chargenname1.mp3', [0]]
+                 ].forEach(function(f){ pre.push({ path: f[0], offs: f[1].map(function(i){ return i * StreamFS.chunk; }) }); });
                  StreamFS.preload(pre, function(d){
                    if (!LD || !d.total) return;
                    LD.set(null, 'Downloading the game data', Math.round(d.bytes / 1048576) + ' MB · ' + Math.round(d.done * 100 / d.total) + '%');
                    LD.step(22 + Math.floor(23 * d.done / d.total));
                  }, 180000).then(function(d){
+                   window.__omwPreload = d;
                    if (d) append('[mw] preloaded ' + d.done + '/' + d.total + ' chunks, ' + Math.round(d.bytes / 1048576) + ' MB fetched');
                    release();
                  }, release);

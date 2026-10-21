@@ -555,6 +555,7 @@
     },
     // Which chunks the engine read while recording, as [{path, offs}] -- the list preload() takes.
     // Recording starts at init and ends with record(false) (index.html: when the boot is released).
+    get chunk() { return CHUNK; },
     mounted(re) { return [...S.urlSrcs.keys()].filter((p) => re.test(p)); },
     record(on) { if (on) S.rec = S.rec || new Set(); else if (S.rec) { S.recDone = S.rec; S.rec = null; } },
     bootSet() {
