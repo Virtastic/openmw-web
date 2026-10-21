@@ -192,6 +192,16 @@ local function probeSwing(label)
             stop and string.format('%.3f', stop) or 'nil'))
     end)
 end
+-- A RUNNING GROUP IS NOT RESTARTED BY PLAYING IT AGAIN. Animation::play on a group already in its
+-- state map only updates the priority and returns (mwrender/animation.cpp): the wind-up, held at
+-- 'chop min attack' (autoDisable = false), kept the group alive, so the blow asked for the same
+-- group, the engine kept the wind-up, and a friend's sword stayed raised through a whole fight
+-- (launch video 2026-10-20). The engine's own attacks disable the group before each section
+-- (character.cpp); so does every swing here.
+local function playFresh(anim, group, opts)
+    pcall(anim.cancel, self, group)
+    anim.playBlended(self, group, opts)
+end
 local function showSwing(release, full)
     pcall(function()
         local anim = require('openmw.animation')
@@ -203,7 +213,7 @@ local function showSwing(release, full)
         local pri = { [G.LowerBody] = P.WeaponLowerBody, [G.Torso] = P.Weapon, [G.LeftArm] = P.Weapon, [G.RightArm] = P.Weapon }
         if types.Actor.getStance(self) == types.Actor.STANCE.Spell then
             if not release or full then
-                anim.playBlended(self, 'spellcast', {
+                playFresh(anim, 'spellcast', {
                     priority = pri, startKey = 'self start', stopKey = 'self stop' })
             end
             return
@@ -222,7 +232,7 @@ local function showSwing(release, full)
             -- The peer's creature starts its whole attack on the press too.
             if release and not full then return end
             local group = groups[math.random(#groups)]
-            anim.playBlended(self, group, { priority = anim.PRIORITY.Weapon, startKey = 'start', stopKey = 'stop' })
+            playFresh(anim, group, { priority = anim.PRIORITY.Weapon, startKey = 'start', stopKey = 'stop' })
             return
         end
         local group = 'handtohand'
@@ -237,7 +247,7 @@ local function showSwing(release, full)
         local kind = ranged and 'shoot' or 'chop'
         swingGroup, swingKind = group, kind
         if release then
-            anim.playBlended(self, group, {
+            playFresh(anim, group, {
                 priority = pri,
                 startKey = kind .. (full and ' start' or ' max attack'),
                 -- SMALL follow stop: the follow sections exist as small/medium/large only
@@ -248,7 +258,7 @@ local function showSwing(release, full)
             })
             core.sound.playSound3d('Weapon Swish', self)
         else
-            anim.playBlended(self, group, {
+            playFresh(anim, group, {
                 priority = pri,
                 startKey = kind .. ' start',
                 stopKey = kind .. ' min attack',

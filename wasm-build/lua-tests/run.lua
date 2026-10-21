@@ -2891,8 +2891,18 @@ do
   }
   package.loaded['openmw.interfaces'] = {}
   package.loaded['openmw.mp'] = { set = function() end }
+  -- AS THE ENGINE DOES IT: a group still held (autoDisable = false) is NOT restarted by playing it
+  -- again -- Animation::play only updates its priority -- until it is cancelled. With the stub
+  -- that played every call, a held wind-up and a blow that never ran looked like a swing here
+  -- (launch video 2026-10-20: a friend's sword raised through the whole fight).
+  local held = {}
   package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return true end,
-    playBlended = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
+    cancel = function(_, group) held[group] = nil end,
+    playBlended = function(_, group, o)
+      if held[group] then return end
+      if o.autoDisable == false then held[group] = true end
+      played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey)
+    end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
   pup.engineHandlers.onInit({ playerId = 7 })
@@ -2902,6 +2912,9 @@ do
   now = now + 0.5; pup.eventHandlers.MP_Pose(pose(16)); pup.engineHandlers.onUpdate(0.05)
   check('a friend\'s swing: wind-up to min attack on the press, the blow to SMALL follow stop on the release',
     played[1] == 'handtohand:chop start>chop min attack' and played[2] == 'handtohand:chop max attack>chop small follow stop', table.concat(played, ' '))
+  -- ...and the NEXT swing winds up again rather than finding its group still running.
+  now = now + 0.5; pup.eventHandlers.MP_Pose(pose(24)); pup.engineHandlers.onUpdate(0.05)
+  check('a second swing winds up again', played[3] == 'handtohand:chop start>chop min attack', table.concat(played, ' '))
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
   local cpp = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('character.cpp does not smooth a puppet\'s speed a second time (the peer already did)',
