@@ -566,7 +566,8 @@ window.omw = (function(){
      // BSAs and loading fine in the harness were undiagnosable without it.
      if (/^\[(mw|assets|data)\] |Adding BSA archive|Adding data directory|Loading content file/.test(text)) return true;
      // One line per page: where this boot's seconds went (__omwLoading, the boot timeline).
-     if (/^\[boot\] /.test(text)) return true;
+     // And each read the player waited on (streamfs, capped below).
+     if (/^\[(boot|sfs)\] /.test(text)) return true;
      // HOW FAR THE JOIN GOT. Sessions that sat on the loading screen until the 5-minute settle
      // ceiling with no error shipped at all (prod 2026-10-18: 4 of 6) -- the game was running and
      // never joined, and nothing said where the session stopped. A handful of lines per boot.
@@ -1593,6 +1594,16 @@ window.omw = (function(){
  // always on; read them with window.__omwBoot in the console, or as performance marks in devtools.
  // Values are ms from navigation start, so they line up with the network panel without arithmetic.
  window.__omwBoot = {};
+ // streamfs calls this for a read the game waited over 300 ms on: file, offset, ms, and the cell.
+ // At most 30 a page: a cold region can miss hundreds, and the first ones already name it.
+ window.__omwSlowRead = (function(){
+   var n = 0;
+   return function(file, off, ms){
+     if (++n > 30) return;
+     var c = ((window.omw && window.omw.state) || {}).cell || '';
+     append('[sfs] slow read ' + file + '@' + Math.round(off / 1048576) + 'MB ' + ms + ' ms cell=' + c);
+   };
+ })();
  window.__omwMark = function(name){
    try {
      if (window.__omwBoot[name] !== undefined) return;      // first one wins; boot happens once

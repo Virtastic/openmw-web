@@ -40,6 +40,7 @@ test('the boot timeline line is one the page ships to the server', opts, () => {
   const want = /function want\(text, cls\)\{[\s\S]*?\n   \}/.exec(html)?.[0] ?? '';
   const keep = new Function('mode', `${want}; return want;`)('default');
   assert.equal(keep('[boot] scriptStart=5 released=40000'), true);
+  assert.equal(keep('[sfs] slow read Hlo_IM000a.mp3@0MB 640 ms cell=-2,-9'), true, 'each read the player waited on');
   assert.equal(keep('[status] Running...'), false, 'the filter still filters');
 });
 

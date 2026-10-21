@@ -402,6 +402,12 @@
     // WHICH FILE THE GAME WAITED ON (telemetry sfsSlow): a read over 50 ms went to the network,
     // not the persistent store, and the file says whether the warm-up should have had it.
     if (waited > 50) { ST.slow = (ST.slow || 0) + 1; const fk = cacheKey.slice(0, cacheKey.lastIndexOf(':')).split('/').pop(); (ST.slowBy || (ST.slowBy = {}))[fk] = (ST.slowBy[fk] || 0) + 1; }
+    // EACH READ THE PLAYER FELT, by name (index.html ships it). The 5 s telemetry keeps only the top
+    // two files per session, which cannot say what a hitch mid-game was waiting on (prod 2026-10-21:
+    // 0.5-0.9 s single misses with the archives already warmed).
+    if (waited > 300 && typeof window !== 'undefined' && typeof window.__omwSlowRead === 'function') {
+      try { window.__omwSlowRead(decodeURIComponent(cacheKey.slice(0, cacheKey.lastIndexOf(':')).split('/').pop()).replace(/\?.*$/, ''), start, Math.round(waited)); } catch (e) {}
+    }
     const n = S.ctrl[1];
     if (n < 0) throw new Error('streamfs: read failed ' + cacheKey + '@' + start + ' after ' + Math.round(waited) + 'ms: '
       + String.fromCharCode.apply(null, S.data.subarray(0, -1 - n)));
