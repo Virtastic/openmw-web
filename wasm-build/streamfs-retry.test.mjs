@@ -232,11 +232,14 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   const mounts = [['Music/Explore/mx_explore_7.mp3', 3e6], ['Morrowind.bsa', 3e8], ['Sound/Vo/a/f/hlo_001.mp3', 2e4],
     ['Sound/Fx/foot/walkr_lt.wav', 9e3], ['Sound/Fx/item/bookpag1.wav', 4e3], ['Sound/Cr/rat/roar.wav', 5e4], ['Tribunal.bsa', 7e7], ['Splash/Splash_Netch.tga', 3e6]];
   for (const [p, s] of mounts) ctx.StreamFS.mount('/mwdata/' + p, 'mwdata/' + p + '?v=2', s);
-  assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 6, 'six files queued');
-  const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/mwdata\/|\?v=2$/g, ''));
+  ctx.StreamFS.mount('/mods/openmw-web-assets.bsa', 'mods/openmw-web-assets.bsa', 1.1e8);
+  assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 7, 'seven files queued');
+  const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/(mwdata|mods)\/|\?v=2$/g, ''));
   // Archives first: the next town comes out of them (prod 2026-10-20: Fx-first left Morrowind.bsa
   // cold at the Seyda Neen dock, a 26.5 s freeze). Then Fx smallest first, creatures, music.
-  assert.deepEqual(order, ['Morrowind.bsa', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
+  // The asset pack ahead of Morrowind.bsa (prod 2026-10-21: the pack's chunks were 20 of 26 slow
+  // reads stepping onto the dock).
+  assert.deepEqual(order, ['openmw-web-assets.bsa', 'Morrowind.bsa', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
     'Sound/Cr/rat/roar.wav', 'Music/Explore/mx_explore_7.mp3', 'Tribunal.bsa'], 'archives first, then Fx smallest first, creatures, music; no Vo, no Splash');
 }
 

@@ -845,7 +845,11 @@ window.omw = (function(){
    var el, titleEl, st, fill, det, done=false, inited=false, warmQueued=false;
    // What the background warm-up fills, and in which order (see finish()).
    var WARM_RE = /\.bsa$|^\/mwdata\/(sound\/(fx|cr)|music)\//i;
-   var WARM_FIRST = [/morrowind\.bsa$/i, /openmw-web-assets\.bsa$/i, /^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
+   // THE ASSET PACK FIRST: its meshes and textures replace vanilla ones, so nearly every model the
+   // next town loads is read from it -- and Morrowind.bsa ahead of it (~150 chunks) left it cold
+   // at the Seyda Neen dock: 20 of 26 slow reads, a 10.9 s freeze with ~100 chunks warmed (prod
+   // 2026-10-21). 57 chunks, about a minute of the boat.
+   var WARM_FIRST = [/openmw-web-assets\.bsa$/i, /morrowind\.bsa$/i, /^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
    function E(){
      if (inited) return el; inited=true;
      el=document.getElementById('loading'); titleEl=document.getElementById('ld-title');
