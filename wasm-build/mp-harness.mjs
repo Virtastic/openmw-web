@@ -445,7 +445,10 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   // opts.newGame: a FRESH SLOT the way the launcher boots one -- no ?start (which bypasses
   // chargen: chargenstate -1) and #mpnew=1, i.e. --new-game: the prison ship and character
   // creation. Every other boot skips chargen.
-  const world = opts.retail && opts.newGame
+  // opts.intro: a new game WITH its opening movie, as a player gets it (every other boot skips it).
+  const world = opts.retail && opts.newGame && opts.intro
+    ? '?stream'
+    : opts.retail && opts.newGame
     ? '?stream&novid&skipintro=1'
     : opts.retail
     ? `?stream&novid&skipintro=1&start=${encodeURIComponent(opts.startCell ?? 'Seyda Neen')}`

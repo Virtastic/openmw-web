@@ -911,8 +911,21 @@ window.omw = (function(){
    var NET = { Connecting: 'Connecting to the server', HelloSent: 'Connecting to the server',
                Authing: 'Signing in', Joining: 'Joining your world' };
    var OWNED = /^(Loading Morrowind|Running|Connecting to the server|Signing in|Joining your world|Placing you where you left off)$/;
+   // THE INTRO IS SHOWN, NOT COVERED. A new game plays Morrowind's opening movie before the game
+   // starts, and the multiplayer join (and this screen's release) only comes after it: the player
+   // sat on "Loading Morrowind" for the movie's minute, hearing it play behind a still screen
+   // (prod 2026-10-21: firstFrame 11 s, connecting 69 s). The engine sets Module.__omwVideo while
+   // a video plays; the screen steps aside for it and comes back for the join.
+   var videoUp = false;
    setInterval(function(){
      if (done || !E() || !st) return;
+     var v = !!(window.Module && window.Module.__omwVideo === 1);
+     if (v !== videoUp) {
+       videoUp = v;
+       el.style.display = v ? 'none' : '';
+       if (v && window.__omwMark) window.__omwMark('videoStart');
+       if (!v && window.__omwMark) window.__omwMark('videoEnd');
+     }
      var s = (window.omw && window.omw.state) || {}, n = s.state || '';
      if (window.__omwMark && (n === 'Connecting' || n === 'Authing' || n === 'Joined')) window.__omwMark('net' + n);
      if (!OWNED.test(st.textContent)) return;

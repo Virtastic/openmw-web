@@ -27,10 +27,11 @@ function boot() {
   els.loading.classList.add('indet');
   const lines: string[] = [];
   const window: Record<string, unknown> = { omw: { state: {} }, __omwBoot: { scriptStart: 5 }, __omwMark: () => {} };
+  let tick = () => {};
   const ld = new Function('window', 'document', 'append', 'setInterval', 'setTimeout', `return ${src};`)(
-    window, { getElementById: (id: keyof typeof els) => els[id] }, (t: string) => lines.push(t), () => 0, () => 0);
+    window, { getElementById: (id: keyof typeof els) => els[id] }, (t: string) => lines.push(t), (f: () => void) => { tick = f; return 0; }, () => 0);
   const p = () => Number(els['ld-fill'].props.get('--p') ?? 0);
-  return { ld, els, lines, p };
+  return { ld, els, lines, p, window, tick: () => tick() };
 }
 
 // WRITTEN IS NOT SENT. The page ships only warnings, errors and a list of prefixes to the server;
@@ -70,4 +71,20 @@ test('one forward-only bar: download, mount, creep, then the steps after the eng
   assert.match(lines.join('\n'), /^\[boot\] scriptStart=5/m, 'the boot timeline is reported once');
   ld.show('Loading', 'Entering a new area…');
   assert.ok(els.loading.cls.has('indet'), 'after boot, a door load is the stripe as before');
+});
+
+// THE INTRO IS SHOWN (prod 2026-10-21: a new game's opening movie played behind "Loading Morrowind"
+// for its whole minute). While the engine says a video plays, the screen steps aside; it is back
+// for the join after it.
+test('the loading screen steps aside while the intro movie plays', opts, () => {
+  const { ld, els, window, tick } = boot();
+  ld.set(null, 'Loading Morrowind', '');
+  tick();
+  assert.equal(els.loading.style.display, '', 'up while the engine starts');
+  window.Module = { __omwVideo: 1 };
+  tick();
+  assert.equal(els.loading.style.display, 'none', 'the movie is not covered');
+  (window.Module as { __omwVideo: number }).__omwVideo = 0;
+  tick();
+  assert.equal(els.loading.style.display, '', 'back for the join');
 });

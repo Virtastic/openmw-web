@@ -2209,6 +2209,10 @@ namespace MWGui
         // restore-state and return; Engine::frame() calls updateVideoPlayback() every tick
         // until the video finishes, then teardown runs there.
         mVideoPlaying = true;
+        // The page's loading screen covers the canvas until the multiplayer join settles, and the
+        // new-game intro plays before that: a minute of "Loading" over a movie nobody saw (prod
+        // 2026-10-21). The page steps aside while this is set (index.html __omwLoading).
+        EM_ASM({ Module.__omwVideo = 1; });
         mVideoOldKeyFocus = oldKeyFocus;
         mVideoCursorWasVisible = cursorWasVisible;
         return;
@@ -2310,6 +2314,7 @@ namespace MWGui
         updateVisible();
         mVideoBackground->setVisible(false);
         mVideoPlaying = false;
+        EM_ASM({ Module.__omwVideo = 0; });
     }
 #endif
 
