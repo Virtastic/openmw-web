@@ -924,9 +924,16 @@ try {
    // on "Running" while the client connected, signed in and joined -- the stretch that feels
    // hung. Only replaces the engine's own labels: the settle/world-switch/reconnect owners set
    // their own text and are left alone.
+   // WHERE WE ARE GOING, SAID ONCE. A world switch names its destination ("Joining Ada's
+   // world", "Going home") and the reboot carries it here; without it a guest arriving in a
+   // friend's game was told "Joining your world".
+   var arriveAs = 'Joining your world';
+   try { arriveAs = sessionStorage.getItem('omwmp:arrive') || arriveAs; sessionStorage.removeItem('omwmp:arrive'); } catch (e) {}
    var NET = { Connecting: 'Connecting to the server', HelloSent: 'Connecting to the server',
-               Authing: 'Signing in', Joining: 'Joining your world' };
-   var OWNED = /^(Loading Morrowind|Running|Connecting to the server|Signing in|Joining your world|Placing you where you left off)$/;
+               Authing: 'Signing in', Joining: arriveAs };
+   var OWNED_LABELS = ['Loading Morrowind', 'Running', 'Connecting to the server', 'Signing in',
+                       'Joining your world', arriveAs, 'Placing you where you left off'];
+   var OWNED = { test: function(t){ return OWNED_LABELS.indexOf(t) >= 0; } };
    // THE INTRO IS SHOWN, NOT COVERED. A new game plays Morrowind's opening movie before the game
    // starts, and the multiplayer join (and this screen's release) only comes after it: the player
    // sat on "Loading Morrowind" for the movie's minute, hearing it play behind a still screen
@@ -4672,7 +4679,14 @@ try {
       // the player sees; this is only how the latch learns it did not work.
       throw new Error('no locker session');
     }
-    window.__omwLoading.show('Changing world', 'Getting you a seat…');
+    // One label for the whole trip: the click names it (window.__omwSwitchLabel), this screen
+    // and the next page's arrival both say it. "Going home" used to flip to "Changing world".
+    // A refused join leaves its label behind; only a click from the last half minute names this trip.
+    var lbl = window.__omwSwitchLabel || {};
+    if (!(Date.now() - (lbl.at || 0) < 30000)) lbl = {};
+    window.__omwSwitchLabel = null;
+    window.__omwLoading.show(lbl.title || 'Changing world', 'Getting you a seat…');
+    try { if (lbl.arrive) sessionStorage.setItem('omwmp:arrive', lbl.arrive); } catch (e) {}
     var ticket = '';
     // RETRIED, because one slow answer must not cost the player their world change. Bounded
     // still -- an unreachable gateway used to leave them behind a locked loading screen with
@@ -5255,6 +5269,7 @@ try {
   var joinSeen = '', joinTimer = 0;
   function watchJoin(name){
     setStatus('Joining ' + name + '…');
+    window.__omwSwitchLabel = { title: 'Joining ' + name, arrive: 'Joining ' + name + "'s world", at: Date.now() };
     joinSeen = String(mpState().joinFriendResult || '');
     clearTimeout(joinTimer);
     joinTimer = setTimeout(function(){ if (sStatusText.indexOf('Joining ') === 0){ setStatus(''); renderSocial(); } }, 30000);
@@ -5349,6 +5364,7 @@ try {
       var leave = el('button','btn','Leave');
       leave.onclick = function(){
         closeSocial();
+        window.__omwSwitchLabel = { title: 'Going home', arrive: 'Arriving home', at: Date.now() };
         cmd('where:home'); // leave the friend's world; our own world's mode is untouched
         window.__omwLoading.show('Going home', 'Back to your own world…');
         setStatus('');
