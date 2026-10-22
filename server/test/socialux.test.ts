@@ -356,5 +356,11 @@ test('JoinFriend follows a friend into the party they are visiting', async () =>
   store.setPresence('bob', 'bob-w', 'Bob', '1,1', false, t, 'private');
   await social.joinFriend(alice, 'bob');
   assert.equal(last()?.error, 'not_open');
+
+  // The host just dropped (crash grace): refused here, not after a reload into a closed door.
+  t += 2000;
+  store.clearPresence('bob', 'bob-w', t);
+  await social.joinFriend(alice, 'bob');
+  assert.equal(last()?.error, 'host_away');
   social.stop(); store.close();
 });

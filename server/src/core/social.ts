@@ -842,6 +842,11 @@ export class Social {
         return;
       }
     }
+    // NO HOST, NO DOOR. A host who just dropped has no presence row, and their world refuses
+    // newcomers through its crash grace (server.ts mayJoinWorld) -- so this used to answer ok,
+    // the page rebooted into the friend's world, the door refused it, and a second reboot took
+    // the player home. Refused here, in place, for the price of one lookup.
+    if (!where.online) return fail('host_away');
     const own = await this.worlds.ownerWorld(targetAcct);
     if (!own) return fail('not_online');
     // ASK THE MODE HERE, where the answer costs nothing. A world admits the party only when its

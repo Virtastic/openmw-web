@@ -477,6 +477,7 @@ return {
                     blocked = 'You cannot join them.',
                     not_open = 'Their world is not open to friends yet. Ask them to switch to Party.',
                     host_not_friend = "They are in someone else's party, and you are not friends with that host.",
+                    host_away = 'They have just disconnected. Try again in a moment.',
                     self = 'That is you.',
                     no_gateway = 'This server runs a single world, so there is nowhere else to join.',
                 }
