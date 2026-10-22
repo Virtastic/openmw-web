@@ -51,7 +51,8 @@ async function makeCharacter(dataDir: string, name: string): Promise<void> {
  * told about.
  */
 async function warpsSeenByPeer(
-  t: { after: (fn: () => unknown) => void }, n: number,
+  t: { after: (fn: () => unknown) => void }, n: number, clientAuthority = false,
+  corrections?: { n: number },
 ): Promise<number> {
   const dataDir = tmpDataDir();
   await makeCharacter(dataDir, 'Warper');
@@ -70,6 +71,7 @@ async function warpsSeenByPeer(
         interestRadius: 0,
         lodNearRadius: 1_000_000_000,
         lodMidRadius: 1_000_000_000,
+        clientAuthority,
       },
     },
   });
@@ -105,15 +107,26 @@ async function warpsSeenByPeer(
   for (const b of watcher.inbox.batches) {
     for (const e of b.entries) if (e.id !== mine && e.pose.x > furthest) furthest = e.pose.x;
   }
+  if (corrections) corrections.n = warper.inbox.stateBatches.length;
   warper.close();
   watcher.close();
   return Math.round(furthest / WARP);
 }
 
-test('an implausible move is only COUNTED — every frame is still relayed', async (t) => {
+test('replay model: an implausible move is only COUNTED — every frame is still relayed', async (t) => {
   const hops = await warpsSeenByPeer(t, 8);
   assert.equal(hops, 8,
     `this is a signal, not a gate (peers followed only to hop ${hops})`);
+});
+
+// THE WOW MODEL'S GATE. The client owns its position, so the speed envelope is no longer a
+// signal: a warp is refused (nobody is told about it) and the warper is handed back the last
+// validated spot as a PlayerStateBatch its reconcile applies.
+test('WoW model: an implausible move is refused, and the mover is corrected', async (t) => {
+  const corr = { n: 0 };
+  const hops = await warpsSeenByPeer(t, 8, true, corr);
+  assert.equal(hops, 0, `peers were told about a warp (hop ${hops})`);
+  assert.ok(corr.n >= 1, 'the warper must be handed its validated position back');
 });
 
 

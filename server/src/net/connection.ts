@@ -20,8 +20,8 @@ import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { socketRttMs } from './ws';
 import { netDelayFromEnv } from './netdelay';
 import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
-import { MSG_PLAYER_INPUT, MSG_AVATAR_MOVE_BATCH, INPUT_PAYLOAD_BYTES, POSE_OBSERVER_BIT, packInputForward, unpackAvatarMoveBatch, type AvatarMoveEntry } from '../proto/input';
-import { unpackMove } from '../proto/movement';
+import { MSG_PLAYER_INPUT, MSG_AVATAR_MOVE_BATCH, MSG_PLAYER_STATE_BATCH, INPUT_PAYLOAD_BYTES, POSE_OBSERVER_BIT, packInputForward, unpackAvatarMoveBatch, packPlayerStateBatch, type AvatarMoveEntry } from '../proto/input';
+import { unpackMove, packMoveBatch } from '../proto/movement';
 import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible, acceptPeerPose } from '../core/movement';
 
 /** Distinct cells one session may enter. Vanilla Morrowind is around 1,800 cells in total and
@@ -989,6 +989,10 @@ export class Connection implements Peer {
       metrics.avatarBatchRejected.inc({ reason: 'not_world_peer' });
       return;
     }
+    // THE WOW MODEL: the client owns its position and the avatar stands where the client put it
+    // (handleMove forwards each accepted pose to the peer). The peer's stream describes that
+    // same spot a few frames late, so it must not become anyone's canonical pose.
+    if (this.ctx.config.limits.clientAuthority) return;
     let entries;
     try {
       entries = unpackAvatarMoveBatch(payload);
@@ -1128,6 +1132,28 @@ export class Connection implements Peer {
     // Over a fixed window the same burst is just the distance actually covered in that window.
     // A frame arriving inside the window is still accepted and relayed — it simply does not
     // produce a verdict, because there is not yet enough elapsed time to form one.
+    // UNDER THE WOW MODEL THE ENVELOPE IS THE GATE. The client owns its position, so a move no
+    // legitimate movement produces is refused: the pose stays where it was validated and the
+    // client is handed that spot back (a PlayerStateBatch at its newest input seq, which its
+    // reconcile treats as a correction). A frame inside the window is held to what the whole
+    // window allows (2400 units), so a burst after a stall passes and a warp does not.
+    // ponytail: one generous speed bound (12000 u/s, past Icarian Flight); per-stat speed,
+    // jump height and the peer-side wall ray when a cheat makes them worth the false positives
+    // they would cost honest players.
+    if (this.ctx.config.limits.clientAuthority && anchor !== undefined && !this.isSystem) {
+      const el = Math.max(now - anchor.at, MOVE_WINDOW_MS) / 1000;
+      const dist = Math.hypot(pose.x - anchor.x, pose.y - anchor.y, pose.z - anchor.z);
+      if (el < 5 && dist > MAX_PLAUSIBLE_SPEED * el) {
+        player.moveSeq = seq;
+        metrics.implausibleMoves.inc();
+        this.ctx.moderation.noteAnomaly(player.accountKey, 'move');
+        log('warn', 'conn.move_refused', { player: player.name, speed: Math.round(dist / el), dt: Math.round(el * 1000) });
+        player.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH, nextBroadcastSeq(),
+          packPlayerStateBatch([{ id: player.id, lastInputSeq: player.inputSeq ?? 0,
+            pose: { ...(player.pose ?? pose), x: anchor.x, y: anchor.y, z: anchor.z } }])));
+        return;
+      }
+    }
     if (anchor !== undefined && !this.isSystem && now - anchor.at >= MOVE_WINDOW_MS) {
       const dt = (now - anchor.at) / 1000;
       const dist = Math.hypot(pose.x - anchor.x, pose.y - anchor.y, pose.z - anchor.z);
@@ -1144,9 +1170,8 @@ export class Connection implements Peer {
           player: player.name, account: player.accountKey,
           speed: Math.round(speed), dt: Math.round(dt * 1000), run,
         });
-        // A signal, not an action: every world is somebody's own game (or their friends'),
-        // so this only counts. Phase 3 retires the whole envelope — with the peer simulating
-        // the avatar, an implausible pose cannot be asserted in the first place.
+        // (Under the WoW model the gate above already refused this; this is the replay
+        // model's signal.)
       } else {
         player.implausibleRun = 0;
       }
@@ -1158,6 +1183,13 @@ export class Connection implements Peer {
     player.moveSeq = seq;
     player.pose = pose;
     player.poseVersion++;
+    // The peer hears every accepted move AT ONCE, as a one-entry move batch (a message it
+    // already decodes): the broadcaster only sends it players near where it is parked, and
+    // the avatar has to stand where its owner is for NPCs to fight and see them there.
+    if (this.ctx.config.limits.clientAuthority && !this.isSystem && player.inChargen !== true) {
+      this.ctx.worldPeer()?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
+        nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose }])));
+    }
   }
 
   // PlayerCellChange {cellKey, x, y, z}: update occupancy, refresh (or synthesize) the
@@ -2008,6 +2040,7 @@ export class Connection implements Peer {
         lodNearRadius: this.ctx.config.limits.lodNearRadius,
         lodMidRadius: this.ctx.config.limits.lodMidRadius,
         lodNearMaxAvatars: this.ctx.config.limits.lodNearMaxAvatars,
+        clientAuthority: this.ctx.config.limits.clientAuthority,
         simulated: this.ctx.config.simPeer.enabled || this.ctx.worldPeer() !== undefined,
         respawn: {
           cellKey: this.ctx.config.rules.respawnCellKey, x: this.ctx.config.rules.respawnX,

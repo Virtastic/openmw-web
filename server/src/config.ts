@@ -250,6 +250,10 @@ export interface Config {
     renderLod: 'full' | 'tiered';
     // Hard ceiling on fully-simulated avatars per client. 0 = no cap (radius alone).
     lodNearMaxAvatars: number;
+    // THE WOW MODEL (2026-10-22): each player's own client owns its position, the server
+    // validates every move and relays it, and the sim peer places that player's avatar where
+    // the client put it. false = the peer replays inputs and the client reconciles to it.
+    clientAuthority: boolean;
   };
   // Cell actor authority (see core/authority.ts). The sim peer is the only eligible holder,
   // so what remains is the RTT probe cadence and a liveness check on the peer itself.
@@ -678,6 +682,7 @@ function validate(t: Tree): Config {
       lodFarHz: reqPosNum(t, 'limits', 'lodFarHz'),
       renderLod: reqEnum(t, 'limits', 'renderLod', ENUM_OPTIONS['limits.renderLod']),
       lodNearMaxAvatars: reqNum(t, 'limits', 'lodNearMaxAvatars'),
+      clientAuthority: optBool(t, 'limits', 'clientAuthority', true),
     },
     authority: {
       rttProbeSec: reqNum(t, 'authority', 'rttProbeSec'),

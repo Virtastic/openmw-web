@@ -18,7 +18,8 @@ const pose = { x: 512, y: 640, z: 10, yaw: 0, pitch: 128, flags: 0, animVel: 0, 
 test('solo player in a held cell: every relayed actor batch survives the shared seq cursor', async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+    // The input-replay model (the avatar's stream is the pose): [limits] clientAuthority = false.
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16, clientAuthority: false } },
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);

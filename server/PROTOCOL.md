@@ -64,9 +64,23 @@ Corrections, each checked against the validator or handler named:
 | `0x0103` | PlayerStateBatch (S→C) | Phase 3 |
 | `0x0105` | AvatarMoveBatch (peer→S) | Phase 3 |
 
+### The WoW model (`[limits] clientAuthority = true`, the default since 2026-10-22)
+
+The player's OWN position is client-authored, as in World of Warcraft: `0x0100` PlayerMove is
+the canonical pose. The server checks each one against the speed envelope (12000 u/s over a
+200 ms window; a frame inside the window may cover at most what the whole window allows) and
+REFUSES an impossible move: nobody hears it, and the mover gets one `0x0103` entry holding the
+last validated position at its newest input seq, which its reconcile applies as a correction.
+An accepted move is relayed as usual AND forwarded to the world peer at once as a one-entry
+`0x0101`; the peer stands that player's avatar on it (global.lua `kit.placeAvatar`) instead of
+walking it. `0x0102` still flows: it aims, swings, blocks and readies the avatar. `0x0105` is
+ignored for players (it describes the placed body a few frames late) and no `0x0103` reconcile
+stream is sent. Combat, NPCs, quests, loot and world state stay on the peer. `false` is the
+input-replay model below, kept as the kill switch.
+
 ### Phase 3 input tier (`0x0102` / `0x0105` / `0x0103`)
 
-The server (via the sim peer) is authoritative over the player's own movement. The three
+With `clientAuthority = false`, the server (via the sim peer) is authoritative over the player's own movement. The three
 types sit BESIDE the M1 movement tier, which remains the DEGRADED MODE: with no peer
 holding the world, `0x0102` frames are dropped (counted) and the client-authored `0x0100`
 path is authoritative again — a peer crash never freezes every player, and no switchover
@@ -78,7 +92,8 @@ signal exists or is needed (the peer-pose freshness window, **2 s** — `PEER_PO
   not the envelope counter, which every binary frame shares) · `4` i8 move axis (−127..127 ≡ −1..1) · `5` i8 side axis ·
   `6` u16 yaw · `8` u8 pitch (same quantization as PlayerMove) · `9` u8 flags (bit0 run,
   bit1 sneak, bit2 jump-edge, bit3 use/attack, bit4 weapon stance, bit5 spell stance — the
-  avatar only swings from a drawn stance) · `10` u16 reserved 0. Authenticated by
+  avatar only swings from a drawn stance) · `10` u16 simMs (the owner's simulated
+  milliseconds since its previous input; avatar.lua plays it as a timed segment). Authenticated by
   CONNECTION IDENTITY — this connection owns exactly one avatar — which is deliberately a
   different check from ActorMoveBatch's holder/epoch ("may you author this cell's
   actors"); do not conflate them. Forwarded to the world peer as the same 12 bytes

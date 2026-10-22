@@ -28,7 +28,8 @@ async function poll<T>(pick: () => T | undefined, timeoutMs: number, what: strin
 async function world(t: { after(fn: () => unknown): void }) {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+    // The input-replay model these tests pin ([limits] clientAuthority = false, the kill switch).
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16, clientAuthority: false } },
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);

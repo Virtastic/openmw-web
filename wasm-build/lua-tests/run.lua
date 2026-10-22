@@ -3938,7 +3938,7 @@ end
 print('global.lua -- Party clicked while visiting is applied on arrival home (carry)')
 do
   local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
-  local ma = g:find('local function mirrorCarry()', 1, true)
+  local ma = g:find('local kit = {}', 1, true)
   local mb = ma and select(2, g:find('\nend\n', ma, true))
   local ha = g:find('    mpCarry = function(data)', 1, true)
   local hb = ha and select(2, g:find('\n    end,\n', ha, true))
@@ -3970,6 +3970,53 @@ do
     mk(wu, true, atHome, mpS)({ v = '|wss://x/w/party-b' })
     check('the Offline way back is restored', wu.lastOut == 'wss://x/w/party-b', tostring(wu.lastOut))
     check('garbage is ignored', mk({ own = home }, true, atHome, mpS)({ v = 'x' }) == nil)
+  end
+end
+
+-- ====================================== the WoW model on the peer: avatars stand where their owner is
+print('global.lua -- the peer places an avatar on its owner\'s pose (clientAuthority)')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local a = g:find('function kit.placeAvatar(', 1, true)
+  local b = a and select(2, g:find('\nend\n', a, true))
+  local mk = a and b and loadstring('local remoteCell, isChargenCell, util, inviteCellArg = ...\nlocal kit = {}\n'
+    .. g:sub(a, b) .. '\nreturn kit.placeAvatar')
+  check('placeAvatar is where this test expects it', mk ~= nil)
+  check('MP_MoveBatch places avatars only on the peer under clientAuthority',
+    g:find("mp.isSystem and mp.isSystem() and net.flags and net.flags.clientAuthority == true then\n                    kit.placeAvatar(p.obj, e.id, e)", 1, true) ~= nil)
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  check('a placed avatar is not walked from inputs', av:find('if placed then moveAxis, sideAxis = 0, 0 end', 1, true) ~= nil)
+  check('a placed avatar does not jump from inputs', av:find("if placed then\n                self.controls.jump = false", 1, true) ~= nil)
+  check('the policy carries the placement mode', av:find('if data.placed ~= nil then placed = data.placed == true end', 1, true) ~= nil
+    and g:find('avatarObjIds = ids, placed = placed', 1, true) ~= nil)
+  if mk then
+    local V = {}
+    V.__index = V
+    V.__sub = function(p, q) return setmetatable({ x = p.x - q.x, y = p.y - q.y, z = p.z - q.z }, V) end
+    function V:length2() return self.x * self.x + self.y * self.y + self.z * self.z end
+    local utilS = { vector3 = function(x, y, z) return setmetatable({ x = x, y = y, z = z }, V) end,
+      transform = { rotateZ = function(r) return { yaw = r } end } }
+    local function body(x, y, z)
+      local o = { position = utilS.vector3(x, y, z), tp = {} }
+      function o:isValid() return true end
+      function o:teleport(cell, pos, opt) self.tp[#self.tp + 1] = { cell = cell, pos = pos, opt = opt }; self.position = pos end
+      return o
+    end
+    local cells = { [7] = '3,4', [8] = 'imperial prison ship' }
+    local place = mk(cells, function(k) return k == 'imperial prison ship' end, utilS,
+      function(k) return k:match('^%-?%d+,%-?%d+$') and '' or k end)
+    local o = body(0, 0, 0)
+    place(o, 7, { x = 100, y = 0, z = 5, yaw = 1.5 })
+    check('a moved owner moves the avatar there', #o.tp == 1 and o.tp[1].pos.x == 100 and o.tp[1].cell == '' and o.tp[1].opt.onGround == false)
+    check('facing comes with it', o.tp[1] and o.tp[1].opt.rotation.yaw == 1.5)
+    place(o, 7, { x = 101, y = 0, z = 5, yaw = 1.5 })
+    check('a rounding error does not nudge a body mid-swing', #o.tp == 1, tostring(#o.tp))
+    local c = body(0, 0, 0)
+    place(c, 8, { x = 50, y = 0, z = 0 })
+    check('never into the chargen sanctuary', #c.tp == 0)
+    local u = body(0, 0, 0)
+    place(u, 9, { x = 50, y = 0, z = 0 })
+    check('no cell yet, no placement', #u.tp == 0)
   end
 end
 

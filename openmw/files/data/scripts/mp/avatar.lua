@@ -28,6 +28,7 @@ local util = require('openmw.util')
 -- on the peer. avatarObjIds is the set of bodies that ARE avatars, so an NPC's blow (PvE)
 -- is untouched: only player-on-player damage is vetoed.
 local pvpEnabled = false
+local placed = false -- the WoW model: global.lua stands this body on its owner's poses (mpAvatarPolicy)
 local avatarObjIds = {}
 
 local input = nil -- latest {seq, move, side, yaw, pitch, flags}
@@ -384,6 +385,10 @@ return {
                     end)
                 end
             end
+            -- PLACED, NOT WALKED (the WoW model): global.lua stands this body on every pose its
+            -- owner's game sent, so the inputs only aim, swing and ready. Walking it as well would
+            -- fight the placement and re-open the disagreement the placement removes.
+            if placed then moveAxis, sideAxis = 0, 0 end
             self.controls.movement = moveAxis
             self.controls.sideMovement = sideAxis
             local curYaw = self.rotation:getYaw()
@@ -395,7 +400,10 @@ return {
             self.controls.pitchChange = (ctl.pitch or curPitch) - curPitch
             self.controls.run = bit(ctl.flags, 0)
             self.controls.sneak = bit(ctl.flags, 1)
-            if timed then
+            if placed then
+                self.controls.jump = false -- the owner's jump arrives as poses
+                jumpDue, jumpLatch = nil, false
+            elseif timed then
                 local okg, onGround = pcall(types.Actor.isOnGround, self)
                 local okw, swimming = pcall(types.Actor.isSwimming, self)
                 local fire = jumpDue ~= nil and ((okg and onGround) or (okw and swimming) or now - jumpDue >= JUMP_HOLD_S)
@@ -526,6 +534,7 @@ return {
         end,
         mpAvatarPolicy = function(data)
             if data.pvp ~= nil then pvpEnabled = data.pvp == true end
+            if data.placed ~= nil then placed = data.placed == true end
             if type(data.avatarObjIds) == 'table' then avatarObjIds = data.avatarObjIds end
         end,
         mpAvatarInput = function(data)

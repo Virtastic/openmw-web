@@ -102,7 +102,10 @@ test('visibility matrix', () => {
 });
 
 test('movement relay over real clients', async (t) => {
-  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  // The RELAY's rules (cells, culling, bounds), not move validation: the poses below jump
+  // across the world inside one cell, which the WoW model's speed gate refuses by design.
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { limits: { clientAuthority: false } } });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);

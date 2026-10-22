@@ -24,7 +24,10 @@ local pendingFlip = nil
 -- the arrival home, Offline remembers where to go back to. As plain locals they died with
 -- the page -- the player arrived home in Solo, and Online had nowhere to return to. The page
 -- carries this mirror across the reload and hands it back as 'carry:<flip>|<lastOut>'.
-local function mirrorCarry()
+-- Helpers that would each cost one of the main chunk's 200 locals (Lua's hard limit; global.lua
+-- sits at it), kept as fields of one table instead.
+local kit = {}
+function kit.mirrorCarry()
     mp.set('switchCarry', (pendingFlip or '') .. '|' .. (worldUrls.lastOut or ''))
 end
 
@@ -430,6 +433,23 @@ end
 -- Exterior keys ("x,y") resolve by position in the default worldspace; interiors are named.
 local function inviteCellArg(cellKey)
     return cellKey:match('^%-?%d+,%-?%d+$') and '' or cellKey
+end
+
+-- THE WOW MODEL, ON THE PEER (net.flags.clientAuthority): the owner's game says where they are,
+-- the server validated it, and the avatar simply STANDS THERE -- placed on every relayed pose
+-- rather than walked from inputs, so its copy can never disagree with the player's on a ledge
+-- or a jump. It still swings, blocks and readies from the owner's inputs (avatar.lua), and
+-- NPCs fight and see it where the player really is. Only on a real move: a still player costs
+-- nothing, and a body mid-swing is not nudged for a rounding error.
+function kit.placeAvatar(obj, id, e)
+    local key = remoteCell[id]
+    if not key or isChargenCell(key) or not obj:isValid() then return end -- the chargen sanctuary
+    local tgt = util.vector3(e.x, e.y, e.z)
+    local okp, cur = pcall(function() return obj.position end)
+    if okp and cur and (cur - tgt):length2() <= 4 then return end -- within 2 units
+    pcall(function()
+        obj:teleport(inviteCellArg(key), tgt, { rotation = util.transform.rotateZ(e.yaw or 0), onGround = false })
+    end)
 end
 
 -- Vanilla's follower rules for a cell change (mwworld/actionteleport.cpp getFollowers): a
@@ -1286,9 +1306,10 @@ local function pushAvatarPolicy()
         end
     end
     local pvp = (net.flags and net.flags.pvp) == true
+    local placed = (net.flags and net.flags.clientAuthority) == true
     for _, p in pairs(puppets) do
         if p.obj and p.obj:isValid() then
-            pcall(function() p.obj:sendEvent('mpAvatarPolicy', { pvp = pvp, avatarObjIds = ids }) end)
+            pcall(function() p.obj:sendEvent('mpAvatarPolicy', { pvp = pvp, avatarObjIds = ids, placed = placed }) end)
         end
     end
 end
@@ -1976,7 +1997,7 @@ local function start()
             if pendingFlip and net.currentTarget() == worldUrls.own then
                 mp.sendEvent('SetWorldMode', { mode = pendingFlip })
                 pendingFlip = nil
-                mirrorCarry()
+                kit.mirrorCarry()
             end
             if net.playerRecord then
                 pendingRestore = net.playerRecord -- applied by restoreTick once the player exists
@@ -2696,6 +2717,9 @@ local eventHandlers = {
                     spawnPuppet(e.id, e)
                 end
                 local p = puppets[e.id]
+                if p and p.obj:isValid() and mp.isSystem and mp.isSystem() and net.flags and net.flags.clientAuthority == true then
+                    kit.placeAvatar(p.obj, e.id, e)
+                end
                 if p and p.obj:isValid() then
                     local d2 = d2Buf[i]
                     local tier
@@ -3535,11 +3559,11 @@ local eventHandlers = {
             if worldUrls.lastOut and net.currentTarget() ~= worldUrls.lastOut then
                 local back = worldUrls.lastOut
                 worldUrls.lastOut = nil
-                mirrorCarry()
+                kit.mirrorCarry()
                 net.switchTo(back)
             end
         end
-        mirrorCarry()
+        kit.mirrorCarry()
     end,
 
     -- The page handing back what mpWhere queued before the reload (see mirrorCarry).
@@ -3553,7 +3577,7 @@ local eventHandlers = {
             mp.sendEvent('SetWorldMode', { mode = pendingFlip })
             pendingFlip = nil
         end
-        mirrorCarry()
+        kit.mirrorCarry()
     end,
 
     -- Script removal lives here because removeScript is bound on GObject only. Both senders

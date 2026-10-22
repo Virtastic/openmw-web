@@ -259,6 +259,9 @@ export interface SessionFlags {
   // this load order (a removed mod's interior). The world's [rules].respawn* point.
   respawn?: { cellKey: string; x: number; y: number; z: number };
   lodNearMaxAvatars: number; // hard ceiling on fully-simulated avatars; 0 = radius only
+  // The WoW model ([limits] clientAuthority): the client owns its own position; the peer
+  // places avatars on the relayed poses instead of replaying inputs.
+  clientAuthority?: boolean;
   // A sim peer simulates this world: the client must not roll its own levelled-list
   // creatures or script-spawned actors (they arrive as named net objects from the holder).
   // Known at join, before the first cell's authority info -- which is after the first

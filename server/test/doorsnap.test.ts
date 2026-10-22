@@ -16,7 +16,8 @@ const pose = (x: number) => ({ x, y: 0, z: 0, yaw: 0, pitch: 128, flags: 0, anim
 async function doorThenWalk(t: { after(fn: () => unknown): void }, walkTo: number) {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+    // The input-replay model (the avatar's stream is the pose): [limits] clientAuthority = false.
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16, clientAuthority: false } },
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);

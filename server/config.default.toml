@@ -290,6 +290,14 @@ renderLod = "tiered"
 # 12 keeps a co-located 64 inside a 30fps budget; raise it for small co-op sessions where
 # fidelity matters more than headroom.
 lodNearMaxAvatars = 12
+# WHO SAYS WHERE A PLAYER IS. true (the World of Warcraft model): each player's own game owns
+# its character's position; the server checks every move (speed over a 200 ms window) and
+# relays it, refuses an impossible one with a correction, and the sim peer stands that
+# player's avatar where their game put it -- so the peer's copy never disagrees with what the
+# player sees on ledges and jumps. Combat, NPCs, quests, loot and the world stay on the peer.
+# false: the peer re-simulates each player from their inputs and the client is pulled back to
+# that copy (the rubber-banding this replaced). The kill switch, not a tuning knob.
+clientAuthority = true
 
 [time]
 # M7: the server owns the clock. Morrowind scale = 30 (30 game seconds per real second);
