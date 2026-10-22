@@ -572,7 +572,7 @@ window.omw = (function(){
      // ceiling with no error shipped at all (prod 2026-10-18: 4 of 6) -- the game was running and
      // never joined, and nothing said where the session stopped. A handful of lines per boot.
      if (/\[mp\] (session state:|server disconnect:|auth dead-end|bad session frame|multiplayer enabled|cannot join|rubber:)/.test(text)) return true;
-     if (/puppet far-gap snap|SELF SNAP/.test(text)) return true; // an NPC or the player teleported to catch up: the 'little teleports' (2026-10-16)
+     if (/puppet far-gap snap|SELF SNAP|AVATAR CATCH-UP/.test(text)) return true; // an NPC or the player teleported to catch up: the 'little teleports' (2026-10-16)
      if (/\[mp\] (loot|drop):/.test(text)) return true; // every corpse take and every 'you dropped it' (lost loot, 2026-10-15)
      return /^\[locker\]|\berror\b|\bwarn|\bfailed\b|\bABORT\b|Lua error|can not parse/i.test(text);
    }

@@ -2603,6 +2603,44 @@ do
   check('releasing the hold hands the engine window back', omwui.interface.getMode() == 'Dialogue' and #engine == 1)
 end
 
+print('the avatar catches up instead of dragging the player back (prod 2026-10-22, Addamasartus)')
+do
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local s = p:find('local CATCHUP_MAX, CATCHUP_COOLDOWN_S', 1, true)
+  local e = p:find('\nlocal function selfReconcileTick()', s, true)
+  local function run(opts)
+    local sent = {}
+    local vec = function(x, y, z) return setmetatable({ x = x, y = y, z = z }, { __add = function(a, b) return { x = a.x + b.x, y = a.y + b.y, z = a.z + b.z } end }) end
+    local env = setmetatable({
+      types = { Actor = { isOnGround = function() return opts.ground ~= false end, isSwimming = function() return false end } },
+      nearby = { COLLISION_TYPE = { World = 1, HeightMap = 2 }, castRay = function() return { hit = opts.wall == true } end },
+      util = { vector3 = vec }, self = { position = vec(300, 0, 0) }, cellKey = function() return 'Addamasartus' end,
+      mp = { set = function() end, sendEvent = function(name, body) sent[#sent + 1] = { name = name, body = body } end },
+      inputSeq = 42, TELEPORT_GRACE_S = 4,
+    }, { __index = _G })
+    local chunk = assert(loadstring(p:sub(s, e) .. '\nreturn tryCatchUp'))
+    setfenv(chunk, env)
+    local try = chunk()
+    local ok = try({ x = 0, y = 0, z = 0 }, opts.dist or 300, 10)
+    local again
+    if opts.twice then again = try({ x = 0, y = 0, z = 0 }, 300, 11) end
+    return ok, sent, env, again
+  end
+  local ok, sent, env = run({})
+  check('a stuck avatar within reach, ground under us, nothing between: we declare our own spot',
+    ok and #sent == 1 and sent[1].name == 'PlayerCellChange' and sent[1].body.x == 300 and env.teleportTo and env.latestSelf == nil)
+  ok, sent = run({ wall = true })
+  check('...not through a wall: the snap runs instead', not ok and #sent == 0)
+  ok, sent = run({ dist = 500 })
+  check('...not past CATCHUP_MAX', not ok and #sent == 0)
+  ok, sent = run({ ground = false })
+  check('...not from mid-air', not ok and #sent == 0)
+  local _, _, _, again = run({ twice = true })
+  check('...once per cooldown: a second gap inside it is the snap\'s', again == false)
+  check('the reconciliation tries the catch-up before the snap',
+    p:find('if tryCatchUp(e, dist, now) then return end', 1, true) ~= nil)
+end
+
 print('#482 snapto lands on the ground: a hard-coded z under the terrain no longer drops the body into the sea')
 do
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')

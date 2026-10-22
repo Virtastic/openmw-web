@@ -391,6 +391,46 @@ local function onSelfState(e)
     latestSelf = e
 end
 
+-- THE AVATAR CATCHES UP; THE PLAYER IS NOT DRAGGED BACK. The avatar replays our inputs, and on
+-- some ground it cannot follow (a ledge its jump falls short of, a rock lip it catches on) while
+-- we walk on: the peer's body stands at the obstacle and every SELF SNAP put us back beside it,
+-- again and again (prod 2026-10-22, Addamasartus: five 270-340 u snaps to one spot in 17 s, and
+-- every swing out of reach). Within CATCHUP_MAX of the avatar, on the ground, with nothing solid
+-- between the two at head height, we declare our own position instead -- the same-cell move the
+-- jump detector sends for a teleport, which the server already takes unexplained under 1024 u
+-- (connection.ts SAME_CELL_JUMP) and the peer applies to the avatar. Once per CATCHUP_COOLDOWN_S:
+-- if the gap is still there after one, the snap below runs as before. (Chosen with the user,
+-- 2026-10-22: the avatar moves up to the player within a checked distance.)
+local CATCHUP_MAX, CATCHUP_COOLDOWN_S = 400, 2.0
+local lastCatchUpAt = -math.huge
+local function tryCatchUp(e, dist, now)
+    if dist > CATCHUP_MAX or now - lastCatchUpAt < CATCHUP_COOLDOWN_S then return false end
+    local okg, grounded = pcall(types.Actor.isOnGround, self)
+    local okw, swimming = pcall(types.Actor.isSwimming, self)
+    if not (okg and grounded) or (okw and swimming) then return false end
+    local here, key = self.position, cellKey()
+    if not key then return false end
+    local clear = false
+    pcall(function()
+        local up = util.vector3(0, 0, 100)
+        local hit = nearby.castRay(util.vector3(e.x, e.y, e.z) + up, here + up,
+            { collisionType = nearby.COLLISION_TYPE.World + nearby.COLLISION_TYPE.HeightMap, ignore = self })
+        clear = not (hit and hit.hit)
+    end)
+    if not clear then return false end
+    lastCatchUpAt = now
+    print(string.format('[mp] AVATAR CATCH-UP %.0f units: avatar (%.0f,%.0f,%.0f) -> us (%.0f,%.0f,%.0f)',
+        dist, e.x, e.y, e.z, here.x, here.y, here.z))
+    mp.set('selfCatchUp', string.format('%.0f,%.0f,%.0f d=%.0f', here.x, here.y, here.z, dist))
+    -- As the jump detector does: samples up to here describe the avatar's old spot, and the
+    -- grace keeps them from pulling us back while the peer moves the body.
+    teleportSeq = inputSeq
+    teleportTo = { x = here.x, y = here.y, z = here.z, until_ = now + TELEPORT_GRACE_S }
+    latestSelf = nil
+    mp.sendEvent('PlayerCellChange', { cellKey = key, x = here.x, y = here.y, z = here.z })
+    return true
+end
+
 local function selfReconcileTick()
     local e = latestSelf
     if not e then return end
@@ -421,6 +461,7 @@ local function selfReconcileTick()
     end
     if dist > SNAP_DIST then
         local now = core.getRealTime()
+        if tryCatchUp(e, dist, now) then return end
         if now - lastSnapAt >= SNAP_COOLDOWN_S then
             lastSnapAt = now
             print(string.format('[mp] SELF SNAP %.0f units -> (%.0f,%.0f,%.0f) seq=%s',
