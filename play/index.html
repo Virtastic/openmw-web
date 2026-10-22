@@ -4687,7 +4687,12 @@ try {
     window.__omwSwitchLabel = null;
     window.__omwLoading.show(lbl.title || 'Changing world', 'Getting you a seat…');
     try { if (lbl.arrive) sessionStorage.setItem('omwmp:arrive', lbl.arrive); } catch (e) {}
-    var ticket = '';
+    // A SEAT MINTED AHEAD. Opening the social panel asks for a ticket in the background
+    // (__omwPremintTicket below), so the click that follows does not wait a round trip for it.
+    // Single use, 15 minutes server-side; taken only while comfortably inside that.
+    var spare = window.__omwSpareTicket;
+    window.__omwSpareTicket = null;
+    var ticket = (spare && Date.now() - spare.at < 10 * 60000) ? spare.ticket : '';
     // RETRIED, because one slow answer must not cost the player their world change. Bounded
     // still -- an unreachable gateway used to leave them behind a locked loading screen with
     // nothing said, because only the Public path had a watchdog -- but a single 10s attempt
@@ -5274,7 +5279,20 @@ try {
     clearTimeout(joinTimer);
     joinTimer = setTimeout(function(){ if (sStatusText.indexOf('Joining ') === 0){ setStatus(''); renderSocial(); } }, 30000);
   }
-  function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); }
+  function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); premintTicket(); }
+  // Every world switch starts here, so the ticket it will need is fetched now, off the click's
+  // critical path. One spare at a time; a failure costs nothing (rebootIntoWorld mints as before).
+  function premintTicket(){
+    var sp = window.__omwSpareTicket;
+    if (sp && Date.now() - sp.at < 5 * 60000) return;
+    var base = window.__lockerHttpBase ? window.__lockerHttpBase() : '', tok = window.__omwLockerToken || '';
+    if (!base || !tok) return;
+    fetch(base + '/auth/ticket', { method: 'POST', headers: { authorization: 'Bearer ' + tok },
+      signal: AbortSignal.timeout(10000) })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){ if (d && d.ticket) window.__omwSpareTicket = { ticket: d.ticket, at: Date.now() }; })
+      .catch(function(){});
+  }
   function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
   document.getElementById('omw-social-close').addEventListener('click', closeSocial);
   sEl.addEventListener('mousedown', function(e){ if (e.target === sEl) closeSocial(); });
