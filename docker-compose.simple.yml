@@ -1,0 +1,22 @@
+services:
+  openmw-web:
+    image: ghcr.io/virtastic/openmw-web-server:latest
+    container_name: openmw-web
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./gamedata:/data/gamedata   # put your own Morrowind.esm / .bsa here
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
