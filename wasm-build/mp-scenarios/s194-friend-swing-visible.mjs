@@ -36,7 +36,13 @@ export default async function run(ctx) {
 
   // Held swings (the press and the release land in different frames: the wind-up, then the blow)
   // and clicks (both in one frame: the whole swing at once).
+  // A turns before each swing, as a player squaring up to a mark does (the 2026-10-21 re-shoot:
+  // after a blow following a turn, the friend stood frozen in turnright1h, the weapon idle erased).
+  let side = 1;
   for (const ms of [400, 400, 400, 30, 30]) {
+    side = -side;
+    await a.cmd(`face:${SPOT.x + side * 600},${SPOT.y + 300},${SPOT.z + 60}`);
+    await ctx.sleep(800);
     await a.cmd(`attack:${ms}`);
     await ctx.sleep(2500);
   }
@@ -50,5 +56,8 @@ export default async function run(ctx) {
   const held = (l) => l.active === l.group && Number.isFinite(l.stop) && Math.abs(l.time - l.stop) < 0.02;
   assert.equal(blows.filter(held).length, 0, 'a blow never left the wind-up: the sword stays raised (launch video, 2026-10-20)');
   assert.equal(ends.filter((l) => l.active === l.group).length, 0, 'a swing was still on screen 1.5 s after its blow: never finished');
+  // ...and what is left is the stance's idle, not a movement clip frozen where the swing cut in.
+  assert.equal(ends.filter((l) => !/^idle/.test(l.active)).length, 0,
+    `after a blow the friend's arm is not back on an idle: ${ends.map((l) => l.active).join(', ')}`);
   ctx.log(`ok: ${blows.length} blows seen on B, each past the wind-up and over within 1.5 s`);
 }

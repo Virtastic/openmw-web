@@ -205,6 +205,18 @@ end
 -- group, the engine kept the wind-up, and a friend's sword stayed raised through a whole fight
 -- (launch video 2026-10-20). The engine's own attacks disable the group before each section
 -- (character.cpp); so does every swing here.
+-- ONE STEP ABOVE THE ENGINE'S OWN WEAPON STATE, NEVER EQUAL TO IT. A biped's weapon animations
+-- (draw, idle1h & co, its own attacks) run at Weapon on the upper body and WeaponLowerBody on the
+-- legs (character.cpp priorityWeapon), and Animation::play ERASES every other group of an equal
+-- priority: the swing deleted the character's weapon idle, the engine never replayed it, and a
+-- friend stood frozen in a half-turn after every blow (#255 probe: blow+1.5 active=turnright1h at a
+-- fixed time). At Block on the arms and torso the swing shows over the idle and leaves it in
+-- place; the legs stay at WeaponLowerBody, under the walk (s120).
+local function swingPriority(anim)
+    local P, G = anim.PRIORITY, anim.BONE_GROUP
+    local up = P.Block or P.Weapon
+    return { [G.LowerBody] = P.WeaponLowerBody, [G.Torso] = up, [G.LeftArm] = up, [G.RightArm] = up }
+end
 local function playFresh(anim, group, opts)
     pcall(anim.cancel, self, group)
     anim.playBlended(self, group, opts)
@@ -216,8 +228,7 @@ local function showSwing(release, full)
         -- NPC's movement comes from its legs' animation: a puppet showing its owner's swings stood
         -- still ~90% of a fight while the real NPC strafed on, 150-250 u away. The engine plays
         -- a biped's attack at WeaponLowerBody on the legs (character.cpp); so do we.
-        local P, G = anim.PRIORITY, anim.BONE_GROUP
-        local pri = { [G.LowerBody] = P.WeaponLowerBody, [G.Torso] = P.Weapon, [G.LeftArm] = P.Weapon, [G.RightArm] = P.Weapon }
+        local pri = swingPriority(anim)
         if types.Actor.getStance(self) == types.Actor.STANCE.Spell then
             if not release or full then
                 playFresh(anim, 'spellcast', {
@@ -478,11 +489,10 @@ local function onUpdate(dt)
         followAt = nil
         pcall(function()
             local anim = require('openmw.animation')
-            local P, G = anim.PRIORITY, anim.BONE_GROUP
             -- SMALL follow: the sections exist as small/medium/large only (character.cpp picks one
             -- by attack strength); a size-less key is in no retail weapon group (s172).
             playFresh(anim, followGroup, {
-                priority = { [G.LowerBody] = P.WeaponLowerBody, [G.Torso] = P.Weapon, [G.LeftArm] = P.Weapon, [G.RightArm] = P.Weapon },
+                priority = swingPriority(anim),
                 startKey = 'chop small follow start', stopKey = 'chop small follow stop' })
         end)
     end

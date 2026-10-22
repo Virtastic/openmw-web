@@ -2895,10 +2895,11 @@ do
   -- again -- Animation::play only updates its priority -- until it is cancelled. With the stub
   -- that played every call, a held wind-up and a blow that never ran looked like a swing here
   -- (launch video 2026-10-20: a friend's sword raised through the whole fight).
-  local held = {}
-  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return true end,
+  local held, pris = {}, {}
+  package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Block = 6, Hit = 4, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return true end,
     cancel = function(_, group) held[group] = nil end,
     playBlended = function(_, group, o)
+      pris[#pris + 1] = o.priority
       if held[group] then return end
       if o.autoDisable == false then held[group] = true end
       played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey)
@@ -2924,6 +2925,11 @@ do
   now = now + 0.05; pup.eventHandlers.MP_Pose(pose(24)); pup.engineHandlers.onUpdate(0.05)
   now = now + 1.0; pup.engineHandlers.onUpdate(0.05)
   check('a wind-up drops a pending recovery', played[6] == 'handtohand:chop start>chop min attack' and #played == 6, table.concat(played, ' '))
+  -- Never the engine's own weapon priority (Weapon up, WeaponLowerBody legs): Animation::play erases
+  -- an equal one, and the character's weapon idle went with it (frozen half-turn, 2026-10-21).
+  local allAbove = #pris > 0
+  for _, p in ipairs(pris) do if not (p[1] == 6 and p[2] == 6 and p[3] == 6 and p[0] == 1) then allAbove = false end end
+  check('every swing half plays at Block on the upper body, WeaponLowerBody on the legs', allAbove)
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
   local cpp = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('character.cpp does not smooth a puppet\'s speed a second time (the peer already did)',
