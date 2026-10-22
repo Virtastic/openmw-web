@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the WASM engine image on the local build server.
-# Clean compile, ~13 min by design (Dockerfile deliberately has no ninja cache mount).
+# ~18 min cold (9 compile + 9 link/pack); with the compile cache warm the compile is ~1 min.
 set -euo pipefail
 
 SRC="${SRC:-/src}"
@@ -26,7 +26,8 @@ docker image inspect "$BUILDER_IMAGE" >/dev/null 2>&1 \
 echo "==> building $TAG ($DEPS_DIR, $BUILDER_IMAGE) from $(cat .source-commit 2>/dev/null || echo 'unknown commit')"
 # --network=host: CMake FetchContent (recastnavigation) needs egress; the default bridge has none.
 # No build-arg: the Dockerfile hardcodes the wasm64 builder now.
-DOCKER_BUILDKIT=1 docker build --network=host -t "$TAG" -f Dockerfile .
+# CCACHE=1: the compile cache (see the Dockerfile). Dev builds only; deploy-ovh/release omit it.
+DOCKER_BUILDKIT=1 docker build --network=host --build-arg CCACHE=1 -t "$TAG" -f Dockerfile .
 
 echo "==> built $TAG"
 docker image inspect "$TAG" --format '    size: {{.Size}} bytes  created: {{.Created}}'

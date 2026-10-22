@@ -19,6 +19,15 @@ FROM openmw-builder64:1 AS builder
 ENV ROOT=/build EM_LIBEXEC=/emsdk/upstream/emscripten EMSDK_BIN=/emsdk/upstream/emscripten
 WORKDIR /build
 
+# OPT-IN COMPILE CACHE (CCACHE=1; ci/jenkins/build-engine.sh passes it, nothing else does). A
+# Lua edit or a new scenario changes this stage's COPY inputs and used to recompile all ~890
+# C++ objects (~9 min) that had not changed. ccache keys each object on its PREPROCESSED source
+# plus the full command line -- content, never mtimes -- so it cannot hand back a stale object,
+# which is the failure the "no build-wasm cache mount" note below is about. Default 0: the prod
+# and release builds stay the clean compile they have always been.
+ARG CCACHE=0
+RUN if [ "$CCACHE" = 1 ]; then apt-get update && apt-get install -y --no-install-recommends ccache && rm -rf /var/lib/apt/lists/*; fi
+
 # Engine source + build recipe (deps/ already baked into openmw-builder).
 COPY openmw            /build/openmw
 COPY fsroot            /build/fsroot
@@ -48,14 +57,17 @@ COPY configure-openmw.sh /build/configure-openmw.sh
 # 8 fits comfortably at ~1-2 GB a job. Override BUILD_JOBS on a bigger box, and budget by RAM
 # rather than by core count.
 ARG BUILD_JOBS=8
-RUN \
+RUN --mount=type=cache,target=/ccache,id=omw-wasm64-ccache \
+    CCL='' \
+ && if [ "$CCACHE" = 1 ]; then export CCACHE_DIR=/ccache CCACHE_MAXSIZE=3G; CCL='-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache'; ccache -z; fi \
     # Hermetic guard: fsroot/gamedata (the ?nomw demo) is gitignored, so a clean actions/checkout
     # omits it and the link would silently bake an EMPTY demo (green build, broken ?nomw). Fail loud
     # instead — the build context must carry the rsynced gamedata.
-    { test -n "$(ls -A fsroot/gamedata 2>/dev/null)" || { echo 'FATAL: fsroot/gamedata is missing/empty — the ?nomw demo would bake empty. Ensure it is rsynced into the build context.' >&2; exit 1; }; } \
- && bash configure-openmw.sh \
+ && { test -n "$(ls -A fsroot/gamedata 2>/dev/null)" || { echo 'FATAL: fsroot/gamedata is missing/empty — the ?nomw demo would bake empty. Ensure it is rsynced into the build context.' >&2; exit 1; }; } \
+ && bash configure-openmw.sh $CCL \
  && BUILD_DIR=build-wasm64 \
  && ninja -C "$BUILD_DIR" -j "${BUILD_JOBS:-8}" components openmw-lib \
+ && { [ "$CCACHE" != 1 ] || ccache -s; } \
  && bash wasm-build/link-openmw.sh \
  && mkdir -p play \
  && cp "$BUILD_DIR"/openmw.js "$BUILD_DIR"/openmw.wasm "$BUILD_DIR"/openmw.data "$BUILD_DIR"/openmw.js.symbols play/ \

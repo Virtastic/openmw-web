@@ -19,7 +19,8 @@ cd "$SRC"
 echo "==> building $TAG from $(cat .source-commit 2>/dev/null || echo 'unknown commit')"
 # --network=host: npm ci and the MyGUI/Bullet git clones need egress.
 # The native OpenMW compile dominates; layers cache unless openmw/ changed.
-DOCKER_BUILDKIT=1 docker build --network=host \
+# CCACHE=1: the compile cache (see Dockerfile.simpeer). Dev builds only; deploy-mp/release omit it.
+DOCKER_BUILDKIT=1 docker build --network=host --build-arg CCACHE=1 \
   -f server/Dockerfile.simpeer --target tier2 -t "$TAG" .
 
 echo "==> built $TAG"

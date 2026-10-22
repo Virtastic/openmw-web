@@ -52,6 +52,12 @@ RUN git clone --depth 1 --branch 3.25 https://github.com/bulletphysics/bullet3.g
     && cmake --build /tmp/bullet/build --target install \
     && rm -rf /tmp/bullet
 
+# OPT-IN COMPILE CACHE (CCACHE=1; ci/jenkins/build-server.sh passes it, nothing else does): a
+# Lua-only change used to recompile the whole native engine (~10 min). ccache keys on content,
+# never mtimes, so it cannot link a stale object; deploy-mp and release builds leave it off.
+ARG CCACHE=0
+RUN if [ "$CCACHE" = 1 ]; then apt-get update && apt-get install -y --no-install-recommends ccache && rm -rf /var/lib/apt/lists/*; fi
+
 # The engine source. Everything under openmw/ is the fork; the mp additions live in
 # apps/openmw/mwmp and the headless guards in apps/openmw/engine.cpp.
 COPY openmw /src/openmw
@@ -73,13 +79,17 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 # Tools OFF (no launcher/wizard/opencs): the peer never renders a menu, and turning them off
 # also avoids the Qt dependency. The APPLE-only bundling guard added for the macOS build does
 # not apply here.
-RUN cmake -S /src/openmw -B /build -G Ninja \
+RUN --mount=type=cache,target=/ccache,id=omw-native-ccache \
+    CCL='' \
+ && if [ "$CCACHE" = 1 ]; then export CCACHE_DIR=/ccache CCACHE_MAXSIZE=3G; CCL='-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache'; ccache -z; fi \
+ && cmake -S /src/openmw -B /build -G Ninja $CCL \
       -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_OPENMW=ON -DBUILD_LAUNCHER=OFF -DBUILD_WIZARD=OFF -DBUILD_OPENCS=OFF \
       -DBUILD_BSATOOL=OFF -DBUILD_ESMTOOL=OFF -DBUILD_NIFTEST=OFF -DBUILD_BULLETOBJECTTOOL=OFF \
       -DBUILD_ESSIMPORTER=OFF -DBUILD_MWINIIMPORTER=OFF -DBUILD_NAVMESHTOOL=OFF \
       -DUSE_QT=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-    && cmake --build /build --target openmw
+    && cmake --build /build --target openmw \
+    && { [ "$CCACHE" != 1 ] || ccache -s; }
 # No `cmake --install`: OpenMW's install rules scatter (configs land, binary/resources do not
 # — verified: the first runtime build failed on it). The runtime stage copies straight from
 # the build tree instead, which is unambiguous.
