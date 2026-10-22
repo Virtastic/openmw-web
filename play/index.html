@@ -4933,7 +4933,12 @@ try {
     // same thing and mostly did nothing: when readiness arrives quickly the floor has already
     // elapsed, so the screen still cleared the moment the world said ready.
     var GRACE_MS = 5000;
-    var until = Date.now() + (ceilingMs || 30000), said = false, readyAt = 0;
+    // ...BUT A WORLD THAT WAS ALREADY RUNNING HAS NOTHING TO COME UP. Joining a friend, or going
+    // back to a home kept warm, the server says SimReady with the join: the peer is up and
+    // holding cells before we arrive, which is the settling the five seconds exist to cover.
+    // Such a world gets a short grace (still gated on the cell being held, below).
+    var WARM_GRACE_MS = 1500;
+    var until = Date.now() + (ceilingMs || 30000), said = false, readyAt = 0, joinedAt = 0, warm = false;
     // Every exit goes through here: the boot screen must never be left up because a world
     // never reported ready, and the first-frame handler must be released either way.
     var settled = function(){
@@ -4958,10 +4963,14 @@ try {
       // net layer's modal is the answer and the boot screen must not sit under it for the
       // whole ceiling (s90-server-down waited 300 s behind it, #105).
       if ((st.state || '') === 'Failed') { settled(); return; }
+      if ((st.state || '') === 'Joined') { if (!joinedAt) joinedAt = Date.now(); } else joinedAt = 0;
       if (!ready) {
         readyAt = 0;   // lost it again (a redial, a peer restart): the grace starts over
+        warm = false;
       } else if (!readyAt) {
         readyAt = Date.now();
+        warm = joinedAt > 0 && readyAt - joinedAt < 1000;
+        if (warm && window.__omwMark) window.__omwMark('settleWarm');
         window.__omwLoading.show('Almost there', 'Settling the world…');
       }
       // Once ready, the grace runs to completion — the ceiling below only bounds the WAIT for
@@ -4977,7 +4986,8 @@ try {
             && (Number(st.puppetedActors || 0) === 0 || Number(st.actorBatchesIn || 0) > 0))
           || st.chargenDone !== '1';
         var waited = Date.now() - readyAt;
-        if (waited >= GRACE_MS && (held || waited >= GRACE_MS + 10000)) { settled(); return; }
+        var grace = warm ? WARM_GRACE_MS : GRACE_MS;
+        if (waited >= grace && (held || waited >= grace + 10000)) { settled(); return; }
       } else {
         if (Date.now() > until) { // let the net layer speak
           settled();
