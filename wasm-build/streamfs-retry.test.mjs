@@ -243,8 +243,9 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   // reads stepping onto the dock).
   // Then Seyda Neen's greetings (prod 2026-10-21: Hlo_IM064.mp3, Idl_DF006.mp3 walking through town);
   // a/f (an Ashlander's) and the rest of Sound/Vo stay on demand.
-  assert.deepEqual(order, ['openmw-web-assets.bsa', 'Morrowind.bsa', 'Sound/Vo/i/m/Hlo_IM064.mp3', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
-    'Sound/Cr/rat/roar.wav', 'Music/Explore/mx_explore_7.mp3', 'Tribunal.bsa'], 'archives first, then Fx smallest first, creatures, music; no Vo, no Splash');
+  // The exploration music right after the archives (prod 2026-10-22: mx_explore_*.mp3 first plays).
+  assert.deepEqual(order, ['openmw-web-assets.bsa', 'Morrowind.bsa', 'Music/Explore/mx_explore_7.mp3', 'Sound/Vo/i/m/Hlo_IM064.mp3', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
+    'Sound/Cr/rat/roar.wav', 'Tribunal.bsa'], 'archives, explore music, voices, then Fx smallest first, creatures; no other Vo, no Splash');
 
   // A PRELOADED CHUNK LANDS IN THE LRU under the key the engine's read looks up, so the read is a
   // memory hit (prod 2026-10-21: stored-only chunks were fetched again when the store was busy).

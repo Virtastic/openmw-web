@@ -853,7 +853,9 @@ window.omw = (function(){
    // next town loads is read from it -- and Morrowind.bsa ahead of it (~150 chunks) left it cold
    // at the Seyda Neen dock: 20 of 26 slow reads, a 10.9 s freeze with ~100 chunks warmed (prod
    // 2026-10-21). 57 chunks, about a minute of the boat.
-   var WARM_FIRST = [/openmw-web-assets\.bsa$/i, /morrowind\.bsa$/i, /^\/mwdata\/sound\/vo\//i, /^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
+   // ...then the exploration music: a track starts within a minute of every boot, and its first
+   // read was a 0.3-0.6 s hitch (prod 2026-10-22, [sfs] slow read mx_explore_1/4/7.mp3). 22 MB.
+   var WARM_FIRST = [/openmw-web-assets\.bsa$/i, /morrowind\.bsa$/i, /^\/mwdata\/music\/explore\//i, /^\/mwdata\/sound\/vo\//i, /^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
    function E(){
      if (inited) return el; inited=true;
      el=document.getElementById('loading'); titleEl=document.getElementById('ld-title');
@@ -4115,6 +4117,9 @@ window.omw = (function(){
                var released = false, release = function(){ if (released) return; released = true; removeRunDependency('mw-data'); };
                try {
                  var LD = window.__omwLoading, pre = StreamFS.mounted(/\.(esm|esp)$/i).map(function(p){ return { path: p }; });
+                 // The footsteps too, on every boot: the first step of each kind was a stall
+                 // (prod 2026-10-22: walkr_lt.wav, walkl_hv.wav). 54 files, 1 MB.
+                 StreamFS.mounted(/^\/mwdata\/sound\/fx\/foot\//i).forEach(function(p){ pre.push({ path: p }); });
                  // A NEW CHARACTER'S FIRST AREA, too: the archive chunks the prison ship and its
                  // opening read inside the same blocking start (recorded by s183's StreamFS.bootSet,
                  // Jenkins #245: 79 chunks; the random splash screens and explore music left out).
