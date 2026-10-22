@@ -240,8 +240,8 @@ export class Social {
         // presence, so it is correct wherever they are.
         ...(available && p ? { playerId: p.id } : {}),
         ...(showWhere ? { cellKey: where.cellKey } : {}),
-        // ponytail: presence says which world they are IN, not which they own; a friend visiting
-        // a third party world reads joinable, and joinFriend then routes to their own world.
+        // Presence says which world they are IN; joinFriend follows them there (and refuses,
+        // in place, a party whose host is not your friend).
         ...(available && where.world !== this.d.worldId && where.mode === 'party' ? { joinable: true } : {}),
       });
     }
@@ -825,6 +825,23 @@ export class Social {
     if (!this.isAvailable(targetAcct)) return fail('not_online');
     if (!this.worlds || !this.worlds.enabled) return fail('no_gateway');
     const friendName = this.d.displayName(targetAcct) ?? targetAcct;
+    // FOLLOW THEM, NOT THEIR HOUSE. A friend visiting a third player's party is IN that world;
+    // their own was flipped to Solo when they left, so routing there always answered not_open.
+    // The visited world admits only its OWNER's friends, so say so here rather than reboot
+    // the page into a door that refuses.
+    const where = this.presenceOf(targetAcct);
+    if (where.world && where.world !== this.d.worldId) {
+      const there = await this.worlds.world(where.world);
+      if (there && there.up && there.ownerAccount && there.ownerAccount !== targetAcct) {
+        if (there.mode !== 'party') return fail('not_open');
+        if (there.ownerAccount !== me && !this.d.store.areFriends(me, there.ownerAccount)) return fail('host_not_friend');
+        player.peer.sendEvent('JoinFriend', {
+          ok: true, worldId: there.id, mode: there.mode, host: there.host, port: there.port, friendName,
+          ...(there.wsPath ? { wsPath: there.wsPath } : {}),
+        });
+        return;
+      }
+    }
     const own = await this.worlds.ownerWorld(targetAcct);
     if (!own) return fail('not_online');
     // ASK THE MODE HERE, where the answer costs nothing. A world admits the party only when its

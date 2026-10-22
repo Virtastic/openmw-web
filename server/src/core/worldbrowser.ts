@@ -108,6 +108,15 @@ export class WorldBrowser {
     return mine.find((w) => w.playerCount > 0) ?? mine[0];
   }
 
+  // One world by id -- where a friend IS (their presence row), which need not be a world they
+  // own. Same visibility as ownerWorld: the destination still authorizes the join.
+  async world(id: string): Promise<WorldEntry | undefined> {
+    if (!this.enabled) return undefined;
+    const r = await this.call(`/worlds/${encodeURIComponent(id)}`, this.asServer());
+    if (!r || typeof r !== 'object' || '__httpError' in r) return undefined;
+    return r as WorldEntry;
+  }
+
   // Tell the directory this world's mode changed, now, so a friend's join reads the truth
   // before the next poll. Best effort: the poll still observes it within its interval.
   async reportMode(worldId: string, ownerAccount: string, mode: 'private' | 'party'): Promise<void> {

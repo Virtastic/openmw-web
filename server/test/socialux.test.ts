@@ -308,3 +308,53 @@ test('a friend row is joinable only from another world that is open to friends',
   assert.equal(row('ada')?.joinable, true, 'a party world elsewhere is');
   w.close();
 });
+
+// FOLLOW THEM, NOT THEIR HOUSE. A friend visiting a third player's party is IN that world, and
+// their own was flipped to Solo when they left -- so routing the join to the world they own
+// answered not_open every time. The join follows their presence row, and refuses in place a
+// party whose host is not the joiner's friend (that door admits only its owner's friends).
+test('JoinFriend follows a friend into the party they are visiting', async () => {
+  const store = new SocialStore(':memory:');
+  const clock = 1_700_000_000_000;
+  let t = clock;
+  const box: Sent[] = [];
+  const alice = {
+    id: 1, name: 'Alice', accountKey: 'alice', inWorld: true, cellKey: '0,0', pose: { x: 0, y: 0, z: 0 },
+    peer: { sendEvent: (n: string, b: Record<string, unknown>) => void box.push({ name: n, body: b }) },
+  } as unknown as Player;
+  const worlds = {
+    enabled: true,
+    ownPort: 0,
+    world: async (id: string) => id === 'carol-w'
+      ? { id, mode: 'party', name: 'w', host: '', port: 0, playerCount: 2, maxPlayers: 8, up: true,
+        ownerAccount: 'carol', wsPath: '/w/carol-w' }
+      : undefined,
+    ownerWorld: async () => ({ id: 'bob-w', mode: 'private', name: 'w', host: '', port: 0,
+      playerCount: 0, maxPlayers: 8, up: true, ownerAccount: 'bob' }),
+  };
+  const social = new Social({
+    store, worldId: 'alice-w', worlds: worlds as never,
+    roster: { activeForAccount: (a: string) => (a === 'alice' ? alice : undefined), findByName: () => undefined,
+      inWorld: () => [alice] } as unknown as Roster,
+    displayName: (a) => a, resolveName: () => undefined, now: () => t,
+  });
+  store.addFriend('alice', 'bob', clock);
+  store.setPresence('bob', 'carol-w', 'Bob', '1,1', false, clock, 'party');
+  const last = () => box.filter((e) => e.name === 'JoinFriend').at(-1)?.body;
+
+  await social.joinFriend(alice, 'bob');
+  assert.equal(last()?.error, 'host_not_friend', `routed to: ${JSON.stringify(last())}`);
+
+  store.addFriend('alice', 'carol', clock);
+  await social.joinFriend(alice, 'bob');
+  assert.equal(last()?.ok, true, JSON.stringify(last()));
+  assert.equal(last()?.worldId, 'carol-w', 'the join went to the world Bob owns, not the one he is in');
+  assert.equal(last()?.wsPath, '/w/carol-w');
+
+  // At home: their own world, exactly as before.
+  t += 2000; // past the one-second presence cache
+  store.setPresence('bob', 'bob-w', 'Bob', '1,1', false, t, 'private');
+  await social.joinFriend(alice, 'bob');
+  assert.equal(last()?.error, 'not_open');
+  social.stop(); store.close();
+});

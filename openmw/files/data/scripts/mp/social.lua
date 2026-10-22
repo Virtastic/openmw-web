@@ -476,6 +476,7 @@ return {
                     in_chargen = 'Finish creating your character first.',
                     blocked = 'You cannot join them.',
                     not_open = 'Their world is not open to friends yet. Ask them to switch to Party.',
+                    host_not_friend = "They are in someone else's party, and you are not friends with that host.",
                     self = 'That is you.',
                     no_gateway = 'This server runs a single world, so there is nowhere else to join.',
                 }
