@@ -630,6 +630,10 @@ maxWorlds = 0
 # TR peer cold-starting pins the load for a minute and a friend's world must not be refused
 # for it. Set to about 2x the core count if the box is shared with other services.
 loadCap = 0
+# Keep an empty game this many seconds past the idle reap while its OWNER is online in another
+# game (visiting a friend's party), so going home is a quick join instead of a cold start. Never
+# held against measured memory or CPU pressure. 0 = reap on the idle timer as before.
+ownerAwayKeepSec = 600
 memBudgetMb = 8192
 # MEASURED cost of one occupied world: its node process plus its sim peer.
 #

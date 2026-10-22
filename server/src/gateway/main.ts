@@ -29,6 +29,7 @@ import { lockerPublicBase } from '../data/fsstorage';
 import { writeCaddyfile, launcherEnabled } from '../net/admin/caddy-config';
 import { gameDataDir } from '../core/gamedata';
 import { presentMods, readModDoc } from '../core/mods';
+import { SocialStore } from '../core/socialstore';
 
 const { values } = parseArgs({
   options: {
@@ -97,6 +98,7 @@ if (!existsSync(serverEntry)) {
   process.exit(1);
 }
 
+const presence = new SocialStore(sharedDir);
 const worlds = new WorldSupervisor({
   settings: {
     worldsDir,
@@ -145,8 +147,12 @@ const worlds = new WorldSupervisor({
     startTimeoutMs: 300_000,
     restartBackoffMs: 15_000,
     sharedDir,
+    ownerAwayKeepMs: config.worlds.ownerAwayKeepSec * 1000,
   },
   sample: measuredSample, // #270: the box as it is, prod only
+  // The presence table every world heartbeats into (30 s TTL, as social.ts reads it).
+  ownerOnlineElsewhere: (account, worldId) =>
+    presence.presentEverywhere(Date.now(), 30_000).some((r) => r.account === account && r.world !== worldId),
 });
 
 // Before anything binds a port: kill the world processes a previous gateway left behind. They

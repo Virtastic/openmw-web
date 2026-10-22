@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import { WorldSupervisor, type WorldSettings } from '../src/gateway/worlds';
+import { WorldSupervisor, type WorldSettings, type WorldDeps } from '../src/gateway/worlds';
 
 class FakeChild extends EventEmitter {
   killed: string[] = [];
@@ -24,7 +24,7 @@ class FakeChild extends EventEmitter {
 
 const tick = () => new Promise((r) => setImmediate(r));
 
-function harness(over: Partial<WorldSettings> = {}) {
+function harness(over: Partial<WorldSettings> = {}, deps: Partial<WorldDeps> = {}) {
   const settings: WorldSettings = {
     worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')),
     gatewayPort: 8080,
@@ -68,6 +68,7 @@ function harness(over: Partial<WorldSettings> = {}) {
       maxPlayers: 32,
       name: `w${port}`,
     }),
+    ...deps,
   });
   return { sup, spawned, counts, peers, down, box, settings, advance: (ms: number) => { clock += ms; } };
 }
@@ -753,4 +754,35 @@ test('worlds: SIGUSR1 is relayed to every world and allExited waits for the last
   assert.equal(exited, false, 'still draining: the gateway must not exit yet');
   await wait;
   assert.ok(children.every((c) => c.exitCode === 0), 'resolved only once every child had exited');
+});
+
+// A HOME KEPT WARM. The owner left to visit a friend's party; their own world emptied and was
+// reaped two minutes later, so coming home was a cold start (node + an 11 s sim peer). While
+// the owner is online in another world it is held for ownerAwayKeepMs more -- and no longer,
+// and never against measured memory pressure.
+test('an empty home is kept warm while its owner plays elsewhere, then reaped', async () => {
+  let away = true;
+  const { sup, counts, box, advance } = harness({ ownerAwayKeepMs: 600_000, memBudgetMb: 8192 },
+    { ownerOnlineElsewhere: (acct, id) => away && acct === 'owner' && id === 'home' });
+  sup.ensure('home', 'private', 'owner');
+  counts.set(40000, 1);
+  await sup.poll();          // played
+  counts.set(40000, 0);
+  await sup.poll();          // empty: idle clock starts
+  advance(5 * 60_000);
+  await sup.poll();
+  assert.equal(sup.running, 1, 'past the idle reap but the owner is away visiting: kept');
+  box.rssMb = 9000;          // the box is out of memory: the hold yields
+  await sup.poll();
+  assert.equal(sup.running, 0, 'a warm hold must never stand against measured memory pressure');
+
+  away = true; box.rssMb = 0;
+  sup.ensure('home', 'private', 'owner');
+  counts.set(40001, 1); counts.set(40000, 1);
+  await sup.poll();
+  counts.set(40001, 0); counts.set(40000, 0);
+  await sup.poll();
+  advance(13 * 60_000);      // idle reap + the whole hold
+  await sup.poll();
+  assert.equal(sup.running, 0, 'the hold is bounded');
 });

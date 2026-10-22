@@ -74,6 +74,10 @@ export interface WorldSettings {
   peerCostMb?: number;
   gatewayReserveMb?: number; // held back for the gateway process itself
   idleReapMs: number; // a world with no players this long is stopped
+  // A HOME KEPT WARM. An empty world whose owner is online in ANOTHER world is held this much
+  // longer than idleReapMs, so coming back from a friend's party is a join, not a cold start
+  // (a node process plus an 11 s sim peer). Absent/0 = reap on idleReapMs as before.
+  ownerAwayKeepMs?: number;
   // #270: refuse NEW worlds while the 1-minute load average is above this (0 = never). Off by
   // default: a bake on the build box, or a TR peer cold-starting, pins the load for a minute
   // and a friend's world must not be refused for it (s102 in Jenkins #103, reason 'cpu').
@@ -152,6 +156,8 @@ export interface WorldDeps {
   // normalises the absence to 1 rather than making every caller restate the default.
   fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[]; mode?: WorldMode; ownerPresent?: boolean } | null>;
   now?: () => number;
+  // Is this account online in a world other than `worldId`? (shared presence; ownerAwayKeepMs)
+  ownerOnlineElsewhere?: (account: string, worldId: string) => boolean;
   // #270: the box as it IS, beside the static price. RSS of the world processes (their sim
   // peers are children of them and counted by the pid sum) and the 1-minute load average.
   // Wired by main.ts (measuredSample: /proc/<pid>/status on Linux + os.loadavg()); absent =
@@ -615,6 +621,14 @@ export class WorldSupervisor {
         continue;
       }
       if (w.idleSince !== undefined && w.idleSince <= idleCutoff) {
+        // ponytail: held at most ownerAwayKeepMs per visit, and never against measured pressure;
+        // a priced "warm world" class if a busy box needs to choose between homes.
+        const keep = this.deps.settings.ownerAwayKeepMs ?? 0;
+        if (keep > 0 && w.ownerAccount && now - w.idleSince < this.deps.settings.idleReapMs + keep
+          && this.deps.ownerOnlineElsewhere?.(w.ownerAccount, w.id)) {
+          const r = this.capacity().reason;
+          if (r !== 'mem' && r !== 'cpu') continue;
+        }
         log('info', 'world.reaped', { id: w.id, idleMs: now - w.idleSince });
         this.stop(w.id);
         continue;
