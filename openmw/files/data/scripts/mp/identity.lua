@@ -814,7 +814,14 @@ local function tryApplyEquipment(now)
     if ready or now > equipRetryUntil then
         local ok, err = pcall(Actor.setEquipment, self, pendingEquipment)
         if not ok then print('[mp] restore equipment failed: ' .. tostring(err)) end
-        last.equipment = fingerprint(snapEquipment())
+        -- SAY IT, DO NOT JUST REMEMBER IT. Equipment is not gated on the baseline, so before
+        -- the record landed the boot TEMPLATE's outfit (shoes, shirt, pants, no weapon) already
+        -- went out and the server stored it. Marking the restored set as sent left the server --
+        -- and the avatar, the body that fights -- on the template: a player swinging a mace hit
+        -- with bare hands, and the next relog restored the template (prod 2026-10-22, the
+        -- Addamasartus session: pushes cuirass+mace, then shoes/shirt/pants, then nothing).
+        -- Forgetting the fingerprint sends the real set on the next tick.
+        last.equipment = nil
         pendingEquipment = nil
     end
 end
@@ -941,7 +948,7 @@ local function applyPhase2(record)
     -- equipment, stats, inventory, the lot. No error surfaced, and the player looks frozen and
     -- empty to everyone else while their own screen is fine.
     local okSeed, seedErr = pcall(function()
-        last.equipment = fingerprint(snapEquipment())
+        last.equipment = nil -- sent again, not assumed: see tryApplyEquipment
         last.dynamic = fingerprint(snapDynamic())
         local prog = snapProgression()
         last.progression = fingerprint(prog.attributes)

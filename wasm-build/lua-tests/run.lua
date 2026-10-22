@@ -170,6 +170,30 @@ local inv, act = firstOf('mpInventoryOut'), firstOf('mpActiveSpellsOut')
 check('the running effect goes out once the gate opens, after the inventory that sources it',
   inv ~= nil and act ~= nil and inv < act, tostring(inv) .. ' vs ' .. tostring(act))
 
+-- THE RESTORED EQUIPMENT REACHES THE SERVER (prod 2026-10-22, Addamasartus): the boot
+-- template's outfit went out before the record landed, then the restore equipped the real set
+-- and only REMEMBERED it as sent -- the server and the avatar kept the template, no weapon.
+print('identity.lua — the restored equipment is sent, not assumed')
+fresh()
+env = stubs.install({})
+do
+  local eq = { [8] = { recordId = 'common_shirt_01' } }
+  local A = package.loaded['openmw.types'].Actor
+  A.getEquipment = function() return eq end
+  A.setEquipment = function(_, slots) eq = {}; for k, id in pairs(slots) do eq[k] = { recordId = id } end end
+  identity = require('scripts.mp.identity')
+  env.setInventory({ { recordId = 'iron mace', count = 1 } })
+  identity.tick(0)
+  pcall(identity.applyRecord, { equipment = { ['16'] = 'iron mace' } })
+  identity.equipRetryTick(1)
+  identity.tick(2); identity.tick(3)
+  local lastSent
+  for _, c in ipairs(env.calls.events) do if c.name == 'mpEquipmentOut' then lastSent = c.body end end
+  check('the last equipment sent is the restored set, with the weapon',
+    lastSent ~= nil and lastSent.slots and lastSent.slots[16] == 'iron mace',
+    lastSent and lastSent.slots and tostring(lastSent.slots[16]) or 'nothing sent')
+end
+
 -- ------------------------------------------------------------ identity.lua: a heal sticks
 -- While the peer reports our bars, a potion raises the local bar between two reports and the
 -- next report puts it back; the 4 Hz diff seldom saw it. The per-frame gain is claimed on
