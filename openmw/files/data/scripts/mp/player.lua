@@ -809,6 +809,8 @@ local function dispatch(cmd)
         -- secret the client did not already hold: it is minted from the same SSO session.
         local tkt = cmd:match('^mpticket:(.+)$')
         if tkt then core.sendGlobalEvent('mpSetTicket', { ticket = tkt }) end
+        local carry = cmd:match('^carry:(.*)$')
+        if carry then core.sendGlobalEvent('mpCarry', { v = carry }) end
         local whereMode = cmd:match('^where:(%a+)$')
         if whereMode then core.sendGlobalEvent('mpWhere', { mode = whereMode }) end
         -- Availability toggle.

@@ -19,6 +19,14 @@ local net = require('scripts.mp.net')
 -- are back in our own world.
 local worldUrls = {}
 local pendingFlip = nil
+-- BOTH SURVIVE THE RELOAD. A world change reboots the page (net.switchTo), and these are
+-- exactly the two things a switch is FOR: Party clicked while visiting queues 'party' for
+-- the arrival home, Offline remembers where to go back to. As plain locals they died with
+-- the page -- the player arrived home in Solo, and Online had nowhere to return to. The page
+-- carries this mirror across the reload and hands it back as 'carry:<flip>|<lastOut>'.
+local function mirrorCarry()
+    mp.set('switchCarry', (pendingFlip or '') .. '|' .. (worldUrls.lastOut or ''))
+end
 
 -- Chargen gate: multiplayer surfaces (chat, social, leaving your solo world) unlock only once
 -- character creation is DONE (race/class/sign chosen — mwscript CharGenState == -1). Mirrored
@@ -1968,6 +1976,7 @@ local function start()
             if pendingFlip and net.currentTarget() == worldUrls.own then
                 mp.sendEvent('SetWorldMode', { mode = pendingFlip })
                 pendingFlip = nil
+                mirrorCarry()
             end
             if net.playerRecord then
                 pendingRestore = net.playerRecord -- applied by restoreTick once the player exists
@@ -3524,9 +3533,27 @@ local eventHandlers = {
         elseif mode == 'online' then
             mp.sendEvent('SetAvailability', { state = 'online' })
             if worldUrls.lastOut and net.currentTarget() ~= worldUrls.lastOut then
-                net.switchTo(worldUrls.lastOut); worldUrls.lastOut = nil
+                local back = worldUrls.lastOut
+                worldUrls.lastOut = nil
+                mirrorCarry()
+                net.switchTo(back)
             end
         end
+        mirrorCarry()
+    end,
+
+    -- The page handing back what mpWhere queued before the reload (see mirrorCarry).
+    mpCarry = function(data)
+        local flip, lastOut = tostring(data and data.v or ''):match('^(%a*)|(.*)$')
+        if not flip then return end
+        if flip ~= '' then pendingFlip = flip end
+        if lastOut ~= '' then worldUrls.lastOut = lastOut end
+        -- Already joined at home (the command can land after the join): fire it now.
+        if pendingFlip and wasJoined and worldUrls.own and net.currentTarget() == worldUrls.own then
+            mp.sendEvent('SetWorldMode', { mode = pendingFlip })
+            pendingFlip = nil
+        end
+        mirrorCarry()
     end,
 
     -- Script removal lives here because removeScript is bound on GObject only. Both senders

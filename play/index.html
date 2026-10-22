@@ -33,6 +33,12 @@ window.omw = (function(){
   function on(name, fn){ (listeners[name] = listeners[name] || []).push(fn); }
   return { state: state, queue: queue, send: send, emit: emit, on: on, pending: pending };
 })();
+// A world switch's queued intent, carried across the reload by rebootIntoWorld. Queued now;
+// Lua drains the queue once the game runs, so the wait is the engine's boot, not ours.
+try {
+  var omwCarry = sessionStorage.getItem('omwmp:carry');
+  if (omwCarry) { sessionStorage.removeItem('omwmp:carry'); window.omw.send('carry:' + omwCarry, 300000); }
+} catch (e) {}
 </script>
 <script>/* Lock the tab title: the engine calls SDL_SetWindowTitle (document.title=...) on boot; shadow the property so those writes are ignored and the tab always reads OpenMW-Web. The only writer is window.__omwBadge(n): an unread count prefix "(n) " for the alt-tabbed player (backlog 350); 0 clears it. */(function(){var LOCK="OpenMW-Web",badge=0;function paint(){var t=document.getElementsByTagName("title")[0];if(t)t.textContent=(badge>0?"("+badge+") ":"")+LOCK;}try{Object.defineProperty(document,"title",{configurable:true,get:function(){return LOCK},set:function(){}});}catch(e){}try{paint();}catch(e){}window.__omwBadge=function(n){badge=n>0?n:0;try{paint();}catch(e){}};})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
@@ -4742,6 +4748,13 @@ window.omw = (function(){
       var wcBy = String((window.omw && window.omw.state && window.omw.state.worldClosedBy) || '');
       if (wcBy) keep.push('mpclosedby=' + encodeURIComponent(wcBy));
     }
+    // What the switcher queued for the far side (a Party flip for home, Offline's way back).
+    // Lua state dies with this reload; the next boot hands it back (see 'carry:' below).
+    try {
+      var carryNow = String((window.omw && window.omw.state && window.omw.state.switchCarry) || '');
+      if (carryNow && carryNow !== '|') sessionStorage.setItem('omwmp:carry', carryNow);
+      else sessionStorage.removeItem('omwmp:carry');
+    } catch (e) {}
     // Flush saves and settings before the navigation, exactly as a tab close would.
     try { if (window.__omwSync) window.__omwSync(); } catch (e) {}
     // The beforeunload guard asks "leave site?" whenever the engine is running. This IS a

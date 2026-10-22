@@ -3934,5 +3934,44 @@ do
   end
 end
 
+-- ====================================== global.lua: a switch's queued intent survives the reload
+print('global.lua -- Party clicked while visiting is applied on arrival home (carry)')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local ma = g:find('local function mirrorCarry()', 1, true)
+  local mb = ma and select(2, g:find('\nend\n', ma, true))
+  local ha = g:find('    mpCarry = function(data)', 1, true)
+  local hb = ha and select(2, g:find('\n    end,\n', ha, true))
+  local src = ma and mb and ha and hb and ('local worldUrls, wasJoined, net, mp = ...\nlocal pendingFlip = nil\n'
+    .. g:sub(ma, mb) .. 'local h = ' .. g:sub(ha + #'    mpCarry = ', hb - 2)
+    .. '\nreturn function(d) h(d); return pendingFlip end')
+  local mk = src and loadstring(src)
+  check('mirrorCarry and mpCarry are where this test expects them', mk ~= nil)
+  check('mpWhere mirrors the carry before going back online',
+    g:find('mirrorCarry()\n                net.switchTo(back)', 1, true) ~= nil)
+  local ip = io.open('./play/index.html'):read('*a')
+  check('the page stores the carry before the reload and replays it at boot',
+    ip:find("sessionStorage.setItem('omwmp:carry', carryNow)", 1, true) ~= nil
+    and ip:find("window.omw.send('carry:' + omwCarry", 1, true) ~= nil)
+  if mk then
+    local sent, mirror = {}, nil
+    local mpS = { set = function(k, v) if k == 'switchCarry' then mirror = v end end,
+      sendEvent = function(n, d) sent[#sent + 1] = n .. ':' .. tostring(d.mode) end }
+    local home = 'wss://x/w/priv-a'
+    local atHome = { currentTarget = function() return home end }
+    local run = mk({ own = home }, false, atHome, mpS)
+    check('a carry before the join queues the flip', run({ v = 'party|' }) == 'party' and #sent == 0)
+    run = mk({ own = home }, true, atHome, mpS)
+    local left = run({ v = 'party|' })
+    check('a carry after the join at home sends the flip now',
+      left == nil and sent[1] == 'SetWorldMode:party', table.concat(sent, ','))
+    check('the mirror is cleared once the flip is sent', mirror == '|', tostring(mirror))
+    local wu = { own = home }
+    mk(wu, true, atHome, mpS)({ v = '|wss://x/w/party-b' })
+    check('the Offline way back is restored', wu.lastOut == 'wss://x/w/party-b', tostring(wu.lastOut))
+    check('garbage is ignored', mk({ own = home }, true, atHome, mpS)({ v = 'x' }) == nil)
+  end
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
