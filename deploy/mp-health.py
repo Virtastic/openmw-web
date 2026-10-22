@@ -40,6 +40,7 @@ slow_reads = Counter()
 no_pose = Counter()  # windows with a drawn NPC that has no pose stream of its own (npcNoPose), by record
 facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
 hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
+rtt50, rtt95, switch_ms, self_snaps, play_s = [], [], [], 0, 0.0
 seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set); data_setup = {}
 num = lambda s: re.sub(r'\d[\d.:x]*', 'N', s)
 f = lambda t, k: (re.search(k + r'=(\S+)', t) or [None, None])[1]
@@ -51,6 +52,8 @@ for e in lines():
     if name == 'auth.sso_ok': accounts.add(e.get('account'))
     elif name == 'auth.sso_failed': sso_fail[e.get('code', '?')] += 1
     elif name == 'player.join_world': joined.add(e.get('name'))
+    elif name == 'net.rtt':  # server-measured, per player per 5 min (connection.ts flushRtt)
+        rtt50.append(e.get('p50', 0)); rtt95.append(e.get('p95', 0))
     elif name == 'world.reaped': reaped[(e.get('reason') or 'idle') + ('' if e.get('played') is None else f" played={e.get('played')}")] += 1
     # A PLAYER's refused action only. The sim peer's own late frames after a hand-off (a burst of
     # ActorEquip / ActorDisposition when a new player takes Seyda Neen, 2026-10-21) are dropped by
@@ -66,6 +69,7 @@ for e in lines():
     elif name == 'client.log':
         t, s = e.get('text', ''), e.get('session', '?')
         if t.startswith('[telemetry]'):
+            if ' hidden=1' not in t: play_s += 5
             m = re.search(r'npcPath p50=\d+ p95=(\d+) max=(\d+)', t)
             sn = f(t, 'snaps')
             if sn and sn.isdigit(): snaps += int(sn)
@@ -86,6 +90,11 @@ for e in lines():
             np = f(t, 'npcNoPose')
             if np and np.isdigit() and int(np):
                 for rec in (f(t, 'noPoseRec') or '?').split(','): no_pose[rec] += 1
+        elif t.startswith('[boot] ') and 'switchMs=' in t:
+            v = f(t, 'switchMs')  # click -> playable in the destination world (index.html)
+            if v and v.isdigit(): switch_ms.append(int(v))
+        elif 'SELF SNAP' in t:
+            self_snaps += 1
         elif t.startswith('[sfs] slow read '):
             # The streamed files a player waited on, by name (index.html, 2026-10-21): what to warm next.
             slow_reads[t.split()[3].split('@')[0]] += 1
@@ -107,6 +116,9 @@ print(f"worlds reaped:\n{top(reaped)}")
 print(f"stuck on the loading screen 5 min (settle timeout): {sum(v for k, v in client_err.items() if 'settle hold released' in k)}")
 print(f"smoothness: NPC path p95 per 5 s window -- median {q(path95, .5)}, p90 {q(path95, .9)}, p99 {q(path95, .99)}, max {q(path_max, 1)} u"
       f" ({len(path95)} windows) | snaps {snaps} | sessions whose first window was unheld {first_unheld}")
+print(f"network: round trip (server-measured) median p50 {q(rtt50, .5)} ms, p95 of p95s {q(rtt95, .95)} ms ({len(rtt50)} samples)"
+      f" | own body pulled back (SELF SNAP) {self_snaps} = {self_snaps / max(play_s / 3600, 1e-9):.1f}/h over {play_s / 3600:.1f} h played")
+print(f"world switches: click to playable p50 {q(switch_ms, .5)} ms, p95 {q(switch_ms, .95)} ms ({len(switch_ms)} switches)")
 print(f"NPCs drawn with no pose stream of their own (5 s windows, by record):\n{top(no_pose, 6)}")
 print(f"hitches: {hitch} visible windows with a frame of 500 ms or more, {hitch_sfs} of them waiting 300 ms+ on streamed game files | {hidden_w} windows in a background tab (not counted)")
 print(f"facing: walking NPCs drawn turned round (>120 deg off the server) {facing_bad}/{facing_n} samples" + (f" ({100 * facing_bad / facing_n:.1f}%)" if facing_n else ''))

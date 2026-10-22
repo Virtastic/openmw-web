@@ -973,7 +973,11 @@ try {
        // Where this player's boot went, once per page: ms from navigation start (see __omwMark).
        try { if (window.StreamFS && window.StreamFS.record) window.StreamFS.record(false); } catch (e) {}
        try { if (window.__omwMark) window.__omwMark('released');
-         var B = window.__omwBoot || {}; append('[boot] ' + Object.keys(B).map(function(k){ return k + '=' + B[k]; }).join(' ')); } catch (e) {}
+         var B = window.__omwBoot || {};
+         // A WORLD SWITCH, end to end: wall time from the click (rebootIntoWorld) to holding the
+         // controller here. The marks above are per page and start at this page's navigation.
+         if (window.__omwSwitchAt > 0) B.switchMs = Date.now() - window.__omwSwitchAt;
+         append('[boot] ' + Object.keys(B).map(function(k){ return k + '=' + B[k]; }).join(' ')); } catch (e) {}
      }
      // In the world: start filling the chunk cache from the game archives in the background, so
      // something new coming into view is a local read rather than a network stall (streamfs warm).
@@ -1630,6 +1634,7 @@ try {
    } catch(e){}
  };
  window.__omwMark('scriptStart');
+ try { window.__omwSwitchAt = Number(sessionStorage.getItem('omwmp:switchAt') || 0); sessionStorage.removeItem('omwmp:switchAt'); } catch(e){}
 
  window.__omwSyncing = false;
  window.__omwSyncAgain = false;
@@ -4684,6 +4689,7 @@ try {
     // A refused join leaves its label behind; only a click from the last half minute names this trip.
     var lbl = window.__omwSwitchLabel || {};
     if (!(Date.now() - (lbl.at || 0) < 30000)) lbl = {};
+    try { sessionStorage.setItem('omwmp:switchAt', String(lbl.at || Date.now())); } catch (e) {}
     window.__omwSwitchLabel = null;
     window.__omwLoading.show(lbl.title || 'Changing world', 'Getting you a seat…');
     try { if (lbl.arrive) sessionStorage.setItem('omwmp:arrive', lbl.arrive); } catch (e) {}

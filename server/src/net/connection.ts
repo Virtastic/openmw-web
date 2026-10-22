@@ -207,6 +207,10 @@ export class Connection implements Peer {
   private lastClientSeq = 0;
   private internalErrors = 0; // informational for the event tier
   private helloTimer?: NodeJS.Timeout;
+  // Server-measured round trips (ws.ts ping stamps, every 5 s), logged as net.rtt every five
+  // minutes and on close. There was NO latency number anywhere -- the pong handler computed one
+  // and dropped it -- so every netcode bar was set without knowing what players' links are.
+  private rttSamples: number[] = [];
   private contentHeld = false;
   // Declared at Hello; carried onto the Player so cell-authority election can require it.
   private simulatesActors = false;
@@ -268,6 +272,9 @@ export class Connection implements Peer {
     // itself lives in net/ws.ts (ping stamp echo); this only attaches it to a playerId.
     ws.on('pong', () => {
       const rtt = socketRttMs(ws);
+      if (rtt === undefined || !this.player) return;
+      this.rttSamples.push(rtt);
+      if (this.rttSamples.length >= 60) this.flushRtt();
     });
     ws.on('close', () => this.cleanup());
   }
@@ -369,9 +376,18 @@ export class Connection implements Peer {
 
   // Idempotent teardown shared by disconnect() and abrupt socket close. Synchronous so a
   // superseding login sees the roster slot freed before it claims the account.
+  private flushRtt(): void {
+    const a = this.rttSamples.sort((x, y) => x - y);
+    this.rttSamples = [];
+    if (a.length === 0) return;
+    const at = (p: number): number => Math.round(a[Math.min(a.length - 1, Math.floor(p * a.length))]!);
+    log('info', 'net.rtt', { player: this.player?.name, n: a.length, p50: at(0.5), p95: at(0.95), max: at(1) });
+  }
+
   private cleanup(): void {
     if (this.state === 'CLOSED') return;
     this.state = 'CLOSED';
+    this.flushRtt();
     // A client that just drops the socket never goes through disconnect(); without this
     // the disconnect total would only ever see server-initiated closes.
     if (!this.closeCounted) {
