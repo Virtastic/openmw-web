@@ -2677,6 +2677,13 @@ namespace MWWorld
         });
 
         WorldModel* worldModel = MWBase::Environment::get().getWorldModel();
+        // A PRISON MARKER IS NOT A WAY IN. It is a Door record pointing into the cell, so it
+        // matched like one, and Seyda Neen's comes first in its cell: its destination
+        // (-67, 341, 192) is outside the Census and Excise Office's rooms. Every --start
+        // there, and every void reset after it (Scene::playerMoved uses this same search),
+        // dropped the player into the void, once a second for good (s155 #207/#245/#250).
+        // Only when no real door leads in.
+        std::optional<ESM::Position> markerDest;
         for (const MWWorld::CellRef* door : sortedDoors)
         {
             const MWWorld::CellStore& source = worldModel->getCell(door->getDestCell());
@@ -2691,7 +2698,10 @@ namespace MWWorld
                 {
                     ESM::Position doorDest = destDoor.mRef.getDoorDest();
                     doorDest.rot[0] = doorDest.rot[1] = doorDest.rot[2] = 0;
-                    return doorDest;
+                    if (!Misc::ResourceHelpers::isHiddenMarker(destDoor.mBase->mId))
+                        return doorDest;
+                    if (!markerDest)
+                        markerDest = doorDest;
                 }
             }
             for (const MWWorld::LiveCellRef<ESM4::Door>& destDoor : source.getReadOnlyEsm4Doors().mList)
@@ -2701,7 +2711,7 @@ namespace MWWorld
             }
         }
 
-        return std::nullopt;
+        return markerDest;
     }
 
     ESM::RefId World::findInteriorPosition(std::string_view name, ESM::Position& pos)

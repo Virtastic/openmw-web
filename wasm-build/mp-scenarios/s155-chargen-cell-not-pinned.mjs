@@ -53,6 +53,12 @@ export default async function run(ctx) {
   // 3 s walk into a desk covers 0 (#119: 0/0/21/21 with divergence 0 and no snap, green in
   // #115 at 15/37/31/41). A pin shows as divergence > 32 or a selfSnap; a free player who
   // covered 15 u in some direction is free.
+  // THE VOID IS NOT A PIN. --start picked the Seyda Neen prison marker's destination, which is
+  // outside the office's rooms: the player fell, the engine reset them to the same spot once a
+  // second, and the walks measured ~15 u of a fall (#207/#245/#250 -- and every green run too,
+  // which simply never printed the console). Say so by name before the pin verdict.
+  const voids = a.logMatches(/falling into the void/).length;
+  assert.equal(voids, 0, `A spawned in the void: ${voids} "falling into the void" resets (findInteriorPosition picked a spot outside the office)`);
   const snapped = String(await a.eval("window.omw.state.selfSnap||''")) !== '';
   const pinned = maxDiv > 32 || snapped || !(moved >= 15);
   if (pinned) {
