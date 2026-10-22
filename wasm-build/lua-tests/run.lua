@@ -2047,7 +2047,8 @@ do
   f, sd = Interp.bodyControls(0, 1000, 0, 200, 1.25)
   check('capped at PUPPET_MAX_SPEED', math.abs(f - 1.25) < 1e-6, string.format('%.2f', f))
   check('puppet.lua always takes the server facing and moves by bodyControls',
-    pp:find('self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)', 1, true) ~= nil
+    pp:find('local yawErr = shortestArc((target.yaw or curYaw) - curYaw)', 1, true) ~= nil
+    and pp:find('self.controls.yawChange = math.abs(yawErr) < YAW_DEADBAND and 0 or yawErr', 1, true) ~= nil
     and pp:find('Interp.bodyControls(cx, cy, curYaw, top, PUPPET_MAX_SPEED)', 1, true) ~= nil
     and pp:find('math.atan(dx, dy) - curYaw', 1, true) == nil)
   local cc = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
@@ -2930,6 +2931,16 @@ do
   local allAbove = #pris > 0
   for _, p in ipairs(pris) do if not (p[1] == 6 and p[2] == 6 and p[3] == 6 and p[0] == 1) then allAbove = false end end
   check('every swing half plays at Block on the upper body, WeaponLowerBody on the legs', allAbove)
+  -- A HAIR OF TURN IS A TURN (character.cpp: any non-zero rotation is the turn state, its clip at a
+  -- speed proportional to it): facing within ~1 degree sends no turn, so the stance idle plays
+  -- instead of a turn clip frozen at near-zero speed (s194, Jenkins #256: turnleft1h after a blow).
+  local ctl = package.loaded['openmw.self'].controls
+  now = now + 2; pup.eventHandlers.MP_Pose({ x = 0, y = 0, z = 0, yaw = 0.005, pitch = 0, flags = 16, t = now })
+  now = now + 0.3; pup.engineHandlers.onUpdate(0.05)
+  check('facing within the deadband sends no turn', ctl.yawChange == 0, tostring(ctl.yawChange))
+  now = now + 0.5; pup.eventHandlers.MP_Pose({ x = 0, y = 0, z = 0, yaw = 0.5, pitch = 0, flags = 16, t = now })
+  now = now + 0.3; pup.engineHandlers.onUpdate(0.05)
+  check('...a real turn still turns', ctl.yawChange and ctl.yawChange > 0.1, tostring(ctl.yawChange))
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
   local cpp = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
   check('character.cpp does not smooth a puppet\'s speed a second time (the peer already did)',

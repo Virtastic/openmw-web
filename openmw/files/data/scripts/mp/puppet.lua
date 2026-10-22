@@ -208,10 +208,10 @@ end
 -- ONE STEP ABOVE THE ENGINE'S OWN WEAPON STATE, NEVER EQUAL TO IT. A biped's weapon animations
 -- (draw, idle1h & co, its own attacks) run at Weapon on the upper body and WeaponLowerBody on the
 -- legs (character.cpp priorityWeapon), and Animation::play ERASES every other group of an equal
--- priority: the swing deleted the character's weapon idle, the engine never replayed it, and a
--- friend stood frozen in a half-turn after every blow (#255 probe: blow+1.5 active=turnright1h at a
--- fixed time). At Block on the arms and torso the swing shows over the idle and leaves it in
--- place; the legs stay at WeaponLowerBody, under the walk (s120).
+-- priority: at that pair the swing deleted the character's weapon idle until the engine next
+-- refreshed it. At Block on the arms and torso the swing shows over the idle and leaves it in
+-- place; the legs stay at WeaponLowerBody, under the walk (s120). (The frozen half-turn after a
+-- blow was the yaw steering, YAW_DEADBAND.)
 local function swingPriority(anim)
     local P, G = anim.PRIORITY, anim.BONE_GROUP
     local up = P.Block or P.Weapon
@@ -464,6 +464,7 @@ local CATCHUP_S = 0.15
 -- (s172 #161: 91 u behind at p50 while the wire was 14). The engine honours up to this factor
 -- for puppets only (character.cpp).
 local PUPPET_MAX_SPEED = 1.25
+local YAW_DEADBAND = 0.02 -- rad, ~1.1 degrees: below it a puppet is facing, not turning
 
 local function onUpdate(dt)
     ensureHitHandler()
@@ -674,7 +675,14 @@ local function onUpdate(dt)
     -- CATCHUP_S. The split uses the heading the body HAS this frame: that is the one the engine
     -- moves it along (character.cpp). Out of steering (close and standing still) only the
     -- target's own velocity is followed, so a slow shuffle is still mirrored.
-    self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)
+    -- A HAIR OF TURN IS A TURN. A biped is in its turn state for ANY non-zero rotation and plays
+    -- the turn clip at a speed proportional to it (character.cpp effectiveRotation, turnSpeed):
+    -- facing the server's heading to the last rounding error, every puppet that had turned stood
+    -- frozen mid-turn afterwards -- a friend's arm on turnleft1h at a fixed time 1.5 s after a blow
+    -- (s194, Jenkins #256), the 2026-10-21 re-shoot's "half-turned" pose. Under YAW_DEADBAND the
+    -- body is facing: no turn, so the stance's idle plays.
+    local yawErr = shortestArc((target.yaw or curYaw) - curYaw)
+    self.controls.yawChange = math.abs(yawErr) < YAW_DEADBAND and 0 or yawErr
     local okT, top = pcall(self.controls.run and types.Actor.getRunSpeed or types.Actor.getWalkSpeed, self)
     if not okT or type(top) ~= 'number' or top <= 0 then top = 150 end
     local cx, cy = vx, vy
