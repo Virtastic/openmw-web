@@ -43,7 +43,12 @@ export function globalHandlers(): Set<string> {
   const g = readFileSync(join(MP, 'global.lua'), 'utf8');
   const requires = new Map<string, string>();
   for (const m of g.matchAll(/local (\w+) = require\('scripts\.mp\.(\w+)'\)/g)) requires.set(m[1]!, m[2]!);
-  const merged = [...g.matchAll(/for name, fn in pairs\((\w+)\.handlers\) do/g)].map((m) => requires.get(m[1]!));
+  // The merge is ONE loop over a module list now, `end)({ objects, actors, ... })` (global.lua sits
+  // at Lua's 200-local limit, so it runs inside a function); the per-module loop form is kept too.
+  const listed = /end\)\(\{\s*([\w\s,]+?)\s*\}\)/.exec(g)?.[1]?.split(/\s*,\s*/) ?? [];
+  const looped = [...g.matchAll(/for name, fn in pairs\((\w+)\.handlers\) do/g)].map((m) => m[1]!);
+  const merged = [...listed, ...looped].map((v) => requires.get(v));
+  assert.ok(merged.length >= 6, `found only ${merged.length} merged handler modules in global.lua -- the parser no longer matches it`);
   const sources = [g, ...merged.filter((x): x is string => !!x).map((mod) => readFileSync(join(MP, mod + '.lua'), 'utf8'))];
   const names = new Set<string>();
   for (const src of sources) for (const m of src.matchAll(/\b(MP_[A-Za-z0-9_]+)\s*=\s*function/g)) names.add(m[1]!);

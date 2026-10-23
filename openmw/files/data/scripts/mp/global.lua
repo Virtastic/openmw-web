@@ -2149,6 +2149,9 @@ local eventHandlers = {
         if not myId then return end
         for _, e in ipairs(batch or {}) do
             if e.id == myId then
+                -- Under the WoW model the only entry we get is a REFUSED move's correction: the
+                -- server put us back on purpose, and catching the avatar up to us would undo it.
+                e.refused = (net.flags and net.flags.clientAuthority) == true
                 toPlayer('MP_SelfState', e)
                 return
             end

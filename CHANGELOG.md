@@ -2,6 +2,34 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.6
+
+**Your character moves where you see it.** Multiplayer now works the way World of Warcraft does:
+your own game says where your character is, and the server checks every move (speed over a short
+window) and passes it on. Before, the server re-walked your character from your key presses, and
+when its copy disagreed with yours on a ledge, a hop or a wall it pulled you back: the
+rubber-banding. Combat, NPCs, quests, loot and the world are still the server's. A move no player
+can make is refused and only that player is put back. Server operators can switch back with
+`[limits] clientAuthority = false`.
+
+**Friends see you about twice as soon:** 200-225 ms behind you while walking, from 425-525 ms.
+
+**Joining a friend follows them.** A friend visiting a third player's party could not be joined
+(the button sent you to their empty home world, which said it was not open); now you land beside
+them, or are told plainly that you are not friends with that party's host. A host who has just
+disconnected says "try again in a moment" instead of costing two reloads.
+
+**Party chosen while visiting a friend is kept on the way home**, and Offline then Online takes you
+back to where you were. Both were forgotten by the page reload a world change makes.
+
+**Changing world is quicker.** Your own world stays running for ten minutes while you visit a friend
+(`[worlds] ownerAwayKeepSec`), so going home is a join, not a cold start; the sign-in ticket for the
+trip is fetched when the social panel opens; a world that is already running settles in 1.5 s, not
+5. The loading screen names the trip ("Joining Ada's world", "Going home").
+
+**Measured.** The server logs each player's round-trip time, each world change reports how long it
+took, and `deploy/mp-health.py` prints both with own-character pull-backs per hour.
+
 ## 1.6.5
 
 **A self-hosted server works from `docker-compose.yml` alone.** Save the file in an empty folder,

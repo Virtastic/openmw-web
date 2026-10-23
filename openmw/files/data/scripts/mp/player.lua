@@ -404,6 +404,7 @@ end
 local CATCHUP_MAX, CATCHUP_COOLDOWN_S = 400, 2.0
 local lastCatchUpAt = -math.huge
 local function tryCatchUp(e, dist, now)
+    if e.refused then return false end -- the WoW model's correction: the server means it (global.lua)
     if dist > CATCHUP_MAX or now - lastCatchUpAt < CATCHUP_COOLDOWN_S then return false end
     local okg, grounded = pcall(types.Actor.isOnGround, self)
     local okw, swimming = pcall(types.Actor.isSwimming, self)

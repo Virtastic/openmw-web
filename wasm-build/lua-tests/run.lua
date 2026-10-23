@@ -2621,7 +2621,7 @@ do
     local chunk = assert(loadstring(p:sub(s, e) .. '\nreturn tryCatchUp'))
     setfenv(chunk, env)
     local try = chunk()
-    local ok = try({ x = 0, y = 0, z = 0 }, opts.dist or 300, 10)
+    local ok = try({ x = 0, y = 0, z = 0, refused = opts.refused }, opts.dist or 300, 10)
     local again
     if opts.twice then again = try({ x = 0, y = 0, z = 0 }, 300, 11) end
     return ok, sent, env, again
@@ -2637,6 +2637,11 @@ do
   check('...not from mid-air', not ok and #sent == 0)
   local _, _, _, again = run({ twice = true })
   check('...once per cooldown: a second gap inside it is the snap\'s', again == false)
+  ok, sent = run({ refused = true })
+  check('...never against a refused move (the WoW model\'s correction): the server meant it', not ok and #sent == 0)
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('global.lua marks every self-state entry as a refusal under clientAuthority',
+    g:find('e.refused = (net.flags and net.flags.clientAuthority) == true', 1, true) ~= nil)
   check('the reconciliation tries the catch-up before the snap',
     p:find('if tryCatchUp(e, dist, now) then return end', 1, true) ~= nil)
 end
