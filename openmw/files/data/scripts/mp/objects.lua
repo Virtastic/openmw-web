@@ -857,7 +857,11 @@ handlers.MP_ObjectSpawnRefused = function(data)
     end
     local player = deps.playerFn()
     if obj and obj:isValid() and player then
-        pcall(function() obj:moveInto(types.Actor.inventory(player)) end)
+        local okM, errM = pcall(function() obj:moveInto(types.Actor.inventory(player)) end)
+        if not okM then
+            print(string.format('[mp] refused drop of %s could not go back into the pack: %s',
+                tostring(obj.recordId), tostring(errM)))
+        end
     end
     if deps.noticeFn then
         local why = {

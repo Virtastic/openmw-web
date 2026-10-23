@@ -3623,7 +3623,10 @@ local eventHandlers = {
 
     mpAvatarDetached = function(data)
         if data.obj and data.obj:isValid() then
-            data.obj:removeScript('scripts/mp/avatar.lua')
+            -- Guarded and SAID: removeScript throws when the script is already gone (a second
+            -- detach, a reload), and a throw here aborts the handler.
+            local ok, err = pcall(function() data.obj:removeScript('scripts/mp/avatar.lua') end)
+            if not ok then print('[mp] avatar script detach failed: ' .. tostring(err)) end
         end
     end,
     mpAvatarLanded = avatarLanded,

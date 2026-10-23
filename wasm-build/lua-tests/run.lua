@@ -4760,5 +4760,17 @@ do
   end
   for _, m in ipairs(names) do package.loaded[m] = saved[m] end
 end
+
+print('1.7.1 silent failures are said: a refused drop that cannot go back, an avatar detach that throws')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  check('the put-back moveInto of a refused drop logs its failure',
+    ob:find("local okM, errM = pcall(function() obj:moveInto(types.Actor.inventory(player)) end)", 1, true) ~= nil
+    and ob:find("[mp] refused drop of %s could not go back into the pack: %s", 1, true) ~= nil)
+  check('mpAvatarDetached guards removeScript and says why it failed',
+    g:find("local ok, err = pcall(function() data.obj:removeScript('scripts/mp/avatar.lua') end)", 1, true) ~= nil
+    and g:find("data.obj:removeScript('scripts/mp/avatar.lua')\n", 1, true) == nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
