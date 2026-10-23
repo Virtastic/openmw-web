@@ -2272,6 +2272,10 @@ namespace MWMechanics
                                 health.setCurrent(health.getCurrent() - realHealthLost);
                                 cls.getCreatureStats(mPtr).setHealth(health);
                             }
+                            // ...and the peer's avatar, placed on our poses, never falls: the
+                            // damage is handed to Lua to claim (MWMP::takeFall, identity.lua).
+                            if (isPlayer && MWMP::peerRulesBody())
+                                MWMP::recordFall(realHealthLost);
                             sndMgr->playSound3D(mPtr, ESM::RefId::stringRefId("Health Damage"), 1.0f, 1.0f);
                             if (isPlayer)
                                 MWBase::Environment::get().getWindowManager()->activateHitOverlay();

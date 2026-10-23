@@ -202,38 +202,21 @@ for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0; t.baseSai
 local peerBarsAt = nil -- when the peer last reported; past PEER_RULES_S our own bars rule again
 -- A FALL THIS ENGINE MEASURED. Under the WoW model the avatar is placed on our poses and never
 -- falls by itself (prod 2026-10-23: the longest avatar fall since 1.6.6 was 248 u, against 300-550
--- before), so it took no fall damage and its next report restored ours: long falls stopped
--- hurting. This engine runs the real fall, and its health drop on landing is the damage; it rides
--- the next claim as hp.fall and the server takes it off the avatar ([limits] clientAuthority only,
--- so the replay model, where the avatar falls itself, is not charged twice).
-local fall = { air = false, airHp = nil, pend = nil, owed = 0, reported = false }
+-- before), so it took no fall damage -- and this engine does not apply its own either while the
+-- peer rules the body (character.cpp, peerRulesBody). So the engine hands the amount over
+-- (mp.takeFallDamage) and it rides the next claim as hp.fall; the server takes it off the avatar
+-- ([limits] clientAuthority only, so the replay model, where the avatar falls itself, is not
+-- charged twice).
+local fall = { owed = 0 }
 identity._fall = fall -- test handle
 function identity.fallWatch()
-    local okg, grounded = pcall(Actor.isOnGround, self)
-    local okh, hp = pcall(function() return Actor.stats.dynamic.health(self).current end)
-    if not (okg and okh and hp) then return end
-    local reported = fall.reported
-    fall.reported = false
-    if fall.pend then
-        -- The damage can land on the landing frame or the next; a peer report in between
-        -- overwrites the bar, so the largest drop seen BEFORE one is the fall.
-        if not reported then fall.pend.best = math.max(fall.pend.best, fall.pend.hp0 - hp) end
-        fall.pend.n = fall.pend.n - 1
-        if reported or fall.pend.n <= 0 then
-            if fall.pend.best > 0.5 then fall.owed = fall.owed + fall.pend.best end
-            fall.pend = nil
-        end
-    elseif fall.air and grounded and fall.airHp then
-        fall.pend = { hp0 = fall.airHp, best = reported and 0 or (fall.airHp - hp), n = 2 }
-    end
-    if not grounded then fall.airHp = hp end
-    fall.air = not grounded
+    local ok, f = pcall(function() return mp.takeFallDamage and mp.takeFallDamage() or 0 end)
+    if ok and type(f) == 'number' and f > 0 then fall.owed = fall.owed + f end
 end
 local PEER_RULES_S = 5 -- server/src/core/players.ts INPUT_DRIVING_MS, the same predicate
 local trackLocalChange -- defined below; the report handler needs it first
 function identity.notePeerBars(hp, mpv, ft)
     peerBarsAt = core.getRealTime()
-    fall.reported = true
     -- BANK THE LOCAL CHANGE BEFORE THE REPORT OVERWRITES IT. The per-frame measurement runs
     -- in onUpdate; a heal and a report landing in the same frame BEFORE that -- a rest, a
     -- potion, then the 4 Hz report -- had the report's write (and its prev) erase the raise

@@ -341,6 +341,9 @@ namespace MWMP
             luaManager->addAction(
                 [ptr, id] { MWBase::Environment::get().getDialogueManager()->say(ptr, id); }, "MPSay");
         };
+        // The fall damage this engine measured but, the peer ruling the body, did not apply
+        // (character.cpp). Taken once: the next call returns 0.
+        api["takeFallDamage"] = []() -> float { return MWMP::takeFall(); };
         // Backlog 73: knockdown is not in the Lua stats API; the peer reports it with the avatar
         // bars so the owner stops driving a body that is lying on the floor.
         api["isKnockedDown"] = [](const sol::object& obj) -> bool {

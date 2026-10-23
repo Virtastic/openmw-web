@@ -304,6 +304,24 @@ namespace MWMP
         return localSummons();
     }
 
+    namespace
+    {
+        float sFallOwed = 0.f;
+    }
+
+    void recordFall(float healthLost)
+    {
+        if (healthLost > 0.f)
+            sFallOwed += healthLost;
+    }
+
+    float takeFall()
+    {
+        const float owed = sFallOwed;
+        sFallOwed = 0.f;
+        return owed;
+    }
+
     bool isClient()
     {
         static const bool v = std::getenv("OPENMW_MP_URL") != nullptr && std::getenv("OPENMW_MP_SYSTEM") == nullptr;

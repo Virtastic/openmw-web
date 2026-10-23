@@ -176,6 +176,13 @@ namespace MWMP
      *  overlay stay, they are what the player feels. */
     inline bool peerRulesBody() { return !localSummonsEnabled(); }
 
+    /** CLIENT ONLY: the fall damage the gate above did not apply. Under the WoW model the avatar
+     *  is PLACED on the owner's poses and never falls by itself, so nobody took it at all (prod
+     *  2026-10-23: long falls cost nothing). character.cpp records it here; Lua (identity.lua)
+     *  takes it and claims it as hp.fall, which the server subtracts from the avatar. */
+    void recordFall(float healthLost);
+    float takeFall();
+
     /** A multiplayer CLIENT (a browser engine with a session URL), as opposed to the sim peer
      *  (OPENMW_MP_SYSTEM) or singleplayer (no URL). Read once: the environment never changes. */
     bool isClient();

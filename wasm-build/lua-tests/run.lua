@@ -4127,48 +4127,34 @@ do
 end
 
 -- ====================================== a fall this engine measured reaches the claim
-print('identity.lua -- the landing\'s health drop is claimed as hp.fall (prod 2026-10-23)')
+print('identity.lua -- the fall damage the engine did not apply is claimed as hp.fall (prod 2026-10-23)')
 do
   local id = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
-  local a = id:find('local fall = { air = false', 1, true)
+  local a = id:find('local fall = { owed = 0 }', 1, true)
   local b = a and select(2, id:find('\nfunction identity.fallWatch()', a, true))
   b = b and select(2, id:find('\nend\n', b, true))
-  local function mk()
-    local st = { ground = true, hp = 100 }
-    local env = setmetatable({
-      identity = {}, self = {},
-      Actor = { isOnGround = function() return st.ground end,
-        stats = { dynamic = { health = function() return { current = st.hp } end } } },
-    }, { __index = _G })
-    local chunk = a and b and loadstring(id:sub(a, b) .. '\nreturn identity')
-    if not chunk then return nil end
+  local owed = {}
+  local env = setmetatable({ identity = {}, mp = { takeFallDamage = function() return table.remove(owed, 1) or 0 end } },
+    { __index = _G })
+  local chunk = a and b and loadstring(id:sub(a, b) .. '\nreturn identity')
+  check('fallWatch is where this test expects it', chunk ~= nil)
+  if chunk then
     setfenv(chunk, env)
-    return chunk(), st
+    local I = chunk()
+    owed = { 0, 23.5, 0 }
+    I.fallWatch(); I.fallWatch(); I.fallWatch()
+    check('the engine\'s skipped fall damage is owed once', math.abs(I._fall.owed - 23.5) < 1e-6, tostring(I._fall.owed))
+    env.mp.takeFallDamage = nil
+    I.fallWatch()
+    check('an engine without the binding owes nothing and does not throw', math.abs(I._fall.owed - 23.5) < 1e-6)
   end
-  local I, st = mk()
-  check('fallWatch is where this test expects it', I ~= nil)
-  if I then
-    local f = I._fall
-    local function frame(ground, hp, reported) st.ground, st.hp = ground, hp; if reported then f.reported = true end; I.fallWatch() end
-    frame(true, 100); frame(false, 100); frame(false, 100)
-    frame(true, 70)  -- the landing frame, damage on it
-    frame(true, 70); frame(true, 70)
-    check('a 30-point landing is owed', math.abs(f.owed - 30) < 1e-6, tostring(f.owed))
-    f.owed = 0
-    frame(false, 70); frame(true, 70); frame(true, 52); frame(true, 52) -- damage a frame late
-    check('damage landing a frame after touchdown is caught too', math.abs(f.owed - 18) < 1e-6, tostring(f.owed))
-    f.owed = 0
-    frame(false, 52); frame(true, 40); frame(true, 100, true); frame(true, 100)
-    check('a peer report overwriting the bar mid-window does not erase the drop already seen', math.abs(f.owed - 12) < 1e-6, tostring(f.owed))
-    f.owed = 0
-    frame(false, 100); frame(true, 100); frame(true, 100); frame(true, 100)
-    check('a soft landing owes nothing', f.owed == 0)
-    frame(true, 60); frame(true, 60); frame(true, 60)
-    check('damage while standing is not a fall', f.owed == 0)
-  end
-  check('identity.tick watches falls every frame', id:find('    identity.fallWatch()\n    trackLocalChange()', 1, true) ~= nil)
+  check('identity.tick takes falls every frame', id:find('    identity.fallWatch()\n    trackLocalChange()', 1, true) ~= nil)
   check('the claim carries it as hp.fall', id:find('claim.hp.fall = math.floor(fall.owed * 10 + 0.5) / 10', 1, true) ~= nil)
-  check('a peer report marks the bar overwritten', id:find('fall.reported = true', 1, true) ~= nil)
+  local ch = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
+  check('character.cpp hands the skipped fall to MWMP', ch:find('if (isPlayer && MWMP::peerRulesBody())\n                                MWMP::recordFall(realHealthLost);', 1, true) ~= nil
+    or ch:find('if (isPlayer && MWMP::peerRulesBody())\r\n                                MWMP::recordFall(realHealthLost);', 1, true) ~= nil)
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  check('mp.takeFallDamage is bound', lb:find('api["takeFallDamage"]', 1, true) ~= nil)
 end
 
 -- ====================================== NPC gait and the face-the-talker turn
