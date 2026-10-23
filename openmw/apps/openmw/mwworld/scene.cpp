@@ -374,6 +374,10 @@ namespace MWWorld
         if (mActiveCells.find(cell) == mActiveCells.end())
             return;
         Log(Debug::Info) << "Unloading cell " << cell->getCell()->getDescription();
+#ifdef __EMSCRIPTEN__
+        // Named again on a later approach (prefetchCellFiles): the page skips chunks it already holds.
+        mPrefetchedCells.erase(cell->getCell()->getId());
+#endif
 
         ListAndResetObjectsVisitor visitor;
 
@@ -1453,9 +1457,36 @@ namespace MWWorld
     {
         if (!mPrefetchedCells.insert(cell.getCell()->getId()).second)
             return;
+        const MWWorld::ESMStore& store = mWorld.getStore();
         std::vector<std::string_view> models;
         cell.forEachConst([&](const MWWorld::ConstPtr& ptr) {
             ptr.getClass().getModelsToPreload(ptr, models);
+            // AN NPC IN A CELL NEVER VISITED HAS NO INVENTORY YET, so getModelsToPreload names no
+            // worn parts. Its base inventory's clothing, armour and weapons are what it will wear.
+            if (ptr.getType() == ESM::NPC::sRecordId && !ptr.getRefData().getCustomData())
+            {
+                const ESM::NPC* npc = ptr.get<ESM::NPC>()->mBase;
+                const bool female = npc->mFlags & ESM::NPC::Female;
+                const auto addParts = [&](const std::vector<ESM::PartReference>& parts) {
+                    for (const ESM::PartReference& partRef : parts)
+                    {
+                        const bool useFemale
+                            = (female && !partRef.mFemale.empty()) || (!female && partRef.mMale.empty());
+                        const ESM::RefId& name = useFemale ? partRef.mFemale : partRef.mMale;
+                        if (const ESM::BodyPart* part = store.get<ESM::BodyPart>().search(name))
+                            models.push_back(part->mModel.getOriginal());
+                    }
+                };
+                for (const ESM::ContItem& item : npc->mInventory.mList)
+                {
+                    if (const ESM::Clothing* c = store.get<ESM::Clothing>().search(item.mItem))
+                        addParts(c->mParts.mParts);
+                    else if (const ESM::Armor* a = store.get<ESM::Armor>().search(item.mItem))
+                        addParts(a->mParts.mParts);
+                    else if (const ESM::Weapon* w = store.get<ESM::Weapon>().search(item.mItem))
+                        models.push_back(w->mModel.getOriginal());
+                }
+            }
             return true;
         });
         const VFS::Manager* vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
@@ -1471,6 +1502,37 @@ namespace MWWorld
                 continue;
             out += mesh.value();
             out += '\n';
+        }
+        // THE GROUND'S TEXTURES (exterior cells): the land record's VTEX indices, resolved the way
+        // ESMTerrain::Storage::getTextureName does. The model scan never finds these: no mesh names them.
+        const MWWorld::Cell& cellVariant = *cell.getCell();
+        if (cellVariant.isExterior() && !ESM::isEsm4Ext(cellVariant.getWorldSpace()))
+        {
+            osg::ref_ptr<const ESMTerrain::LandObject> land
+                = mRendering.getLandManager()->getLand(cellVariant.getExteriorCellLocation());
+            const ESM::LandData* data = land ? land->getData(ESM::Land::DATA_VTEX) : nullptr;
+            if (data)
+            {
+                std::set<std::uint16_t> ids(data->getTextures().begin(), data->getTextures().end());
+                for (const std::uint16_t id : ids)
+                {
+                    constexpr VFS::Path::NormalizedView defaultTexture("_land_default.dds");
+                    VFS::Path::NormalizedView texture = defaultTexture;
+                    // NB: vtex ids are ltex ids + 1; 0 is the default texture.
+                    if (id != 0)
+                    {
+                        const ESM::Path* ltex = store.get<ESM::LandTexture>().search(id - 1, land->getPlugin());
+                        if (ltex == nullptr)
+                            continue;
+                        texture = ltex->getNormalized();
+                    }
+                    const VFS::Path::Normalized path = Misc::ResourceHelpers::correctTexturePath(texture, *vfs);
+                    if (!seen.insert(path.value()).second)
+                        continue;
+                    out += path.value();
+                    out += '\n';
+                }
+            }
         }
         if (!out.empty())
             EM_ASM({ if (Module.__omwPrefetch) Module.__omwPrefetch(UTF8ToString($0)); }, out.c_str());
