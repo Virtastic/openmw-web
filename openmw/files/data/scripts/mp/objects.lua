@@ -17,6 +17,8 @@ local I = require('openmw.interfaces')
 
 local json = require('scripts.mp.json')
 local worldmp = require('scripts.mp.world')
+-- remove/teleport that survive an in-flight teleport (count 0 until the end of the frame)
+local retry = require('scripts.mp.retry')
 
 local objects = {}
 
@@ -937,7 +939,7 @@ handlers.MP_ObjectDelete = function(data)
         netToObj[netId] = nil
         objIdToNet[obj.id] = nil
     end
-    pcall(function() obj:remove() end)
+    retry.remove(obj) -- refused mid-teleport: disabled now (no pickup), removed next frames
 end
 
 -- (Lives here, below `local handlers = {}`, on purpose: a `handlers.X = ...` placed ABOVE that
@@ -1206,7 +1208,7 @@ handlers.MP_WorldCellState = function(data)
                 objIdToNet[obj.id] = nil
                 netSpawned[obj.id] = nil
                 netActorCount = math.max(0, netActorCount - 1)
-                pcall(function() obj:remove() end)
+                retry.remove(obj)
             end
         end
     end
@@ -1221,7 +1223,7 @@ handlers.MP_WorldCellState = function(data)
                 netToObj[netId] = nil
                 objIdToNet[obj.id] = nil
             end
-            pcall(function() obj:remove() end)
+            retry.remove(obj)
         end
     end
     for refKey, m in pairs(data.moved or {}) do
@@ -1617,7 +1619,7 @@ function objects.forgetCell(cellKey)
             if obj and obj:isValid() then
                 objIdToNet[obj.id] = nil
                 netSpawned[obj.id] = nil
-                pcall(function() obj:remove() end)
+                retry.remove(obj)
             end
         end
     end

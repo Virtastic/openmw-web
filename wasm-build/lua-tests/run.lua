@@ -1650,8 +1650,8 @@ do
     and ob:find('containerOpenPending[obj.id] = { obj = obj, at = core.getRealTime() }', 1, true) ~= nil)
   -- #294: the retry carries the followers.
   check('tryTeleport takes onLanded and the retry tick fires it',
-    g:find('local function tryTeleport(obj, cellArg, pos, onLanded)', 1, true) ~= nil
-    and g:find('if t.onLanded then pcall(t.onLanded) end', 1, true) ~= nil
+    g:find('local tryTeleport = retry.teleport', 1, true) ~= nil
+    and io.open('./openmw/files/data/scripts/mp/retry.lua'):read('*a'):find('function retry.teleport(obj, cellArg, pos, onLanded, opts)', 1, true) ~= nil
     and g:find('tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z), carryFollowers)', 1, true) ~= nil)
   -- #293: the revive edge and its applier.
   check('the holder sends ActorRevive on the revive edge and clients apply it with mp.resurrect(obj)',
@@ -2508,9 +2508,8 @@ do
   check('global.lua mpSnapRequest ignores a snap from a body it does not track',
     g:find('if p and data.obj ~= nil and p.obj ~= data.obj then return end', 1, true) ~= nil)
   check('despawnPuppet retries a remove() refused mid-teleport instead of forgetting the body',
-    g:find('if p.obj:isValid() and not pcall(function() p.obj:remove() end) then', 1, true) ~= nil
-    and g:find('removeRetry[p.obj] = core.getRealTime() + 1', 1, true) ~= nil
-    and g:find('removeRetryTick(now) -- a despawn refused mid-teleport lands now (480)', 1, true) ~= nil)
+    g:find('    retry.remove(p.obj)\n', 1, true) ~= nil
+    and g:find('retry.tick(now) -- a teleport that threw last frame lands now; a refused remove too (480)', 1, true) ~= nil)
   check('spawnPuppet skips a pose outside the loaded neighbourhood (a lagging avatar two cells back)',
     g:find('if not poseInView(pose) then return end', 1, true) ~= nil
     and g:find("visibleFrom(ownCellKeyCache, math.floor(pose.x / 8192) .. ',' .. math.floor(pose.y / 8192))", 1, true) ~= nil)
@@ -2525,10 +2524,9 @@ do
   local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
   local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
   check('a refused remove() disables the body at once (no solid ghost while the retry waits)',
-    g:find('pcall(function() p.obj.enabled = false end)', 1, true) ~= nil)
+    io.open('./openmw/files/data/scripts/mp/retry.lua'):read('*a'):find('pcall(function() obj.enabled = false end)', 1, true) ~= nil)
   check('the remove retry has no deadline, on a once-a-second cadence',
-    g:find('if pcall(function() obj:remove() end) then removeRetry[obj] = nil else removeRetry[obj] = now + 1 end', 1, true) ~= nil
-    and g:find('now > until_', 1, true) == nil)
+    io.open('./openmw/files/data/scripts/mp/retry.lua'):read('*a'):find('if pcall(function() r.obj:remove() end) then removes[id] = nil else r.at = now + 1 end', 1, true) ~= nil)
   check('despawnPuppet takes the body out of the avatar registry',
     g:find('if mp.setAvatar then pcall(mp.setAvatar, p.obj, false) end', 1, true) ~= nil)
   check('the owner re-sends its active effects when its look (the peer rebuild keys) changes',
@@ -4553,6 +4551,85 @@ do
   re:push({ t = re.buf[#re.buf].at + 0.05, x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = 0, st = re.buf[#re.buf].st })
   check('a repeated stamp re-bases instead of stacking two samples on one instant',
     re.buf[#re.buf].t > re.buf[#re.buf - 1].t)
+end
+
+print('1.7.1 retry.lua: a teleport or remove refused mid-teleport is retried, never lost')
+do
+  package.loaded['scripts.mp.retry'] = nil
+  local retry = require('scripts.mp.retry')
+  -- An engine-shaped object whose remove/teleport throw `fails` times, like a body whose
+  -- teleport has not landed yet (count 0 until the end of the frame).
+  local function body(id, removeFails, teleportFails)
+    local o = { id = id, recordId = 'rec_' .. id, enabled = true, valid = true, at = nil, moves = 0 }
+    function o:isValid() return self.valid end
+    function o:remove()
+      if removeFails > 0 then removeFails = removeFails - 1; error("Can't remove 0 of 0 items") end
+      self.valid = false
+    end
+    function o:teleport(cell, pos, opts)
+      if teleportFails > 0 then teleportFails = teleportFails - 1; error('already in the process of teleporting') end
+      self.at = { cell = cell, pos = pos, opts = opts }; self.moves = self.moves + 1
+    end
+    return o
+  end
+  local said = {}
+  local rawPrint = print
+  print = function(s) said[#said + 1] = s end
+  local a = body('a', 1, 0)
+  local removedNow = retry.remove(a)
+  print = rawPrint
+  check('a refused remove reports false and disables the object at once', removedNow == false and a.enabled == false and a.valid)
+  retry.tick(10)
+  check('the next tick removes it', a.valid == false)
+  check('the refusal is said once', #said == 1 and said[1]:find('remove refused for a', 1, true) ~= nil, said[1])
+
+  local b = body('b', 0, 2)
+  local landed = 0
+  print = function(s) said[#said + 1] = s end
+  local first = retry.teleport(b, 'Balmora', 1, function() landed = landed + 1 end)
+  local second = retry.teleport(b, '', 2, function() landed = landed + 1 end, { rotation = 'r' })
+  print = rawPrint
+  check('two teleports refused in one frame both report false', first == false and second == false)
+  check('the second refusal on the same object is not said again', #said == 2)
+  check('pendingTeleport names the target it is going to', retry.pendingTeleport(b) and retry.pendingTeleport(b).pos == 2)
+  retry.tick(20)
+  check('the next tick lands the LATEST request, with its options', b.at and b.at.cell == '' and b.at.pos == 2 and b.at.opts.rotation == 'r' and b.moves == 1)
+  check('its onLanded runs once', landed == 1)
+  check('nothing is pending once it landed', retry.pendingTeleport(b) == nil)
+  retry.tick(21)
+  check('a landed teleport is not repeated', b.moves == 1)
+
+  local c = body('c', 0, 0)
+  check('a teleport the engine takes lands now', retry.teleport(c, '', 5) == true and c.moves == 1)
+
+  local d = body('d', 0, 99)
+  retry.teleport(d, '', 1)
+  retry.tick(100)
+  retry.tick(131)
+  check('a teleport that never lands is dropped after 30 s', retry.pendingTeleport(d) == nil)
+
+  local e = body('e', 1, 1)
+  retry.teleport(e, '', 1)
+  retry.remove(e)
+  retry.tick(200)
+  check('a remove cancels the queued teleport', e.valid == false and e.moves == 0)
+  check('a teleport on an object waiting to be removed is refused', (function()
+    local f = body('f', 5, 0)
+    retry.remove(f)
+    return retry.teleport(f, '', 1) == false and f.moves == 0
+  end)())
+
+  -- A follower queued by an onLanded during the tick is not lost to the table walk.
+  local g, h = body('g', 0, 1), body('h', 0, 1)
+  retry.teleport(g, '', 1, function() retry.teleport(h, '', 9) end)
+  retry.tick(300)
+  retry.tick(301)
+  check('a teleport queued from onLanded lands on a later tick', g.moves == 1 and h.moves == 1 and h.at.pos == 9)
+
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  local _, bare = ob:gsub('pcall%(function%(%) obj:remove%(%) end%)', '')
+  check('objects.lua deletes, purges and resets go through retry.remove', select(2, ob:gsub('retry%.remove%(obj%)', '')) >= 4)
+  check('objects.lua bare removes are only on objects it just created', bare == 2, tostring(bare))
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
