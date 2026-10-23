@@ -126,7 +126,13 @@ signal exists or is needed (the peer-pose freshness window, **2 s** — `PEER_PO
 (world units) · `12` u16 yaw (0..65535 ≡ 0..2π, wraps) · `14` u8 pitch
 (0..255 ≡ −π/2..+π/2, clamped) · `15` u8 flags (bit0 run, bit1 sneak, bit2 jump-edge,
 bit3 inAir, bit4 weaponDrawn, bit5 spellReady) · `16` u8 animVel (0..255 ≡ 0..2× base walk
-speed, clamped) · `17` u8 counter (0 in M1) · `18-19` reserved, MUST be zero.
+speed, clamped) · `17` u8 counter: bit0 = bytes 18-19 carry a sample time, other bits 0 ·
+`18-19` u16 SAMPLE TIME, the sender's monotonic ms clock mod 65536, when bit0 is set (else
+zero). Today only the peer's `0x0200` actor poses are stamped (netmanager.cpp, one stamp per
+batch); player poses leave all three bytes zero (under the WoW model the client's own timing
+rides `0x0102`'s `simMs`, not the pose). Decoders that predate the stamp ignore bytes 17-19,
+so old and new clients and peers interoperate; a receiver without bit0 falls back to arrival
+time (interp.lua).
 Sent at ~15 Hz while moving + edge-triggered (jump, stop); receivers drop any frame whose
 envelope `seq` ≤ the last seen from that sender. Movement has its OWN server rate budget
 (~40 msg/s) separate from the general bucket.
@@ -531,7 +537,7 @@ content-file objects, addressed by RefNum userdata (`ref`), exactly like M3 cont
 
 | name | dir | body / layout |
 |---|---|---|
-| `ActorMoveBatch` | holder→S→C (binary `0x0200`) | `[u32 epoch][u8 count]` + count × (`8-byte ref` + 20-byte pose, same pose layout as PlayerMove); server infers cell from the holder, validates epoch, relays cell-scoped |
+| `ActorMoveBatch` | holder→S→C (binary `0x0200`) | `[u32 epoch][u8 count]` + count × (`8-byte ref` + 20-byte pose, same pose layout as PlayerMove, sample-time stamped by the peer); server infers cell from the holder, validates epoch, relays the bytes cell-scoped untouched. The client decodes a stamp as `st` (ms mod 65536) on each `MP_ActorMoveBatch` entry, and puppets interpolate on it |
 | `ActorStatsDynamic` | holder→S→C | `{cellKey, epoch, ref, hp={c,b}, mp={c,b}, ft={c,b}}` |
 | `ActorEquip` | holder→S→C | `{cellKey, epoch, ref, slots={[n]=recordId,…}}` |
 | `ActorAI` | holder→S→C | `{cellKey, epoch, ref|net, combat=u16|false}` — who the actor now fights (a player id) or that it stopped; puppets mirror the state so vanilla's own checks (no rest with an enemy on you) read true. `{…, travel={x,y,z}}` — the holder's own scripted travel. There is no `pkg=` package hint |

@@ -4242,5 +4242,54 @@ do
     mm:find('if (MWMechanics::isPlayerOrAvatar(target))', 1, true) ~= nil and mm:find('aiSeq.getActivePackage().getTarget() == target', 1, true) ~= nil)
 end
 
+print('1.7.0 NPC poses carry the peer sample time: interp.lua interpolates on it, and falls back to arrival without it')
+do
+  package.loaded['scripts.mp.interp'] = nil
+  local Interp = dofile('./openmw/files/data/scripts/mp/interp.lua')
+  -- The peer makes a pose every 50 ms; the link adds 20 ms plus 0/40 ms of jitter.
+  local function feed(stamped, base)
+    local it, prevA = Interp.new(), 0
+    for i = 1, 80 do
+      local made = i * 0.05
+      local a = math.max(made + 0.02 + ((i % 2 == 0) and 0.04 or 0), prevA + 0.004)
+      prevA = a
+      it:push({ t = a, x = 0, y = made * 140, z = 0, yaw = 0, pitch = 0, flags = 1,
+        st = stamped and ((base + i * 50) % 65536) or nil })
+    end
+    return it
+  end
+  local it = feed(true, 0)
+  local worst, late = 0, false
+  for i = 2, #it.buf do
+    worst = math.max(worst, math.abs((it.buf[i].t - it.buf[i - 1].t) - 0.05))
+    if it.buf[i].t > it.buf[i].at + 1e-9 then late = true end
+  end
+  check('stamped samples are spaced as they were MADE (50 ms), not as they arrived', worst < 0.002, string.format('%.4f', worst))
+  check('a stamped sample is never timed after its own arrival', not late)
+  local wrap = feed(true, 65536 - 40 * 50)
+  local wworst = 0
+  for i = 2, #wrap.buf do wworst = math.max(wworst, math.abs((wrap.buf[i].t - wrap.buf[i - 1].t) - 0.05)) end
+  check('the u16 stamp wrapping at 65536 ms is not a gap', wworst < 0.002, string.format('%.4f', wworst))
+  local old = feed(false, 0)
+  check('no stamp (an older peer): the arrival-time path, unchanged', old.buf[#old.buf].su == nil and old.buf[#old.buf].st == nil)
+  local function worstSpeed(s)
+    local w = 0
+    local t0 = s.buf[#s.buf].at - 0.55 -- the 16-sample buffer holds the last ~0.8 s
+    for f = 0, 24 do
+      local now = t0 + f / 60
+      s:target(now) -- as the puppet does each frame: settles the delay in use
+      w = math.max(w, math.abs(s:speed(now) - 140))
+    end
+    return w
+  end
+  check('the rendered NPC speed is steadier on sample time than on arrival time',
+    worstSpeed(feed(true, 0)) < worstSpeed(feed(false, 0)),
+    string.format('%.1f vs %.1f u/s', worstSpeed(feed(true, 0)), worstSpeed(feed(false, 0))))
+  local re = feed(true, 0)
+  re:push({ t = re.buf[#re.buf].at + 0.05, x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = 0, st = re.buf[#re.buf].st })
+  check('a repeated stamp re-bases instead of stacking two samples on one instant',
+    re.buf[#re.buf].t > re.buf[#re.buf - 1].t)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

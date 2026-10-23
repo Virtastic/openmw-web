@@ -27,12 +27,15 @@ local MAX_SNAPSHOTS = 16 -- ~1s of history at 15 Hz
 -- this long; a real stop then overshoots by <= ~22 u at a run, comfortably under puppet.lua's
 -- STEER_START (24 u).
 local EXTRAP_S = 0.09
+-- How fast the stamp-to-clock offset may RISE per stamped sample (falling is immediate): ~5 s
+-- to follow a lasting change in lag at 20 Hz, slow enough that one late pose does not move it.
+local OFF_CREEP = 0.01
 
 function Interp.new()
-    return setmetatable({ buf = {}, mean = nil, dev = 0.01, cur = START_DELAY, lastNow = nil }, Interp)
+    return setmetatable({ buf = {}, mean = nil, dev = 0.01, cur = START_DELAY, lastNow = nil, off = 0 }, Interp)
 end
 
--- s = {t=arrival realTime, x=, y=, z=, yaw=, pitch=, flags=, animVel=}
+-- s = {t=arrival realTime, x=, y=, z=, yaw=, pitch=, flags=, animVel=, st=sender ms mod 65536 (optional)}
 --
 -- THE SAMPLE'S TIME IS WHEN IT WAS MADE, NOT WHEN IT ARRIVED. The server generates poses evenly
 -- (one per batch interval) but they reach us bunched and late; stamping each with its arrival
@@ -56,6 +59,23 @@ function Interp:push(s)
             local st = last.t + self.mean
             st = st + (s.at - st) * PULL
             s.t = math.min(s.at, math.max(st, last.t + 0.005))
+        end
+    end
+    -- STAMPED BY THE SENDER (s.st, ms mod 65536: the peer's NPC poses, netmanager.cpp): the spacing
+    -- between samples is then KNOWN, not estimated, and replaces the estimate above. Sample time =
+    -- the stamp on our clock (s.su) plus an offset that follows the least-delayed arrival -- it
+    -- drops to a smaller lag at once and creeps up after a route or clock change -- so it is never
+    -- later than the arrival itself. An unstamped sample (an older peer), a backwards or repeated
+    -- stamp, or a gap past GAP_MAX keeps the estimate and re-bases the stamp clock on it.
+    if s.st then
+        local d = (last and last.su and last.st) and ((s.st - last.st) % 65536) / 1000 or 0
+        if d > 0 and d < GAP_MAX then
+            s.su = last.su + d
+            local off = s.at - s.su
+            if off < self.off then self.off = off else self.off = self.off + (off - self.off) * OFF_CREEP end
+            s.t = math.max(s.su + self.off, last.t + 0.001)
+        else
+            s.su, self.off = s.t, 0
         end
     end
     buf[#buf + 1] = s
@@ -169,6 +189,7 @@ function Interp:clear()
     self.dev = 0.01
     self.cur = START_DELAY
     self.lastNow = nil
+    self.off = 0
 end
 
 return Interp

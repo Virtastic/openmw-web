@@ -3,6 +3,7 @@
 #include "netmanager.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
@@ -115,9 +116,15 @@ namespace MWMP
         constexpr size_t sMovePayload = 20; // f32 x,y,z + u16 yaw + u8 pitch,flags,animVel,counter
         constexpr size_t sInputPayload = 12; // u32 seq + i8 move,side + u16 yaw + u8 pitch,flags + u16 rsvd
 
+        // Pose bytes 17-19 (PROTOCOL.md): u8 counter whose bit0 says bytes 18-19 carry a u16 SAMPLE
+        // TIME (the sender's ms clock mod 65536). Unstamped = all three zero, which is what every
+        // build before this wrote and what every decoder before this ignores.
+        constexpr uint8_t sPoseStamped = 0x01;
+
         // Append the shared 20-byte pose payload (PlayerMove/ActorMoveBatch identical layout).
+        // stamp < 0: no sample time.
         void appendPose(std::string& frame, float x, float y, float z, float yaw, float pitch,
-            uint8_t flags, float animVel)
+            uint8_t flags, float animVel, int32_t stamp = -1)
         {
             double yawNorm = std::fmod(static_cast<double>(yaw), 2.0 * sPi);
             if (yawNorm < 0)
@@ -133,9 +140,24 @@ namespace MWMP
             frame.push_back(static_cast<char>(pitchQ));
             frame.push_back(static_cast<char>(flags));
             frame.push_back(static_cast<char>(velQ));
-            frame.push_back('\0'); // counter, reserved 0
-            frame.push_back('\0'); // bytes 18-19 reserved, MUST be zero (payload is exactly 20)
-            frame.push_back('\0');
+            if (stamp < 0)
+            {
+                frame.push_back('\0'); // counter: no sample time
+                frame.push_back('\0'); // bytes 18-19 zero (payload is exactly 20)
+                frame.push_back('\0');
+                return;
+            }
+            frame.push_back(static_cast<char>(sPoseStamped));
+            appendLE<uint16_t>(frame, static_cast<uint16_t>(stamp & 0xffff));
+        }
+
+        // The sample time for a pose built this frame: a monotonic ms clock, mod 65536 on the wire.
+        int32_t poseStampNow()
+        {
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+            return static_cast<int32_t>(ms & 0xffff);
         }
     }
 
@@ -332,6 +354,9 @@ namespace MWMP
         appendLE<uint32_t>(frame, ++mSeq);
         appendLE<uint32_t>(frame, epoch);
         frame.push_back(static_cast<char>(std::min<size_t>(entries.size(), 255)));
+        // Every entry was sampled this frame (actors.lua broadcastCell builds and sends in one
+        // pass), so one stamp serves the batch. Receivers interpolate on it (interp.lua).
+        const int32_t stamp = poseStampNow();
         size_t n = 0;
         for (const ActorMoveEntry& e : entries)
         {
@@ -339,7 +364,7 @@ namespace MWMP
                 break; // u8 count cap; actors.lua broadcastCell chunks a bigger cell into several batches (#271)
             appendLE<uint32_t>(frame, e.mIndex);
             appendLE<int32_t>(frame, e.mContentFile);
-            appendPose(frame, e.mX, e.mY, e.mZ, e.mYaw, e.mPitch, e.mFlags, e.mAnimVel);
+            appendPose(frame, e.mX, e.mY, e.mZ, e.mYaw, e.mPitch, e.mFlags, e.mAnimVel, stamp);
         }
         mOutbound.push_back({ false, std::move(frame) });
         return true;
@@ -517,6 +542,8 @@ namespace MWMP
                     lserKV(body, "pitch", pose[14] / 255.0 * sPi - sPi / 2.0);
                     lserKV(body, "flags", pose[15]);
                     lserKV(body, "animVel", pose[16] / 127.5);
+                    if (pose[17] & sPoseStamped)
+                        lserKV(body, "st", readLE<uint16_t>(pose + 18)); // sample time, ms mod 65536
                     body.push_back(0x4); // TABLE_END (entry)
                 }
                 body.push_back(0x4); // TABLE_END (outer)
