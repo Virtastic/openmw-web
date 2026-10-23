@@ -4352,5 +4352,17 @@ do
   check('the peer lays the avatar down on kd', g:find('if data.kd == true and mp.setKnockedDown then pcall(mp.setKnockedDown, p.obj) end', 1, true) ~= nil)
 end
 
+-- ====================================== the dummy player's rules (1.7.0)
+print('dummy-player fixes -- the peer\'s getPlayer() is nobody; rules reach the real player')
+do
+  local function src(p) return io.open(p):read('*a') end
+  local ENG = './openmw/apps/openmw/'
+  local g = src('./openmw/files/data/scripts/mp/global.lua')
+  local ax = src(ENG .. 'mwscript/aiextensions.cpp')
+  check('scripted StartCombat Player on a puppet is noted (scriptcombat)',
+    ax:find('"scriptcombat"', 1, true) ~= nil and ax:find('MWMP::isPuppet(actor.getCellRef().getRefNum())', 1, true) ~= nil)
+  check('scriptcombat is claimed like crimecombat', g:find("n.kind == 'crimecombat' or n.kind == 'scriptcombat'", 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

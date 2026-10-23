@@ -1264,7 +1264,8 @@ local function scriptNotesTick()
             actors.noteSay(n)
         elseif n.kind == 'aidone' then
             actors.noteAiDone(n)
-        elseif n.kind == 'crimecombat' then
+        elseif n.kind == 'crimecombat' or n.kind == 'scriptcombat' then
+            -- scriptcombat: a world script's StartCombat Player on a puppet (same claim)
             actors.noteCrimeCombat(n)
         else
             objects.onScriptNote(n)

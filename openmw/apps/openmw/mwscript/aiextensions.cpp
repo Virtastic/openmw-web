@@ -28,6 +28,8 @@
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwmp/puppets.hpp"
+
 #include "interpretercontext.hpp"
 #include "ref.hpp"
 
@@ -508,7 +510,16 @@ namespace MWScript
                 MWWorld::Ptr target = MWBase::Environment::get().getWorld()->searchPtr(targetID, true, false);
                 if (!target.isEmpty() && !target.getBase()->isDeleted()
                     && !target.getClass().getCreatureStats(target).isDead())
+                {
+                    // Multiplayer client: "StartCombat Player" from a world script (not a
+                    // dialogue result) lands on an AI-off puppet, so the fight never ran on
+                    // the holder. Noted like a witness's crime fight; scripts/mp claims it.
+                    if (MWMP::isClient() && target == MWMechanics::getPlayer() && actor.isInCell()
+                        && MWMP::isPuppet(actor.getCellRef().getRefNum()))
+                        MWMP::recordScriptNote({ "scriptcombat", actor.getCellRef().getRefNum(), false, {}, 1,
+                            MWMP::cellKeyOf(*actor.getCell()) });
                     MWBase::Environment::get().getMechanicsManager()->startCombat(actor, target, nullptr);
+                }
             }
         };
 
