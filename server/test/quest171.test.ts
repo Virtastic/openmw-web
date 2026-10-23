@@ -82,3 +82,45 @@ test('a regress to a logged stage is a replay just after JournalSync, and a rest
   assert.equal(idx(e), 10, 'the restart is relayed');
   assert.equal(val(e, 'regress'), true);
 });
+
+// Item 5: on a standalone (owner-less) server the peer's advances reach the shared map that
+// JournalSync sends after its log, and a joining peer is seeded from the shared campaign state.
+test("standalone: the peer's journal advance lands in the shared map; a new peer is seeded with globals and scripts", async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Solo');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  a.sendEvent('JournalEntry', { questId: 'mq_stand', index: 10 });
+  await sleep(200);
+  peer.sendEvent('JournalEntry', { questId: 'mq_stand', index: 40 });
+  assert.equal(val(await a.waitEvent('JournalEntry', jq('mq_stand'), 3000), 'index'), 40);
+  peer.sendEvent('GlobalVarUpdate', { name: 'mp_stand_peer', value: 5 });
+  a.sendEvent('GlobalVarUpdate', { name: 'mp_stand_human', value: 2 });
+  peer.sendEvent('GlobalScriptsUpdate', { started: ['Sleepers'] });
+  await a.waitEvent('GlobalVarUpdate', gv('mp_stand_peer'), 3000);
+  await sleep(300);
+
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Second');
+  const sync = await b.waitEvent('JournalSync', () => true, 3000);
+  assert.equal((val(sync, 'quests') as Record<string, number>)['mq_stand'], 40, 'the stale shared map would lower the peer-advanced stage');
+
+  peer.close();
+  await sleep(500);
+  const peer2 = await TestClient.simPeer(server.port, PEER_PASS, 'simpeer-two');
+  t.after(() => peer2.close());
+  const gs = await peer2.waitEvent('GlobalVarSync', () => true, 3000);
+  const globals = val(gs, 'globals') as Record<string, number>;
+  assert.equal(globals['mp_stand_peer'], 5, "the peer's own write seeds the next peer");
+  assert.equal(globals['mp_stand_human'], 2, "a human's campaign global seeds the peer");
+  const ss = await peer2.waitEvent('GlobalScriptsSync', () => true, 3000);
+  assert.deepEqual(val(ss, 'running'), ['sleepers']);
+});

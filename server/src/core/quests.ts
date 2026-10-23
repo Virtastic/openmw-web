@@ -273,17 +273,33 @@ export class Quests {
     }
     const target = this.ctx.journalTarget(player);
     if (target === undefined) return; // the shared world persists no campaign
-    this.ctx.players.update(target, (doc) => {
-      const set = new Set(doc.scripts ?? []);
+    const apply = (list: string[] | undefined): string[] => {
+      const set = new Set(list ?? []);
       for (const s of stopped) set.delete(s);
       for (const s of started) set.add(s);
-      doc.scripts = [...set].slice(0, MAX_SCRIPTS);
-    });
+      return [...set].slice(0, MAX_SCRIPTS);
+    };
+    // STANDALONE (1.7.1): like its globals, the peer's scripts persist to every human, and the
+    // union is kept on the shared state the peer is seeded from (its own doc is throwaway).
+    if (this.ctx.ownerCharId() === undefined) {
+      const shared = this.ctx.cells.sharedQuest();
+      shared.scripts = apply(shared.scripts);
+      this.ctx.cells.saveShared();
+      if (player.system === true) {
+        for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
+          this.ctx.players.update(h.charId, (doc) => { doc.scripts = apply(doc.scripts); });
+        }
+        return;
+      }
+    }
+    this.ctx.players.update(target, (doc) => { doc.scripts = apply(doc.scripts); });
   }
 
   sendScriptsSync(player: Player): void {
     const source = this.ctx.journalTarget(player);
-    const running = source === undefined ? [] : (this.ctx.players.getCached(source)?.scripts ?? []);
+    const running = player.system === true && this.ctx.ownerCharId() === undefined
+      ? (this.ctx.cells.sharedQuest().scripts ?? [])
+      : source === undefined ? [] : (this.ctx.players.getCached(source)?.scripts ?? []);
     if (running.length === 0) return;
     player.peer.sendEvent('GlobalScriptsSync', { running: [...running] });
   }
@@ -324,15 +340,28 @@ export class Quests {
     // stack resolves to the peer's own ephemeral doc, so a peer-advanced journal entry was
     // relayed live and then lost -- leaving globals saying "done" and the journal saying
     // stage 10, the exact split the comment above forbids. Persist to every human instead.
+    // ...AND THE SHARED MAP (1.7.1). JournalSync sends shared.journal as the map AFTER the log,
+    // and the map is the current stage: left stale, every join lowered what the peer advanced.
+    // The peer's restart is authoritative here as in an owned world -- outside its own
+    // join-time replay window, where a lower stage is the echo of its JournalSync.
     if (player.system === true && this.ctx.ownerCharId() === undefined) {
+      const shared = this.ctx.isShared('journal') ? this.ctx.cells.sharedQuest() : undefined;
+      const current = shared?.journal[questId];
+      if (current === idx) return;
+      const regress = current !== undefined && idx < current;
+      if (regress && this.inReplayWindow(player)) {
+        log('debug', 'quest.journal_regress_replay', { questId, have: current, got: idx, from: player.name });
+        return;
+      }
+      if (shared) { shared.journal[questId] = idx; this.ctx.cells.saveShared(); }
       for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
         this.ctx.players.update(h.charId, (doc) => {
           const log = (doc.journal ??= {});
-          if ((log[questId] ?? -1) < idx) log[questId] = idx;
+          log[questId] = regress ? idx : Math.max(log[questId] ?? -1, idx);
           this.logEntry(doc, questId, idx);
         });
       }
-      this.relayAll(player.id, 'JournalEntry', { questId, index: idx });
+      this.relayAll(player.id, 'JournalEntry', { questId, index: idx, ...(regress ? { regress: true } : {}) });
       return;
     }
     // INDIVIDUAL MODE IS THE PLAYER'S OWN LOG (backlog 320): it used to write to the host's
@@ -553,13 +582,12 @@ export class Quests {
       // and then lost on relog. Every human in the world got the relay, so every human's
       // doc is the campaign: persist to all of them and return.
       if (player.system === true && this.ctx.ownerCharId() === undefined) {
-        // Humans only -- a bot's doc is not a campaign. (The journal half still routes
-        // through journalTarget and is lost on an owner-less stack; globals and journal
-        // should freeze together, so this is the honest half-fix until standalone gets a
-        // campaign doc of its own. Recorded in the audit doc.)
+        // Humans only -- a bot's doc is not a campaign. The journal half does the same (and
+        // keeps shared.journal), and the shared campaign map seeds the peer itself (1.7.1).
         for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
           this.ctx.players.update(h.charId, (doc) => { (doc.globals ??= {})[name] = value; });
         }
+        this.noteCampaignGlobal(name, value);
         this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
         return;
       }
@@ -581,6 +609,7 @@ export class Quests {
       this.ctx.players.update(target, (doc) => {
         (doc.globals ??= {})[name] = value;
       });
+      if (this.ctx.ownerCharId() === undefined) this.noteCampaignGlobal(name, value); // standalone: the peer's seed
       return;
     }
     if (!this.ctx.isShared('questVars')) return; // world global, but sharing is off
@@ -599,6 +628,14 @@ export class Quests {
     this.relayAll(player.id, 'GlobalVarUpdate', { name, value, seq: nextSeq });
   }
 
+  // Standalone only: the latest value of every campaign global anyone in the world wrote --
+  // what the peer, which simulates that one shared world, is seeded with (sendGlobalSync).
+  private noteCampaignGlobal(name: string, value: number): void {
+    const shared = this.ctx.cells.sharedQuest();
+    (shared.campaignGlobals ??= {})[name] = value;
+    this.ctx.cells.saveShared();
+  }
+
   private isWorldGlobal(lowerName: string): boolean {
     if (WORLD_GLOBALS.has(lowerName)) return true;
     return (this.ctx.worldGlobals ?? []).some((g) => g.toLowerCase() === lowerName);
@@ -614,7 +651,10 @@ export class Quests {
   // ran the other way on the very engine that simulates it.
   sendGlobalSync(player: Player): void {
     const source = this.ctx.journalTarget(player) ?? player.charId;
-    const globals = { ...(this.ctx.players.getCached(source)?.globals ?? {}) };
+    // Standalone: the peer's own doc is throwaway; the shared campaign map is its seed (1.7.1).
+    const globals = player.system === true && this.ctx.ownerCharId() === undefined
+      ? { ...(this.ctx.cells.sharedQuest().campaignGlobals ?? {}) }
+      : { ...(this.ctx.players.getCached(source)?.globals ?? {}) };
     // Filter on the way OUT too, not just on the way in: characters saved before
     // CLIENT_GLOBALS existed already have a chargenstate on disk, and sending it would
     // re-break exactly the players this fixes. Same for CHARACTER_GLOBALS: a campaign doc

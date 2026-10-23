@@ -126,6 +126,11 @@ export interface SharedQuestState {
   globals: Record<string, { value: number; seq: number }>; // MWScript globals + LWW seq
   factions: Record<string, FactionState>;
   bounty: number; // shared crime bounty
+  // 1.7.1, STANDALONE (owner-less) worlds only: what the PEER is seeded with at join. Its own
+  // doc is throwaway there, so GlobalVarSync/GlobalScriptsSync from it were always empty and
+  // the world it simulates ran every gate the "not yet" way. Humans keep theirs on their docs.
+  campaignGlobals?: Record<string, number>;
+  scripts?: string[];
 }
 
 export function emptySharedQuestState(): SharedQuestState {
