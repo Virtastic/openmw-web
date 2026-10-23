@@ -289,7 +289,16 @@ namespace MWMP
         // bounties live in the registry above), so its guards kept pursuing. Same call the
         // owner's client makes; the peer's player is the reference the witness check in
         // actors.cpp compares against anyway.
-        api["recordCrimePaid"] = []() { MWBase::Environment::get().getWorld()->getPlayer().recordCrimeId(); };
+        // With an avatar: THAT player's crimes are paid (witnesses of others' stay hostile).
+        // Without: the shared mark, every crime so far (a party-wide fine; singleplayer).
+        api["recordCrimePaid"] = [](sol::optional<sol::object> who) {
+            if (who && who->is<MWLua::Object>())
+            {
+                recordAvatarCrimePaid(who->as<MWLua::Object>().id());
+                return;
+            }
+            MWBase::Environment::get().getWorld()->getPlayer().recordCrimeId();
+        };
         // The player's Mark (backlog 155). NpcStats keeps just the cell id and the position,
         // which is what the doc carries: {cell=<serialized cell id, '' when none>, x, y, z}.
         // setMark takes the same id back (an interior name, '#x,y' for an exterior); a cell this

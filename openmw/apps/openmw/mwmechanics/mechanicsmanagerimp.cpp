@@ -1319,6 +1319,9 @@ namespace MWMechanics
             neighbors.push_back(victim);
 
         int id = MWBase::Environment::get().getWorld()->getPlayer().getNewCrimeId();
+        // MP: the witnesses' crime id belongs to THIS avatar; its own payment calms them.
+        if (MWMP::isAvatar(player.getCellRef().getRefNum()))
+            MWMP::noteCrimeOffender(id, player.getCellRef().getRefNum());
 
         // What amount of provocation did this crime generate?
         // Controls whether witnesses will engage combat with the criminal.

@@ -4406,6 +4406,41 @@ do
     ls:find('if (MWMP::isAvatar(target.ptr().getCellRef().getRefNum()))', 1, true) ~= nil
     and ls:find('getMechanicsManager()->startCombat(ptr, target.ptr(), nullptr);', 1, true) ~= nil
     and ls:find('#include "../mwmp/puppets.hpp"', 1, true) ~= nil)
+
+  -- 4. a paid crime is per avatar
+  local ac = src(ENG .. 'mwmechanics/actors.cpp')
+  local pc = src(ENG .. 'mwmp/puppets.cpp')
+  local lb = src(ENG .. 'mwmp/luabindings.cpp')
+  check('reportCrime and the guard pursuit tie the crime id to the avatar',
+    mm:find('MWMP::noteCrimeOffender(id, player.getCellRef().getRefNum());', 1, true) ~= nil
+    and ac:find('MWMP::noteCrimeOffender(crimeId, criminal.getCellRef().getRefNum());', 1, true) ~= nil)
+  check('a witness compares against its offender\'s own paid id',
+    ac:find('paidCrimeId = std::max(paidCrimeId, MWMP::avatarPaidCrimeId(offender));', 1, true) ~= nil
+    and ac:find('if (npcStats.getCrimeId() <= paidCrimeId)', 1, true) ~= nil)
+  check('puppets.cpp keeps per-avatar crime marks and clears them with the avatars',
+    pc:find('void recordAvatarCrimePaid(ESM::RefNum avatar)', 1, true) ~= nil and pc:find('crimeMarks().clear();', 1, true) ~= nil)
+  check('mp.recordCrimePaid(obj) pays one avatar, no argument the shared mark',
+    lb:find('recordAvatarCrimePaid(who->as<MWLua::Object>().id());', 1, true) ~= nil
+    and lb:find('getPlayer().recordCrimeId();', 1, true) ~= nil)
+  do -- behaviour: the peer's CrimeUpdate pays the named avatar only
+    package.loaded['scripts.mp.quests'] = nil
+    local qenv = stubs.install({})
+    qenv.mp.isSystem = function() return true end
+    local paid = {}
+    qenv.mp.recordCrimePaid = function(o) paid[#paid + 1] = o or 'shared' end
+    qenv.mp.setAvatarBounty = function() end
+    local q = require('scripts.mp.quests')
+    local av = { isValid = function() return true end }
+    q.init({ playerFn = function() return nil end, avatarObjFn = function(id) return id == 5 and av or nil end,
+      allAvatarsFn = function() return { av } end, ownIdFn = function() return nil end })
+    q.handlers.MP_CrimeUpdate({ bounty = 40, byId = 5 })
+    q.handlers.MP_CrimeUpdate({ bounty = 0, byId = 5 })
+    check('a named player\'s paid fine settles only their avatar', #paid == 1 and paid[1] == av, tostring(paid[1]))
+    q.handlers.MP_CrimeUpdate({ bounty = 40, shared = true })
+    q.handlers.MP_CrimeUpdate({ bounty = 0, shared = true })
+    check('a shared fine still settles everything', #paid == 2 and paid[2] == 'shared', tostring(paid[2]))
+    package.loaded['scripts.mp.quests'] = nil
+  end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

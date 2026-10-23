@@ -154,9 +154,58 @@ namespace MWMP
         Log(Debug::Info) << "[mp] avatar bounty " << ref.mIndex << " = " << bounty;
     }
 
+    namespace
+    {
+        struct CrimeMarks
+        {
+            int mLast = -1; // the newest crime id noted for this avatar
+            int mPaid = -1;
+        };
+        std::unordered_map<int, ESM::RefNum>& crimeOffenders()
+        {
+            static std::unordered_map<int, ESM::RefNum> sOffenders;
+            return sOffenders;
+        }
+        std::unordered_map<ESM::RefNum, CrimeMarks, RefNumHash, RefNumEq>& crimeMarks()
+        {
+            static std::unordered_map<ESM::RefNum, CrimeMarks, RefNumHash, RefNumEq> sMarks;
+            return sMarks;
+        }
+    }
+
+    void noteCrimeOffender(int crimeId, ESM::RefNum offender)
+    {
+        // ponytail: one entry per witnessed crime, freed only on clearAvatars; ids are tiny
+        // and a session sees hundreds, not millions.
+        crimeOffenders()[crimeId] = offender;
+        CrimeMarks& m = crimeMarks()[offender];
+        m.mLast = std::max(m.mLast, crimeId);
+    }
+
+    ESM::RefNum crimeOffender(int crimeId)
+    {
+        const auto it = crimeOffenders().find(crimeId);
+        return it == crimeOffenders().end() ? ESM::RefNum() : it->second;
+    }
+
+    int avatarPaidCrimeId(ESM::RefNum avatar)
+    {
+        const auto it = crimeMarks().find(avatar);
+        return it == crimeMarks().end() ? -1 : it->second.mPaid;
+    }
+
+    void recordAvatarCrimePaid(ESM::RefNum avatar)
+    {
+        const auto it = crimeMarks().find(avatar);
+        if (it != crimeMarks().end())
+            it->second.mPaid = it->second.mLast;
+    }
+
     void clearAvatars()
     {
         avatars().clear();
+        crimeOffenders().clear();
+        crimeMarks().clear();
     }
 
     void recordMagicHit(const MagicHit& hit)

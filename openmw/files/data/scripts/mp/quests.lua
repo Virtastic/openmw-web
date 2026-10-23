@@ -885,7 +885,12 @@ handlers.MP_CrimeUpdate = function(data)
         local key = data.shared and 'shared' or data.byId or 'none'
         local prev = peerLevel[key]
         peerLevel[key] = level
-        if prev ~= nil and level < prev and mp.recordCrimePaid then mp.recordCrimePaid() end
+        -- 1.7.0: a player's own fine settles only THEIR crimes (the avatar's paid mark); the
+        -- shared record, or a drop nobody can be named for, settles every crime as before.
+        local payer = (not data.shared and data.byId ~= nil and deps.avatarObjFn) and deps.avatarObjFn(data.byId) or nil
+        if prev ~= nil and level < prev and mp.recordCrimePaid then
+            if payer then mp.recordCrimePaid(payer) else mp.recordCrimePaid() end
+        end
         -- SHARED CRIME IS ONE RECORD FOR THE PARTY: every client applies it to its own
         -- player, so every avatar here has to carry it too, or the peer's guards hunt only
         -- the one who did it while the clients believe everyone is wanted.

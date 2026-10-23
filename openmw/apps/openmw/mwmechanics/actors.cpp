@@ -1224,7 +1224,11 @@ namespace MWMechanics
                 else
                     creatureStats.getAiSequence().stack(AiPursue(criminal), ptr);
                 creatureStats.setAlarmed(true);
-                npcStats.setCrimeId(world->getPlayer().getNewCrimeId());
+                const int crimeId = world->getPlayer().getNewCrimeId();
+                npcStats.setCrimeId(crimeId);
+                // MP: tie the id to the avatar, so ITS paid fine is the one that calms this guard.
+                if (MWMP::isAvatar(criminal.getCellRef().getRefNum()))
+                    MWMP::noteCrimeOffender(crimeId, criminal.getCellRef().getRefNum());
                 return true;
             };
 
@@ -1262,7 +1266,13 @@ namespace MWMechanics
         if (npcStats.getCrimeId() != -1)
         {
             // if you've paid for your crimes and I haven't noticed
-            if (npcStats.getCrimeId() <= world->getPlayer().getCrimeId())
+            // MP: an avatar's crime is settled by that avatar's own payment (mwmp/puppets.hpp);
+            // the shared mark (a party-wide fine, or no avatars at all) still settles everything.
+            int paidCrimeId = world->getPlayer().getCrimeId();
+            const ESM::RefNum offender = MWMP::crimeOffender(npcStats.getCrimeId());
+            if (offender.isSet())
+                paidCrimeId = std::max(paidCrimeId, MWMP::avatarPaidCrimeId(offender));
+            if (npcStats.getCrimeId() <= paidCrimeId)
             {
                 // Calm witness down
                 if (ptr.getClass().isClass(ptr, "Guard"))
