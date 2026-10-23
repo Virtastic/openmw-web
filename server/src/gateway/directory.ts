@@ -61,6 +61,8 @@ export interface DirectoryDeps {
    *  got 404 for the manifest, and was asked to upload a game the operator had already
    *  uploaded. */
   mwdata?: HttpRoute;
+  /** The player app (net/client-routes.ts), for any path nothing else here claims. */
+  client?: HttpRoute;
   // Bearer token -> account key. POST /worlds spawns an OS process, so it must know WHO is
   // asking: the account used to come from the request body, so anyone could spawn worlds
   // under fabricated names until the global maxWorlds cap was gone, while every per-owner
@@ -436,6 +438,15 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       return;
     }
 
+    if (deps.client) {
+      void Promise.resolve(deps.client(req, res, url)).then((claimed) => {
+        if (!claimed) json(res, 404, { error: 'not found' });
+      }).catch((err) => {
+        log('error', 'client.route_failed', { path, error: String(err) });
+        if (!res.headersSent) json(res, 500, { error: 'internal' });
+      });
+      return;
+    }
     json(res, 404, { error: 'not found' });
   }
 

@@ -33,7 +33,7 @@ const WEB_ROOT = ((): string => {
   return fileURLToPath(new URL('../../../web/', import.meta.url));
 })();
 
-const TYPES: Record<string, string> = {
+export const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -43,6 +43,11 @@ const TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
   '.map': 'application/json',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  '.wasm': 'application/wasm',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
 };
 
 /**

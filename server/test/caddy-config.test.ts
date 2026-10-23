@@ -2,28 +2,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // The generated proxy config, pinned where getting it wrong is invisible until a human looks.
 //
-// This file had no test, and shipped without the cross-origin isolation headers. Nothing in
-// the suite noticed, because every server-side check passes without them: the pages are
-// served, the routes answer, /healthz is green. The failure is entirely inside the browser,
-// where the engine asks for SharedArrayBuffer and the browser refuses, and it presents as
-// "Browser not supported" on a perfectly capable Chrome.
+// Since issue #203 the proxy is a plain HTTPS front: the server serves the player app, its
+// isolation headers, /join and the deny list itself (test/client-routes.test.ts pins those).
+// What is left here is the TLS posture and the one rule that everything reaches the server.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { renderCaddyfile, launcherEnabled } from '../src/net/admin/caddy-config';
 
-// Without all three, the engine cannot start. This is the one assertion in the file that
-// stands between a working install and a game that never boots.
-const ISOLATION = [
-  'Cross-Origin-Opener-Policy "same-origin"',
-  'Cross-Origin-Embedder-Policy "require-corp"',
-  'Cross-Origin-Resource-Policy "cross-origin"',
-];
-
-test('the localhost-only config is cross-origin isolated', () => {
-  const out = renderCaddyfile({ domain: '' });
-  for (const h of ISOLATION) assert.ok(out.includes(h), `missing: ${h}`);
+test('every site block hands everything to the server and serves nothing from disk', () => {
+  for (const opts of [{ domain: '' }, { domain: 'mp.example.test' }, { domain: '', internal: true, port: 8080 }]) {
+    const out = renderCaddyfile(opts);
+    const blocks = out.split(/^\S[^\n]* \{$/m).length - 1;
+    assert.ok(blocks >= 1);
+    assert.equal(out.split('reverse_proxy openmw-web:8080').length - 1, blocks, JSON.stringify(opts));
+    // A second set of rules here is how the two drifted: the server answered :8080 without the
+    // player app while the proxy served it on :80.
+    assert.doesNotMatch(out, /^\s*(file_server|root|rewrite|redir|handle|@\w+)\b/m, JSON.stringify(opts));
+  }
 });
 
 test('a server nobody configured serves plain HTTP, not a certificate warning', () => {
@@ -39,76 +36,13 @@ test('a server nobody configured serves plain HTTP, not a certificate warning', 
   assert.match(out, /tls internal/);
 });
 
-test('BOTH site blocks are isolated when a domain is set', () => {
-  // The domain block is the one real players arrive on, and the localhost block is how the
-  // operator tests it. Isolating only one produces the worst version of this bug: it works
-  // when the operator checks and fails for everybody else.
-  const out = renderCaddyfile({ domain: 'mp.example.test' });
-  for (const h of ISOLATION) {
-    assert.equal(out.split(h).length - 1, 2, `expected ${h} in both site blocks`);
-  }
-});
-
-test('the development scaffolding in the source tree is refused outright', () => {
-  const out = renderCaddyfile({ domain: '' });
-  assert.match(out, /@private path .*\/server\.py/);
-  assert.match(out, /respond "not found" 404/);
-});
-
-test('/mwdata/* reaches the server rather than the folder in the source tree', () => {
-  // play/mwdata is a developer's own copy of Morrowind and must never be served. It is not
-  // denied here any more, because the same path is how the game page fetches an operator's
-  // published library — so it is PROXIED instead, and the server decides. The ordering is
-  // what keeps the source-tree folder unreachable: this handler is matched before the static
-  // file server ever looks in /srv/client.
-  const out = renderCaddyfile({ domain: '' });
-  assert.match(out, /@mwdata path \/mwdata\/\* \/mwdata-manifest\.json \/mwdata-mods\.json/);
-  assert.ok(out.indexOf('@mwdata') < out.indexOf('@static'),
-    '@mwdata must be handled before the static root, or play/mwdata leaks');
-});
-
 test('localhost keeps a site block even with a domain, so a typo cannot lock the operator out', () => {
   const out = renderCaddyfile({ domain: 'mp.example.test' });
   assert.match(out, /^localhost \{$/m);
   assert.match(out, /^mp\.example\.test \{$/m);
 });
 
-// --- the launcher is opt-in ------------------------------------------------------------------
-//
-// play/launcher.html is the hosted site's chooser: bundled sample, your own local Morrowind,
-// or multiplayer. None of those is a question for a player who came to THIS server, and "/"
-// already signs them in and starts the game. Environment only, and off unless asked for.
-
-test('the launcher is not served by default', () => {
-  const out = renderCaddyfile({ domain: '' });
-  assert.match(out, /@launcher path \/launcher\.html/);
-  // Redirected, not refused: the game page falls back to the launcher on a fatal and on a
-  // bootless load, and a 404 would strand a player at the worst possible moment.
-  // The wildcard matcher is load-bearing, not noise: without it Caddy reads the "/" as a
-  // path matcher and "302" as the destination, and the redirect silently never fires.
-  assert.match(out, /redir \* \/ 302/);
-});
-
-test('and IS served when the environment asks for it', () => {
-  const out = renderCaddyfile({ domain: '', launcher: true });
-  assert.doesNotMatch(out, /@launcher/);
-});
-
-// Backlog 171: on a multiplayer (gateway) deployment the launcher is the way in, not a
-// showcase -- "/" signs a player in and sends them to /launcher.html. Redirecting it back to
-// "/" looped every player at the front door forever.
-test('and IS served on a multiplayer deployment without the env override', () => {
-  const out = renderCaddyfile({ domain: 'mp.example.test', multiplayer: true });
-  assert.doesNotMatch(out, /@launcher/);
-  assert.match(renderCaddyfile({ domain: 'mp.example.test', multiplayer: false }), /@launcher/);
-});
-
-test('the gate applies to a domain deployment too, in both blocks', () => {
-  const out = renderCaddyfile({ domain: 'mp.example.test' });
-  assert.equal(out.split('@launcher path').length - 1, 2);
-});
-
-test('only an explicit truthy value switches it on', () => {
+test('only an explicit truthy value switches the launcher on', () => {
   // The default must be off, so an unset or empty variable cannot quietly expose it.
   for (const v of [undefined, '', ' ', '0', 'false', 'no', 'off']) {
     assert.equal(launcherEnabled(v === undefined ? {} : { OMW_ENABLE_LAUNCHER: v }), false, `"${v}"`);
@@ -140,47 +74,10 @@ test('the port is honoured, and a fractional one cannot produce a broken address
   assert.match(renderCaddyfile({ domain: '', internal: true, port: 8080.9 }), /^:8080 \{$/m);
 });
 
-test('internal still carries the isolation headers and the mod routes', () => {
-  // The mode changes TLS and nothing else: the engine still needs cross-origin isolation, and
-  // the game files still have to be reachable.
-  const out = renderCaddyfile({ domain: '', internal: true, port: 8080 });
-  for (const h of ISOLATION) assert.ok(out.includes(h), `missing: ${h}`);
-  assert.match(out, /@mwdata path/);
-});
-
 test('public hosting is unchanged: a real certificate, and localhost as a way back in', () => {
   const out = renderCaddyfile({ domain: 'mp.example.test' });
   assert.match(out, /^mp\.example\.test \{$/m);
   assert.match(out, /^localhost \{$/m);
   assert.match(out, /tls internal/);
   assert.doesNotMatch(out, /auto_https off/, 'the public path must still provision certificates');
-});
-
-test('the app shell revalidates, so a deploy cannot reach half a client', () => {
-  // file_server sends ETag and Last-Modified and no Cache-Control, so a browser falls back to
-  // heuristic freshness and serves the shell from cache without asking. That is how a deploy
-  // lands on half a client: launcher.html updated, index.html still the old copy, and the two
-  // disagreeing about the boot fragment they hand each other -- which is silent, and presents
-  // as the feature simply not working. Measured in a real browser: fetch with cache:'no-store'
-  // had the new code and the ordinary fetch did not, on the same page load.
-  const cfg = renderCaddyfile({ domain: '' });
-  assert.match(cfg, /@shell path \*\.html \//, 'the html shell needs its own matcher');
-  assert.match(cfg, /header @shell Cache-Control "no-cache"/,
-    'the shell must revalidate; no-cache means "ask first", not "do not store"');
-  // The engine is deliberately NOT in it: openmw.wasm/.data are tens of megabytes and a stale
-  // one is refused loudly by the engine hash at SessionHello.
-  assert.doesNotMatch(cfg, /@shell path[^\n]*\.wasm/, 'the engine must stay cacheable');
-});
-
-test('/join serves the launcher in door mode, on every server shape, and revalidates', () => {
-  // The front door hands a signed-in multiplayer player to /join (play.js): the launcher's
-  // username/character/world steps without its demo chooser. A missing rewrite sends /join to
-  // the server, which 404s, and the player is stranded right after signing in.
-  for (const opts of [{ domain: '', multiplayer: true }, { domain: '' }, { domain: 'mp.example.test', multiplayer: true }]) {
-    const cfg = renderCaddyfile(opts);
-    assert.match(cfg, /@join path \/join\s+rewrite @join \/launcher\.html/, JSON.stringify(opts));
-    assert.match(cfg, /@shell path [^\n]*\/join/, 'the door page must revalidate like the other shells');
-    // Rewrite BEFORE the root proxy, which must never claim /join.
-    assert.ok(cfg.indexOf('@join') < cfg.indexOf('@root path'), JSON.stringify(opts));
-  }
 });

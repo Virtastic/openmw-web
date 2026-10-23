@@ -65,8 +65,12 @@ if [ -n "$RUN_AS" ] && [ "$(id -u)" = "0" ]; then
     # (compose run by hand, without setup.sh) it is root's, and the server's Caddyfile write
     # fails EACCES while Caddy crash-loops on the missing file. Created here first, so the
     # usual start order (openmw-web before caddy) never lets Docker make it.
+    #
+    # /client too: it is ./play, the player app, and Docker creates it root's on first boot.
+    # The dashboard's "Install the game client" writes into it, and offers no button at all
+    # while it cannot (issue #203).
     mkdir -p "$DATA/caddy" 2>/dev/null || true
-    for d in "$DATA" "$DATA/gamedata" "$DATA/caddy"; do
+    for d in "$DATA" "$DATA/gamedata" "$DATA/caddy" /client; do
       # Plain `if`, not `[ x = y ] && continue`: this script runs under `set -e`, where a
       # bare AND-OR list whose test fails is the classic way to exit a shell by accident.
       if [ ! -d "$d" ]; then continue; fi

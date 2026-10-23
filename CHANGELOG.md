@@ -2,6 +2,24 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.5
+
+**A self-hosted server works from `docker-compose.yml` alone.** Save the file in an empty folder,
+run `docker compose up -d`, open `/admin`, and the setup wizard does the rest. It has a new
+*Player app* step that downloads the game players run in their browser; before, only `./setup.sh`
+installed it, so a server started by hand let players sign in and then showed "The player app has
+not been added to this server yet" (#203). The updater, which needs the git checkout, now only
+runs when `./setup.sh` turned it on.
+
+**The server serves the player app itself.** It used to come only from the bundled Caddy, so a
+server reached on its own port (`docker-compose.simple.yml`, or your own reverse proxy) had no game.
+Caddy now just adds HTTPS and forwards everything. `docker-compose.simple.yml` is one service on
+port 8080 again.
+
+**The Install button shows up on a fresh Linux box.** The server now fixes the ownership of `./play`
+when it starts, the same as it already did for `./data`. Docker creates that folder owned by root,
+and the dashboard offered no button while it could not write there.
+
 ## 1.6.4
 
 These fixes were already live on the hosted server; this release brings them to self-hosted ones.

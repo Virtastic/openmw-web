@@ -179,6 +179,7 @@ env_set() { # $1 = KEY, $2 = value, $3 = comment written above it the first time
   fi
 }
 env_set REPO_DIR "$(pwd)" "The absolute path of this checkout, for the updater container. Managed by setup.sh."
+env_set COMPOSE_PROFILES updater "Starts the updater service, which needs this checkout. Managed by setup.sh."
 
 if [ -z "$(ls -A gamedata 2>/dev/null)" ]; then
   warn "./gamedata is empty."

@@ -63,7 +63,7 @@ import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
 import { checkDomain, normaliseDomain, VERIFY_PATH, VERIFY_NONCE } from './setup-check';
 import { readDashboardTree } from './settings-store';
-import { writeCaddyfile, launcherEnabled } from './caddy-config';
+import { writeCaddyfile } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES } from './api-mods';
 import {
   beginInstall, commitInstall, getInstallProgress, saveModOrder, uninstallMod, type Choice,
@@ -670,8 +670,6 @@ export function adminRoutes(deps: AdminDeps) {
         const domain = internal ? '' : normaliseDomain(String(pend.domain ?? ''));
         writeCaddyfile(deps.dataDir, {
           domain,
-          launcher: launcherEnabled(),
-          multiplayer: pend.deploymentMode === 'multiplayer',
           internal,
           port: Number(pend.httpPort ?? 80),
         });
@@ -767,8 +765,6 @@ export function adminRoutes(deps: AdminDeps) {
       const domain = internal ? '' : normaliseDomain(String(body.domain ?? ''));
       writeCaddyfile(deps.dataDir, {
         domain,
-        launcher: launcherEnabled(),
-        multiplayer: body.deploymentMode === 'multiplayer',
         internal,
         port: Number(body.httpPort ?? 80),
       });
@@ -892,10 +888,10 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       if (!deps.clientDir || !engineStatus(deps.clientDir).writable) {
         json(res, 200, { ok: false, unavailable: true,
-          error: 'This deployment does not expose the game client folder to the server. '
-            + 'With the bundled Docker setup, run ./setup.sh --update once by hand '
-            + '(Windows: .\\setup.ps1 -Update); on bare Linux also make '
-            + './play writable for the container: chown -R 1000:1000 ./play' });
+          error: 'The server cannot write to the game client folder. In docker-compose.yml it is '
+          + './play mounted at /client; restarting the server repairs its ownership '
+          + '(docker compose restart openmw-web). If it is still refused, run next to the compose file: '
+          + 'sudo chown -R "$(docker exec openmw-web id -u):$(docker exec openmw-web id -g)" ./play' });
         return true;
       }
       log('warn', 'admin.update.engine', { by: ctx.accountKey });

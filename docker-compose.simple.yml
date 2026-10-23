@@ -1,6 +1,18 @@
+# Minimal setup: just the server, on plain HTTP port 8080. No proxy, no certificates.
+#
+#   docker compose -f docker-compose.simple.yml up -d
+#
+# Then open http://<this machine>:8080/admin. The setup wizard walks you through the rest,
+# including installing the player app into ./play.
+#
+# Browsers start the game only on https:// or http://localhost. So this file is for playing
+# on this machine (http://localhost:8080), or for putting your own HTTPS proxy in front. For
+# players on other machines without a proxy of your own, use docker-compose.yml with a domain:
+# it adds Caddy, which fetches a certificate for you.
+
 services:
   openmw-web:
-    image: ghcr.io/virtastic/openmw-web-server:latest
+    image: ghcr.io/virtastic/openmw-web-server:${OPENMW_WEB_TAG:-latest}
     container_name: openmw-web
     entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
     command: []
@@ -11,7 +23,8 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
-      - ./gamedata:/data/gamedata   # put your own Morrowind.esm / .bsa here
+      - ./gamedata:/data/gamedata   # your Morrowind.esm / .bsa, or upload them in the dashboard
+      - ./play:/client              # the player app; the wizard installs it here
     environment:
       - NODE_ENV=production
     healthcheck:
@@ -20,3 +33,8 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
