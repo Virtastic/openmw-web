@@ -1380,7 +1380,10 @@ namespace MWMechanics
 
             bool isActorGuard = actor.getClass().isClass(actor, "guard");
 
-            int currentDisposition = getDerivedDisposition(actor);
+            // MP: the witness's feelings toward the AVATAR that did it. Never the dummy itself:
+            // an explicit `toward` reads the avatar registry's bounty, which is 0 for getPlayer().
+            int currentDisposition = getDerivedDisposition(
+                actor, MWMP::isAvatar(player.getCellRef().getRefNum()) ? player : MWWorld::Ptr());
 
             bool isPermanent = false;
             bool applyOnlyIfHostile = false;
@@ -1515,6 +1518,22 @@ namespace MWMechanics
         if (reported)
         {
             const ESM::RefNum offender = player.getCellRef().getRefNum();
+            // Before the avatar branch returns (1.7.0): an avatar's victim fights back and
+            // remembers the crime id too, or paying the fine never calmed it.
+            if (type == OT_Assault && !victim.isEmpty()
+                && !victim.getClass().getCreatureStats(victim).getAiSequence().isInCombat(player)
+                && victim.getClass().isNpc())
+            {
+                // Attacker is in combat with us, but we are not in combat with the attacker yet. Time to fight back.
+                // Note: accidental or collateral damage attacks are ignored.
+                if (!victim.getClass().getCreatureStats(victim).getAiSequence().isInPursuit())
+                    startCombat(victim, player, &playerFollowers);
+
+                // Set the crime ID, which we will use to calm down participants
+                // once the bounty has been paid.
+                victim.getClass().getNpcStats(victim).setCrimeId(id);
+            }
+
             if (MWMP::isAvatar(offender))
             {
                 // The bounty belongs to the owner's client; the peer records the increment for
@@ -1553,20 +1572,6 @@ namespace MWMechanics
                 {
                     player.getClass().getNpcStats(player).expell(factionId, true);
                 }
-            }
-
-            if (type == OT_Assault && !victim.isEmpty()
-                && !victim.getClass().getCreatureStats(victim).getAiSequence().isInCombat(player)
-                && victim.getClass().isNpc())
-            {
-                // Attacker is in combat with us, but we are not in combat with the attacker yet. Time to fight back.
-                // Note: accidental or collateral damage attacks are ignored.
-                if (!victim.getClass().getCreatureStats(victim).getAiSequence().isInPursuit())
-                    startCombat(victim, player, &playerFollowers);
-
-                // Set the crime ID, which we will use to calm down participants
-                // once the bounty has been paid.
-                victim.getClass().getNpcStats(victim).setCrimeId(id);
             }
         }
 

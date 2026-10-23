@@ -4466,6 +4466,19 @@ do
     mm:find('const MWWorld::Ptr leader = getPlayerLeader(attacker);', 1, true) ~= nil
     and mm:find('commitCrime(offender, victim, MWBase::MechanicsManager::OT_Murder);', 1, true) ~= nil)
   check('allies joining a fight never include a player or avatar', mm:find('if (follower != attacker && !isPlayerOrAvatar(follower))', 1, true) ~= nil)
+
+  -- 8. crime disposition and calming
+  mm = src(ENG .. 'mwmechanics/mechanicsmanagerimp.cpp')
+  check('a witness\'s disposition is toward the avatar, never the dummy passed explicitly',
+    mm:find('actor, MWMP::isAvatar(player.getCellRef().getRefNum()) ? player : MWWorld::Ptr());', 1, true) ~= nil)
+  do
+    local victimAt = mm:find('victim.getClass().getNpcStats(victim).setCrimeId(id);', 1, true)
+    local avatarAt = mm:find('if (MWMP::isAvatar(offender))', 1, true)
+    local reportedAt = mm:find('const ESM::RefNum offender = player.getCellRef().getRefNum();', 1, true)
+    check('the victim fights back and keeps the crime id before the avatar branch returns',
+      victimAt and avatarAt and reportedAt and reportedAt < victimAt and victimAt < avatarAt
+      and select(2, mm:gsub('victim%.getClass%(%)%.getNpcStats%(victim%)%.setCrimeId%(id%);', '')) == 1)
+  end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
