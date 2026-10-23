@@ -1618,7 +1618,7 @@ namespace MWMechanics
                     // Force friendly actors into combat to prevent infighting between followers
                     for (const auto& follower : cachedAllies.getActorsSidingWith(target))
                     {
-                        if (follower != attacker && follower != player)
+                        if (follower != attacker && !isPlayerOrAvatar(follower))
                             startCombat(follower, attacker, &attackerAllies);
                     }
                 }
@@ -1666,12 +1666,20 @@ namespace MWMechanics
         bool canCommit = (attacker == player || attackerIsAvatar) && canCommitCrimeAgainst(victim, attacker);
 
         // For now we report only about crimes of player and player's followers
+        MWWorld::Ptr offender = attackerIsAvatar ? attacker : player;
         if (attacker != player && !attackerIsAvatar)
         {
             std::set<MWWorld::Ptr> playerFollowers;
             getActorsSidingWith(player, playerFollowers);
             if (playerFollowers.find(attacker) == playerFollowers.end())
-                return;
+            {
+                // MP: an AVATAR's companion -- the peer's dummy has none. Its kill is its
+                // leader's crime, committed as that avatar so the bounty reaches the owner.
+                const MWWorld::Ptr leader = getPlayerLeader(attacker);
+                if (leader.isEmpty() || leader == player)
+                    return;
+                offender = leader;
+            }
         }
 
         if (!canCommit && victimStats.getCrimeId() == -1)
@@ -1680,7 +1688,7 @@ namespace MWMechanics
         // Simple check for who attacked first: if the player attacked first, a crimeId should be set
         // Doesn't handle possible edge case where no one reported the assault, but in such a case,
         // for bystanders it is not possible to tell who attacked first, anyway.
-        commitCrime(attackerIsAvatar ? attacker : player, victim, MWBase::MechanicsManager::OT_Murder);
+        commitCrime(offender, victim, MWBase::MechanicsManager::OT_Murder);
     }
 
     bool MechanicsManager::awarenessCheck(const MWWorld::Ptr& ptr, const MWWorld::Ptr& observer, bool useCache)

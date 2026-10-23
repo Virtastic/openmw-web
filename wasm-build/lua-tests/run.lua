@@ -4457,6 +4457,15 @@ do
     ac:find('const bool casterIsPlayer = isPlayerOrAvatar(caster);', 1, true) ~= nil
     and ac:find('creature, casterIsPlayer || !casterFollowsPlayer ? caster : player);', 1, true) ~= nil
     and not ac:find('if (caster == player || playerFollowers.find(caster) != playerFollowers.end())', 1, true))
+
+  -- 7. companions
+  mm = src(ENG .. 'mwmechanics/mechanicsmanagerimp.cpp')
+  local cb = src(ENG .. 'mwmechanics/combat.cpp')
+  check('friendlyHit applies to an avatar striking its companion', cb:find('if %(!isPlayerOrAvatar%(attacker%)%)\r?\n%s*return false;') ~= nil)
+  check('a companion\'s kill is committed as its leader',
+    mm:find('const MWWorld::Ptr leader = getPlayerLeader(attacker);', 1, true) ~= nil
+    and mm:find('commitCrime(offender, victim, MWBase::MechanicsManager::OT_Murder);', 1, true) ~= nil)
+  check('allies joining a fight never include a player or avatar', mm:find('if (follower != attacker && !isPlayerOrAvatar(follower))', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
