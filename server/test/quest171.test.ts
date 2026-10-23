@@ -124,3 +124,31 @@ test("standalone: the peer's journal advance lands in the shared map; a new peer
   const ss = await peer2.waitEvent('GlobalScriptsSync', () => true, 3000);
   assert.deepEqual(val(ss, 'running'), ['sleepers']);
 });
+
+// Item 6: a client write refused because the peer owns the name is answered with the winning
+// value, so the refused engine converges instead of keeping its own until the next login.
+test('a client write refused as peer-owned is answered with the peer value', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, sharing: { questVars: true, worldGlobals: ['mp_world_gate'] } } as never,
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Refused');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  peer.sendEvent('GlobalVarUpdate', { name: 'mp_char_gate', value: 7 });
+  peer.sendEvent('GlobalVarUpdate', { name: 'mp_world_gate', value: 10, seq: 4 });
+  await a.waitEvent('GlobalVarUpdate', gv('mp_world_gate'), 3000);
+  a.inbox.events.length = 0;
+  a.sendEvent('GlobalVarUpdate', { name: 'mp_char_gate', value: 3 });
+  a.sendEvent('GlobalVarUpdate', { name: 'mp_world_gate', value: 99, seq: 5 });
+  const back = await a.waitEvent('GlobalVarUpdate', gv('mp_char_gate'), 3000);
+  assert.equal(val(back, 'value'), 7, 'the refused writer hears the winning campaign value');
+  const w = await a.waitEvent('GlobalVarUpdate', gv('mp_world_gate'), 3000);
+  assert.equal(val(w, 'value'), 10);
+  assert.equal(val(w, 'seq'), 4, 'with the stored seq, so its next write is not stale');
+});

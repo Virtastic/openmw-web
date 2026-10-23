@@ -523,8 +523,18 @@ export class Quests {
   // client write to a name the peer wrote within INPUT_DRIVING_MS is dropped. Names the
   // peer never writes (dialogue-result scripts run only on the client that talked) are
   // untouched, so dialogue-driven quest state stays exactly as it was.
-  private peerGlobalAt = new Map<string, number>();
-  private peerMemberAt = new Map<string, number>();
+  //
+  // THE REFUSED CLIENT IS TOLD (1.7.1). The drop was silent, and the client's diff cache
+  // already held its own value as "sent", so its engine kept the losing value -- its Global
+  // filters and script copies ran the other way -- until the next login. The winning value
+  // goes back to the refused writer, which applies it like any relay and converges.
+  // ponytail: "the peer wins" is wrong for a peer write from a script that reads Player --
+  // on the peer that is the parked dummy (GetDistance player, GetItemCount on the dummy), so
+  // the peer's value can be the dummy's answer, not the party's. Telling which script wrote a
+  // global needs engine-side attribution (the interpreter's current script and whether it
+  // touched the player ref); until then such a global converges to the peer's value.
+  private peerGlobalAt = new Map<string, { at: number; value: number }>();
+  private peerMemberAt = new Map<string, { at: number; value: number }>();
   private peerMemberWrites = 0;
 
   private globalVar(player: Player, body: LTable): void {
@@ -561,11 +571,15 @@ export class Quests {
     // overwrite each other forever.
     const nowMs = Date.now();
     if (player.system === true) {
-      this.peerGlobalAt.set(lower, nowMs);
+      this.peerGlobalAt.set(lower, { at: nowMs, value });
     } else {
-      const at = this.peerGlobalAt.get(lower);
-      if (at !== undefined && nowMs - at <= INPUT_DRIVING_MS) {
+      const owned = this.peerGlobalAt.get(lower);
+      if (owned !== undefined && nowMs - owned.at <= INPUT_DRIVING_MS) {
         log('debug', 'quest.global_peer_owned', { name, from: player.name });
+        if (owned.value !== value) {
+          const seqNow = this.isWorldGlobal(lower) ? this.ctx.cells.sharedQuest().globals[name]?.seq : undefined;
+          player.peer.sendEvent('GlobalVarUpdate', { name, value: owned.value, ...(seqNow !== undefined ? { seq: seqNow } : {}) });
+        }
         return;
       }
     }
@@ -692,17 +706,19 @@ export class Quests {
     const memberKey = `${cellKey}|${ref.key}|${name}`;
     const nowMs = Date.now();
     if (player.system === true) {
-      this.peerMemberAt.set(memberKey, nowMs);
+      this.peerMemberAt.set(memberKey, { at: nowMs, value });
       // Backlog 196: one entry per cell|ref|name the peer ever wrote, never removed -- prune
       // what is long past INPUT_DRIVING_MS (10 min is generous) every few thousand writes,
       // so the map tracks what the peer is CURRENTLY driving rather than everything it has.
       if (++this.peerMemberWrites % 4096 === 0) {
-        for (const [k, at] of this.peerMemberAt) if (nowMs - at > PEER_MEMBER_TTL_MS) this.peerMemberAt.delete(k);
+        for (const [k, w] of this.peerMemberAt) if (nowMs - w.at > PEER_MEMBER_TTL_MS) this.peerMemberAt.delete(k);
       }
     } else {
-      const at = this.peerMemberAt.get(memberKey);
-      if (at !== undefined && nowMs - at <= INPUT_DRIVING_MS) {
+      const owned = this.peerMemberAt.get(memberKey);
+      if (owned !== undefined && nowMs - owned.at <= INPUT_DRIVING_MS) {
         log('debug', 'quest.member_peer_owned', { name, ref: ref.key, from: player.name });
+        // Told, like a refused global (above): the writer's watch cache thinks its value went out.
+        if (owned.value !== value) player.peer.sendEvent('MemberVarUpdate', { ...(lToJs(body) as Record<string, JsLike>), value: owned.value });
         return;
       }
     }
