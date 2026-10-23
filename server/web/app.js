@@ -4462,7 +4462,13 @@ async function pageUpdates() {
   // ---- the game client card -------------------------------------------------------------
   const eng = $('#updEng');
   const e = r.engine || { writable: false, tag: null, present: false };
-  if (!e.writable) {
+  if (e.external) {
+    // NO CLIENT FOLDER HERE AT ALL: the game is served by something else (the hosted site runs
+    // it in its own container). "Nothing installed" would be a false alarm; say where it lives.
+    eng.innerHTML = html`<p class="small mb-0"><i class="bi bi-info-circle me-1"></i>The game client is
+      not served by this server on this deployment, so it is updated with the site that serves it,
+      not from here.</p>`;
+  } else if (!e.writable) {
     // NOT WRITABLE IS THE NORMAL DOCKER CASE: play/ belongs to whoever cloned the repo, and the
     // server runs as its own user. This used to promise that `./setup.sh --update` grants the
     // access (it changes no ownership) and to suggest `chown 1000:1000` (the wrong uid for the

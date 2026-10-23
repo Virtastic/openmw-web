@@ -728,7 +728,7 @@ export function adminRoutes(deps: AdminDeps) {
           // The game client is its own component with its own currency: it updates in
           // place from the release zip, no restart, when the deployment mounts it.
           engine: deps.clientDir ? engineStatus(deps.clientDir)
-            : { writable: false, tag: null, present: false },
+            : { writable: false, tag: null, present: false, external: true },
           url: rel.html_url ?? '',
         });
       } catch {

@@ -211,3 +211,12 @@ test('startEngineUpdate hands back a pollable token and a terminal error frame',
     globalThis.fetch = realFetch;
   }
 });
+
+// NO CLIENT FOLDER AT ALL IS NOT "NOBODY CAN PLAY". The hosted site serves the game from its own
+// container, so the multiplayer server has no /client -- and its Updates page warned "No game
+// engine is installed, so nobody can play" over a working game (prod, 2026-10-23).
+test('engineStatus: a client folder that does not exist is external, not missing', () => {
+  const s = engineStatus(join(tmpdir(), `no-such-client-${Date.now()}`));
+  assert.equal(s.external, true);
+  assert.equal(s.present, false);
+});

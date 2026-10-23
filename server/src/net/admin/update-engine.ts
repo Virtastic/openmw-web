@@ -33,8 +33,11 @@ const RELEASES_URL = 'https://api.github.com/repos/Virtastic/openmw-web/releases
 /** The engine zip is ~350MB today; 2GB is headroom against a hostile redirect, not a plan. */
 const MAX_ZIP_BYTES = 2 * 1024 * 1024 * 1024;
 
-/** What the dashboard needs to render the engine card. */
-export function engineStatus(clientDir: string): { writable: boolean; tag: string | null; present: boolean } {
+/** What the dashboard needs to render the engine card. `external`: this server has no client
+ *  folder at all, so the game is served by something else (the hosted site's own container) --
+ *  "nothing installed here" is then not "nobody can play" (prod's Updates page said so, 2026-10-23). */
+export function engineStatus(clientDir: string): { writable: boolean; tag: string | null; present: boolean; external?: boolean } {
+  if (!existsSync(clientDir)) return { writable: false, tag: null, present: false, external: true };
   let writable = false;
   try {
     // A real write, not accessSync: access checks lie on bind mounts, where the only
