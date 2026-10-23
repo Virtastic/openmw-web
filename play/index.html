@@ -820,12 +820,14 @@ try {
      // hitch. hidden=1: the tab was in the background, so fps=0 there is the browser pausing it, not
      // a freeze (a third of all prod windows on 2026-10-15 were exactly that).
      var sfs = (window.StreamFS && window.StreamFS.stats && window.StreamFS.stats()) || null;
-     var sfsD = sfs && lastSfs ? { m: sfs.misses - lastSfs.misses, ms: Math.round(sfs.stallMs - lastSfs.stallMs), slow: (sfs.slow || 0) - (lastSfs.slow || 0) } : null;
+     var sfsD = sfs && lastSfs ? { m: sfs.misses - lastSfs.misses, ms: Math.round(sfs.stallMs - lastSfs.stallMs), slow: (sfs.slow || 0) - (lastSfs.slow || 0), pf: (sfs.slowPf || 0) - (lastSfs.pf || 0), nopf: (sfs.slowNoPf || 0) - (lastSfs.nopf || 0) } : null;
+     // sfsSlowPf=named/unnamed: of this window's slow reads, how many the cell prefetch had already
+     // asked for (too late or too slow) and how many it never named (a gap in what it names).
      // sfsSlowTop: the files the game waited on the NETWORK for, whole session, most first.
      var slowTop = sfs && sfs.slowBy ? Object.keys(sfs.slowBy).sort(function(x, y){ return sfs.slowBy[y] - sfs.slowBy[x]; }).slice(0, 2).map(function(k){ return k.replace(/\?.*$/, '') + ':' + sfs.slowBy[k]; }).join(',') : '';
-     lastSfs = sfs ? { misses: sfs.misses, stallMs: sfs.stallMs, slow: sfs.slow || 0 } : null;
+     lastSfs = sfs ? { misses: sfs.misses, stallMs: sfs.stallMs, slow: sfs.slow || 0, pf: sfs.slowPf || 0, nopf: sfs.slowNoPf || 0 } : null;
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
-       + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + (sfs.cacheSlow ? ' sfsCacheSlow=1' : '') + (sfs.store ? ' sfsStore=' + sfs.store : '') + (sfs.pfFiles ? ' sfsPf=' + sfs.pfFiles + '/' + (sfs.pfFetched || 0) : '') + ' sfsSlow=' + sfsD.slow + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
+       + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + (sfs.cacheSlow ? ' sfsCacheSlow=1' : '') + (sfs.store ? ' sfsStore=' + sfs.store : '') + (sfs.pfFiles ? ' sfsPf=' + sfs.pfFiles + '/' + (sfs.pfFetched || 0) : '') + ' sfsSlow=' + sfsD.slow + (sfsD.slow ? ' sfsSlowPf=' + sfsD.pf + '/' + sfsD.nopf : '') + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
        + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
        + (window.__omwMPSettling ? ' settling=1' : '') + (s.chargenDone !== '1' ? ' chargen=1' : '')
@@ -1003,9 +1005,12 @@ try {
      // archives are ~200 chunks, about a minute; a sound's first-play hitch is a fraction of a
      // second, a town that has not arrived is the whole screen. Sound/Vo is left out: 6,400 files /
      // 128 MB of mostly once-heard lines.
+     // AT RELEASE, NOT 20 S LATER: the warm-up already stands aside while the game reads (1.5 s of
+     // quiet first, worker warm()), and those 20 s were the first steps in town with nothing warmed
+     // (prod 2026-10-23: 26 of 50 hitch windows waited 300 ms+ on streamed files, Morrowind.bsa first).
      if (!warmQueued) { warmQueued = true; setTimeout(function(){
        try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(WARM_RE, WARM_FIRST); } catch (e) {}
-     }, 20000); }
+     }, 2000); }
      el.classList.remove('indet', 'creep'); fill.style.setProperty('--p', 1); el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);
    }
@@ -1630,10 +1635,11 @@ try {
  // At most 30 a page: a cold region can miss hundreds, and the first ones already name it.
  window.__omwSlowRead = (function(){
    var n = 0;
-   return function(file, off, ms){
+   return function(file, off, ms, named){
      if (++n > 30) return;
      var c = ((window.omw && window.omw.state) || {}).cell || '';
-     append('[sfs] slow read ' + file + '@' + Math.round(off / 1048576) + 'MB ' + ms + ' ms cell=' + c);
+     // pf=1: the cell prefetch had already named this chunk (streamfs pfSeen).
+     append('[sfs] slow read ' + file + '@' + Math.round(off / 1048576) + 'MB ' + ms + ' ms cell=' + c + ' pf=' + (named ? 1 : 0));
    };
  })();
  window.__omwMark = function(name){
@@ -1707,7 +1713,9 @@ try {
    // which skips the census intro and spawns directly in --start. Passing --new-game forced the
    // full Imperial-Prison-Ship intro (bypass=false), leaving a headless player stuck in the boat.
    // Set here (not preRun) because emscripten captures Module.arguments before preRun callbacks.
-   arguments: (function(){
+   // __omwSkipMenu: no title menu, so no logo movies (the boot preload leaves them out). Kept here:
+   // emscripten may trap a later read of Module.arguments.
+   arguments: (function(a){ window.__omwSkipMenu = a.indexOf('--skip-menu') >= 0; return a; })((function(){
      try {
        var m = /[?&]start=([^&]+)/.exec(location.search);
        // '+' IS A SPACE HERE. A world change rebuilds the query with URLSearchParams, which
@@ -1731,7 +1739,7 @@ try {
        }
      } catch (e) {}
      return [];
-   })(),
+   })()),
    // ONE PAINTED FRAME BEFORE THE ENGINE BLOCKS. main() starts in the task that releases the last
    // run dependency, so a creep started there never reached the compositor and the bar sat still.
    // 'ld-paint' is held until every other dependency is gone, then released a frame later (or after
@@ -4164,6 +4172,14 @@ try {
                  // office: 35 files, 1.9 MB, each a 0.4-0.6 s stall when it played cold (prod
                  // 2026-10-21, [sfs] slow read CharGen Class2.mp3, chargenboat1.mp3, ...).
                  if (window.__omwNewGame) StreamFS.mounted(/\/Sound\/Vo\/Misc\/chargen/i).forEach(function(p){ pre.push({ path: p }); });
+                 // THE BOOT MOVIES: each was read cold as it played (prod 2026-10-23, [sfs] slow reads of
+                 // the logo and intro .bik). The two logos play when the title menu does (11 MB), the
+                 // intro only for a new game (26 MB). Names from engine.cpp's Movies_* fallbacks above;
+                 // last in the list, so the content chunks take the in-memory LRU first.
+                 var BOOT_MOVIES = /^\/mwdata\/video\/(bethesda logo|mw_logo|mw_intro)\.bik$/i;
+                 if (!window.__noMovies) StreamFS.mounted(BOOT_MOVIES).forEach(function(p){
+                   if (/mw_intro/i.test(p) ? window.__omwNewGame : !window.__omwSkipMenu) pre.push({ path: p });
+                 });
                  StreamFS.preload(pre, function(d){
                    if (!LD || !d.total) return;
                    LD.set(null, 'Downloading the game data', Math.round(d.bytes / 1048576) + ' MB · ' + Math.round(d.done * 100 / d.total) + '%');
@@ -4171,6 +4187,11 @@ try {
                  }, 180000).then(function(d){
                    window.__omwPreload = d;
                    if (d) append('[mw] preloaded ' + d.done + '/' + d.total + ' chunks, ' + Math.round(d.bytes / 1048576) + ' MB fetched, ' + (StreamFS.stats().preMem || 0) + ' in memory');
+                   // THE SPLASH SCREENS, AFTER THE BOOT'S OWN DATA. Every loading screen picks one at
+                   // random and read it cold (prod 2026-10-23: splash .tga in the slow reads). Retail has
+                   // 11 of 3 MB each, 33 MB: too much to hold the boot for, so the prefetch fetches them
+                   // into the store behind the game's own reads.
+                   try { StreamFS.prefetchPaths(StreamFS.mounted(/^\/mwdata\/splash\//i).map(function(p){ return p.slice(8); }), false); } catch (e) {}
                    release();
                  }, release);
                } catch (e) { release(); }
@@ -5120,10 +5141,16 @@ try {
   // Only the PRESS is withheld from SDL, never `click`: the panel's own handlers listen for
   // click, and shielding that would break every button (the Enter trap, once more). Focus
   // still lands because it is a default action, which propagation cannot stop.
+  // EVERY OVERLAY OF OURS, the onboarding tour and the confirm dialog too. Without them a click
+  // on the tour's Next was also a press into the game behind it (chargen's own buttons), and the
+  // diagnostic below logged it as a lost click: prod 2026-10-23, 17 of
+  // "[ui] click at N,N went to <omw-tour-next> canvas pointer-events=none" in 3 sessions -- each
+  // a player clicking through the tour, the canvas correctly inert while it was up.
+  var OVERLAYS = '#omw-social, #omw-chat, #omw-uname, #omw-tour, #omw-ask';
   ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(type){
     window.addEventListener(type, function(e){
       if (!uiRefs) return;
-      if (e.target && e.target.closest && e.target.closest('#omw-social, #omw-chat, #omw-uname'))
+      if (e.target && e.target.closest && e.target.closest(OVERLAYS))
         e.stopImmediatePropagation();
     }, true);
   });
@@ -5134,7 +5161,7 @@ try {
     if (!uiRefs) return;
     var top = document.elementFromPoint(e.clientX, e.clientY);
     var id = top ? (top.id || top.tagName + (top.className ? '.' + String(top.className).split(' ')[0] : '')) : 'null';
-    var inOverlay = !!(top && top.closest && top.closest('#omw-social, #omw-chat, #omw-uname'));
+    var inOverlay = !!(top && top.closest && top.closest(OVERLAYS));
     if (!inOverlay || document.pointerLockElement){
       mpLog('[ui] click at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
         + ' went to <' + id + '>'
@@ -5640,6 +5667,11 @@ try {
     document.getElementById('omw-tour-next').innerHTML = (tourIdx === tourDeck.length - 1) ? "Let's go ▸" : 'Next ▸';
   }
   var tourPaused = false;
+  // ONE HOLD FOR THE PANEL, however many times it is filled. The tour opening over a notice (or a
+  // notice over the tour) took a second uiHold that one close never gave back: the canvas stayed
+  // pointer-events:none and the game ignored the mouse with nothing on screen.
+  var tourHeld = false;
+  function tourHold(on){ if (on !== tourHeld){ tourHeld = on; uiHold(on); } }
   function openTour(which){
     which = which || 'unlocked';
     if (tourShown[which]) return;
@@ -5652,14 +5684,14 @@ try {
     // world, so stopping the world is safe and a modal you cannot dismiss while something
     // walks up to you is not. The unlock tour does not pause: by then you are in a live world
     // and pausing only your own client would freeze your view while everyone else moves.
-    uiHold(true);
+    tourHold(true);
     tourPaused = (which === 'intro');
     if (tourPaused) cmd('pause:on');
   }
   function closeTour(){ if (!tourEl.classList.contains('show')) return;
     tourEl.classList.remove('show');
     if (tourPaused) { tourPaused = false; cmd('pause:off'); }
-    uiHold(false);
+    tourHold(false);
     // A notice has no key: it reports something that just happened, so "seen" is meaningless
     // and writing one would make the next occurrence silent.
     if (tourKey) { try { localStorage.setItem(tourKey, '1'); } catch(e){} } }
@@ -5731,7 +5763,7 @@ try {
     document.getElementById('omw-tour-dots').innerHTML = '';
     document.getElementById('omw-tour-next').innerHTML = 'Got it';
     tourEl.classList.add('show');
-    uiHold(true);
+    tourHold(true);
     tourPaused = false;
   }
   // Exported like __omwLog and __omwLoading: showNotice is block-local (depth 1 of block 4),

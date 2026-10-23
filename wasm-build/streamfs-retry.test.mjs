@@ -236,6 +236,14 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   for (const [p, s] of mounts) ctx.StreamFS.mount('/mwdata/' + p, 'mwdata/' + p + '?v=2', s);
   ctx.StreamFS.mount('/mods/openmw-web-assets.bsa', 'mods/openmw-web-assets.bsa', 1.1e8);
   assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 8, 'eight files queued');
+  // ...and it starts at release, not 20 s later (prod 2026-10-23: the first steps in town cold).
+  assert.ok(/StreamFS\.warm\(WARM_RE, WARM_FIRST\); \} catch \(e\) \{\}\s+\}, 2000\);/.test(html), 'the warm-up starts 2 s after release');
+  // THE BOOT PRELOAD names the logo and intro movies; the splash screens go to the background prefetch.
+  const movies = new RegExp(html.match(/var BOOT_MOVIES = \/(.*)\/i;/)[1], 'i');
+  assert.deepEqual(['Video/bethesda logo.bik', 'video/MW_Logo.bik', 'Video/mw_intro.bik', 'Video/mw_credits.bik', 'Video/mw_menu.bik']
+    .map((p) => movies.test('/mwdata/' + p)), [true, true, true, false, false]);
+  const pfSplash = html.match(/StreamFS\.prefetchPaths\(StreamFS\.mounted\(\/(.*)\/i\)\.map\(function\(p\)\{ return p\.slice\(8\); \}\), false\)/);
+  assert.ok(pfSplash && new RegExp(pfSplash[1], 'i').test('/mwdata/Splash/Splash_Netch.tga') && '/mwdata/'.length === 8, 'splash screens prefetched by VFS path');
   const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/(mwdata|mods)\/|\?v=2$/g, ''));
   // Archives first: the next town comes out of them (prod 2026-10-20: Fx-first left Morrowind.bsa
   // cold at the Seyda Neen dock, a 26.5 s freeze). Then Fx smallest first, creatures, music.
@@ -422,9 +430,9 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   const pack = bsa([{ name: 'meshes\\b.nif', data: Buffer.from('PACKB') }]);
   const posted = [];
   const ctx = {
-    URL, Blob, SharedArrayBuffer, Int32Array, Uint8Array, DataView, Map, Set, location: { href: 'https://h/', origin: 'https://h', search: '' },
+    URL, Blob, SharedArrayBuffer, Int32Array, Uint8Array, DataView, Map, Set, Atomics, performance: { now: () => (ctx.clock = (ctx.clock || 0) + 60) }, location: { href: 'https://h/', origin: 'https://h', search: '' },
     navigator: {}, self: { crossOriginIsolated: true }, caches: {}, setTimeout, clearTimeout, Promise,
-    Worker: class { constructor() { ctx.worker = this; } postMessage(m) { posted.push(m); } },
+    Worker: class { constructor() { ctx.worker = this; } postMessage(m) { posted.push(m); if (m.init) ctx.init = m; if (m.gen && ctx.serve) ctx.serve(m); } },
     FS: { createFile: () => ({ node_ops: {}, stream_ops: {} }) },
   };
   ctx.window = ctx; ctx.URL = class extends URL { static createObjectURL() { return 'blob:x'; } };
@@ -433,7 +441,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   vm.runInContext('StreamFS.init()', ctx);
   ctx.StreamFS.mount('/mwdata/Morrowind.bsa', 'mwdata/Morrowind.bsa?v=2', mw.bytes.length);
   ctx.StreamFS.mount('/mods/openmw-web-assets.bsa', 'mods/openmw-web-assets.bsa', pack.bytes.length);
-  ctx.StreamFS.mount('/mwdata/Meshes/loose.nif', 'mwdata/Meshes/loose.nif?v=2', 9);
+  const loose = ctx.StreamFS.mount('/mwdata/Meshes/loose.nif', 'mwdata/Meshes/loose.nif?v=2', 9);
   // The archives' directories are already in memory (the engine read them at boot): hand chunk 0
   // of each to the page's LRU the way a preload does.
   for (const [path, bytes] of [['/mwdata/Morrowind.bsa', mw.bytes], ['/mods/openmw-web-assets.bsa', pack.bytes]]) {
@@ -463,6 +471,19 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(ctx.StreamFS.stats().pfFetched, 2);
   // Asking again for the same paths fetches nothing twice.
   assert.equal(ctx.StreamFS.prefetchPaths(['meshes/b.nif']), 0);
+
+  // A SLOW READ SAYS WHETHER THE PREFETCH HAD NAMED ITS CHUNK (telemetry sfsSlowPf=named/unnamed).
+  // The fake worker answers a read at once; the page's clock moves 60 ms a look: over the 50 ms
+  // line for "slow".
+  ctx.serve = (m) => {
+    new Uint8Array(ctx.init.data).fill(7, 0, m.end - m.start);
+    const ctrl = new Int32Array(ctx.init.ctrl); ctrl[1] = m.end - m.start; Atomics.store(ctrl, 0, m.gen);
+  };
+  const splash = ctx.StreamFS.mount('/mwdata/Splash/Splash_Netch.tga', 'mwdata/Splash/Splash_Netch.tga?v=2', 9);
+  assert.equal(loose.stream_ops.read({}, new Uint8Array(9), 0, 9, 0), 9, 'loose.nif: named by the prefetch above');
+  assert.equal(splash.stream_ops.read({}, new Uint8Array(9), 0, 9, 0), 9, 'the splash: never named');
+  const st = ctx.StreamFS.stats();
+  assert.deepEqual([st.slow, st.slowPf, st.slowNoPf], [2, 1, 1], 'one slow read named, one not');
 
   // The worker's texture scan finds the names a model carries, and only those.
   const w = new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response', 'navigator',

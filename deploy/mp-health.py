@@ -40,6 +40,7 @@ slow_reads = Counter()
 no_pose = Counter()  # windows with a drawn NPC that has no pose stream of its own (npcNoPose), by record
 facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
 hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
+hitch_pf = [0, 0]  # those windows' slow streamed reads: [named by the cell prefetch already, never named] (sfsSlowPf)
 rtt50, rtt95, switch_ms, self_snaps, play_s = [], [], [], 0, 0.0
 npc_worst = Counter()  # visible windows' worst-off NPC (>= 300 u): record (puppet | run locally)
 seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set); data_setup = {}
@@ -85,6 +86,8 @@ for e in lines():
                 if wf and int(wf[1]) >= 500:
                     hitch += 1
                     if ss and int(ss[1]) >= 300: hitch_sfs += 1
+                    pf = re.search(r'sfsSlowPf=(\d+)/(\d+)', t)
+                    if pf: hitch_pf[0] += int(pf[1]); hitch_pf[1] += int(pf[2])
             mf = re.search(r'npcFacing bad=(\d+) n=(\d+)', t)
             if mf: facing_bad += int(mf[1]); facing_n += int(mf[2])
             if s not in seen_session and ' settling=1' not in t and ' chargen=1' not in t:
@@ -130,7 +133,8 @@ print(f"network: round trip (server-measured) median p50 {q(rtt50, .5)} ms, p95 
 print(f"world switches: click to playable p50 {q(switch_ms, .5)} ms, p95 {q(switch_ms, .95)} ms ({len(switch_ms)} switches)")
 print(f"NPCs drawn 300 u+ off their server path, worst per visible 5 s window:\n{top(npc_worst, 8)}")
 print(f"NPCs drawn with no pose stream of their own (5 s windows, by record):\n{top(no_pose, 6)}")
-print(f"hitches: {hitch} visible windows with a frame of 500 ms or more, {hitch_sfs} of them waiting 300 ms+ on streamed game files | {hidden_w} windows in a background tab (not counted)")
+print(f"hitches: {hitch} visible windows with a frame of 500 ms or more, {hitch_sfs} of them waiting 300 ms+ on streamed game files"
+      f" (their slow reads: {hitch_pf[0]} already named by the cell prefetch, {hitch_pf[1]} never named) | {hidden_w} windows in a background tab (not counted)")
 print(f"facing: walking NPCs drawn turned round (>120 deg off the server) {facing_bad}/{facing_n} samples" + (f" ({100 * facing_bad / facing_n:.1f}%)" if facing_n else ''))
 print(f'Lua errors (peer + clients): {lua_errors}')
 print(f"sim peer start failures: {ev['simpeer.start_timeout']}   peer errors:\n{top(peer_err, 8)}")
