@@ -1005,9 +1005,12 @@ try {
      // archives are ~200 chunks, about a minute; a sound's first-play hitch is a fraction of a
      // second, a town that has not arrived is the whole screen. Sound/Vo is left out: 6,400 files /
      // 128 MB of mostly once-heard lines.
+     // AT RELEASE, NOT 20 S LATER: the warm-up already stands aside while the game reads (1.5 s of
+     // quiet first, worker warm()), and those 20 s were the first steps in town with nothing warmed
+     // (prod 2026-10-23: 26 of 50 hitch windows waited 300 ms+ on streamed files, Morrowind.bsa first).
      if (!warmQueued) { warmQueued = true; setTimeout(function(){
        try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(WARM_RE, WARM_FIRST); } catch (e) {}
-     }, 20000); }
+     }, 2000); }
      el.classList.remove('indet', 'creep'); fill.style.setProperty('--p', 1); el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);
    }
