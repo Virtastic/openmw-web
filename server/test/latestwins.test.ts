@@ -109,6 +109,7 @@ test('a hidden tab is idle: streams held to the newest frame, no BACKLOG, avatar
   // Past the cell-entry grace, so the hard ceiling would bite on a visible tab.
   await new Promise((r) => setTimeout(r, 2100));
 
+  carol.inbox.batches.length = 0; // the join-time pose had animVel 0 too
   bob.sendEvent('ClientVisibility', { hidden: true });
   // Observers see the avatar stop: same spot, motion cleared.
   const idle = await carol.waitBatch((b) => b.entries.some((e) => e.id === bobId && e.pose.animVel === 0));
