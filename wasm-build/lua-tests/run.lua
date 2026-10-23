@@ -4479,6 +4479,12 @@ do
       victimAt and avatarAt and reportedAt and reportedAt < victimAt and victimAt < avatarAt
       and select(2, mm:gsub('victim%.getClass%(%)%.getNpcStats%(victim%)%.setCrimeId%(id%);', '')) == 1)
   end
+
+  -- 9. the interior range check on the peer
+  local at = src(ENG .. 'mwlua/types/actor.cpp')
+  check('isInActorsProcessingRange skips the worldspace check when sim anchors exist',
+    at:find('if (MWBase::Environment::get().getWorld()->getSimAnchorPositions().empty()\r\n                && target.getCell()->getCell()->getWorldSpace()', 1, true) ~= nil
+    or at:find('if (MWBase::Environment::get().getWorld()->getSimAnchorPositions().empty()\n                && target.getCell()->getCell()->getWorldSpace()', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

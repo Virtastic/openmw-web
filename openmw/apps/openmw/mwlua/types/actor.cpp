@@ -414,7 +414,10 @@ namespace MWLua
             if (!target.getClass().isActor())
                 throw std::runtime_error("Actor expected");
 
-            if (target.getCell()->getCell()->getWorldSpace() != player.getCell()->getCell()->getWorldSpace())
+            // Not on a sim peer: its dummy player stands in one worldspace while the anchors
+            // (players) are in interiors it simulates; inSimProcessingRange decides there.
+            if (MWBase::Environment::get().getWorld()->getSimAnchorPositions().empty()
+                && target.getCell()->getCell()->getWorldSpace() != player.getCell()->getCell()->getWorldSpace())
                 return false;
 
             // Nearest anchor + held interiors (actorutil), not just the player: on a sim peer
