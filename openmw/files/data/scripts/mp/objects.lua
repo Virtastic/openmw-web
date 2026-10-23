@@ -985,11 +985,8 @@ handlers.MP_ObjectMove = function(data)
     if isOwnEcho(data) then return end
     local obj = resolveBody(data)
     if not obj then return end
-    local cellArg = cellArgFor(data.cellKey)
-    pcall(function()
-        obj:teleport(cellArg, util.vector3(data.x, data.y, data.z),
-            { rotation = util.transform.rotateZ(data.rotZ or 0) })
-    end)
+    retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(data.x, data.y, data.z), nil,
+        { rotation = util.transform.rotateZ(data.rotZ or 0) })
 end
 
 -- A lock this client has just REPORTED itself (the harness door commands): the cell poll must
@@ -1229,11 +1226,8 @@ handlers.MP_WorldCellState = function(data)
     for refKey, m in pairs(data.moved or {}) do
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() then
-            local cellArg = cellArgFor(data.cellKey)
-            pcall(function()
-                obj:teleport(cellArg, util.vector3(m.x, m.y, m.z),
-                    { rotation = util.transform.rotateZ(m.rotZ or 0) })
-            end)
+            retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(m.x, m.y, m.z), nil,
+                { rotation = util.transform.rotateZ(m.rotZ or 0) })
         end
     end
     for refKey, lockInfo in pairs(data.locks or {}) do

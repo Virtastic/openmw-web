@@ -11,6 +11,8 @@ local world = require('openmw.world')
 local mp = require('openmw.mp')
 
 local json = require('scripts.mp.json')
+-- teleports refused while another is in flight land on a later frame (latest wins)
+local retry = require('scripts.mp.retry')
 
 local actors = {}
 
@@ -553,10 +555,8 @@ actors.handlers.MP_ActorAuthorityGrant = function(data)
         local obj = (not a.dead) and actorOf(a) or nil
         if obj then
             local cellArg = obj.cell and not obj.cell.isExterior and obj.cell.name or ''
-            pcall(function()
-                obj:teleport(cellArg, util.vector3(a.x, a.y, a.z),
-                    { rotation = util.transform.rotateZ(a.rotZ or 0) })
-            end)
+            retry.teleport(obj, cellArg, util.vector3(a.x, a.y, a.z), nil,
+                { rotation = util.transform.rotateZ(a.rotZ or 0) })
             -- Self-gated write: the actor's own script (companion.lua mpSetStats) applies it.
             pcall(function() obj:sendEvent('mpSetStats', { hp = a.hp, mp = a.mp, ft = a.ft }) end)
             if type(a.disp) == 'number' then
@@ -661,9 +661,7 @@ actors.handlers.MP_ActorCellChange = function(data)
     -- engine looked it up as a name, failed inside the pcall, and the actor never arrived --
     -- so every NPC that walked outdoors kept standing indoors on every other screen.
     local cellArg = data.toCellKey:match('^%-?%d+,%-?%d+$') and '' or data.toCellKey
-    pcall(function()
-        obj:teleport(cellArg, util.vector3(data.x or 0, data.y or 0, data.z or 0))
-    end)
+    retry.teleport(obj, cellArg, util.vector3(data.x or 0, data.y or 0, data.z or 0))
 end
 
 actors.handlers.MP_ActorStatsDynamic = function(data)
@@ -978,7 +976,7 @@ actors.handlers.MP_ActorAI = function(data)
         -- A scripted teleport from a non-holder (notePosition); the server sends it to the
         -- holder only. An empty cell name is the default exterior, resolved from x,y.
         local p = data.position
-        pcall(function() obj:teleport(tostring(p.cell or ''), util.vector3(p.x, p.y or 0, p.z or 0)) end)
+        retry.teleport(obj, tostring(p.cell or ''), util.vector3(p.x, p.y or 0, p.z or 0))
         return
     end
     if data.done == true then
@@ -994,15 +992,17 @@ actors.handlers.MP_ActorAI = function(data)
             -- so it kept its back to whoever spoke to it. Turned once, in place, toward their body.
             local body = data.hold == true and data.by ~= nil and deps.playerObjOf and deps.playerObjOf(data.by) or nil
             if body and body:isValid() then
-                pcall(function()
+                local okT, cellArg, pos, yaw = pcall(function()
                     local d = body.position - obj.position
                     local len = math.sqrt(d.x * d.x + d.y * d.y)
-                    if len < 1 then return end
+                    if len < 1 then return nil end
                     -- yaw from +Y toward +X; acos, not atan2: the peer is LuaJIT, the browser 5.4
                     local yaw = math.acos(math.max(-1, math.min(1, d.y / len))) * (d.x < 0 and -1 or 1)
-                    local cellArg = obj.cell and not obj.cell.isExterior and obj.cell.name or ''
-                    obj:teleport(cellArg, obj.position, { rotation = util.transform.rotateZ(yaw), onGround = true })
+                    return obj.cell and not obj.cell.isExterior and obj.cell.name or '', obj.position, yaw
                 end)
+                if okT and cellArg then
+                    retry.teleport(obj, cellArg, pos, nil, { rotation = util.transform.rotateZ(yaw), onGround = true })
+                end
             end
             pcall(function() obj:sendEvent('MP_DialogueHold', { on = data.hold == true }) end)
         end
@@ -1224,7 +1224,7 @@ function actors.snapActor(actorKey, pos)
         -- WITH ITS FACING. A snap that kept the old yaw left the body inside the 64 u gate,
         -- walking the new way while turned round (1% of walking NPCs on prod, 2026-10-23).
         local opts = type(pos.yaw) == 'number' and { rotation = util.transform.rotateZ(pos.yaw) } or nil
-        pcall(function() obj:teleport(cellArg, util.vector3(pos.x, pos.y, pos.z), opts) end)
+        retry.teleport(obj, cellArg, util.vector3(pos.x, pos.y, pos.z), nil, opts)
     end
 end
 

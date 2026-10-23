@@ -535,7 +535,7 @@ do
     ob:find("mp.sendEvent%('ObjectSpawnRequest', {%s*tempId = 0, actor = true") ~= nil)
   check('WorldCellState applies persisted re-enables', ob:find('for _, refKey in ipairs(data.enabled or {}) do', 1, true) ~= nil)
   check('actors.notePosition rides ActorAI and the holder teleports on it',
-    ac:find('position = { cell = tostring(cellName or ', 1, true) ~= nil and ac:find("obj:teleport(tostring(p.cell or ''), util.vector3(p.x", 1, true) ~= nil)
+    ac:find('position = { cell = tostring(cellName or ', 1, true) ~= nil and ac:find("retry.teleport(obj, tostring(p.cell or ''), util.vector3(p.x", 1, true) ~= nil)
   check('mpQuestSpawn places a forwarded PlaceAtPC at its spot',
     g:find("if type(data.x) == 'number' then", 1, true) ~= nil and g:find('world.getCellByName(key)', 1, true) ~= nil)
   -- EVERY SCRIPT MUST PARSE. A script with a syntax error is silently not attached by the
@@ -4632,5 +4632,20 @@ do
   check('objects.lua bare removes are only on objects it just created', bare == 2, tostring(bare))
 end
 
+
+print('1.7.1 actor and object moves go through retry.teleport: a refusal mid-teleport lands next frame')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  check('actors.lua has no bare teleport left (cell change, scripted position, snap, handoff, facing)',
+    ac:find('obj:teleport(', 1, true) == nil and select(2, ac:gsub('retry%.teleport%(obj, ', '')) == 5)
+  check('MP_ActorCellChange retries its teleport',
+    ac:find("retry.teleport(obj, cellArg, util.vector3(data.x or 0, data.y or 0, data.z or 0))", 1, true) ~= nil)
+  check('the speaker-facing turn keeps rotation and onGround through the retry',
+    ac:find('retry.teleport(obj, cellArg, pos, nil, { rotation = util.transform.rotateZ(yaw), onGround = true })', 1, true) ~= nil)
+  check('ObjectMove and the cell state moved list retry their teleports',
+    ob:find('retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(data.x, data.y, data.z), nil,', 1, true) ~= nil
+    and ob:find('retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(m.x, m.y, m.z), nil,', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
