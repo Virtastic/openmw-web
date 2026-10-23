@@ -17,6 +17,8 @@ local I = require('openmw.interfaces')
 
 local json = require('scripts.mp.json')
 local worldmp = require('scripts.mp.world')
+-- remove/teleport that survive an in-flight teleport (count 0 until the end of the frame)
+local retry = require('scripts.mp.retry')
 
 local objects = {}
 
@@ -855,7 +857,11 @@ handlers.MP_ObjectSpawnRefused = function(data)
     end
     local player = deps.playerFn()
     if obj and obj:isValid() and player then
-        pcall(function() obj:moveInto(types.Actor.inventory(player)) end)
+        local okM, errM = pcall(function() obj:moveInto(types.Actor.inventory(player)) end)
+        if not okM then
+            print(string.format('[mp] refused drop of %s could not go back into the pack: %s',
+                tostring(obj.recordId), tostring(errM)))
+        end
     end
     if deps.noticeFn then
         local why = {
@@ -937,7 +943,7 @@ handlers.MP_ObjectDelete = function(data)
         netToObj[netId] = nil
         objIdToNet[obj.id] = nil
     end
-    pcall(function() obj:remove() end)
+    retry.remove(obj) -- refused mid-teleport: disabled now (no pickup), removed next frames
 end
 
 -- (Lives here, below `local handlers = {}`, on purpose: a `handlers.X = ...` placed ABOVE that
@@ -983,11 +989,8 @@ handlers.MP_ObjectMove = function(data)
     if isOwnEcho(data) then return end
     local obj = resolveBody(data)
     if not obj then return end
-    local cellArg = cellArgFor(data.cellKey)
-    pcall(function()
-        obj:teleport(cellArg, util.vector3(data.x, data.y, data.z),
-            { rotation = util.transform.rotateZ(data.rotZ or 0) })
-    end)
+    retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(data.x, data.y, data.z), nil,
+        { rotation = util.transform.rotateZ(data.rotZ or 0) })
 end
 
 -- A lock this client has just REPORTED itself (the harness door commands): the cell poll must
@@ -1206,7 +1209,7 @@ handlers.MP_WorldCellState = function(data)
                 objIdToNet[obj.id] = nil
                 netSpawned[obj.id] = nil
                 netActorCount = math.max(0, netActorCount - 1)
-                pcall(function() obj:remove() end)
+                retry.remove(obj)
             end
         end
     end
@@ -1221,17 +1224,14 @@ handlers.MP_WorldCellState = function(data)
                 netToObj[netId] = nil
                 objIdToNet[obj.id] = nil
             end
-            pcall(function() obj:remove() end)
+            retry.remove(obj)
         end
     end
     for refKey, m in pairs(data.moved or {}) do
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() then
-            local cellArg = cellArgFor(data.cellKey)
-            pcall(function()
-                obj:teleport(cellArg, util.vector3(m.x, m.y, m.z),
-                    { rotation = util.transform.rotateZ(m.rotZ or 0) })
-            end)
+            retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(m.x, m.y, m.z), nil,
+                { rotation = util.transform.rotateZ(m.rotZ or 0) })
         end
     end
     for refKey, lockInfo in pairs(data.locks or {}) do
@@ -1526,7 +1526,7 @@ function objects.tick(now)
         lastMirror = now
         local netObjs = {}
         for netId, obj in pairs(netToObj) do
-            if obj:isValid() then netObjs[tostring(netId)] = obj.recordId end
+            if obj:isValid() then netObjs[string.format('%.0f', netId)] = obj.recordId end
         end
         mp.set('netObjects', json.encode(netObjs))
         -- Display names of the net objects: a PLACEHOLDER stand-in still "exists", so the
@@ -1534,7 +1534,7 @@ function objects.tick(now)
         local netNames = {}
         for netId, obj in pairs(netToObj) do
             if obj:isValid() then
-                netNames[tostring(netId)] = worldmp.recordNameOf(obj.recordId) or ''
+                netNames[string.format('%.0f', netId)] = worldmp.recordNameOf(obj.recordId) or ''
             end
         end
         mp.set('netObjectNames', json.encode(netNames))
@@ -1617,7 +1617,7 @@ function objects.forgetCell(cellKey)
             if obj and obj:isValid() then
                 objIdToNet[obj.id] = nil
                 netSpawned[obj.id] = nil
-                pcall(function() obj:remove() end)
+                retry.remove(obj)
             end
         end
     end

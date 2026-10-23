@@ -30,6 +30,11 @@ local kit = {}
 function kit.mirrorCarry()
     mp.set('switchCarry', (pendingFlip or '') .. '|' .. (worldUrls.lastOut or ''))
 end
+-- A player id as a table key or mirror key. LSER numbers are doubles, and Lua 5.4's tostring(2.0)
+-- is "2.0" where LuaJIT's is "2": the same id keyed two ways on two engines (objects.lua netKey).
+function kit.idKey(id)
+    return type(id) == 'number' and string.format('%.0f', id) or tostring(id)
+end
 
 -- Chargen gate: multiplayer surfaces (chat, social, leaving your solo world) unlock only once
 -- character creation is DONE (race/class/sign chosen — mwscript CharGenState == -1). Mirrored
@@ -206,34 +211,13 @@ end
 -- one peer frame -- every login with a stored position sends the boot spawn and the restored
 -- spot a frame apart -- left the avatar parked at the first and gated out of its owner's
 -- cell for the rest of the stay: no melee, NPCs fighting a ghost. Keep the latest target and
--- retry it on the next ticks until it lands.
-local teleportRetry = {} -- obj -> { cellArg, pos, until_, onLanded }
+-- retry it on the next ticks until it lands (30 s: a COLD interior load on the peer).
 -- `onLanded` (optional) runs once the move actually happens, now or from a later retry: the
 -- door path hangs the avatar's followers on it (#294), so a retried teleport carries them too.
-local function tryTeleport(obj, cellArg, pos, onLanded)
-    if not obj or not obj:isValid() or not cellArg then return false end
-    local ok = pcall(function() obj:teleport(cellArg, pos) end)
-    if ok then
-        teleportRetry[obj] = nil
-        if onLanded then onLanded() end
-    else
-        -- Long enough for a COLD interior load on the peer (a Tamriel Rebuilt town takes well
-        -- over three seconds): an avatar that never followed left the friend with no puppet
-        -- in the room and the server saying avatar_never_arrived.
-        teleportRetry[obj] = { cellArg = cellArg, pos = pos, until_ = core.getRealTime() + 30, onLanded = onLanded }
-    end
-    return ok
-end
-local function teleportRetryTick(now)
-    for obj, t in pairs(teleportRetry) do
-        if not obj:isValid() or now > t.until_ then
-            teleportRetry[obj] = nil
-        elseif pcall(function() obj:teleport(t.cellArg, t.pos) end) then
-            teleportRetry[obj] = nil
-            if t.onLanded then pcall(t.onLanded) end
-        end
-    end
-end
+-- THE ONE COPY lives in retry.lua, shared with objects.lua and actors.lua, whose bare pcalls
+-- lost the same moves and removes; ticked once a frame below.
+local retry = require('scripts.mp.retry')
+local tryTeleport = retry.teleport
 
 -- Apply one record's item-state bucket onto the stacks the inventory holds for it (#234).
 -- Entries are one per stack, in inventory order, each carrying its stack size `n`; a stateless
@@ -561,7 +545,7 @@ local function pushEquipmentToPuppet(id)
         -- COUNT WHAT IS ON ITS WAY IN. At spawn the doc grant and this push (twice) ran in one
         -- frame, each reading 0 because adds land at the end of it, so every equipped item was
         -- granted three times -- a player in heavy armour spawned carrying three sets.
-        local key = 'p:' .. tostring(id)
+        local key = 'p:' .. kit.idKey(id)
         if reconcile.held(inventory, key, grantId) == 0 then
             local okc, item = pcall(function() return world.createObject(grantId) end)
             if okc then
@@ -704,7 +688,7 @@ local function applyAvatarDoc(id)
     -- wrong damage.
     pcall(function()
         local inventory = types.Actor.inventory(obj)
-        local key = 'p:' .. tostring(id)
+        local key = 'p:' .. kit.idKey(id)
         local items = {}
         for _, entry in ipairs(doc.inventory or {}) do
             items[#items + 1] = { id = worldmp.toLocal(entry.id), n = entry.n or 1 }
@@ -1332,20 +1316,10 @@ local function pushAvatarPolicy()
     end
 end
 
--- obj -> next try: remove() refused (teleport in flight). NO DEADLINE: giving up after 30 s
--- left a live, solid, AI-off body standing -- on the peer, usually right where the
--- reconnected owner's new avatar spawns, blocking and shoving it. The body is disabled at
--- the refusal (despawnPuppet), so waiting costs nothing; once a second bounds the churn.
-local removeRetry = {}
-local function removeRetryTick(now)
-    for obj, at in pairs(removeRetry) do
-        if not obj:isValid() then
-            removeRetry[obj] = nil
-        elseif now >= at then
-            if pcall(function() obj:remove() end) then removeRetry[obj] = nil else removeRetry[obj] = now + 1 end
-        end
-    end
-end
+-- remove() refused (teleport in flight): retry.remove. NO DEADLINE: giving up after 30 s left
+-- a live, solid, AI-off body standing -- on the peer, usually right where the reconnected
+-- owner's new avatar spawns, blocking and shoving it. The body is disabled at the refusal,
+-- so waiting costs nothing.
 
 -- Whether a pose lies in a cell this CLIENT has loaded (own cell or an exterior neighbour).
 -- The server relays by the mover's announced cellKey while the pose itself comes from the
@@ -1458,12 +1432,9 @@ local function despawnPuppet(id)
     -- old body registered beside the new one ("avatar registry ... (now 2)"), and guard and
     -- crime checks treat every registered body as a player.
     if mp.setAvatar then pcall(mp.setAvatar, p.obj, false) end
-    if p.obj:isValid() and not pcall(function() p.obj:remove() end) then
-        -- Disabled NOW, removed later: a disabled object leaves the scene and its collision
-        -- with it, so the retry can take as long as the teleport does.
-        pcall(function() p.obj.enabled = false end)
-        removeRetry[p.obj] = core.getRealTime() + 1
-    end
+    -- Disabled NOW if refused, removed later: a disabled object leaves the scene and its
+    -- collision with it, so the retry can take as long as the teleport does.
+    retry.remove(p.obj)
     print('[mp] puppet despawned for ' .. p.name .. ' (#' .. tostring(id) .. ')')
 end
 
@@ -1472,7 +1443,11 @@ end
 local function rebuildPuppet(id)
     local p = puppets[id]
     if not p or not p.obj:isValid() then return end
-    local pos = p.obj.position
+    -- WHERE IT IS GOING, not where it stood: obj.position lags a teleport still in flight (or
+    -- queued in retry.lua), and the owner's last pose is newer than the body. Read before the
+    -- despawn, which drops the queued move.
+    local queued = retry.pendingTeleport(p.obj)
+    local pos = (queued and queued.pos) or lastPose[id] or p.obj.position
     despawnPuppet(id)
     spawnPuppet(id, { x = pos.x, y = pos.y, z = pos.z })
 end
@@ -1539,7 +1514,7 @@ local function mirrorPuppets()
             end)
             table.sort(actives)
             local okD, dead = pcall(types.Actor.isDead, p.obj)
-            m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z,
+            m[kit.idKey(id)] = { x = pos.x, y = pos.y, z = pos.z,
                 name = rec and rec.name or p.name, eq = eq, actives = actives, dead = okD and dead or false, falls = p.falls or 0,
                 flags = lastFlags[id] or 0, jumps = jumpEdges[id] or 0, stance = okS and st or -1 }
         end
@@ -2925,7 +2900,7 @@ local eventHandlers = {
         -- (0.5 s) could sample that window or miss it (s131 #179/#181: 'the host sees the guest drown'
         -- passed one run in two). Event-driven, so nothing is sampled.
         if data.hp and data.hp.c <= 0 and not (was and was.hp and was.hp.c <= 0) and puppets[data.id] then
-            local key = tostring(data.id) -- json.encode wants string keys (#183: a numeric key threw and aborted the whole handler)
+            local key = kit.idKey(data.id) -- json.encode wants string keys (#183: a numeric key threw and aborted the whole handler)
             puppetDeaths[key] = (puppetDeaths[key] or 0) + 1
             mp.set('puppetDeaths', json.encode(puppetDeaths))
         end
@@ -3648,7 +3623,10 @@ local eventHandlers = {
 
     mpAvatarDetached = function(data)
         if data.obj and data.obj:isValid() then
-            data.obj:removeScript('scripts/mp/avatar.lua')
+            -- Guarded and SAID: removeScript throws when the script is already gone (a second
+            -- detach, a reload), and a throw here aborts the handler.
+            local ok, err = pcall(function() data.obj:removeScript('scripts/mp/avatar.lua') end)
+            if not ok then print('[mp] avatar script detach failed: ' .. tostring(err)) end
         end
     end,
     mpAvatarLanded = avatarLanded,
@@ -4075,8 +4053,7 @@ return {
                 localSummonsTick() -- summons spawn on the peer while it holds our cell
                 worldmp.tick(now)
                 mirrorDoor(now)
-                teleportRetryTick(now) -- a follow-teleport that threw last frame lands now
-                removeRetryTick(now) -- a despawn refused mid-teleport lands now (480)
+                retry.tick(now) -- a teleport that threw last frame lands now; a refused remove too (480)
                 avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses
                 -- Re-pushed on a cadence, not only on change: the veto FAILS OPEN (an empty
                 -- avatar set vetoes nothing), so a single dropped event would silently permit
