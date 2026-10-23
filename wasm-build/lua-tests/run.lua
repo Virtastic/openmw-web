@@ -4647,5 +4647,37 @@ do
     ob:find('retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(data.x, data.y, data.z), nil,', 1, true) ~= nil
     and ob:find('retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(m.x, m.y, m.z), nil,', 1, true) ~= nil)
 end
+
+print('1.7.1 a puppet re-attached while its cell change is in flight records the cell it is going to')
+do
+  fresh()
+  package.loaded['scripts.mp.actors'] = nil
+  package.loaded['scripts.mp.retry'] = nil
+  local env = stubs.install({})
+  env.types.Player.objectIsInstance = env.types.Player.objectIsInstance or function() return false end
+  package.loaded['scripts.mp.quests'] = { isTalkingTo = function() return false end }
+  local actors = require('scripts.mp.actors')
+  actors.init({ ownIdFn = function() return 7 end, netIdOf = function() return 42 end, playerIdOf = function() return nil end })
+  local events = {}
+  -- Still standing in the shop: the teleport lands at the end of the frame.
+  local npc = { id = 'npc1', recordId = 'fargoth', cell = { isExterior = false, name = 'Seyda Neen, Arrille\'s Tradehouse' } }
+  function npc:isValid() return true end
+  function npc:teleport() end
+  function npc:addScript() end
+  function npc:sendEvent(name) events[#events + 1] = name end
+  actors.handlers.MP_ActorCellChange({ ref = npc, toCellKey = '-2,-9', x = 1, y = 2, z = 3 })
+  actors.handlers.MP_ActorMoveBatch({ { ref = npc, x = 1, y = 2, z = 3, yaw = 0, pitch = 0, flags = 0 } })
+  events = {}
+  actors.handlers.MP_ActorAuthorityGrant({ cellKey = '-2,-9', epoch = 1 })
+  local detached = false
+  for _, e in ipairs(events) do if e == 'MP_Detach' then detached = true end end
+  check('the destination cell\'s grant finds and detaches it', detached, table.concat(events, ','))
+  -- Two frames on, with nothing queued, the actor's own cell rules again.
+  pcall(actors.tick, 1); pcall(actors.tick, 2) -- the frame count is its first line; the stubs stop the rest
+  local okK, key = pcall(actors.cellKeyFor, 'o:npc1', npc)
+  check('two frames later obj.cell rules again', okK and key == "seyda neen, arrille's tradehouse", tostring(key))
+  package.loaded['scripts.mp.quests'] = nil
+  package.loaded['scripts.mp.actors'] = nil
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -39,6 +39,12 @@ local lastMirror = 0
 local lastAttachSweep = 0
 local watchKillRecord = nil -- record whose shared kill tally the scenarios watch
 local batchesIn = 0 -- diagnostic: ActorMoveBatch frames applied as a non-holder
+-- refKey -> { cellKey, frame }: where MP_ActorCellChange sent an actor. obj.cell still names
+-- the OLD cell until the teleport lands (end of frame, later on a retry), so a puppet
+-- re-attached from a pose in that window recorded the cell it left -- and the destination's
+-- detachActorPuppetsInCell never found it (a frozen NPC under its new holder).
+local movedTo = {}
+local frameNo = 0 -- actors.tick count
 
 -- --------------------------------------------------------------- ref helpers
 
@@ -494,7 +500,7 @@ local function attachActorPuppets(cellKey)
                 obj:addScript('scripts/mp/puppet.lua', { actorKey = key })
             end)
             if ok then
-                puppetActors[key] = { obj = obj, cellKey = cellKey }
+                puppetActors[key] = { obj = obj, cellKey = actors.cellKeyFor(key, obj) }
                 -- Died before we got here: the world says so; the body must agree.
                 if pendingDeaths[key] then
                     pendingDeaths[key] = nil
@@ -631,7 +637,7 @@ actors.handlers.MP_ActorMoveBatch = function(batch)
                 local ok = pcall(function()
                     obj:addScript('scripts/mp/puppet.lua', { actorKey = key })
                 end)
-                if ok then puppetActors[key] = { obj = obj, cellKey = cellKeyOf(obj.cell) } end
+                if ok then puppetActors[key] = { obj = obj, cellKey = actors.cellKeyFor(key, obj) } end
             end
             e.t = now
             e.actorKey = key -- re-arms a puppet detached a moment ago (puppet.lua MP_Pose)
@@ -661,6 +667,7 @@ actors.handlers.MP_ActorCellChange = function(data)
     -- engine looked it up as a name, failed inside the pcall, and the actor never arrived --
     -- so every NPC that walked outdoors kept standing indoors on every other screen.
     local cellArg = data.toCellKey:match('^%-?%d+,%-?%d+$') and '' or data.toCellKey
+    movedTo[key] = { cellKey = data.toCellKey, frame = frameNo }
     retry.teleport(obj, cellArg, util.vector3(data.x or 0, data.y or 0, data.z or 0))
 end
 
@@ -1288,7 +1295,17 @@ end
 
 -- --------------------------------------------------------------- tick
 
+-- The cell an actor's puppet belongs to: where MP_ActorCellChange sent it while that move is
+-- this frame's or the last, or still queued in retry.lua; otherwise where it stands.
+function actors.cellKeyFor(key, obj)
+    local m = movedTo[key]
+    if m and (frameNo - m.frame <= 1 or retry.pendingTeleport(obj)) then return m.cellKey end
+    movedTo[key] = nil
+    return cellKeyOf(obj.cell)
+end
+
 function actors.tick(now)
+    frameNo = frameNo + 1
     -- Non-holder: keep trying to puppet our cell's actors. Attaching ONLY on
     -- MP_ActorAuthorityInfo loses the race — that event lands on our PlayerCellChange,
     -- while the cell's actors are still streaming in, so cellActors() is empty or partial
