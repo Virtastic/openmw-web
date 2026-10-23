@@ -632,6 +632,10 @@ export class Quests {
     const prev = shared.globals[name];
     if (seq !== undefined && prev !== undefined && seq <= prev.seq) {
       log('debug', 'quest.global_stale_seq', { name, have: prev.seq, got: seq, from: player.name });
+      // Answered, not silent (1.7.1): a relogged client's per-name seq restarts at 1 while the
+      // stored one survives, and every write it made was refused with no reply. The stored
+      // value and seq bring it level; its next write then outbids the store.
+      player.peer.sendEvent('GlobalVarUpdate', { name, value: prev.value, seq: prev.seq });
       return;
     }
     // Absent seq = plain last-write-wins; keep the stored seq monotonic regardless.
@@ -684,8 +688,19 @@ export class Quests {
         if (CHARACTER_GLOBALS.has(k.toLowerCase())) globals[k] = own[k]!;
       }
     }
+    // WORLD-SHARED globals too, with their seqs (1.7.1). They live on the shared state, never
+    // on a doc, so a joiner was never given them -- and its per-name seq restarts at 1, so
+    // every write it made after a relog was refused as stale. `seqs` seeds the client's.
+    const seqs: Record<string, number> = {};
+    if (this.ctx.isShared('questVars')) {
+      for (const [k, g] of Object.entries(this.ctx.cells.sharedQuest().globals)) {
+        if (TIME_GLOBALS.has(k.toLowerCase()) || !this.isWorldGlobal(k.toLowerCase())) continue;
+        globals[k] = g.value;
+        seqs[k] = g.seq;
+      }
+    }
     if (Object.keys(globals).length === 0) return;
-    player.peer.sendEvent('GlobalVarSync', { globals });
+    player.peer.sendEvent('GlobalVarSync', { globals, ...(Object.keys(seqs).length > 0 ? { seqs } : {}) });
   }
 
   // Per-object MWScript locals. The body carries no cellKey (it piggybacks on object

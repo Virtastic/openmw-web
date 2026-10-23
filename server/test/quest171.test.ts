@@ -152,3 +152,29 @@ test('a client write refused as peer-owned is answered with the peer value', asy
   assert.equal(val(w, 'value'), 10);
   assert.equal(val(w, 'seq'), 4, 'with the stored seq, so its next write is not stale');
 });
+
+// Item 7: a world-shared global's stored seq survives a relog while the client's restarts at
+// 1. The join sync now carries the shared values with their seqs, and a stale write is answered.
+test('a rejoiner is given world globals with their seqs, and a stale write is answered', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, sharing: { questVars: true, worldGlobals: ['mp_world_seq'] } } as never,
+  });
+  t.after(() => server.close());
+  const a = await TestClient.connect(server.port);
+  await a.joinAsNew('Seq');
+  await a.waitEvent('PlayerList');
+  for (let i = 1; i <= 3; i++) a.sendEvent('GlobalVarUpdate', { name: 'mp_world_seq', value: i, seq: i });
+  await sleep(300);
+  a.close();
+  await sleep(300);
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinExisting('Seq');
+  const gs = await b.waitEvent('GlobalVarSync', () => true, 3000);
+  assert.equal((val(gs, 'globals') as Record<string, number>)['mp_world_seq'], 3, 'the world global is restored on join');
+  assert.equal((val(gs, 'seqs') as Record<string, number>)['mp_world_seq'], 3, 'with its stored seq');
+  b.sendEvent('GlobalVarUpdate', { name: 'mp_world_seq', value: 1, seq: 1 }); // a client that ignored the seed
+  const back = await b.waitEvent('GlobalVarUpdate', gv('mp_world_seq'), 3000);
+  assert.deepEqual([val(back, 'value'), val(back, 'seq')], [3, 3], 'the stale write is answered with the stored state');
+});

@@ -4658,5 +4658,18 @@ do
   check('a failed topic is not marked applied, so the next sync retries it', added[#added] == 'no such topic')
 end
 
+print('1.7.1 quests.lua -- a world global after a relog outbids the stored seq')
+do
+  local e, q = questEnv()
+  e.setGlobal('weather', 0)
+  q.tick(0) -- baseline
+  q.handlers.MP_GlobalVarSync({ globals = { weather = 3 }, seqs = { weather = 41 } })
+  e.setGlobal('weather', 4)
+  q.tick(1)
+  local seq
+  for _, c in ipairs(e.calls.events) do if c.name == 'GlobalVarUpdate' and c.body.name == 'weather' then seq = c.body.seq end end
+  check("the client's next write is stamped above the server's stored seq", seq == 42, tostring(seq))
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

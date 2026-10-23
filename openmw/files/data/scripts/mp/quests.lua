@@ -788,6 +788,11 @@ end
 -- each other), so this is the only way progress survives a relog or a world hop.
 handlers.MP_GlobalVarSync = function(data)
     local n = 0
+    -- World-shared globals arrive with the server's stored seq (1.7.1): ours restarts at 1
+    -- every session, and a write stamped below the stored one is refused as stale.
+    for name, seq in pairs(data.seqs or {}) do
+        if type(name) == 'string' and type(seq) == 'number' then globalSeq[name] = math.max(globalSeq[name] or 0, seq) end
+    end
     for name, value in pairs(data.globals or {}) do
         if type(name) == 'string' and type(value) == 'number' and not TIME_GLOBALS[string.lower(name)] then
             globals[name] = value
