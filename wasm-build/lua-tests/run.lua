@@ -4485,6 +4485,10 @@ do
   check('isInActorsProcessingRange skips the worldspace check when sim anchors exist',
     at:find('if (MWBase::Environment::get().getWorld()->getSimAnchorPositions().empty()\r\n                && target.getCell()->getCell()->getWorldSpace()', 1, true) ~= nil
     or at:find('if (MWBase::Environment::get().getWorld()->getSimAnchorPositions().empty()\n                && target.getCell()->getCell()->getWorldSpace()', 1, true) ~= nil)
+
+  -- 10. Command and AvoidDoor
+  check('Command cannot take an avatar', src(ENG .. 'mwmechanics/spelleffects.cpp'):find('!caster.getClass().isActor() || MWMechanics::isPlayerOrAvatar(target)', 1, true) ~= nil)
+  check('AvoidDoor never stacks on an avatar', src(ENG .. 'mwmechanics/aiavoiddoor.cpp'):find('if (MWMechanics::isPlayerOrAvatar(neighbor))', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

@@ -64,7 +64,7 @@ bool MWMechanics::AiAvoidDoor::execute(
     MWBase::Environment::get().getMechanicsManager()->getActorsInRange(pos.asVec3(), 100, actors);
     for (auto& neighbor : actors)
     {
-        if (neighbor == getPlayer())
+        if (MWMechanics::isPlayerOrAvatar(neighbor)) // an avatar is input-driven, not AI
             continue;
 
         MWMechanics::AiSequence& seq = neighbor.getClass().getCreatureStats(neighbor).getAiSequence();

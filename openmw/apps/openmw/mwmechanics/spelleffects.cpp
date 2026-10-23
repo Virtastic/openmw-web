@@ -544,7 +544,7 @@ namespace MWMechanics
             else if (effect.mEffectId == ESM::MagicEffect::CommandCreature
                 || effect.mEffectId == ESM::MagicEffect::CommandHumanoid)
             {
-                if (caster.isEmpty() || !caster.getClass().isActor() || target == getPlayer()
+                if (caster.isEmpty() || !caster.getClass().isActor() || MWMechanics::isPlayerOrAvatar(target)
                     || (effect.mEffectId == ESM::MagicEffect::CommandCreature) == target.getClass().isNpc())
                     return ESM::ActiveEffect::Flag_Invalid;
                 else if (effect.mMagnitude >= target.getClass().getCreatureStats(target).getLevel())
