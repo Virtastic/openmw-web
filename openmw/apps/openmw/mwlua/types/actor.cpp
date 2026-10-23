@@ -311,6 +311,12 @@ namespace MWLua
             const MWWorld::Class& cls = o.ptr().getClass();
             return cls.getWalkSpeed(o.ptr());
         };
+        // The speed a full movement control moves this actor at right now: fly or swim speed
+        // for a creature that flies or is in water, where getRunSpeed is its walk speed (mp).
+        actor["getMaxSpeed"] = [](const Object& o) {
+            const MWWorld::Class& cls = o.ptr().getClass();
+            return cls.getMaxSpeed(o.ptr());
+        };
         actor["getCurrentSpeed"] = [](const Object& o) {
             const MWWorld::Class& cls = o.ptr().getClass();
             return cls.getCurrentSpeed(o.ptr());

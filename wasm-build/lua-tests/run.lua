@@ -4190,7 +4190,7 @@ do
   check('placement passes no rotation (a yaw-only transform zeroed the pitch)',
     g:find("obj:teleport(inviteCellArg(key), tgt, { onGround = false })", 1, true) ~= nil
     and not g:find('rotation = util.transform.rotateZ(e.yaw or 0), onGround = false', 1, true))
-  check('puppet records carry no template mwscript', g:find("local draft = { template = template, name = name, mwscript = '' }", 1, true) ~= nil)
+  check('puppet records carry no template mwscript', g:find("local draft = { template = template, name = name, mwscript = '', model = '' }", 1, true) ~= nil)
   check('a paralyzed avatar stops its owner (kd)', g:find("getEffect('paralyze')", 1, true) ~= nil)
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
   local a = av:find('local placedFatigue = {}', 1, true)
@@ -4240,6 +4240,40 @@ do
   local mm = io.open('./openmw/apps/openmw/mwmechanics/mechanicsmanagerimp.cpp'):read('*a')
   check('a guard fighting an avatar keeps at it, and only its own pursuers join',
     mm:find('if (MWMechanics::isPlayerOrAvatar(target))', 1, true) ~= nil and mm:find('aiSeq.getActivePackage().getTarget() == target', 1, true) ~= nil)
+end
+
+-- ====================================== 1.7.0 B: NPC and creature sync (2026-10-23)
+print('1.7.0 sync -- re-attach race, creature top speed, snap facing, orphans, beast skeleton, refused death')
+do
+  local M = './openmw/files/data/scripts/mp/'
+  local g = io.open(M .. 'global.lua'):read('*a')
+  local a = io.open(M .. 'actors.lua'):read('*a')
+  local pu = io.open(M .. 'puppet.lua'):read('*a')
+  local ob = io.open(M .. 'objects.lua'):read('*a')
+  local pl = io.open(M .. 'player.lua'):read('*a')
+  local det = g:find('mpPuppetDetached = function(data)', 1, true)
+  local keep = det and g:find('if obj and obj:isValid() and actors.isPuppetedActor(obj) then return end', det, true)
+  local rm = det and g:find("pcall(obj.removeScript, obj, 'scripts/mp/puppet.lua')", det, true)
+  check('a re-attached puppet keeps its script (the detach hop checks first)', keep ~= nil and rm ~= nil and keep < rm)
+  check('each actor pose names its key', a:find('e.actorKey = key', 1, true) ~= nil)
+  check('a pose re-arms a puppet detached a moment ago',
+    pu:find('if degraded or (actorKey == nil and playerId == nil and e.actorKey ~= nil) then', 1, true) ~= nil
+    and pu:find('actorKey = actorKey or degradedKey or e.actorKey', 1, true) ~= nil)
+  check('a creature puppet steers by its max speed (fly/swim)', pu:find('speedOf = types.Actor.getMaxSpeed', 1, true) ~= nil)
+  local ab = io.open('./openmw/apps/openmw/mwlua/types/actor.cpp'):read('*a')
+  check('types.Actor.getMaxSpeed is bound', ab:find('actor["getMaxSpeed"]', 1, true) ~= nil)
+  check('a snap request carries the yaw', pu:find('yaw = target.yaw, why = why', 1, true) ~= nil)
+  check('an actor snap keeps the facing', a:find("{ rotation = util.transform.rotateZ(pos.yaw) }", 1, true) ~= nil)
+  check('a count-0 actor (expired summon) is gone to the peer', a:find('if obj.count == 0 then', 1, true) ~= nil
+    and a:find('if obj and obj:isValid() and obj.count > 0 then', 1, true) ~= nil)
+  check('a full cell state drops named-actor copies it lacks (never on the peer)',
+    ob:find('if data.actorsComplete == true and data.cellKey and not (mp.isSystem and mp.isSystem()) then', 1, true) ~= nil)
+  local obb = io.open('./openmw/apps/openmw/mwlua/objectbindings.cpp'):read('*a')
+  check('a same-cell teleport does not re-add a running local script',
+    obb:find('!world->getLocalScripts().isRunning(script, newPtr)', 1, true) ~= nil)
+  check('a refused death stands up at the peer hp, baselined first',
+    pl:find('if hp then identity.notePeerBars(hp) end', 1, true) ~= nil and g:find('if not data.standUp then teleportPlayerTo(data) end', 1, true) ~= nil)
+  check('the probe marks bodies past processing range', a:find('> 7168 * 7168 or nil', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

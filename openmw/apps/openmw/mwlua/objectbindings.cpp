@@ -140,8 +140,10 @@ namespace MWLua
                 newPtr = world->moveObject(ptr, destCell, pos);
                 if (srcCell == destCell)
                 {
+                    // Only if not already registered: a same-cell move keeps the Ptr, and mp puppets
+                    // snap with teleport (kagouti_diseased: "tried to add local script twice").
                     ESM::RefId script = cls.getScript(newPtr);
-                    if (!script.empty())
+                    if (!script.empty() && !world->getLocalScripts().isRunning(script, newPtr))
                         world->getLocalScripts().add(script, newPtr);
                 }
                 world->rotateObject(newPtr, rot, MWBase::RotationFlag_none);

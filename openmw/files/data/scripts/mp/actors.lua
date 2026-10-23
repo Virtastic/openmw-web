@@ -269,7 +269,11 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
     -- named nothing about it travels -- nobody could resolve it -- so it is left out below.
     local addressable = {}
     for _, obj in ipairs(live) do
-        if obj.contentFile or (deps.netIdOf and deps.netIdOf(obj)) then
+        -- COUNT 0 IS GONE. An expired summon is deleted with count 0 and stays valid; listed as
+        -- live it was never "gone" below, so no ObjectDelete went out and every client's copy of
+        -- the skeleton stood there for good, with no pose stream (npcNoPose, prod 2026-10-23).
+        if obj.count == 0 then
+        elseif obj.contentFile or (deps.netIdOf and deps.netIdOf(obj)) then
             addressable[#addressable + 1] = obj
         elseif not netPending[obj.id] and deps.requestNetActor
             -- CONTENT RECORDS ONLY. A levelled creature, a script spawn, a summon: all bodies
@@ -412,7 +416,7 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
     for key, tracked in pairs(cell.actors) do
         if tracked.seen ~= now then
             local obj = tracked.obj
-            if obj and obj:isValid() then
+            if obj and obj:isValid() and obj.count > 0 then
                 local toCell = cellKeyOf(obj.cell)
                 -- toCell == cellKey would mean it is still here and we merely missed it this
                 -- pass; only a real move is worth an event.
@@ -630,6 +634,7 @@ actors.handlers.MP_ActorMoveBatch = function(batch)
                 if ok then puppetActors[key] = { obj = obj, cellKey = cellKeyOf(obj.cell) } end
             end
             e.t = now
+            e.actorKey = key -- re-arms a puppet detached a moment ago (puppet.lua MP_Pose)
             pcall(function() obj:sendEvent('MP_Pose', e) end)
         end
     end
@@ -1212,7 +1217,10 @@ function actors.snapActor(actorKey, pos)
     local obj = resolveRefKey(actorKey)
     if obj and obj:isValid() then
         local cellArg = obj.cell and not obj.cell.isExterior and obj.cell.name or ''
-        pcall(function() obj:teleport(cellArg, util.vector3(pos.x, pos.y, pos.z)) end)
+        -- WITH ITS FACING. A snap that kept the old yaw left the body inside the 64 u gate,
+        -- walking the new way while turned round (1% of walking NPCs on prod, 2026-10-23).
+        local opts = type(pos.yaw) == 'number' and { rotation = util.transform.rotateZ(pos.yaw) } or nil
+        pcall(function() obj:teleport(cellArg, util.vector3(pos.x, pos.y, pos.z), opts) end)
     end
 end
 
@@ -1345,6 +1353,11 @@ function actors.tick(now)
         -- order, which differs per client, so key by recordId and sort. Scenarios compare
         -- the SAME record on both clients.
         local probe, probeN = {}, {}
+        -- far: past the engine's actor processing range (7168 u, the default) from us, where a
+        -- puppet is hidden and frozen by the engine itself (actors.cpp) -- nothing anyone sees,
+        -- so the page's NPC path/facing/no-pose telemetry leaves it out.
+        local me = world.players[1]
+        local mePos = me and me:isValid() and me.position
         for _, obj in ipairs(cellActors(ownCell)) do
             local rec = obj.recordId
             -- n: how many of this record stand in the cell. First-wins by record means two
@@ -1378,7 +1391,8 @@ function actors.tick(now)
                 -- (telemetry npcPath), not to whichever actor happens to stand nearest.
                 probe[rec] = { x = p.x, y = p.y, z = p.z, yaw = obj.rotation:getYaw(), dead = types.Actor.isDead(obj),
                     guard = isGuard, hp = hp, n = probeN[rec] or 1, puppet = puppeted,
-                    id = obj.id, net = deps.netIdOf and deps.netIdOf(obj) or nil }
+                    id = obj.id, net = deps.netIdOf and deps.netIdOf(obj) or nil,
+                    far = mePos and ((p.x - mePos.x) ^ 2 + (p.y - mePos.y) ^ 2) > 7168 * 7168 or nil }
             end
         end
         mp.set('actorProbe', json.encode(probe))

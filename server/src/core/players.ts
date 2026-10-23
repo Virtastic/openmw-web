@@ -94,6 +94,9 @@ export interface Player {
   // Wall-clock of the peer's newest avatar-bars report for this player; while fresh the
   // client's own PlayerStatsDynamic assertion is ignored (Phase 4A one-writer rule).
   peerStatsAt?: number;
+  // When this player's last PlayerDeath was refused (peer says alive): a second refusal stands
+  // the client back up instead of leaving it a corpse (playerstate.ts PlayerDeath).
+  deathRefusedAt?: number;
   // Wall-clock of the peer's newest avatar item-state (wear/charge/soul) report; while fresh
   // the client's own itemStates (inside PlayerInventory) are ignored -- counts still land.
   peerItemStatesAt?: number;

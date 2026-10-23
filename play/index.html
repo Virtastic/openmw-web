@@ -728,7 +728,7 @@ try {
      if (!rx.length) return;
      for (var rec in probe) {
        var p = probe[rec];
-       if (rec === 'player' || !p || p.dead || (p.n || 1) !== 1) continue;
+       if (rec === 'player' || !p || p.dead || p.far || (p.n || 1) !== 1) continue;
        // ITS OWN POSES, NOT THE NEAREST ACTOR'S. Matched by position alone, an NPC with no pose
        // stream of its own was measured against whichever neighbour stood closest: 200-500 u "off
        // its path" for 100 s at 180 fps with no snap (prod 2026-10-17, ar5tbvgs at Pelagiad: 20

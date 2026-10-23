@@ -1158,6 +1158,17 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
       if (hp !== undefined && hp > 0) {
         log('warn', 'state.death_unconfirmed', { from: player.name, hp });
         ctx.noteAnomaly?.(player.accountKey, 'death_unconfirmed');
+        // STILL ALIVE BY THE PEER'S WORD, AGAIN: the client died of something the peer never
+        // simulated, and its 5 s resend was refused forever -- a corpse with healthy bars. The
+        // first refusal waits (the peer's own 0 may simply be late); the next stands it back up
+        // where it lies, at the peer's health (no teleport, no refill).
+        const now = Date.now();
+        if (player.deathRefusedAt !== undefined && now - player.deathRefusedAt <= 15000) {
+          player.peer.sendEvent('PlayerResurrect', { restoreHp: false, standUp: true, hp });
+          player.deathRefusedAt = undefined;
+        } else {
+          player.deathRefusedAt = now;
+        }
         return true;
       }
     }

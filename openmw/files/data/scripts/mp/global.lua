@@ -500,7 +500,10 @@ local function puppetRecordId(id, name)
     -- mwscript '': the template's own script (a villager's, or retail's first NPC record's) ran
     -- on every puppet, and on the avatar it restarted with reset locals at every placement
     -- (a same-cell teleport re-adds the local script, objectbindings.cpp).
-    local draft = { template = template, name = name, mwscript = '' }
+    -- model '': no skeleton of the template's. Its base_anim.nif overrode the race's own pick
+    -- (npcanimation.cpp: a set model wins), so a Khajiit or Argonian friend had no Tail node
+    -- ("Error adding NPC part: Can't find attachment node Tail"). Empty = chosen by race and sex.
+    local draft = { template = template, name = name, mwscript = '', model = '' }
     if app then
         draft.race = app.race
         draft.class = app.class
@@ -2935,8 +2938,9 @@ local eventHandlers = {
 
     -- M2 respawn service: teleport self, then let player.lua revive/refill.
     MP_PlayerResurrect = function(data)
-        teleportPlayerTo(data)
-        toPlayer('MP_DoResurrect', { restoreHp = data.restoreHp == true })
+        -- standUp: a death the peer never confirmed (playerstate.ts) -- up where we lie.
+        if not data.standUp then teleportPlayerTo(data) end
+        toPlayer('MP_DoResurrect', { restoreHp = data.restoreHp == true, standUp = data.standUp == true, hp = data.hp })
     end,
 
     -- Test hook (equip:<id>:<slot>): grant an item into the LOCAL player's inventory.
@@ -3603,6 +3607,12 @@ local eventHandlers = {
     -- (s125 in #90/#91): a detach on a body without the script is a no-op.
     mpPuppetDetached = function(data)
         local obj = data.obj
+        -- RE-ATTACHED IN THE MEANTIME. A creature crossing a cell border is detached, and its new
+        -- cell's first pose can land before this hop: actors.lua records it as puppeted again (the
+        -- addScript is a no-op on a script still attached) and the pose re-arms it. Removing the
+        -- script now left a body running its own AI while counted as a puppet -- slaughterfish and
+        -- cliff racers drawn up to 1,900 u off their path with no snap (prod 2026-10-23).
+        if obj and obj:isValid() and actors.isPuppetedActor(obj) then return end
         if obj and obj:isValid() and obj:hasScript('scripts/mp/puppet.lua') then
             pcall(obj.removeScript, obj, 'scripts/mp/puppet.lua')
         end

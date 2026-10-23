@@ -492,6 +492,12 @@ test("a client's PlayerDeath is ignored while the peer reports it alive, honoure
   const o = await (await fetch(`http://127.0.0.1:${server.port}/admin/api/overview`, { headers: { authorization: 'Bearer stats-dash' } })).json() as { players: { account: string; anomalies: Record<string, number> }[] };
   assert.equal(o.players.find((p) => p.account === 'runner')?.anomalies.death_unconfirmed, 1, 'the claimed death is recorded for moderation');
 
+  // Refused AGAIN (the client's 5 s resend): stand it back up where it lies, at the peer's hp.
+  a.sendEvent('PlayerDeath', {});
+  const up = await a.waitEvent('PlayerResurrect', () => true, 3000);
+  assert.deepEqual(up.value, { restoreHp: false, standUp: true, hp: 42 }, 'no refill, no teleport');
+  a.inbox.events.length = 0;
+
   hp = 0;
   await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 0);
   a.sendEvent('PlayerDeath', {});

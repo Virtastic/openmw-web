@@ -322,7 +322,7 @@ local function requestSnap(target, why, force)
     -- teleport is in flight cannot remove the body (count 0), so this script lived on, its
     -- stale target 16k units away, and every snap it asked for was applied to the successor.
     core.sendGlobalEvent('mpSnapRequest',
-        { id = playerId, actorKey = actorKey, obj = self.object, x = target.x, y = target.y, z = target.z, why = why })
+        { id = playerId, actorKey = actorKey, obj = self.object, x = target.x, y = target.y, z = target.z, yaw = target.yaw, why = why })
 end
 
 -- M2: setEquipment only works once the items granted by global.lua exist in our inventory
@@ -687,7 +687,12 @@ local function onUpdate(dt)
     -- body is facing: no turn, so the stance's idle plays.
     local yawErr = shortestArc((target.yaw or curYaw) - curYaw)
     self.controls.yawChange = math.abs(yawErr) < YAW_DEADBAND and 0 or yawErr
-    local okT, top = pcall(self.controls.run and types.Actor.getRunSpeed or types.Actor.getWalkSpeed, self)
+    -- A CREATURE'S TOP SPEED IS ITS MAX SPEED. getRunSpeed is a creature's WALK speed, but a flier
+    -- or a swimmer moves at its fly or swim speed (creature.cpp getMaxSpeed): the controls asked a
+    -- slaughterfish for the wrong fraction, and it overshot and oscillated round its path.
+    local speedOf = self.controls.run and types.Actor.getRunSpeed or types.Actor.getWalkSpeed
+    if types.Actor.getMaxSpeed and types.Creature and types.Creature.objectIsInstance(self) then speedOf = types.Actor.getMaxSpeed end
+    local okT, top = pcall(speedOf, self)
     if not okT or type(top) ~= 'number' or top <= 0 then top = 150 end
     local cx, cy = vx, vy
     if steering then cx, cy = vx + dx / math.max(CATCHUP_S, dt or 0), vy + dy / math.max(CATCHUP_S, dt or 0) end
@@ -757,9 +762,11 @@ return {
             -- The peer is back and driving this actor again: re-arm. addScript on a script
             -- that is still attached is a silent no-op (no onInit), so this is the only
             -- place a degraded puppet learns the outage is over.
-            if degraded then
+            -- ...or a cell-border detach whose new cell's first pose came before the script was
+            -- removed (global.lua mpPuppetDetached then keeps it): drive it again.
+            if degraded or (actorKey == nil and playerId == nil and e.actorKey ~= nil) then
                 degraded = false
-                actorKey = actorKey or degradedKey
+                actorKey = actorKey or degradedKey or e.actorKey
                 placed = false
                 self:enableAI(false)
                 markPuppet(true)

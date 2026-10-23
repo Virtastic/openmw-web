@@ -182,6 +182,8 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
     disabled: disabledKeys(doc),
     enabled: enabledKeys(doc),
     deaths,
+    // Every named actor of the cell is in `placed`: a client drops copies the list lacks.
+    actorsComplete: true,
   };
   // Bounded like placed/deleted; past the cap the cell simply sends none.
   if (withMemberVars) body['memberVars'] = memberVarEntries(doc) <= MAX_MEMBER_VARS_PER_CELL ? { ...(doc.memberVars ?? {}) } : {};
@@ -203,6 +205,8 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
       dropped[field] = (dropped[field] ?? 0) + 1;
     }
   }
+  // Trimmed placed may have lost actors (they go last): the list no longer proves absence.
+  if (dropped['placed']) body['actorsComplete'] = false;
   log('warn', 'world.cell_state_trimmed', { cellKey, nodes, ...dropped });
   return body;
 }

@@ -1188,8 +1188,27 @@ handlers.MP_CellSnapshotReplace = function(data)
 end
 
 handlers.MP_WorldCellState = function(data)
+    local named = {}
     for _, place in ipairs(data.placed or {}) do
         handlers.MP_ObjectPlace(place)
+        if place.actor and place.netId then named[place.netId] = true end
+    end
+    -- COPIES THE WORLD NO LONGER HAS. A peer restart or a cell release purges the named actors
+    -- (worldstate.ts purgeNamedActors) with deletes only to whoever heard that cell then; anyone
+    -- else kept a nix-hound or cliff racer nothing streams (npcNoPose, prod 2026-10-23). The full
+    -- list (actorsComplete: the server did not trim it) says which of ours are still real.
+    -- Never on the peer: its named actors are the originals, not copies.
+    if data.actorsComplete == true and data.cellKey and not (mp.isSystem and mp.isSystem()) then
+        for netId, obj in pairs(netToObj) do
+            if not named[netId] and obj:isValid() and netSpawned[obj.id]
+                and types.Actor.objectIsInstance(obj) and cellKeyOfObj(obj) == data.cellKey then
+                netToObj[netId] = nil
+                objIdToNet[obj.id] = nil
+                netSpawned[obj.id] = nil
+                netActorCount = math.max(0, netActorCount - 1)
+                pcall(function() obj:remove() end)
+            end
+        end
     end
     -- The dead stay dead for a late arrival (see actors.noteCellDeaths). Called with an empty
     -- list too: the holder waits for the record itself before streaming bars (#431).

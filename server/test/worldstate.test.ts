@@ -522,6 +522,14 @@ test('a trimmed cell state keeps its actors and sheds loose placed objects first
   const placed = body['placed'] as { netId: number; actor?: boolean }[];
   assert.ok(placed.length < MAX_KEYS_PER_CELL + 20, 'something was trimmed');
   assert.equal(placed.filter((p) => p.actor === true).length, 20, 'every actor survived the trim');
+  assert.equal(body['actorsComplete'], false, 'a trimmed placed list cannot prove an actor is gone');
+});
+
+// A client drops named-actor copies the full list lacks (orphans after a peer restart).
+test('an untrimmed cell state says its actor list is complete', () => {
+  const doc = emptyCellDoc();
+  doc.placed['n:7'] = { netId: 7, recordId: 'nix-hound', cellKey: '0,0', x: 0, y: 0, z: 0, rotZ: 0, count: 1, byId: 2, actor: true };
+  assert.equal(cellStateBody('0,0', doc, [], true)['actorsComplete'], true);
 });
 
 // Backlog 214: a client's PlaceAtPC actor is the HOLDER's to spawn (the client's engine
