@@ -486,9 +486,11 @@ local function flushMemberVars(watch)
     for name, value in pairs(snap) do
         if watch.last[name] ~= value then
             watch.last[name] = value
-            -- No cellKey in the body: the server infers it from our current cell.
+            -- The OBJECT's cell (1.7.1), which the server validates against our reach: inferred
+            -- from ours, an NPC's locals were filed under whatever cell the player stood in.
+            local okk, key = pcall(function() return cellKeyOf(watch.obj.cell) end)
             local a = npcAddr(watch.obj)
-            if a then mp.sendEvent('MemberVarUpdate', { ref = a.ref, net = a.net, name = name, value = value, cellKey = watch.cellKey }) end
+            if a then mp.sendEvent('MemberVarUpdate', { ref = a.ref, net = a.net, name = name, value = value, cellKey = (okk and key) or watch.cellKey }) end
         end
     end
 end
@@ -501,31 +503,34 @@ end
 -- rarely the object's.
 local HELD_WATCH_POLL = 1.0
 local heldScanAt = 0
-local function armHeldWatches(now)
-    if now < heldScanAt or not (mp.isSystem and mp.isSystem()) or not deps.heldCellsFn then return end
-    heldScanAt = now + SCRIPTED_SCAN_INTERVAL
-    for _, cell in ipairs(deps.heldCellsFn()) do
-        local cellKey = cellKeyOf(cell)
-        local okc, list = pcall(function() return cell:getAll() end)
-        for _, obj in ipairs(okc and list or {}) do
-            if not memberWatch[obj.id] and npcAddr(obj) then
-                local oks, script = pcall(world.mwscript.getLocalScript, obj)
-                -- `variables` is userdata with __pairs, not a table: next() throws (116 peer
-                -- onUpdate failures in #102, s114); pairs() is the only way to ask.
-                local hasVars = false
-                if oks and script then
-                    local okp = pcall(function() for _ in pairs(script.variables) do hasVars = true; break end end)
-                    hasVars = okp and hasVars
-                end
-                if hasVars then
-                    memberWatch[obj.id] = {
-                        obj = obj, script = script, last = scriptVarSnapshot(script), cellKey = cellKey,
-                        nextPoll = now + HELD_WATCH_POLL, poll = HELD_WATCH_POLL, until_ = math.huge,
-                    }
-                end
+-- Arm an open-ended watch on every scripted, addressable object in `cell` not already watched.
+local function armCellWatches(cell, now, poll, dialogue)
+    local cellKey = cellKeyOf(cell)
+    local okc, list = pcall(function() return cell:getAll() end)
+    for _, obj in ipairs(okc and list or {}) do
+        if not memberWatch[obj.id] and npcAddr(obj) then
+            local oks, script = pcall(world.mwscript.getLocalScript, obj)
+            -- `variables` is userdata with __pairs, not a table: next() throws (116 peer
+            -- onUpdate failures in #102, s114); pairs() is the only way to ask.
+            local hasVars = false
+            if oks and script then
+                local okp = pcall(function() for _ in pairs(script.variables) do hasVars = true; break end end)
+                hasVars = okp and hasVars
+            end
+            if hasVars then
+                memberWatch[obj.id] = {
+                    obj = obj, script = script, last = scriptVarSnapshot(script), cellKey = cellKey,
+                    nextPoll = now + poll, poll = poll, until_ = math.huge, dialogue = dialogue,
+                }
             end
         end
     end
+end
+
+local function armHeldWatches(now)
+    if now < heldScanAt or not (mp.isSystem and mp.isSystem()) or not deps.heldCellsFn then return end
+    heldScanAt = now + SCRIPTED_SCAN_INTERVAL
+    for _, cell in ipairs(deps.heldCellsFn()) do armCellWatches(cell, now, HELD_WATCH_POLL) end
 end
 
 local function tickMemberVars(now)
@@ -551,6 +556,14 @@ local function armLockWatch(obj)
         obj = obj, script = script, last = scriptVarSnapshot(script),
         nextPoll = core.getRealTime() + MEMBER_POLL, until_ = math.huge,
     }
+    -- A dialogue result may write ANOTHER object's locals ("lever"->Set state to 1): every
+    -- scripted object in the conversation's cell is watched until the release (1.7.1).
+    -- ponytail: an object in a cell this client has not loaded is written on no engine here
+    -- and cannot be watched; a result script writing such a far ref still does not travel.
+    if not (mp.isSystem and mp.isSystem()) then
+        local okc, cell = pcall(function() return obj.cell end)
+        if okc and cell then armCellWatches(cell, core.getRealTime(), HELD_WATCH_POLL, true) end
+    end
 end
 
 -- ================================================================== dialogue lock
@@ -624,6 +637,13 @@ function quests.releaseLock(why)
     if watch then
         if obj:isValid() then pcall(flushMemberVars, watch) end
         watch.until_ = core.getRealTime() + MEMBER_WATCH_SECONDS
+    end
+    for _, w in pairs(memberWatch) do
+        if w.dialogue then
+            if w.obj:isValid() then pcall(flushMemberVars, w) end
+            w.dialogue = nil
+            w.until_ = core.getRealTime() + MEMBER_WATCH_SECONDS
+        end
     end
     local a = npcAddr(obj)
     if a then mp.sendEvent('DialogueLock', { ref = a.ref, net = a.net, cellKey = deps.ownCellKeyFn(), want = false }) end

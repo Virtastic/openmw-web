@@ -703,15 +703,22 @@ export class Quests {
     player.peer.sendEvent('GlobalVarSync', { globals, ...(Object.keys(seqs).length > 0 ? { seqs } : {}) });
   }
 
-  // Per-object MWScript locals. The body carries no cellKey (it piggybacks on object
-  // interaction), so the cell is inferred from the sender's current cell.
+  // Per-object MWScript locals, filed under the OBJECT's cell.
   private memberVar(player: Player, body: LTable): void {
     const ref = parseObjRef(body);
     const name = str(body.get('name'));
     const value = finite(body.get('value'));
     // The peer names the cell (#217): it watches scripted objects in every cell it holds,
-    // which is rarely the one its dummy stands in. A client's body still infers its own.
-    const cellKey = (player.system === true && str(body.get('cellKey'))) || player.cellKey;
+    // which is rarely the one its dummy stands in. A client names it too since 1.7.1 -- an
+    // NPC's locals were filed under the cell the PLAYER stood in, so a neighbour-cell NPC's
+    // state was stored (and restored) against the wrong cell doc. A client's cell must be
+    // one it can see; an older client that names none still infers its own.
+    const named = str(body.get('cellKey'), MAX_CELL_KEY);
+    if (named !== undefined && player.system !== true && !cellsVisible(player.cellKey, named)) {
+      this.drop(player, 'MemberVarUpdate', 'cell out of reach');
+      return;
+    }
+    const cellKey = named ?? player.cellKey;
     // A content ref, or the net id of a runtime actor the holder named (a script-placed NPC
     // runs its own local script like any other).
     if (!ref || !name || value === undefined || !cellKey) {

@@ -1846,9 +1846,10 @@ do
   check('the peer arms open-ended member watches over held cells, with the cell key on the wire',
     g:find('heldCellsFn = function() return actors.heldCells() end, -- #217', 1, true) ~= nil
     and q:find('local function armHeldWatches(now)', 1, true) ~= nil
-    and q:find('poll = HELD_WATCH_POLL, until_ = math.huge,', 1, true) ~= nil
-    and q:find('value = value, cellKey = watch.cellKey }', 1, true) ~= nil
-    and qs:find("(player.system === true && str(body.get('cellKey'))) || player.cellKey", 1, true) ~= nil)
+    and q:find('armCellWatches(cell, now, HELD_WATCH_POLL)', 1, true) ~= nil
+    and q:find('poll = poll, until_ = math.huge, dialogue = dialogue,', 1, true) ~= nil
+    and q:find('cellKey = (okk and key) or watch.cellKey }', 1, true) ~= nil
+    and qs:find("const cellKey = named ?? player.cellKey;", 1, true) ~= nil)
   check('OpSay on the peer becomes ActorSay and puppets core.sound.say the line',
     snd:find('MWMP::recordScriptNote({ "say"', 1, true) ~= nil
     and g:find("elseif n.kind == 'say' then", 1, true) ~= nil
@@ -4669,6 +4670,28 @@ do
   local seq
   for _, c in ipairs(e.calls.events) do if c.name == 'GlobalVarUpdate' and c.body.name == 'weather' then seq = c.body.seq end end
   check("the client's next write is stamped above the server's stored seq", seq == 42, tostring(seq))
+end
+
+print("1.7.1 quests.lua -- a conversation watches its cell's scripted objects; a member var names the object's cell")
+do
+  local e, q = questEnv()
+  local cell
+  local function obj(id) return { id = id, recordId = id, contentFile = 'morrowind.esm', isValid = function() return true end,
+    activateBy = function() end, cell = nil } end
+  local npc, lever = obj('npc'), obj('lever')
+  cell = { isExterior = true, gridX = 0, gridY = 1, getAll = function() return { npc, lever } end }
+  npc.cell, lever.cell = cell, cell
+  local scripts = { npc = { variables = { talked = 0 } }, lever = { variables = { state = 0 } } }
+  e.world.mwscript.getLocalScript = function(o) return scripts[o.id] end
+  q.onNpcActivate(npc, { id = 'player' })
+  q.handlers.MP_DialogueLockResult({ ref = npc, granted = true })
+  scripts.lever.variables.state = 1 -- the dialogue result: "lever"->Set state to 1
+  e.advance(2)
+  q.tick(2)
+  local upd
+  for _, c in ipairs(e.calls.events) do if c.name == 'MemberVarUpdate' and c.body.name == 'state' then upd = c.body end end
+  check("a dialogue result's write to another object in the cell travels", upd ~= nil and upd.value == 1)
+  check("the update names the object's own cell", upd ~= nil and upd.cellKey == '0,1', upd and tostring(upd.cellKey))
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

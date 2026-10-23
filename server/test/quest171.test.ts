@@ -178,3 +178,30 @@ test('a rejoiner is given world globals with their seqs, and a stale write is an
   const back = await b.waitEvent('GlobalVarUpdate', gv('mp_world_seq'), 3000);
   assert.deepEqual([val(back, 'value'), val(back, 'seq')], [3, 3], 'the stale write is answered with the stored state');
 });
+
+// Item 8: an NPC's locals are filed under the NPC's own cell (the client names it, the server
+// checks it is in reach), not under the cell the writing player stands in.
+test("a member var is filed under the object's own cell, which must be in the writer's reach", async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+  });
+  t.after(() => server.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Writer');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  await c.joinAsNew('Neighbour');
+  await c.waitEvent('PlayerList');
+  c.sendCellChange('0,2', 0, 8192 * 2, 0);
+  await sleep(200);
+  const mv = (n: string) => (v: unknown) => (v as { name?: string })?.name === n;
+  a.sendEvent('MemberVarUpdate', { net: 41, name: 'far_state', value: 2, cellKey: '0,2' }); // two cells off: out of reach, dropped
+  a.sendEvent('MemberVarUpdate', { net: 41, name: 'npc_state', value: 3, cellKey: '0,1' });
+  const got = await c.waitEvent('MemberVarUpdate', mv('npc_state'), 3000);
+  assert.equal(val(got, 'value'), 3, "filed under 0,1, the write reaches a player who sees 0,1 but not the writer's 0,0");
+  assert.equal(c.inbox.events.filter((e) => e.name === 'MemberVarUpdate' && mv('far_state')(e.value)).length, 0);
+});
