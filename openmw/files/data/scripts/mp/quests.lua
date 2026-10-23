@@ -642,12 +642,18 @@ function quests.releaseLock(why)
     -- Their script locals too: the last diff, then the watch runs out like any other.
     local watch = memberWatch[obj.id]
     if watch then
-        if obj:isValid() then pcall(flushMemberVars, watch) end
+        if obj:isValid() then
+            local okf, errf = pcall(flushMemberVars, watch)
+            if not okf then print('[mp] memberVar: final flush on release failed: ' .. tostring(errf)) end
+        end
         watch.until_ = core.getRealTime() + MEMBER_WATCH_SECONDS
     end
     for _, w in pairs(memberWatch) do
         if w.dialogue then
-            if w.obj:isValid() then pcall(flushMemberVars, w) end
+            if w.obj:isValid() then
+                local okf, errf = pcall(flushMemberVars, w)
+                if not okf then print('[mp] memberVar: final flush on release failed: ' .. tostring(errf)) end
+            end
             w.dialogue = nil
             w.until_ = core.getRealTime() + MEMBER_WATCH_SECONDS
         end
@@ -824,9 +830,10 @@ handlers.MP_GlobalVarSync = function(data)
         if type(name) == 'string' and type(value) == 'number' and not TIME_GLOBALS[string.lower(name)] then
             globals[name] = value
             applying = true
-            local ok = pcall(function() globalStore()[name] = value end)
+            local ok, err = pcall(function() globalStore()[name] = value end)
             applying = false
-            if ok then n = n + 1 end
+            if ok then n = n + 1
+            else print('[mp] global "' .. name .. '" not restorable here: ' .. tostring(err)) end
         end
     end
     if n > 0 then print('[mp] restored ' .. tostring(n) .. ' character globals') end
@@ -854,6 +861,7 @@ end
 local SCRIPTS_INTERVAL = 5.0
 local nextScriptsAt = 0
 local reportedScripts = nil -- name -> true, as last told to the server
+local scriptsReadFailed = false
 -- Never persisted: the tutorial's scripts stop themselves and would drag a joiner into chargen;
 -- Startup is the engine's own once-per-game entry (main is left alone -- it always runs).
 local function scriptIsCampaign(id)
@@ -864,7 +872,13 @@ end
 local function diffGlobalScripts()
     if not mp.runningGlobalScripts then return end
     local ok, list = pcall(mp.runningGlobalScripts)
-    if not (ok and type(list) == 'table') then return end
+    if not (ok and type(list) == 'table') then
+        if not scriptsReadFailed then
+            scriptsReadFailed = true -- once: this runs every 5 s
+            print('[mp] global scripts: cannot list running scripts: ' .. tostring(list))
+        end
+        return
+    end
     local now = {}
     for _, id in ipairs(list) do
         if type(id) == 'string' and scriptIsCampaign(id) then now[string.lower(id)] = true end
@@ -886,8 +900,9 @@ handlers.MP_GlobalScriptsSync = function(data)
     local n = 0
     for _, id in ipairs(data.running) do
         if type(id) == 'string' and scriptIsCampaign(id) then
-            local ok = pcall(mp.startGlobalScript, id)
-            if ok then n = n + 1 end
+            local ok, err = pcall(mp.startGlobalScript, id)
+            if ok then n = n + 1
+            else print('[mp] global scripts: could not start "' .. id .. '": ' .. tostring(err)) end
         end
     end
     if n > 0 then print('[mp] started ' .. tostring(n) .. ' campaign global scripts') end

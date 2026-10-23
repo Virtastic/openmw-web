@@ -1095,7 +1095,7 @@ do
     pl:find("MP_CloseDialogue = function()", 1, true) ~= nil and pl:find("I.UI.removeMode('Dialogue')", 1, true) ~= nil)
   check('the lock grant arms an open-ended member-var watch and the release flushes it',
     q:find('until_ = math.huge', 1, true) ~= nil and q:find('armLockWatch(obj)', 1, true) ~= nil
-    and q:find('if obj:isValid() then pcall(flushMemberVars, watch) end', 1, true) ~= nil)
+    and q:find('local okf, errf = pcall(flushMemberVars, watch)', 1, true) ~= nil)
   check('the re-run activation does not shorten the conversation watch back to 6 s',
     q:find('if lockHeld and lockHeld.id == object.id and memberWatch[object.id] then return end', 1, true) ~= nil)
 end
@@ -4765,6 +4765,22 @@ do
   local b = a and tx:find('if (to.isEmpty())\n                    to = MWBase::Environment::get().getWorld()->searchPtr(name, false);', a, true)
   check('OpGetDistance tries the nearest avatar for "player", then the unchanged lookup', a ~= nil and b ~= nil
     and tx:find('if (name == "player")', g, true) ~= nil)
+end
+
+print('1.7.1 quests.lua -- a failed restore, script start or script listing is printed, not swallowed')
+do
+  local e, q = questEnv()
+  setmetatable(e.globals, { __newindex = function(_, k) error('no global ' .. k) end })
+  e.mp.startGlobalScript = function() error('no such script') end
+  local listed = 0
+  e.mp.runningGlobalScripts = function() listed = listed + 1; error('engine refused') end
+  q.handlers.MP_GlobalVarSync({ globals = { mp_missing = 1 } })
+  q.handlers.MP_GlobalScriptsSync({ running = { 'MoveMehra' } })
+  q.tick(0); q.tick(5); q.tick(10)
+  local function said(s) local n = 0; for _, p in ipairs(e.calls.prints) do if p:find(s, 1, true) then n = n + 1 end end; return n end
+  check('a global the sync cannot restore is printed', said('global "mp_missing" not restorable here') == 1)
+  check('a campaign script that cannot start is printed', said('could not start "MoveMehra"') == 1)
+  check('a failed script listing is printed once, not every poll', listed >= 2 and said('cannot list running scripts') == 1)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
