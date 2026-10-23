@@ -34,28 +34,6 @@ export interface ProxySettings {
   port?: number;
   /** Upstream container name and port, as compose names them. */
   upstream?: string;
-  /**
-   * Serve play/launcher.html, the hosted site's chooser. Off unless the operator opts in.
-   *
-   * It asks whether you want the bundled sample game, your own local Morrowind, or
-   * multiplayer — none of which is a question for somebody who arrived at a particular
-   * server to play on it. That is what "/" is for, and it is how the app is meant to be used.
-   *
-   * The launcher is kept working as a SHOWCASE: a page to demonstrate the project with, and
-   * to let somebody try it without committing a server to a particular shape. Env-only and
-   * deliberately not a dashboard setting — it says what this deployment is being used FOR,
-   * which is not the same kind of thing as the settings on that page, and a server someone
-   * plays on should not sprout a chooser because a box got ticked.
-   */
-  launcher?: boolean;
-  /**
-   * A multiplayer (gateway) deployment. There the launcher is not a showcase but the ONLY way
-   * in: "/" signs a player in and hands them to /launcher.html, which asks the gateway for a
-   * profile, a character and a world (only /w/<id> is accepted on the socket). Redirecting
-   * /launcher.html to / in that mode looped every player back to the front door forever.
-   * OMW_ENABLE_LAUNCHER=1 stays a manual override for the single-player showcase.
-   */
-  multiplayer?: boolean;
 }
 
 /**
@@ -66,141 +44,20 @@ export interface ProxySettings {
  * how they would fix it — a mistyped domain must not take the admin page down with it.
  */
 export function renderCaddyfile(
-  { domain, upstream = 'openmw-web:8080', launcher = false, multiplayer = false, internal = false, port = 80 }: ProxySettings,
+  { domain, upstream = 'openmw-web:8080', internal = false, port = 80 }: ProxySettings,
 ): string {
   const site = (address: string, tls: string): string => `
 ${address} {
 ${tls}
 	encode zstd gzip
 
-	# WITHOUT THESE THREE HEADERS THERE IS NO GAME.
-	#
-	# The engine is a pthreads build: it needs SharedArrayBuffer, and a browser only hands that
-	# out to a cross-origin-isolated page. Miss them and every browser on earth lands on
-	# "Browser not supported" — which reads as a client bug and is not one. play/server.py sent
-	# these from the start, so the game ran under the python dev server and not through this
-	# proxy, and the difference looked like Docker being broken.
-	#
-	# Site-wide rather than on the client's paths only: the isolation applies to the DOCUMENT,
-	# and the document at / is served by the server upstream, not from /srv/client.
-	header {
-		Cross-Origin-Opener-Policy "same-origin"
-		Cross-Origin-Embedder-Policy "require-corp"
-		# Lets our own assets be embedded by the isolated document. Same-origin would do here,
-		# but this matches what play/server.py sends, and one of the two is not worth diverging.
-		Cross-Origin-Resource-Policy "cross-origin"
-	}
-
-	root * /srv/client
-
-	# NOT EVERYTHING IN THE CLIENT FOLDER IS FOR THE PUBLIC.
-	#
-	# The folder served here is the repo's play/, which is where the player app actually
-	# lives, and it also carries development scaffolding: a local python server, the launcher
-	# shortcuts, and mwdata/ — the operator's own copy of Morrowind, hundreds of megabytes of
-	# a game they are not licensed to redistribute. Serving that to anyone who asked would be
-	# the worst bug in this file, so it is refused by path before the file server ever runs.
-	#
-	# A deny list rather than an allow list, deliberately: the client's own filenames change
-	# with every engine build (openmw.wasm, openmw.data, and their brotli siblings), and an
-	# allow list would silently stop serving the game the first time one was renamed. What
-	# must never leak is a short, stable set.
-	@private path /server.py /__pycache__/* /.env* /START-HERE.txt /*.bat /*.command
-	handle @private {
-		respond "not found" 404
-	}
-
-	# /mwdata/* IS THE SERVER'S ANSWER TO GIVE, NOT THIS FILE'S.
-	#
-	# It used to be denied outright here, which was right when the only thing behind it was
-	# play/mwdata — a developer's own copy of Morrowind sitting in the source tree, which must
-	# never be served. But it is also the path the game page fetches when the operator answered
-	# "this server hands out the files", so a flat 404 made that answer impossible to honour.
-	#
-	# Proxied BEFORE the static handler, so the folder in the source tree is still never
-	# served: these requests reach the server, which publishes the library the DASHBOARD
-	# uploaded into and refuses with 404 unless the stored answer says to serve it.
-	@mwdata path /mwdata/* /mwdata-manifest.json /mwdata-mods.json
-	handle @mwdata {
-		reverse_proxy ${upstream}
-	}
-${launcher || multiplayer ? '' : `	# THE LAUNCHER IS OFF UNLESS SOMEBODY ASKED FOR IT (OMW_ENABLE_LAUNCHER=1) OR THIS IS A
-	# MULTIPLAYER DEPLOYMENT, where it is the way in (see ProxySettings.multiplayer).
-	#
-	# It is the hosted site's chooser: bundled sample, your own local Morrowind, or multiplayer.
-	# None of those is a question for a player who came to THIS server to play on it, and "/"
-	# already signs them in and starts the game.
-	#
-	# Redirected rather than refused, deliberately. The game page falls back to the launcher in
-	# several places — the no-fragment gate, the "Back to the launcher" button on a fatal — and
-	# a 404 would strand a player on a dead end at exactly the moment something already went
-	# wrong. Sending them to the front door is the answer those fallbacks actually wanted.
-	# "redir * / 302", with the explicit wildcard matcher. Caddy's redir takes an OPTIONAL
-	# leading matcher, so "redir / 302" parses as matcher "/" with destination "302": it then
-	# matches only the site root and redirects it to a relative URL called 302. Caddy accepts
-	# it, reloads cleanly, and logs the request as a NOP with no status — which is how a
-	# launcher that was supposed to be switched off went on being served.
-	@launcher path /launcher.html
-	handle @launcher {
-		redir * / 302
-	}
-`}
-
-	# /join IS launcher.html in DOOR MODE: the multiplayer steps (username, character, world)
-	# the front door hands a signed-in player to, with the hosted site's demo chooser stripped
-	# away (see the <head> of play/launcher.html). A rewrite, so the address stays /join; that
-	# path is how the page knows it is a door.
-	@join path /join
-	rewrite @join /launcher.html
-
-	# The ROOT path always goes to the server, even when client files are staged: the server
-	# serves the sign-in landing page there, and the game (launcher.html and friends) is what
-	# that page links into.
-	@root path /
-	handle @root {
-		reverse_proxy ${upstream}
-	}
-
-	# ONE ORIGIN, AND WHY IT MATTERS.
-	#
-	# The game page hands the server a session ticket, and it refuses to hand that ticket to a
-	# different hostname. So the client and the server cannot be split across two names. Both
-	# are served from here.
-	#
-	# The rule is "a real file wins, everything else is the server". That needs no list of the
-	# server's paths, so it cannot drift as the server grows new ones, and it degrades
-	# correctly: with no client files staged, /srv/client is empty, nothing matches, and every
-	# request goes to the server.
-	# THE APP SHELL MUST REVALIDATE, THE ENGINE MAY NOT.
-	#
-	# file_server sends ETag and Last-Modified and no Cache-Control at all, so a browser falls
-	# back to HEURISTIC freshness -- roughly a tenth of the file's age -- and serves the shell
-	# from cache without asking. That is how a deploy reaches half a client: launcher.html
-	# updated, index.html still the old copy, and the two halves disagreeing about the boot
-	# fragment they pass each other. Measured here: a fetch with cache:'no-store' had the new
-	# code and the ordinary one did not, on the same page load.
-	#
-	# no-cache does NOT mean "do not store" -- it means "revalidate before use", so the usual
-	# answer stays a 304 with no body. The engine keeps heuristic caching: openmw.wasm/.data
-	# are tens of megabytes, and a stale one is refused loudly at SessionHello by the engine
-	# hash rather than silently misbehaving like a stale shell.
-	@shell path *.html / /join
-	header @shell Cache-Control "no-cache"
-
-	@static file
-	handle @static {
-		file_server {
-			# The engine ships brotli siblings next to openmw.wasm/.data; serve those when the
-			# browser accepts them rather than re-compressing multi-megabyte files per request.
-			precompressed br gzip
-		}
-	}
-
-	handle {
-		# Tells the server it is behind HTTPS, which is how it decides whether cookies may
-		# carry the Secure flag. Caddy sets the header itself.
-		reverse_proxy ${upstream}
-	}
+	# EVERYTHING GOES TO THE SERVER. It serves the player app itself, with the cross-origin
+	# isolation headers the engine needs, the release's brotli siblings, /join, the launcher
+	# switch and the deny list (net/client-routes.ts). This proxy only adds HTTPS, so the same
+	# server works with it, behind someone else's proxy, or on its own port (issue #203).
+	# Caddy tells the server it is behind HTTPS, which is how it decides whether cookies may
+	# carry the Secure flag.
+	reverse_proxy ${upstream}
 
 	log {
 		output stdout

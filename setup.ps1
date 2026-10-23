@@ -157,6 +157,7 @@ function Set-EnvValue {
   [System.IO.File]::WriteAllText($envPath, (($envLines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
 }
 Set-EnvValue 'REPO_DIR' $PSScriptRoot.Replace('\', '/') 'The absolute path of this checkout, for the updater container. Managed by setup.ps1.'
+Set-EnvValue 'COMPOSE_PROFILES' 'updater' 'Starts the updater service, which needs this checkout. Managed by setup.ps1.'
 
 if (-not (Get-ChildItem 'gamedata' -ErrorAction SilentlyContinue)) {
   Write-Warn ".\gamedata is empty."

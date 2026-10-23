@@ -426,6 +426,7 @@ const wizardSteps = () => {
     'storage',
     'files',
     ...(answers.contentProfile === 'tamriel-rebuilt' ? ['tr'] : []),
+    'client',
     'review',
   ];
 };
@@ -434,7 +435,7 @@ const wizardSteps = () => {
 const STEP_LABEL = {
   owner: 'Account', mode: 'Type', login: 'Sign-in', registration: 'Sign-ups',
   content: 'Content', hosting: 'Access',
-  name: 'Name', storage: 'Storage', files: 'Data', tr: 'Tamriel', review: 'Review',
+  name: 'Name', storage: 'Storage', files: 'Data', tr: 'Tamriel', client: 'Player app', review: 'Review',
 };
 
 /** The address players actually reach this server on, which is what a provider must be
@@ -608,6 +609,7 @@ function renderWizard() {
   if (name === 'storage') return stepStorage();
   if (name === 'files') return stepFiles();
   if (name === 'tr') return stepTamriel();
+  if (name === 'client') return stepClient();
   return stepReview();
 }
 
@@ -1226,6 +1228,75 @@ async function stepFiles() {
   { next: 'Continue' });
   // Re-render this step after an upload so the found/missing table updates in place.
   wireUpload(() => renderWizard());
+}
+
+/**
+ * The player app: the browser game itself (./play, about 350 MB), which no Docker image
+ * carries. Without it sign-in works and then there is no game, and setup.sh was the only
+ * thing that ever installed it, so an operator who ran the compose file by hand finished
+ * this wizard on a server nobody could play on (issue #203).
+ */
+async function stepClient() {
+  let r = null;
+  try { r = await api('/updates'); } catch (e) {
+    if (e.message === 'signed out') return;
+  }
+  const e = r?.engine || { writable: false, tag: null, present: false };
+  const latest = r?.latest ? `v${r.latest}` : '';
+  const zip = html`<span class="vt-mono">openmw-web-${latest || '<tag>'}.zip</span> from the
+    <a href="https://github.com/Virtastic/openmw-web/releases" target="_blank" rel="noopener">releases page</a>`;
+  let body;
+  if (e.present) {
+    body = html`<div class="alert alert-success mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-check-circle-fill fs-4"></i>
+      <span><strong>The player app is installed${e.tag ? ` (${e.tag})` : ''}.</strong>
+        Updates arrive from the Updates page.</span></div>`;
+  } else if (!e.writable) {
+    body = html`<div class="alert alert-warning mb-0">
+      <strong>The server cannot write to its player app folder.</strong> In
+      <span class="vt-mono">docker-compose.yml</span> it is <span class="vt-mono">./play</span>, mounted at
+      <span class="vt-mono">/client</span>. Restarting the server fixes its ownership
+      (<span class="vt-mono">docker compose restart openmw-web</span>); if it is still refused, run this
+      next to the compose file and reload this page:
+      <pre class="vt-mono small mb-1 mt-2">sudo chown -R "$(docker exec openmw-web id -u):$(docker exec openmw-web id -g)" ./play</pre>
+      Or unzip ${raw(zip)} into <span class="vt-mono">./play</span> by hand.</div>`;
+  } else if (!r?.ok) {
+    body = html`<div class="alert alert-warning mb-0"><strong>Could not reach GitHub</strong>
+      (${r?.reason || 'no answer'}), so the server cannot download the player app right now.
+      Unzip ${raw(zip)} into <span class="vt-mono">./play</span>, or install it later from the Updates page.</div>`;
+  } else {
+    body = html`<div id="wzClient"><button class="btn btn-primary btn-lg" id="wzClientGo">
+      <i class="bi bi-download me-1"></i>Install the player app (${latest})</button>
+      <p class="text-secondary small mt-2 mb-0">About 350 MB, checked against the release checksums.</p></div>`;
+  }
+  wizardShell(html`
+    <h5>Install the player app</h5>
+    <p class="text-secondary small">The game players run in their browser. This server hands it
+      out; it is not part of the Docker image, so it is downloaded here.</p>
+    ${raw(body)}`,
+  { next: e.present ? 'Continue' : 'Skip for now' });
+  const go = $('#wzClientGo');
+  if (!go) return;
+  go.onclick = async () => {
+    go.disabled = true;
+    let res;
+    try { res = await api('/update/engine', { method: 'POST' }); } catch (err) { toast(err.message, 'danger'); go.disabled = false; return; }
+    if (!res.ok) { toast(res.error || 'Could not start the download.', 'danger'); go.disabled = false; return; }
+    const el = $('#wzClient');
+    installPhase(el, 'Installing the player app', 'starting');
+    const timer = setInterval(async () => {
+      if (!el.isConnected) { clearInterval(timer); return; }
+      let p;
+      try { p = await api(`/mods/install/progress?token=${encodeURIComponent(res.token)}`); } catch { return; }
+      if (!p || typeof p.pct !== 'number') return;
+      const note = String(p.note || '');
+      if (note.startsWith('done:')) { clearInterval(timer); renderWizard(); }
+      else if (note.startsWith('error:')) {
+        clearInterval(timer);
+        el.innerHTML = html`<div class="text-danger"><i class="bi bi-x-circle me-1"></i>${note.slice(6)}</div>`;
+      } else installPhase(el, 'Installing the player app', note, p.pct);
+    }, 1000);
+  };
 }
 
 /** A mod is Tamriel Rebuilt if it brought TR's own files, whatever the operator named it. */

@@ -11,17 +11,30 @@ cd openmw-web
 ./setup.sh        # Windows: .\setup.ps1
 ```
 
-1. The script installs the game engine into `play/` for you: the engine is too big for git, so
-   it downloads the same release's `openmw-web-*.zip` from
+1. The script installs the player app into `play/` for you: it is too big for git, so it
+   downloads the same release's `openmw-web-*.zip` from
    [Releases](https://github.com/Virtastic/openmw-web/releases) and checks it against the
-   release's `SHA256SUMS`. Starting it with `docker compose up` yourself? Unzip that zip into
-   `play/` first, or sign-in works and the game page then cannot load the engine.
+   release's `SHA256SUMS`.
 2. Your browser opens **http://localhost/admin**: create the admin account, answer the
    wizard, drag your `Data Files` folder in when it asks.
 3. Play at **http://localhost**.
 
 That's it. Stuck, or a question this page doesn't answer? Ask in
 [Discord](https://discord.gg/PzFfDkbSue).
+
+### Without the clone or the script
+
+Save [`docker-compose.yml`](docker-compose.yml) in an empty folder and run
+`docker compose up -d` there. Open **http://localhost/admin** (or this machine's address) and
+answer the wizard; its *Player app* step downloads the player app into `./play`. Everything
+works the same, except the dashboard's Update button for the **server** itself: that needs
+the updater, which needs the git checkout. Update by hand instead with
+`docker compose pull && docker compose up -d`.
+
+[`docker-compose.simple.yml`](docker-compose.simple.yml) is the same server without Caddy,
+on plain HTTP port 8080: for playing on that machine (`http://localhost:8080`) or for your
+own HTTPS proxy in front. Browsers start the game only on `https://` or `http://localhost`,
+so players on other machines need HTTPS either way.
 
 Useful afterwards:
 
@@ -146,9 +159,9 @@ saves, settings, game files and mods all stay; the cautious can take a backup fi
   follows along and reconnects; the restart signs everyone out for a minute or two.
 
 Installed before updates existed? `./setup.sh --update` (Windows: `.\setup.ps1 -Update`)
-adds the updater and the button works from then on. Running without Docker on Linux, also
-`chown -R 1000:1000 ./play` so the server may write the client folder. The script remains
-the manual fallback and does the same thing as the button.
+adds the updater and the button works from then on. The script remains the manual fallback
+and does the same thing as the button. If the game client card says the server cannot write
+its folder, restart the server once (it repairs `./play`'s ownership at boot).
 
 **Rolling back.** The image a deployment runs is pinned by `OPENMW_WEB_TAG` in `.env`
 (the setup script and the updater write it). To go back a release, set it to the previous

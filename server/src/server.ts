@@ -15,6 +15,7 @@ import { QuestRepair } from './core/quest-repair';
 import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
 import { writeCaddyfile, launcherEnabled } from './net/admin/caddy-config';
+import { clientRoutes } from './net/client-routes';
 import { saveSection } from './net/admin/settings-store';
 import { orderedContent } from './net/admin/api-mods';
 import { notifyFromLog, type MailConfig } from './net/admin/notify';
@@ -722,6 +723,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     pass: config.notifications.smtpPass,
     from: config.notifications.from,
   });
+  // The game client bundle, when this deployment mounts it (docker-compose mounts ./play at
+  // /client). Served by clientRoutes below and updated by the dashboard.
+  const clientDir = opts.clientDir ?? (existsSync('/client') ? '/client' : undefined);
+
   // Maintenance mode: set from the dashboard, read by the connection path. PERSISTED to a
   // marker file, because its stated use case is "turn it on, change settings, restart" —
   // and every settings change ends in a restart. In-memory it silently switched itself off
@@ -733,8 +738,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // wizard re-run. No-ops when the content already matches.
   writeCaddyfile(opts.dataDir, {
     domain: config.setup.domain,
-    launcher: launcherEnabled(),
-    multiplayer: config.setup.deploymentMode === 'multiplayer',
     internal: config.setup.hosting === 'internal',
     port: config.setup.httpPort,
   });
@@ -1109,9 +1112,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     recentLogs: (limit, filter) => logHistory(limit, filter),
     metricsSnapshot: () => summariseMetrics(),
 
-    // The game client bundle, when this deployment mounts it (docker-compose mounts
-    // ./play at /client). Absent on other layouts, and the update routes say so honestly.
-    clientDir: opts.clientDir ?? (existsSync('/client') ? '/client' : undefined),
+    // Absent on other layouts, and the update routes say so honestly.
+    clientDir,
     maintenance: {
       get: () => ({ on: maintenance.on, message: maintenance.message }),
       set: (on, message) => {
@@ -1340,6 +1342,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       servesGameData: () => config.setup.deliveryModel === 'serve',
       eraseSaves: (acct) => eraseSaves(sharedDir, acct, lockerStorage),
     }),
+    // Last: the player app, for any path nothing above claimed (issue #203).
+    ...(clientDir ? [clientRoutes({
+      clientDir,
+      launcher: () => launcherEnabled() || config.setup.deploymentMode === 'multiplayer',
+    })] : []),
   )), () => (setupMode ? blockers : []));
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.
   // humansInWorld, not inWorld: the sim peer is infrastructure. Counting it here would make

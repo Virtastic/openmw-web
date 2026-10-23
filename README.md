@@ -54,10 +54,13 @@ release). `./setup.sh --update` or the dashboard's Update button pulls the next 
 back, set `OPENMW_WEB_TAG` in `.env` to the previous tag and `docker compose pull && docker
 compose up -d`.
 
-1. The script also installs the game engine: it is too big for git, so it downloads the same
-   release's `openmw-web-*.zip` (about 150 MB), checks it against the release's `SHA256SUMS`,
-   and unpacks it into `play/`. Running `docker compose up` by hand instead? Unzip it into
-   `play/` yourself, or sign-in works and the game page then cannot load the engine.
+**No clone, no script?** Save [`docker-compose.yml`](docker-compose.yml) in an empty folder,
+run `docker compose up -d` there, and open **http://localhost/admin**. Same server; only the
+dashboard's Update button for the server itself needs the clone and script.
+
+1. The script also installs the player app: it is too big for git, so it downloads the same
+   release's `openmw-web-*.zip`, checks it against the release's `SHA256SUMS`, and unpacks it
+   into `play/`. Without the script, the wizard's *Player app* step does the same.
 2. Your browser opens **http://localhost/admin**. Create your admin account, answer the
    wizard.
 3. Drag your Morrowind `Data Files` folder in when it asks. Play at **http://localhost**.

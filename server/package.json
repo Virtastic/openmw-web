@@ -1,6 +1,6 @@
 {
   "name": "openmw-mp",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "private": true,
   "type": "module",
   "description": "Relay/validator/persister server for openmw-web multiplayer (omw-mp/1, M0)",

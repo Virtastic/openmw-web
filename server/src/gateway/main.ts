@@ -24,6 +24,7 @@ import { HARNESS_PASSWORD } from '../auth/harness';
 import { log, enableFileLog } from '../log';
 import { metrics } from '../metrics';
 import { mwDataRoutes } from '../net/mwdata-routes';
+import { clientRoutes } from '../net/client-routes';
 import { lockerPublicBase } from '../data/fsstorage';
 import { writeCaddyfile, launcherEnabled } from '../net/admin/caddy-config';
 import { gameDataDir } from '../core/gamedata';
@@ -230,8 +231,6 @@ const adminRoute = gatewayAdminRoutes({
 // No-ops when the content already matches.
 writeCaddyfile(sharedDir, {
   domain: config.setup.domain,
-  launcher: launcherEnabled(),
-  multiplayer: config.setup.deploymentMode === 'multiplayer',
   internal: config.setup.hosting === 'internal',
   port: config.setup.httpPort,
 });
@@ -258,6 +257,11 @@ const directory = await startDirectory({
     modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
     allowStockSwap: () => config.content.allowStockSwap,
   }),
+  // The player app (./play mounted at /client), served here so Caddy is optional (#203).
+  ...(existsSync('/client') ? { client: clientRoutes({
+    clientDir: '/client',
+    launcher: () => launcherEnabled() || config.setup.deploymentMode === 'multiplayer',
+  }) } : {}),
   resolveAccount: frontDoor.resolveAccount,
   // Constant-time-ish compare on a fixed-length secret, and an empty token NEVER matches --
   // otherwise an unconfigured platform would treat every anonymous caller as trusted, which
