@@ -134,7 +134,10 @@ envelope `seq` ≤ the last seen from that sender. Movement has its OWN server r
 
 `u8 count` then `count ×` (`u16 playerId` + the 20-byte PlayerMove payload). Server
 broadcasts on a 66 ms tick containing the latest pose of every VISIBLE player that moved
-since the last tick. Visibility = same cell, or adjacent exterior grid cells, narrowed by
+since the last tick. An accepted `0x0100` is also forwarded ON ARRIVAL, as a one-entry batch,
+to every observer that already has that player in view at the near LOD tier (at most every
+50 ms per sender, the client's 15 Hz with jitter room; a jump/use edge always goes); the tick
+then skips what already went out, and keeps visibility, first sightings and the mid/far tiers. Visibility = same cell, or adjacent exterior grid cells, narrowed by
 interest management (below). When a player first becomes visible (join, cell entry, or
 re-entering the interest radius), the server sends their current pose in the next batch
 unconditionally. Client transport decodes this in C++ and delivers ONE global Lua

@@ -133,6 +133,7 @@ type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 // connection.ts has no import cycle with server.ts.
 export interface ServerCtx {
   worldPeer(): Player | undefined; // THE world peer (server.ts): the single simulator
+  relayPose?(p: Player): void; // an accepted pose, to near observers now (MoveBroadcaster.relayNow)
   config: Config;
   accounts: AccountStore;
   roster: Roster;
@@ -1275,6 +1276,7 @@ export class Connection implements Peer {
     player.moveSeq = seq;
     player.pose = pose;
     player.poseVersion++;
+    this.ctx.relayPose?.(player);
     // The peer hears every accepted move AT ONCE, as a one-entry move batch (a message it
     // already decodes): the broadcaster only sends it players near where it is parked, and
     // the avatar has to stand where its owner is for NPCs to fight and see them there.

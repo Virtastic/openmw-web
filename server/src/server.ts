@@ -1948,6 +1948,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const port = typeof address === 'object' && address !== null ? address.port : opts.port;
   const moveBroadcaster = new MoveBroadcaster(roster, undefined, interest);
   moveBroadcaster.start();
+  ctx.relayPose = (p) => moveBroadcaster.relayNow(p);
   m7.start(); // clock ticking + cell-reset sweep before plugins register schedules
   hooks.serverStart();
   // SERVER-WIDE PRESENCE. Each world publishes its own occupants into the shared store so
