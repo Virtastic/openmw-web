@@ -114,7 +114,8 @@ signal exists or is needed (the peer-pose freshness window, **2 s** — `PEER_PO
   and keeps the seq-matched pose for that player's own `0x0103`. A server that ignores the
   bit applies both in order, so the seq-matched one wins.
 - **`0x0103` PlayerStateBatch (S→C).** Same entry layout as `0x0105`. Each player receives
-  their OWN entry on the broadcast tick — pose + `lastInputSeq` — which is the anchor for
+  their OWN entry on the broadcast tick — pose + `lastInputSeq`, only when either changed
+  since the last one sent (an unchanged sample is not resent) — which is the anchor for
   client-side reconciliation (predict + smooth blend via capped physics offsets; hard snap
   past the threshold). The local player never renders from the delayed interpolation
   buffer: `RENDER_DELAY` is for remote puppets only.

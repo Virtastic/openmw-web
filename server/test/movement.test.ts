@@ -519,6 +519,26 @@ test('relayNow: a near observer gets the pose on arrival, mid/far stay on the ti
   assert.equal(h.updates(2, 1), before2 + 3);
 });
 
+test('an unchanged 0x0103 is not resent', () => {
+  const sent: number[] = [];
+  const p = {
+    id: 1, name: 'p1', inWorld: true, cellKey: undefined, poseVersion: 1, lastInputSeq: 7,
+    peerPoseAt: Date.now(),
+    pose: { x: 1, y: 0, z: 0, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 },
+    peer: { sendEvent: () => {}, sendBinaryFrame: (type: number) => { sent.push(type); return true; } },
+  } as unknown as Player;
+  const bc = new MoveBroadcaster({ inWorld: () => [p], get: () => p } as unknown as Roster, 1_000_000);
+  bc.tick();
+  bc.tick();
+  bc.tick();
+  assert.equal(sent.filter((t) => t === 0x0103).length, 1, 'the same sample went out again');
+  p.lastInputSeq = 8; // the peer consumed another input
+  bc.tick();
+  p.pose = { ...p.pose!, x: 2 }; // or the body moved
+  bc.tick();
+  assert.equal(sent.filter((t) => t === 0x0103).length, 3);
+});
+
 test('shared serialization: every recipient decodes its own frame, seq strictly increasing', () => {
   const h = harness();
   const p1 = h.add(1, '0,0', 10);

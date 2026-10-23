@@ -297,10 +297,13 @@ export class MoveBroadcaster {
       if (p.inChargen === true) continue;
       if (p.peerPoseAt === undefined || nowMs - p.peerPoseAt > PEER_POSE_FRESH_MS) continue;
       if (!p.pose || p.lastInputSeq === undefined) continue;
-      p.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH,
-        nextBroadcastSeq(), packPlayerStateBatch([
-          { id: p.id, lastInputSeq: p.lastInputSeq, pose: p.statePose ?? p.pose },
-        ])));
+      // NOTHING NEW, NOTHING SENT. While the peer stalls the same sample sat here for 2 s and
+      // went out 30 times; the client already drops a sample acknowledging no new input.
+      const payload = packPlayerStateBatch([{ id: p.id, lastInputSeq: p.lastInputSeq, pose: p.statePose ?? p.pose }]);
+      if (p.stateSent?.equals(payload)) continue;
+      if (p.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH, nextBroadcastSeq(), payload))) {
+        p.stateSent = payload;
+      }
     }
 
     const inWorld = this.roster.inWorld();
