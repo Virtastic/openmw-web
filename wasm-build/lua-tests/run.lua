@@ -4709,5 +4709,23 @@ do
   check('the netObjects mirrors key net ids with %.0f',
     ob:find("netObjs[string.format('%.0f', netId)]", 1, true) ~= nil and ob:find("netNames[string.format('%.0f', netId)]", 1, true) ~= nil)
 end
+
+print('1.7.1 GetLOS and GetDetected "Player" on the sim peer ask about the nearest avatar, not the dummy')
+do
+  local au = io.open('./openmw/apps/openmw/mwmechanics/actorutil.cpp'):read('*a')
+  local ai = io.open('./openmw/apps/openmw/mwscript/aiextensions.cpp'):read('*a')
+  local a = au:find('MWWorld::Ptr nearestAvatarTo(const MWWorld::Ptr& ptr)', 1, true)
+  check('nearestAvatarTo is peer-only (singleplayer and clients get an empty Ptr)',
+    a and au:find('static const bool simPeer = std::getenv("OPENMW_MP_SYSTEM") != nullptr;', a, true)
+    and au:find('if (!simPeer || ptr.isEmpty() || ptr.getCell() == nullptr)\n            return MWWorld::Ptr();', a, true))
+  check('...and only takes an avatar in the same room or outdoors with it',
+    a and au:find('!MWMP::isAvatar(body.getCellRef().getRefNum())', a, true)
+    and au:find('(there != here && !(there->isExterior() && here->isExterior()))', a, true))
+  check('GetDetected and GetLOS resolve through it, falling back to searchPtr',
+    ai:find('MWWorld::Ptr actor = searchActorOrAvatar(actorID, observer);', 1, true) ~= nil
+    and ai:find('MWWorld::Ptr dest = searchActorOrAvatar(actorID, source);', 1, true) ~= nil
+    and ai:find('return MWBase::Environment::get().getWorld()->searchPtr(id, true, false);', 1, true) ~= nil
+    and select(2, ai:gsub('searchPtr%(actorID, true, false%)', '')) == 0)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
