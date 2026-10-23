@@ -12,8 +12,11 @@ local escapeMap = {
     ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t',
 }
 
+-- %c, not %z\1-\31: Lua 5.4 (the browser) has no %z -- it read as a literal 'z', so NUL went
+-- out raw (invalid JSON) and every 'z' as z. %c is every control byte, NUL included, on
+-- 5.4 and LuaJIT alike (DEL as well, a valid escape).
 local function encodeString(s)
-    return '"' .. s:gsub('[%z\1-\31"\\]', function(c)
+    return '"' .. s:gsub('[%c"\\]', function(c)
         return escapeMap[c] or string.format('\\u%04x', c:byte())
     end) .. '"'
 end

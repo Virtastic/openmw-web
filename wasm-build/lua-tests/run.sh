@@ -40,4 +40,5 @@ exec docker run --rm -v "$ROOT:/repo" -w /repo alpine:3 sh -c \
   'apk add --no-cache lua5.1 lua5.4 >/dev/null 2>&1 \
    && for f in openmw/files/data/scripts/mp/*.lua; do luac5.4 -p "$f" || { echo "FAIL $f does not compile under Lua 5.4 (the browser engine)"; exit 1; }; done \
    && echo "  ok   every mp/*.lua compiles under Lua 5.4" \
+   && lua5.4 wasm-build/lua-tests/json54.lua && lua5.1 wasm-build/lua-tests/json54.lua \
    && exec lua5.1 wasm-build/lua-tests/run.lua'
