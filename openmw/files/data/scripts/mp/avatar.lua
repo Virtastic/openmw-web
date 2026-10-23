@@ -36,6 +36,36 @@ local placed = false -- the WoW model: global.lua stands this body on its owner'
 -- (prod 2026-10-23, 1.6.6). The same formulas, on the owner's input; fatigue stays the peer's,
 -- where combat reads it. One table, not more locals.
 local placedFatigue = {}
+-- THE OWNER'S SWING, NOT JUST ITS BUTTON. A blow's strength is how long the body was wound up
+-- when the use control let go (character.cpp), and a press that arrives while this body is still
+-- in the last swing's follow-through starts the wind-up late: the owner's release then landed a
+-- frame or two into it. Prod 2026-10-15..23: most avatar blows went out at strength 0 (16:00 on
+-- the 23rd, 84 of 155) whatever the owner held. So a press is kept until this body actually winds
+-- up, and the wind-up runs as long as the owner held the button (a tap stays a tap), capped.
+local strike = { down = false, pressAt = 0, holdS = 0, pending = false, windupAt = nil, deadline = 0 }
+strike.MAX_HOLD_S, strike.START_WAIT_S = 1.5, 2.0
+function strike.input(useBit, now)
+    if useBit and not strike.down then
+        strike.down, strike.pressAt, strike.pending, strike.windupAt = true, now, true, nil
+        strike.deadline = now + strike.START_WAIT_S
+    elseif not useBit and strike.down then
+        strike.down = false
+        strike.holdS = math.min(strike.MAX_HOLD_S, now - strike.pressAt)
+    end
+end
+-- `want` is what the raw input says this frame; returns whether use stays held.
+function strike.hold(want, body, now)
+    if not strike.pending then return want end
+    if body == 'windup' and not strike.windupAt then strike.windupAt = now end
+    if strike.down then return true end
+    if not strike.windupAt then
+        if now < strike.deadline then return true end -- not started yet: keep pressing
+    elseif now - strike.windupAt < strike.holdS then
+        return true -- wind up as long as the owner did
+    end
+    strike.pending = false
+    return want
+end
 function placedFatigue.spend(loss)
     if not (loss and loss > 0) then return end
     pcall(function()
@@ -494,7 +524,8 @@ return {
             -- this engine computes the hit natively against the actors it simulates. Safe
             -- now because combat.lua no longer forwards a real swing while the peer holds
             -- the cell -- so a blow lands exactly once, here.
-            self.controls.use = (useLatch or bit(input.flags, 3)) and 1 or 0
+            local body = mp.upperBody and mp.upperBody(self.object)
+            self.controls.use = strike.hold(useLatch or bit(input.flags, 3), body, core.getRealTime()) and 1 or 0
             -- WHAT THE BODY WAS DOING WHEN THE PRESS CAME, and a moment later (#159 s157: every
             -- press reached the controls, 1 of 113 swings reached the hit test). On each rising
             -- edge of use, and once ~0.3 s after it: attacking, staggered, stance, fatigue, weapon.
@@ -610,6 +641,7 @@ return {
             end
             if bit(data.flags, 2) and not timed then jumpLatch = true end
             if bit(data.flags, 3) then useLatch = true end
+            strike.input(bit(data.flags, 3), core.getRealTime())
         end,
         -- Same three-step contract as puppet.lua: re-enable AI HERE, then ask the global
         -- script to remove this script. Removing it synchronously from global would leave

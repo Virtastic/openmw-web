@@ -698,7 +698,7 @@ do
   check('avatar.lua latches the jump and use edges until onUpdate consumes them (198)',
     av:find('if bit(data.flags, 2) and not timed then jumpLatch = true end', 1, true) ~= nil
     and av:find('local jump = jumpLatch or bit(input.flags, 2)', 1, true) ~= nil
-    and av:find('(useLatch or bit(input.flags, 3)) and 1 or 0', 1, true) ~= nil)
+    and av:find('strike.hold(useLatch or bit(input.flags, 3), body, core.getRealTime()) and 1 or 0', 1, true) ~= nil)
   -- prod 2026-10-16, rubber-banding hopping rock to rock: a timed jump fires when its SEGMENT
   -- plays, and waits for the body to be on the ground instead of being lost mid-air.
   check('avatar.lua fires a timed jump with its segment, once the body is on the ground',
@@ -4084,6 +4084,46 @@ do
     pp:find('if not weapon and attack.successful and attack.damage and attack.damage.fatigue then lastPunchSoundAt = lastSwingAt end', 1, true) ~= nil)
   check('...and the fatigue drop does not voice it again',
     pp:find('if core.getRealTime() - lastPunchSoundAt > SWING_FEEL_WINDOW_S then', 1, true) ~= nil)
+end
+
+-- ====================================== the avatar winds up as long as its owner held the button
+print('avatar.lua -- a press during the follow-through still swings as hard as the owner held (prod 2026-10-23)')
+do
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  local a = av:find('local strike = {', 1, true)
+  local b = a and select(2, av:find('\nfunction strike.hold(', a, true))
+  b = b and select(2, av:find('\nend\n', b, true))
+  local chunk = a and b and loadstring(av:sub(a, b) .. '\nreturn strike')
+  check('strike is where this test expects it', chunk ~= nil)
+  if chunk then
+    local function fresh() return chunk() end
+    -- The prod pattern: press at 0 while the body is busy, owner releases at 0.6, the body only
+    -- reaches its wind-up at 0.5 -- so the raw input lets go 0.1 s into it (strength ~0).
+    local s, held = fresh(), {}
+    s.input(true, 0.0)
+    for _, f in ipairs({ { 0.2, true, 'busy' }, { 0.5, true, 'windup' } }) do held[#held + 1] = s.hold(f[2], f[3], f[1]) end
+    s.input(false, 0.6)
+    check('held through the follow-through and into the wind-up', held[1] and held[2])
+    check('still held after the owner let go, while the wind-up is shorter than their 0.6 s', s.hold(false, 'windup', 0.7) == true)
+    check('...and at 1.05 s (0.55 s wound up)', s.hold(false, 'windup', 1.05) == true)
+    check('released once it has wound up as long as the owner held', s.hold(false, 'windup', 1.15) == false)
+    check('then it is the raw input again', s.hold(false, 'ready', 1.3) == false and s.pending == false)
+    -- A tap stays a tap: released 0.05 s after the press, the wind-up is not stretched.
+    s = fresh()
+    s.input(true, 0); s.hold(true, 'windup', 0.02); s.input(false, 0.05)
+    check('a tap is not turned into a charged blow', s.hold(false, 'windup', 0.1) == false)
+    -- A press the body never acts on (no weapon drawn) is let go after START_WAIT_S.
+    s = fresh()
+    s.input(true, 0); s.input(false, 0.1)
+    check('kept pressing while the body has not started', s.hold(false, 'ready', 1.0) == true)
+    check('...but not for ever', s.hold(false, 'ready', 2.1) == false)
+    -- A very long hold is capped.
+    s = fresh()
+    s.input(true, 0); s.hold(true, 'windup', 0.1); s.input(false, 5)
+    check('the stretch is capped at MAX_HOLD_S', s.holdS == 1.5)
+  end
+  check('onUpdate routes use through strike.hold', av:find('strike.hold(useLatch or bit(input.flags, 3), body, core.getRealTime())', 1, true) ~= nil)
+  check('mpAvatarInput feeds strike.input', av:find('strike.input(bit(data.flags, 3), core.getRealTime())', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
