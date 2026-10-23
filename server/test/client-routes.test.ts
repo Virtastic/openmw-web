@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, get, type Server } from 'node:http';
 
-import { clientRoutes } from '../src/net/client-routes';
+import { clientRoutes, defaultClientDir } from '../src/net/client-routes';
 
 function fixture(): string {
   const parent = mkdtempSync(join(tmpdir(), 'client-'));
@@ -122,4 +122,16 @@ test('ranges and revalidation work on the plain bytes', async () => {
     const etag = (await fetch(`${s.base}/index.html`)).headers.get('etag')!;
     assert.equal((await fetch(`${s.base}/index.html`, { headers: { 'if-none-match': etag } })).status, 304);
   } finally { await s.stop(); }
+});
+
+test('defaultClientDir is /client unless OMW_CLIENT moves it', () => {
+  const was = process.env.OMW_CLIENT;
+  try {
+    delete process.env.OMW_CLIENT;
+    assert.equal(defaultClientDir(), '/client');
+    process.env.OMW_CLIENT = '/home/container/play';
+    assert.equal(defaultClientDir(), '/home/container/play');
+  } finally {
+    if (was === undefined) delete process.env.OMW_CLIENT; else process.env.OMW_CLIENT = was;
+  }
 });

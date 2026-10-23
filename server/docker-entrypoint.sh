@@ -70,7 +70,7 @@ if [ -n "$RUN_AS" ] && [ "$(id -u)" = "0" ]; then
     # The dashboard's "Install the game client" writes into it, and offers no button at all
     # while it cannot (issue #203).
     mkdir -p "$DATA/caddy" 2>/dev/null || true
-    for d in "$DATA" "$DATA/gamedata" "$DATA/caddy" /client; do
+    for d in "$DATA" "$DATA/gamedata" "$DATA/caddy" "${OMW_CLIENT:-/client}"; do
       # Plain `if`, not `[ x = y ] && continue`: this script runs under `set -e`, where a
       # bare AND-OR list whose test fails is the classic way to exit a shell by accident.
       if [ ! -d "$d" ]; then continue; fi
