@@ -95,6 +95,12 @@ local lockPending = nil -- GameObject we asked for and have not heard back about
 local lockHeld = nil -- GameObject we currently hold the conversation on
 local lockAllowOnce = nil -- obj.id whose next activation must pass through unblocked
 local lockForced = false -- the window is already open (ForceGreeting): no activateBy on grant
+-- Real time of a grant whose window has not opened yet (1.7.1). The grant re-runs the
+-- activation; if no Dialogue (or pickpocket Container) opens -- the NPC turned hostile, the
+-- engine refused, the activation was eaten -- nothing ever released the lock and the NPC
+-- read "talking to <you>" for everyone until you left the cell.
+local lockGrantedAt = nil
+local LOCK_OPEN_TIMEOUT = 1.0
 local lastLockMirror = nil
 
 local nextDiffAt = 0
@@ -609,6 +615,7 @@ function quests.isTalkingTo(obj)
 end
 
 function quests.releaseLock(why)
+    lockGrantedAt = nil
     local obj = lockHeld
     if obj then releasedId, releasedAt = obj.id, core.getRealTime() end
     lockHeld = nil
@@ -1036,7 +1043,10 @@ handlers.MP_DialogueLockResult = function(data)
         mirrorLock({ ref = obj.recordId, granted = true })
         -- Re-run the activation we cancelled; this time the handler lets it through. A forced
         -- greeting's window is already open: nothing to re-run.
-        if player and not forced then obj:activateBy(player) end
+        if player and not forced then
+            lockGrantedAt = core.getRealTime()
+            obj:activateBy(player)
+        end
     else
         -- A forced greeting on an NPC someone else holds: the window is open on our screen
         -- with no right to its results. Shut it; the notice says why.
@@ -1056,6 +1066,11 @@ end
 quests.handlers = handlers
 
 -- ================================================================== lifecycle
+
+-- player.lua: a Dialogue/Container window opened on `obj`. The lock we hold on it is in use.
+function quests.onLockWindowOpened(obj)
+    if lockHeld and obj and lockHeld.id == obj.id then lockGrantedAt = nil end
+end
 
 function quests.onCellChanged()
     -- Walking away ends the conversation (the server releases on cell change too).
@@ -1163,6 +1178,10 @@ function quests.tick(now)
         nextScriptsAt = now + SCRIPTS_INTERVAL
         diffGlobalScripts()
     end
+    if lockGrantedAt and now - lockGrantedAt > LOCK_OPEN_TIMEOUT then
+        print('[mp] dialogue lock: no window opened within ' .. LOCK_OPEN_TIMEOUT .. ' s of the grant, releasing')
+        quests.releaseLock('noopen')
+    end
     tickMemberVars(now)
     if now - lastMirror >= MIRROR_INTERVAL then
         lastMirror = now
@@ -1191,6 +1210,7 @@ function quests.reset()
     lockHeld = nil
     lockAllowOnce = nil
     lockForced = false
+    lockGrantedAt = nil
 end
 
 -- ================================================================== test hooks

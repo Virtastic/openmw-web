@@ -1080,7 +1080,7 @@ do
     and q:find('if lockPending and lockPending.id == obj.id then return end', 1, true) ~= nil)
   check('a forced grant sets lockHeld/lockDisposition like the activation path and does not re-activate',
     q:find('lockAllowOnce = not forced and obj.id or nil', 1, true) ~= nil
-    and q:find('if player and not forced then obj:activateBy(player) end', 1, true) ~= nil)
+    and q:find('if player and not forced then\n            lockGrantedAt = core.getRealTime()\n            obj:activateBy(player)', 1, true) ~= nil)
   check('a forced denial closes the window the other holder owns',
     q:find("if forced then%s+local player = playerObj%(%)%s+if player then pcall%(function%(%) player:sendEvent%('MP_CloseDialogue', {}%) end%) end") ~= nil)
   check('actors.lua hands every MP_ActorDeath to the quest layer',
@@ -4692,6 +4692,23 @@ do
   for _, c in ipairs(e.calls.events) do if c.name == 'MemberVarUpdate' and c.body.name == 'state' then upd = c.body end end
   check("a dialogue result's write to another object in the cell travels", upd ~= nil and upd.value == 1)
   check("the update names the object's own cell", upd ~= nil and upd.cellKey == '0,1', upd and tostring(upd.cellKey))
+end
+
+print('1.7.1 quests.lua -- a granted lock whose window never opens is released after about a second')
+do
+  local function run(opens)
+    local e, q = questEnv()
+    local npc = { id = 'npc', recordId = 'npc', contentFile = 'morrowind.esm', isValid = function() return true end, activateBy = function() end }
+    q.onNpcActivate(npc, { id = 'player' })
+    q.handlers.MP_DialogueLockResult({ ref = npc, granted = true })
+    if opens then q.onLockWindowOpened(npc) end
+    e.advance(0.5); q.tick(e.now())
+    e.advance(1.0); q.tick(e.now())
+    for _, c in ipairs(e.calls.events) do if c.name == 'DialogueLock' and c.body.want == false then return true end end
+    return false
+  end
+  check('no window within ~1 s: the lock is released', run(false) == true)
+  check('the window opened: the lock is kept', run(true) == false)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

@@ -3841,6 +3841,9 @@ local eventHandlers = {
     mpDialogueClosed = function()
         quests.releaseLock('windowclosed')
     end,
+    mpLockWindowOpened = function(data)
+        if data and data.target then quests.onLockWindowOpened(data.target) end
+    end,
     -- The window opened without an activation (ForceGreeting): take the lock after the fact.
     mpDialogueForced = function(data)
         if data and data.target then quests.onDialogueForced(data.target) end

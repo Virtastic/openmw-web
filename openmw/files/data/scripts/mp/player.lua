@@ -1646,6 +1646,11 @@ local script = {
                 local okNpc, isNpc = pcall(function() return types.NPC.objectIsInstance(data.arg) end)
                 if okNpc and isNpc and not arrest then core.sendGlobalEvent('mpDialogueForced', { target = data.arg }) end
             end
+            -- The window a granted lock asked for has opened (1.7.1): a Dialogue, or the
+            -- Container a pickpocket's activation opens. Without one the lock is released.
+            if (data.newMode == 'Dialogue' or data.newMode == 'Container') and data.arg then
+                core.sendGlobalEvent('mpLockWindowOpened', { target = data.arg })
+            end
             -- PAID SERVICES. `arg` is the actor the window belongs to (pushGuiMode passes it
             -- through uiModeChanged for every mode), which is the NPC the server has to
             -- arbitrate. Barter is the only one that moves STOCK, but all seven pay the NPC
