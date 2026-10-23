@@ -467,6 +467,12 @@ export default async function run(ctx) {
   try { await a.mouseHold(60); } catch (e) { ctx.log('focus click: ' + e.message); }
   await ctx.sleep(500);
   await a.cmd('stance:weapon');
+  // The avatar's own word that a press reached it (avatar.lua pressProbe). selfFlags is the
+  // avatar's pose echoed back in the reconcile stream, which the WoW model does not send.
+  const NL2 = String.fromCharCode(10);
+  const pressCount = () => Math.max(...[ctx.peerLogTail?.(20000) ?? '', ctx.serverLogTail?.(20000) ?? '']
+    .map((t) => String(t).split(NL2).filter((l) => /avatar use press:/.test(l)).length));
+  const pressBase = pressCount();
   const swings = [];
   for (let i = 0; i < 8; i++) {
     const st = JSON.parse(await a.eval(`JSON.stringify({ p: (JSON.parse(window.omw.state.actorProbe||"{}"))[${JSON.stringify(victim)}] || null, me: JSON.parse(window.omw.state.pose||"{}") })`));
@@ -497,7 +503,10 @@ export default async function run(ctx) {
   }
   const hpSeq = (tr) => tr.map((e) => e[1]).filter((v, i, arr) => i === 0 || v !== arr[i - 1]).join('>');
   ctx.log(`d2: creature hp -- peer ${hpSeq(peerHp.filter(([t]) => t >= swings[0]?.t0))} | A ${hpSeq(hpTrackOf(sA))} | B ${hpSeq(hpTrackOf(sB))}; A hitFwdCount ${await a.eval('window.omw.state.hitFwdCount')}`);
-  bar(avatarSwung.some(Boolean), `d: a real mouse swing reaches the avatar (${avatarSwung.filter(Boolean).length}/${swings.length})`);
+  if (wow) {
+    const presses = pressCount() - pressBase;
+    bar(presses > 0, `d: a real mouse swing reaches the avatar (${presses} presses on the peer for ${swings.length} swings)`);
+  } else bar(avatarSwung.some(Boolean), `d: a real mouse swing reaches the avatar (${avatarSwung.filter(Boolean).length}/${swings.length})`);
   const peerDropped = peerHp.length > 1 && Math.min(...peerHp.filter(([t]) => t >= (swings[0]?.t0 ?? Infinity)).map((e) => e[1])) < (swings[0]?.hp0 ?? -1);
   bar(peerDropped || hpSeq(hpTrackOf(sB)).includes('>'), 'd: a real swing registers (creature hp drops on the peer, or on B when the peer probe is off)');
   await shot(a, 'd3-a-after-swings.png'); await shot(b, 'd3-b-after-swings.png');
