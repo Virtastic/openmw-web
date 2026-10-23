@@ -48,6 +48,13 @@ namespace MWMechanics
      *  companion's crime is its leader's, and on the peer the leader is an avatar. */
     MWWorld::Ptr getPlayerLeader(const MWWorld::Ptr& actor);
 
+    /** SIM PEER ONLY (OPENMW_MP_SYSTEM): the avatar nearest `ptr` -- same cell, or both outdoors
+     *  -- for an mwscript that names "Player" (GetLOS, GetDetected). There the player is the
+     *  peer's idle dummy, parked wherever, so a guard's "can I see the player" asked about
+     *  nobody. Empty everywhere else (singleplayer, clients) and when no avatar qualifies:
+     *  callers fall back to the vanilla lookup, unchanged. */
+    MWWorld::Ptr nearestAvatarTo(const MWWorld::Ptr& ptr);
+
     /** MP (Phase 2): the werewolf stat swap, actor-generic. These used to live on
      *  MWWorld::Player (saveStats/setWerewolfStats/restoreStats), so only the singleton
      *  player could ever transform correctly; the snapshot now lives in the actor's own

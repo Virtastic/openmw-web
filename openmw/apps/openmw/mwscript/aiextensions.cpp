@@ -37,6 +37,20 @@ namespace MWScript
 {
     namespace Ai
     {
+        // "Player" ON THE SIM PEER is its idle dummy, parked wherever: a guard's GetLOS/GetDetected
+        // asked about nobody. There it means the avatar nearest the asking actor
+        // (MWMechanics::nearestAvatarTo, empty off the peer); everywhere else, the vanilla lookup.
+        static MWWorld::Ptr searchActorOrAvatar(const ESM::RefId& id, const MWWorld::Ptr& near)
+        {
+            if (id == "Player")
+            {
+                const MWWorld::Ptr avatar = MWMechanics::nearestAvatarTo(near);
+                if (!avatar.isEmpty())
+                    return avatar;
+            }
+            return MWBase::Environment::get().getWorld()->searchPtr(id, true, false);
+        }
+
         template <class R>
         class OpAiActivate : public Interpreter::Opcode1
         {
@@ -434,7 +448,7 @@ namespace MWScript
                 ESM::RefId actorID = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
                 runtime.pop();
 
-                MWWorld::Ptr actor = MWBase::Environment::get().getWorld()->searchPtr(actorID, true, false);
+                MWWorld::Ptr actor = searchActorOrAvatar(actorID, observer);
 
                 Interpreter::Type_Integer value = 0;
                 if (!actor.isEmpty())
@@ -456,7 +470,7 @@ namespace MWScript
                 ESM::RefId actorID = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
                 runtime.pop();
 
-                MWWorld::Ptr dest = MWBase::Environment::get().getWorld()->searchPtr(actorID, true, false);
+                MWWorld::Ptr dest = searchActorOrAvatar(actorID, source);
                 bool value = false;
                 if (!dest.isEmpty() && source.getClass().isActor() && dest.getClass().isActor())
                 {

@@ -1,10 +1,14 @@
 #include "actorutil.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <limits>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/player.hpp"
@@ -90,6 +94,36 @@ namespace MWMechanics
                 return target;
         }
         return MWWorld::Ptr();
+    }
+
+    MWWorld::Ptr nearestAvatarTo(const MWWorld::Ptr& ptr)
+    {
+        static const bool simPeer = std::getenv("OPENMW_MP_SYSTEM") != nullptr;
+        if (!simPeer || ptr.isEmpty() || ptr.getCell() == nullptr)
+            return MWWorld::Ptr();
+        const MWWorld::CellStore* here = ptr.getCell();
+        const osg::Vec3f pos = ptr.getRefData().getPosition().asVec3();
+        std::vector<MWWorld::Ptr> actors;
+        // Every actor the peer processes (a radius no world reaches): avatars are a handful.
+        MWBase::Environment::get().getMechanicsManager()->getActorsInRange(pos, 1e7f, actors);
+        MWWorld::Ptr best;
+        float bestDist2 = std::numeric_limits<float>::max();
+        for (const MWWorld::Ptr& body : actors)
+        {
+            if (body == ptr || !MWMP::isAvatar(body.getCellRef().getRefNum()))
+                continue;
+            // Interior coordinates mean nothing across a door: same room, or both outdoors.
+            const MWWorld::CellStore* there = body.getCell();
+            if (there == nullptr || (there != here && !(there->isExterior() && here->isExterior())))
+                continue;
+            const float d2 = (body.getRefData().getPosition().asVec3() - pos).length2();
+            if (d2 < bestDist2)
+            {
+                bestDist2 = d2;
+                best = body;
+            }
+        }
+        return best;
     }
 
     bool inSimProcessingRange(const MWWorld::Ptr& actor)
