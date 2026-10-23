@@ -4489,6 +4489,12 @@ do
   -- 10. Command and AvoidDoor
   check('Command cannot take an avatar', src(ENG .. 'mwmechanics/spelleffects.cpp'):find('!caster.getClass().isActor() || MWMechanics::isPlayerOrAvatar(target)', 1, true) ~= nil)
   check('AvoidDoor never stacks on an avatar', src(ENG .. 'mwmechanics/aiavoiddoor.cpp'):find('if (MWMechanics::isPlayerOrAvatar(neighbor))', 1, true) ~= nil)
+
+  -- 11. werewolves
+  ac = src(ENG .. 'mwmechanics/actors.cpp')
+  check('PCKnownWerewolf applies to an avatar target', src(ENG .. 'mwmechanics/combat.cpp'):find('|| (isPlayerOrAvatar(target)', 1, true) ~= nil)
+  check('the guard pursuit skips a werewolf avatar',
+    ac:find('if (body.getClass().isNpc() && body.getClass().getNpcStats(body).isWerewolf())', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

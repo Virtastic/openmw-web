@@ -1260,6 +1260,9 @@ namespace MWMechanics
                     const ESM::RefNum ref = body.getCellRef().getRefNum();
                     if (!MWMP::isAvatar(ref) || body.getClass().getCreatureStats(body).isDead())
                         continue;
+                    // A werewolf avatar is not pursued for its bounty (as the player is not, above).
+                    if (body.getClass().isNpc() && body.getClass().getNpcStats(body).isWerewolf())
+                        continue;
                     if (pursue(body, MWMP::avatarBounty(ref)))
                     {
                         // ONCE PER AVATAR, not once per frame. The outer guard (isInPursuit /

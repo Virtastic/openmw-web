@@ -662,7 +662,7 @@ namespace MWMechanics
         if (actor.getClass().isNpc() && target.getClass().isNpc())
         {
             if (target.getClass().getNpcStats(target).isWerewolf()
-                || (target == getPlayer()
+                || (isPlayerOrAvatar(target)
                     && MWBase::Environment::get().getWorld()->getGlobalInt(MWWorld::Globals::sPCKnownWerewolf)))
             {
                 const ESM::GameSetting* iWerewolfFightMod
