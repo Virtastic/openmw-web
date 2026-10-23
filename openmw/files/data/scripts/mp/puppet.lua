@@ -116,7 +116,7 @@ local actorKey = nil -- set for M4 NPC puppets (refKey the holder addresses)
 local degraded = false
 local degradedKey = nil
 -- Backlog 310: the last local swing at this puppet; the stats drop it caused plays the feel.
-local lastSwingAt, lastSwingPos = 0, nil
+local lastSwingAt, lastSwingPos, lastPunchSoundAt = 0, nil, 0
 local SWING_FEEL_WINDOW_S = 1.0
 local interp = Interp.new()
 local lastSnapReq = 0
@@ -375,6 +375,10 @@ local function onHitIntercept(attack)
     -- swing; the MP_Stats drop that follows plays the sound (and the blood, at this position).
     lastSwingAt = core.getRealTime()
     lastSwingPos = attack.hitPos
+    -- ...EXCEPT A PUNCH, WHICH THIS ENGINE HAS ALREADY VOICED. getHandToHandDamage (combat.cpp)
+    -- plays 'Hand To Hand Hit' before the hit reaches this handler, so the fatigue drop's punch
+    -- below played it a second time: every bare-handed blow sounded twice (prod 2026-10-23).
+    if not weapon and attack.successful and attack.damage and attack.damage.fatigue then lastPunchSoundAt = lastSwingAt end
     return false -- cancel local damage; the owner applies it
 end
 
@@ -849,10 +853,12 @@ return {
                         I.Combat.spawnBloodEffect(lastSwingPos)
                     end
                 elseif ftDrop and recent then
-                    core.sound.playSound3d(math.random(2) == 1 and 'Hand To Hand Hit' or 'Hand To Hand Hit 2', self)
+                    if core.getRealTime() - lastPunchSoundAt > SWING_FEEL_WINDOW_S then
+                        core.sound.playSound3d(math.random(2) == 1 and 'Hand To Hand Hit' or 'Hand To Hand Hit 2', self)
+                    end
                     flinch()
                 end
-                if hpDrop or ftDrop then lastSwingAt = 0 end
+                if hpDrop or ftDrop then lastSwingAt = 0; lastPunchSoundAt = 0 end
             end)
             -- Speed is the one attribute the body needs: on the template's Speed a fast
             -- friend's puppet fell 128 units behind and teleported (backlog 134).

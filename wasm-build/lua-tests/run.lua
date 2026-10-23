@@ -727,7 +727,7 @@ do
   check('player.lua sends only a jump the engine will make (on the ground or swimming)',
     pl:find('if not okg or onGround or (okw and swimming) then jumpLatched = true end', 1, true) ~= nil)
   check('puppet.lua flinches on a landed punch, not only on health (prod 2026-10-16)',
-    (pp:match("'Hand To Hand Hit 2', self%)%s+flinch%(%)")) ~= nil)
+    (pp:match("'Hand To Hand Hit 2', self%)%s+end%s+flinch%(%)")) ~= nil)
   check('avatar.lua holds the last input through a retransmit stall (205)',
     av:find('local INPUT_HOLD_S = 1.0', 1, true) ~= nil)
   local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
@@ -3990,8 +3990,8 @@ do
   check('MP_MoveBatch places avatars only on the peer under clientAuthority',
     g:find("mp.isSystem and mp.isSystem() and net.flags and net.flags.clientAuthority == true then\n                    kit.placeAvatar(p.obj, e.id, e)", 1, true) ~= nil)
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
-  check('a placed avatar is not walked from inputs', av:find('if placed then moveAxis, sideAxis = 0, 0 end', 1, true) ~= nil)
-  check('a placed avatar does not jump from inputs', av:find("if placed then\n                self.controls.jump = false", 1, true) ~= nil)
+  check('a placed avatar is not walked from inputs', av:find('\n                moveAxis, sideAxis = 0, 0\n', 1, true) ~= nil)
+  check('a placed avatar does not jump from inputs', av:find("if placed then\n                if jumpDue or jumpLatch then placedFatigue.jump() end -- a jump the owner's engine made\n                self.controls.jump = false", 1, true) ~= nil)
   check('the policy carries the placement mode', av:find('if data.placed ~= nil then placed = data.placed == true end', 1, true) ~= nil
     and g:find('avatarObjIds = ids, placed = placed', 1, true) ~= nil)
   if mk then
@@ -4023,6 +4023,67 @@ do
     place(u, 9, { x = 50, y = 0, z = 0 })
     check('no cell yet, no placement', #u.tp == 0)
   end
+end
+
+-- ====================================== a placed avatar pays for its owner's movement
+print('avatar.lua -- a placed body spends fatigue for running, swimming, sneaking and jumping (prod 2026-10-23)')
+do
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  local a = av:find('local placedFatigue = {}', 1, true)
+  local b = a and select(2, av:find('\nfunction placedFatigue.jump()', a, true))
+  b = b and select(2, av:find('\nend\n', b, true))
+  local GM = { fFatigueRunBase = 5, fFatigueRunMult = 2, fFatigueSwimWalkBase = 2.5, fFatigueSwimWalkMult = 4,
+    fFatigueSwimRunBase = 7, fFatigueSwimRunMult = 1, fFatigueSneakBase = 1.5, fFatigueSneakMult = 1.5,
+    fFatigueJumpBase = 5, fFatigueJumpMult = 10 }
+  local function mk(opts)
+    local ft = { current = opts.ft or 100 }
+    local env = setmetatable({
+      core = { getGMST = function(k) return GM[k] end },
+      self = {},
+      types = { Actor = {
+        stats = { dynamic = { fatigue = function() return ft end } },
+        getEncumbrance = function() return opts.enc or 50 end,
+        getCapacity = function() return opts.cap or 100 end,
+        isSwimming = function() return opts.swim == true end,
+      } },
+    }, { __index = _G })
+    local chunk = a and b and loadstring(av:sub(a, b) .. '\nreturn placedFatigue')
+    if not chunk then return nil end
+    setfenv(chunk, env)
+    return chunk(), ft
+  end
+  local pf, ft = mk({})
+  check('placedFatigue is where this test expects it', pf ~= nil)
+  if pf then
+    pf.move(1, 1, 0, true, false)
+    check('a second of running costs fFatigueRunBase + encumbrance x fFatigueRunMult (5 + 0.5 x 2 = 6)',
+      math.abs(ft.current - 94) < 1e-6, tostring(ft.current))
+    pf, ft = mk({}); pf.move(1, 1, 0, false, false)
+    check('walking on land costs nothing (as in the engine)', ft.current == 100, tostring(ft.current))
+    pf, ft = mk({}); pf.move(0.5, 0.6, 0.8, true, false)
+    check('scaled by time and by how hard the stick is pushed', math.abs(ft.current - (100 - 6 * 0.5)) < 1e-6, tostring(ft.current))
+    pf, ft = mk({ swim = true }); pf.move(1, 1, 0, false, false)
+    check('swimming at a walk costs the swim-walk rate', math.abs(ft.current - (100 - 4.5)) < 1e-6, tostring(ft.current))
+    pf, ft = mk({}); pf.move(1, 1, 0, true, true)
+    check('sneaking costs the sneak rate, run or not', math.abs(ft.current - (100 - 2.25)) < 1e-6, tostring(ft.current))
+    pf, ft = mk({ enc = 150 }); pf.move(1, 1, 0, true, false)
+    check('over capacity spends nothing (the engine does not move such a body either)', ft.current == 100)
+    pf, ft = mk({}); pf.jump()
+    check('a jump costs fFatigueJumpBase + encumbrance x fFatigueJumpMult (5 + 5 = 10)', math.abs(ft.current - 90) < 1e-6, tostring(ft.current))
+    pf, ft = mk({ ft = 3 }); pf.jump()
+    check('the bar stops at zero', ft.current == 0, tostring(ft.current))
+    pf, ft = mk({ ft = -5 }); pf.jump()
+    check('an already-negative bar is left as it is', ft.current == -5, tostring(ft.current))
+  end
+  check('the placed branch spends run fatigue before zeroing the axes',
+    av:find('placedFatigue.move(frameDt, moveAxis, sideAxis, bit(ctl.flags, 0), bit(ctl.flags, 1))\n                moveAxis, sideAxis = 0, 0', 1, true) ~= nil)
+  check('the placed branch charges a jump the owner made',
+    av:find('if jumpDue or jumpLatch then placedFatigue.jump() end', 1, true) ~= nil)
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  check('puppet.lua remembers a punch this engine already voiced',
+    pp:find('if not weapon and attack.successful and attack.damage and attack.damage.fatigue then lastPunchSoundAt = lastSwingAt end', 1, true) ~= nil)
+  check('...and the fatigue drop does not voice it again',
+    pp:find('if core.getRealTime() - lastPunchSoundAt > SWING_FEEL_WINDOW_S then', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

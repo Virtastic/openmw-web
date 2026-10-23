@@ -29,6 +29,45 @@ local util = require('openmw.util')
 -- is untouched: only player-on-player damage is vetoed.
 local pvpEnabled = false
 local placed = false -- the WoW model: global.lua stands this body on its owner's poses (mpAvatarPolicy)
+-- A PLACED BODY PAYS FOR ITS OWNER'S MOVEMENT. The engine charges fatigue for running, swimming,
+-- sneaking (mwmechanics/character.cpp) and jumping (mwphysics/physicssystem.cpp) only to a body
+-- that moves itself, and a placed one never does -- so the avatar's bar stayed full, and the 4 Hz
+-- report (player.lua MP_SelfStats) refilled the owner's every time a jump or a sprint spent it
+-- (prod 2026-10-23, 1.6.6). The same formulas, on the owner's input; fatigue stays the peer's,
+-- where combat reads it. One table, not more locals.
+local placedFatigue = {}
+function placedFatigue.spend(loss)
+    if not (loss and loss > 0) then return end
+    pcall(function()
+        local f = types.Actor.stats.dynamic.fatigue(self)
+        -- the engine's setCurrent(cur - loss, cur < 0): a bar at or above zero stops at zero
+        if f.current >= 0 then f.current = math.max(0, f.current - loss) end
+    end)
+end
+function placedFatigue.encumbrance()
+    local ok, e, c = pcall(function() return types.Actor.getEncumbrance(self), types.Actor.getCapacity(self) end)
+    if not ok or not e or not c then return 0, false end
+    return (c > 0 and e / c or 1), e > c -- getNormalizedEncumbrance; over capacity spends nothing
+end
+function placedFatigue.move(dt, move, side, run, sneak)
+    local speed = math.min(1, math.sqrt((move or 0) ^ 2 + (side or 0) ^ 2))
+    if speed <= 0 or not (dt and dt > 0) then return end
+    local enc, over = placedFatigue.encumbrance()
+    if over then return end
+    local G = core.getGMST
+    local okw, swim = pcall(types.Actor.isSwimming, self)
+    local loss = 0
+    if sneak then loss = G('fFatigueSneakBase') + enc * G('fFatigueSneakMult')
+    elseif okw and swim then
+        loss = run and (G('fFatigueSwimRunBase') + enc * G('fFatigueSwimRunMult'))
+            or (G('fFatigueSwimWalkBase') + enc * G('fFatigueSwimWalkMult'))
+    elseif run then loss = G('fFatigueRunBase') + enc * G('fFatigueRunMult') end
+    placedFatigue.spend(loss * dt * speed)
+end
+function placedFatigue.jump()
+    local enc = placedFatigue.encumbrance()
+    placedFatigue.spend(core.getGMST('fFatigueJumpBase') + enc * core.getGMST('fFatigueJumpMult'))
+end
 local avatarObjIds = {}
 
 local input = nil -- latest {seq, move, side, yaw, pitch, flags}
@@ -388,7 +427,10 @@ return {
             -- PLACED, NOT WALKED (the WoW model): global.lua stands this body on every pose its
             -- owner's game sent, so the inputs only aim, swing and ready. Walking it as well would
             -- fight the placement and re-open the disagreement the placement removes.
-            if placed then moveAxis, sideAxis = 0, 0 end
+            if placed then
+                placedFatigue.move(frameDt, moveAxis, sideAxis, bit(ctl.flags, 0), bit(ctl.flags, 1))
+                moveAxis, sideAxis = 0, 0
+            end
             self.controls.movement = moveAxis
             self.controls.sideMovement = sideAxis
             local curYaw = self.rotation:getYaw()
@@ -401,6 +443,7 @@ return {
             self.controls.run = bit(ctl.flags, 0)
             self.controls.sneak = bit(ctl.flags, 1)
             if placed then
+                if jumpDue or jumpLatch then placedFatigue.jump() end -- a jump the owner's engine made
                 self.controls.jump = false -- the owner's jump arrives as poses
                 jumpDue, jumpLatch = nil, false
             elseif timed then
