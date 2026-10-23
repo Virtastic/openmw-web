@@ -302,6 +302,11 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     // never falls by itself, so without this a long fall cost nothing. A LOSS only, capped at
     // the bar: the one thing a modified client can do with it is hurt itself.
     const fallLoss = ctx.clientAuthority ? finite(tbl(body.get('hp'))?.get('fall')) : undefined;
+    // ...and the fall knocked the owner down: lay the avatar down too (a fact about the owner's
+    // own body, harmless to forge). Its own event: it may come with no bar change at all.
+    if (ctx.clientAuthority && tbl(body.get('hp'))?.get('kd') === true && player.avatarDead !== true) {
+      ctx.worldPeer()?.peer.sendEvent('AvatarRestore', { id: player.id, kd: true });
+    }
     if (fallLoss !== undefined && fallLoss > 0 && cur?.hp && !(player.avatarDead === true && cur.hp.c <= 0)) {
       const base = r.hp ?? { c: cur.hp.c, b: cur.hp.b };
       r.hp = { c: Math.max(0, base.c - Math.min(fallLoss, base.b)), b: base.b };

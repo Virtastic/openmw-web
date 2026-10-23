@@ -4131,7 +4131,7 @@ end
 print('identity.lua -- the fall damage the engine did not apply is claimed as hp.fall (prod 2026-10-23)')
 do
   local id = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
-  local a = id:find('local fall = { owed = 0 }', 1, true)
+  local a = id:find('local fall = { owed = 0, kd = false }', 1, true)
   local b = a and select(2, id:find('\nfunction identity.fallWatch()', a, true))
   b = b and select(2, id:find('\nend\n', b, true))
   local owed = {}
@@ -4274,6 +4274,82 @@ do
   check('a refused death stands up at the peer hp, baselined first',
     pl:find('if hp then identity.notePeerBars(hp) end', 1, true) ~= nil and g:find('if not data.standUp then teleportPlayerTo(data) end', 1, true) ~= nil)
   check('the probe marks bodies past processing range', a:find('> 7168 * 7168 or nil', 1, true) ~= nil)
+end
+
+-- ====================================== 1.7.0 D: stats counted once (2026-10-23)
+print('1.7.0 stats -- modifier moves and worn restores are the avatar\'s; rest fatigue is claimed; a fall knocks down')
+do
+  local id = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
+  local a = id:find('local tracked = {', 1, true)
+  local b = a and select(2, id:find('\ntrackLocalChange = function()', a, true))
+  b = b and select(2, id:find('\nend\n', b, true))
+  local function mk(o)
+    local st = { health = { current = 50, base = 100, modifier = 0 }, magicka = { current = 40, base = 80, modifier = 0 },
+      fatigue = { current = 30, base = 200, modifier = 0 } }
+    local clock = { t = 0 }
+    local env = setmetatable({
+      identity = {}, self = {}, mp = {},
+      core = { getSimulationTime = function() return clock.t end, getRealTime = function() return clock.t end },
+      I = { UI = { getMode = function() return o.mode end } },
+      Actor = { stats = { dynamic = {
+        health = function() return st.health end, magicka = function() return st.magicka end, fatigue = function() return st.fatigue end } },
+        activeSpells = function() return o.spells or {} end },
+    }, { __index = _G })
+    local chunk = a and b and loadstring(id:sub(a, b) .. '\nreturn tracked, trackLocalChange')
+    if not chunk then return nil end
+    setfenv(chunk, env)
+    local tr, tick = chunk()
+    return tr, tick, st, clock
+  end
+  local tr, tick, st, clock = mk({})
+  check('trackLocalChange (1.7.0) is where this test expects it', tick ~= nil)
+  if tick then
+    tick()
+    st.health.current = 70; st.health.modifier = 20; tick()
+    check('a Fortify Health is not claimed as a heal (the avatar runs its copy)', tr.hp.delta == 0, tostring(tr.hp.delta))
+    st.health.current = 50; st.health.modifier = 0; tick()
+    check('...nor its expiry', tr.hp.delta == 0, tostring(tr.hp.delta))
+    st.health.current = 60; tick()
+    check('a real heal is still claimed', tr.hp.delta == 10, tostring(tr.hp.delta))
+    st.magicka.current = 30; st.magicka.modifier = -10; tick()
+    check('a Drain Magicka is not claimed as a spend', tr.mp.delta == 0, tostring(tr.mp.delta))
+    st.fatigue.current = 60; tick()
+    check('fatigue regen out of rest is not claimed', tr.ft.delta == 0, tostring(tr.ft.delta))
+  end
+  tr, tick, st, clock = mk({ mode = 'Rest' })
+  if tick then
+    tick(); st.fatigue.current = 90; tick()
+    check('fatigue a rest restored is claimed', tr.ft.delta == 60, tostring(tr.ft.delta))
+  end
+  local ring = { { fromEquipment = true, effects = { { id = 'restorehealth', magnitudeThisFrame = 2 } } } }
+  tr, tick, st, clock = mk({ spells = ring })
+  if tick then
+    tick(); clock.t = 5; st.health.current = 60; tick()
+    check('a worn Restore Health ring\'s regen is the avatar\'s, not claimed again', math.abs(tr.hp.delta) < 1e-6, tostring(tr.hp.delta))
+    clock.t = 6; st.health.current = 80; tick()
+    check('a potion on top of it still counts', math.abs(tr.hp.delta - 18) < 1e-6, tostring(tr.hp.delta))
+  end
+  -- the fall's knockdown
+  local fa = id:find('local fall = { owed = 0, kd = false }', 1, true)
+  local fb = fa and select(2, id:find('\nfunction identity.fallWatch()', fa, true))
+  fb = fb and select(2, id:find('\nend\n', fb, true))
+  local kds = { false, true }
+  local fenv = setmetatable({ identity = {}, mp = { takeFallDamage = function() return 0 end,
+    takeFallKnockdown = function() return table.remove(kds, 1) end } }, { __index = _G })
+  local fchunk = fa and fb and loadstring(id:sub(fa, fb) .. '\nreturn identity')
+  if fchunk then
+    setfenv(fchunk, fenv)
+    local F = fchunk()
+    F.fallWatch(); check('no knockdown, none owed', F._fall.kd == false)
+    F.fallWatch(); check('the engine\'s fall knockdown is taken', F._fall.kd == true)
+  end
+  check('the claim carries the knockdown', id:find('if fall.kd then claim.hp.kd = true end', 1, true) ~= nil)
+  local ch = io.open('./openmw/apps/openmw/mwmechanics/character.cpp'):read('*a')
+  check('character.cpp records a fall knockdown for the avatar', ch:find('MWMP::recordFallKnockdown();', 1, true) ~= nil)
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  check('mp.takeFallKnockdown and mp.setKnockedDown are bound', lb:find('api["takeFallKnockdown"]', 1, true) ~= nil and lb:find('api["setKnockedDown"]', 1, true) ~= nil)
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('the peer lays the avatar down on kd', g:find('if data.kd == true and mp.setKnockedDown then pcall(mp.setKnockedDown, p.obj) end', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

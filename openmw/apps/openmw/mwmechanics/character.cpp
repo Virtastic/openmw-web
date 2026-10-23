@@ -2285,7 +2285,11 @@ namespace MWMechanics
                         if (healthLost > (acrobaticsSkill * fatigueTerm))
                         {
                             if (!godmode)
+                            {
                                 cls.getCreatureStats(mPtr).setKnockedDown(true);
+                                if (isPlayer && MWMP::peerRulesBody())
+                                    MWMP::recordFallKnockdown();
+                            }
                         }
                         else
                         {

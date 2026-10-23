@@ -344,6 +344,16 @@ namespace MWMP
         // The fall damage this engine measured but, the peer ruling the body, did not apply
         // (character.cpp). Taken once: the next call returns 0.
         api["takeFallDamage"] = []() -> float { return MWMP::takeFall(); };
+        api["takeFallKnockdown"] = []() -> bool { return MWMP::takeFallKnockdown(); };
+        // The peer lays an avatar down when its owner's fall knocked the owner down (hp.kd).
+        api["setKnockedDown"] = [](const sol::object& obj) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return;
+            ptr.getClass().getCreatureStats(ptr).setKnockedDown(true);
+        };
         // Backlog 73: knockdown is not in the Lua stats API; the peer reports it with the avatar
         // bars so the owner stops driving a body that is lying on the floor.
         api["isKnockedDown"] = [](const sol::object& obj) -> bool {

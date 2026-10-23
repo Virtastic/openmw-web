@@ -182,6 +182,10 @@ namespace MWMP
      *  takes it and claims it as hp.fall, which the server subtracts from the avatar. */
     void recordFall(float healthLost);
     float takeFall();
+    // ...and a fall that knocked the owner down: the avatar must lie down too, or NPCs fight a
+    // standing body (no knocked-down hit bonus, it can still block). Sticky until taken.
+    void recordFallKnockdown();
+    bool takeFallKnockdown();
 
     /** A multiplayer CLIENT (a browser engine with a session URL), as opposed to the sim peer
      *  (OPENMW_MP_SYSTEM) or singleplayer (no URL). Read once: the environment never changes. */

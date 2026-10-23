@@ -307,6 +307,19 @@ namespace MWMP
     namespace
     {
         float sFallOwed = 0.f;
+        bool sFallKnockdown = false;
+    }
+
+    void recordFallKnockdown()
+    {
+        sFallKnockdown = true;
+    }
+
+    bool takeFallKnockdown()
+    {
+        const bool kd = sFallKnockdown;
+        sFallKnockdown = false;
+        return kd;
     }
 
     void recordFall(float healthLost)

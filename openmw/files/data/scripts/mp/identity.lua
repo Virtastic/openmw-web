@@ -192,12 +192,40 @@ end
 -- Magicka is the same story in BOTH directions: the avatar never casts, so a cast's cost is
 -- a local drop the next report refills (casting was free half the time), and a restore
 -- potion is a local rise it takes away. Health claims gains only (damage is the peer's);
--- magicka claims the net local change. Fatigue is NOT tracked: both engines regenerate it,
--- so claiming our regen on top of the avatar's would double the recovery rate.
+-- magicka claims the net local change. Fatigue is measured only WHILE RESTING: both engines
+-- regenerate it, so claiming our regen on top of the avatar's would double the recovery rate,
+-- but a rest is hours of game time the avatar never lives (restOnly; the sleep: hook banks it).
+-- NOT CLAIMED, because the avatar does it too (it wears the same items and runs a mirrored copy
+-- of every Fortify/Drain): a move of the stat's MODIFIER (Fortify/Drain Health or Magicka, cast
+-- or worn -- a Fortify Health potion healed its magnitude for free), and what worn constant-effect
+-- Restore Health/Magicka regenerates (restoreId; it ran at twice the rate).
 local tracked = {
-    hp = { stat = 'health', gainsOnly = true },
-    mp = { stat = 'magicka', gainsOnly = false },
+    hp = { stat = 'health', gainsOnly = true, restoreId = 'restorehealth' },
+    mp = { stat = 'magicka', gainsOnly = false, restoreId = 'restoremagicka' },
+    ft = { stat = 'fatigue', gainsOnly = true, restOnly = true },
 }
+-- Per second, what worn constant-effect Restore Health/Magicka gives us, by effect id. Re-read
+-- every 0.5 s of game time: equipping is rare, and activeSpells is not free to walk per frame.
+local equipRestore = { at = -1, rate = {} }
+function identity._equipRestore() return equipRestore end -- test handle
+local function equipRestoreRate(simNow)
+    if simNow - equipRestore.at < 0.5 then return equipRestore.rate end
+    equipRestore.at = simNow
+    local rate = {}
+    pcall(function()
+        for _, sp in pairs(Actor.activeSpells(self)) do
+            if sp.fromEquipment then
+                for _, e in ipairs(sp.effects or {}) do
+                    if (e.id == 'restorehealth' or e.id == 'restoremagicka') and type(e.magnitudeThisFrame) == 'number' then
+                        rate[e.id] = (rate[e.id] or 0) + e.magnitudeThisFrame
+                    end
+                end
+            end
+        end
+    end)
+    equipRestore.rate = rate
+    return rate
+end
 for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0; t.baseSaid = nil end
 local peerBarsAt = nil -- when the peer last reported; past PEER_RULES_S our own bars rule again
 -- A FALL THIS ENGINE MEASURED. Under the WoW model the avatar is placed on our poses and never
@@ -207,11 +235,13 @@ local peerBarsAt = nil -- when the peer last reported; past PEER_RULES_S our own
 -- (mp.takeFallDamage) and it rides the next claim as hp.fall; the server takes it off the avatar
 -- ([limits] clientAuthority only, so the replay model, where the avatar falls itself, is not
 -- charged twice).
-local fall = { owed = 0 }
+local fall = { owed = 0, kd = false }
 identity._fall = fall -- test handle
 function identity.fallWatch()
     local ok, f = pcall(function() return mp.takeFallDamage and mp.takeFallDamage() or 0 end)
     if ok and type(f) == 'number' and f > 0 then fall.owed = fall.owed + f end
+    local okK, kd = pcall(function() return mp.takeFallKnockdown and mp.takeFallKnockdown() end)
+    if okK and kd == true then fall.kd = true end
 end
 local PEER_RULES_S = 5 -- server/src/core/players.ts INPUT_DRIVING_MS, the same predicate
 local trackLocalChange -- defined below; the report handler needs it first
@@ -245,13 +275,23 @@ function identity.bankGain(gains)
     end
 end
 trackLocalChange = function()
+    local simNow = (core.getSimulationTime or core.getRealTime)()
+    local resting = false
+    if tracked.ft.restOnly then pcall(function() resting = I.UI.getMode() == 'Rest' end) end
     for _, t in pairs(tracked) do
-        local ok, cur = pcall(function() return Actor.stats.dynamic[t.stat](self).current end)
-        if ok and cur and t.prev then
-            local d = cur - t.prev
+        local ok, cur, mod = pcall(function()
+            local s = Actor.stats.dynamic[t.stat](self)
+            return s.current, s.modifier or 0
+        end)
+        if ok and cur and t.prev and (resting or not t.restOnly) then
+            local d = (cur - t.prev) - (mod - (t.prevMod or mod))
+            if t.restoreId and t.at then
+                local r = equipRestoreRate(simNow)[t.restoreId]
+                if r and r > 0 then d = d - r * math.max(0, simNow - t.at) end
+            end
             if d > 0 or not t.gainsOnly then t.delta = t.delta + d end
         end
-        if ok and cur then t.prev = cur end
+        if ok and cur then t.prev = cur; t.prevMod = mod; t.at = simNow end
     end
 end
 
@@ -569,7 +609,7 @@ function identity.tick(now)
                 -- base is ours to say, and the avatar must get it or the new maximum exists
                 -- on no body that fights.
                 local baseMoved = t.baseSaid ~= nil and math.abs(dyn[k].b - t.baseSaid) > 0.5
-                if math.abs(t.delta) > 0.5 or baseMoved then
+                if t.peer ~= nil and (math.abs(t.delta) > 0.5 or baseMoved) then
                     -- THE GAIN RIDES ALONG AS `d` (backlog 461). `c` is `last report + gain`,
                     -- and the last report is stale for a round trip after every raise the
                     -- server applies: each claim in that window was BELOW the doc, ignored
@@ -582,14 +622,17 @@ function identity.tick(now)
                 t.baseSaid = dyn[k].b
                 t.delta = 0
             end
-            if fall.owed > 0.5 then
+            if fall.owed > 0.5 or fall.kd then
                 -- `fall` is a LOSS: the server only ever subtracts it (and only under the WoW
-                -- model), so a modified client can hurt nobody but itself with it.
+                -- model), so a modified client can hurt nobody but itself with it. `kd`: the
+                -- fall knocked us down, so the avatar lies down too.
                 claim.hp = claim.hp or { c = math.floor((tracked.hp.peer or dyn.hp.c) + 0.5), b = dyn.hp.b }
-                claim.hp.fall = math.floor(fall.owed * 10 + 0.5) / 10
+                if fall.owed > 0.5 then claim.hp.fall = math.floor(fall.owed * 10 + 0.5) / 10 end
+                if fall.kd then claim.hp.kd = true end
                 any = true
             end
             fall.owed = 0
+            fall.kd = false
             if any then
                 mp.sendEvent('PlayerStatsDynamic', claim)
                 if claim.hp then mp.set('hpClaim', string.format('%d+%s', claim.hp.c, tostring(claim.hp.d))) end
@@ -601,6 +644,7 @@ function identity.tick(now)
             -- gain zeroed here without being said was a heal that reached nobody (s150: the
             -- rest's +24 in a frame the peer's word had gone stale). Say it, then zero it.
             fall.owed = 0 -- our own bars rule: the drop is already in dyn.hp
+            fall.kd = false
             local fp = fingerprint(dyn) -- of the bars alone: a gain is not a change to re-send
             local anyGain = false
             for k, t in pairs(tracked) do

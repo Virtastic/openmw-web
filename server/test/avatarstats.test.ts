@@ -735,5 +735,12 @@ for (const clientAuthority of [true, false]) {
     } else {
       assert.equal(restore, undefined, 'under the replay model the avatar falls itself: no second charge');
     }
+    // A fall that knocked the owner down lays the avatar down (its own AvatarRestore, kd only).
+    peer.inbox.events.length = 0;
+    a.sendEvent('PlayerStatsDynamic', { hp: { c: 90, b: 100, kd: true } });
+    await new Promise((r) => setTimeout(r, 400));
+    const kd = peer.inbox.events.find((e) => e.name === 'AvatarRestore' && (e.value as { kd?: boolean }).kd === true);
+    if (clientAuthority) assert.deepEqual(kd?.value, { id: a.playerId, kd: true }, 'the knockdown never reached the avatar');
+    else assert.equal(kd, undefined, 'under the replay model the avatar falls, and is knocked down, itself');
   });
 }

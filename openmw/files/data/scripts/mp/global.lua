@@ -2401,6 +2401,9 @@ local eventHandlers = {
         if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
         local p = puppets[data.id]
         if not p or not p.obj or not p.obj:isValid() then return end
+        -- The owner's fall knocked them down (playerstate.ts hp.kd): so is the avatar.
+        if data.kd == true and mp.setKnockedDown then pcall(mp.setKnockedDown, p.obj) end
+        if not (data.hp or data.mp or data.ft) then return end
         -- Self-gated write (see applyAvatarDoc): the avatar's script applies it. Done from
         -- here it threw inside a pcall, and no potion, rest or self-heal ever reached the
         -- avatar -- the next report undid every one of them (s112).
