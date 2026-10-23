@@ -1438,7 +1438,11 @@ end
 local function rebuildPuppet(id)
     local p = puppets[id]
     if not p or not p.obj:isValid() then return end
-    local pos = p.obj.position
+    -- WHERE IT IS GOING, not where it stood: obj.position lags a teleport still in flight (or
+    -- queued in retry.lua), and the owner's last pose is newer than the body. Read before the
+    -- despawn, which drops the queued move.
+    local queued = retry.pendingTeleport(p.obj)
+    local pos = (queued and queued.pos) or lastPose[id] or p.obj.position
     despawnPuppet(id)
     spawnPuppet(id, { x = pos.x, y = pos.y, z = pos.z })
 end

@@ -4679,5 +4679,15 @@ do
   package.loaded['scripts.mp.quests'] = nil
   package.loaded['scripts.mp.actors'] = nil
 end
+
+print('1.7.1 rebuildPuppet respawns at the queued teleport or the last pose, not the lagging body')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local a = g:find('local function rebuildPuppet(id)', 1, true)
+  local q = a and g:find('local queued = retry.pendingTeleport(p.obj)', a, true)
+  local pick = a and g:find('local pos = (queued and queued.pos) or lastPose[id] or p.obj.position', a, true)
+  local d = a and g:find('despawnPuppet(id)', a, true)
+  check('the target is read before the despawn drops the queued move', q and pick and d and q < pick and pick < d)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
