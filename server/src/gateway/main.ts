@@ -24,7 +24,7 @@ import { HARNESS_PASSWORD } from '../auth/harness';
 import { log, enableFileLog } from '../log';
 import { metrics } from '../metrics';
 import { mwDataRoutes } from '../net/mwdata-routes';
-import { clientRoutes } from '../net/client-routes';
+import { clientRoutes, defaultClientDir } from '../net/client-routes';
 import { lockerPublicBase } from '../data/fsstorage';
 import { writeCaddyfile, launcherEnabled } from '../net/admin/caddy-config';
 import { gameDataDir } from '../core/gamedata';
@@ -264,8 +264,8 @@ const directory = await startDirectory({
     allowStockSwap: () => config.content.allowStockSwap,
   }),
   // The player app (./play mounted at /client), served here so Caddy is optional (#203).
-  ...(existsSync('/client') ? { client: clientRoutes({
-    clientDir: '/client',
+  ...(existsSync(defaultClientDir()) ? { client: clientRoutes({
+    clientDir: defaultClientDir(),
     launcher: () => launcherEnabled() || config.setup.deploymentMode === 'multiplayer',
   }) } : {}),
   resolveAccount: frontDoor.resolveAccount,

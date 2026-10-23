@@ -62,6 +62,8 @@ Worth knowing:
 - **Locked out?** `docker compose run --rm openmw-web node dist/server.mjs --data /data
   --admin-reset <name>` clears the password and two-factor and prints a temporary one.
 
+Running a Pterodactyl or Pelican panel? See [pterodactyl/README.md](pterodactyl/README.md) for an egg (single-player, untested).
+
 ## The dashboard, page by page
 
 Each page needs a role: **viewer** reads, **moderator** acts on players, **owner** changes

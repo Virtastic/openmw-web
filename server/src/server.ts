@@ -15,7 +15,7 @@ import { QuestRepair } from './core/quest-repair';
 import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
 import { writeCaddyfile, launcherEnabled } from './net/admin/caddy-config';
-import { clientRoutes } from './net/client-routes';
+import { clientRoutes, defaultClientDir } from './net/client-routes';
 import { saveSection } from './net/admin/settings-store';
 import { orderedContent } from './net/admin/api-mods';
 import { notifyFromLog, type MailConfig } from './net/admin/notify';
@@ -726,7 +726,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   // The game client bundle, when this deployment mounts it (docker-compose mounts ./play at
   // /client). Served by clientRoutes below and updated by the dashboard.
-  const clientDir = opts.clientDir ?? (existsSync('/client') ? '/client' : undefined);
+  const clientDir = opts.clientDir ?? (existsSync(defaultClientDir()) ? defaultClientDir() : undefined);
 
   // Maintenance mode: set from the dashboard, read by the connection path. PERSISTED to a
   // marker file, because its stated use case is "turn it on, change settings, restart" —

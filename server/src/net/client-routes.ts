@@ -24,6 +24,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HttpRoute } from './http';
 import { TYPES } from './admin/static';
 
+/** Where the player app is mounted: /client in the Docker images, OMW_CLIENT where the volume lives elsewhere (Pterodactyl/Pelican). */
+export const defaultClientDir = (): string => process.env.OMW_CLIENT || '/client';
+
 export interface ClientDeps {
   /** The folder holding index.html, launcher.html and e/<hash>/. */
   clientDir: string;

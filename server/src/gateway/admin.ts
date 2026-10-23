@@ -29,6 +29,7 @@ import { request as httpRequest } from 'node:http';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from '../config';
+import { defaultClientDir } from '../net/client-routes';
 import { roleAtLeast, type AccountStore } from '../core/accounts';
 import type { AdminSessionStore } from '../auth/identities';
 import { Moderation } from '../core/moderation';
@@ -151,7 +152,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     setupToken,
     gameDataDir: gameDataDir(deps.sharedDir),
     version: deps.version,
-    clientDir: existsSync('/client') ? '/client' : undefined,
+    clientDir: existsSync(defaultClientDir()) ? defaultClientDir() : undefined,
 
     // PEOPLE FIRST. Rows are players, each labelled with whose game they are in; the games
     // and the box's health come after. This is the reading the page exists to give here,

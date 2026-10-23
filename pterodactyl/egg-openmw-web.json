@@ -1,0 +1,79 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": { "version": "PTDL_v2", "update_url": null },
+    "exported_at": "2026-10-23T00:00:00+00:00",
+    "name": "OpenMW Web",
+    "author": "michael@stavridis.xyz",
+    "description": "Morrowind in the browser (openmw-web), single-player. Open /admin on the server port to run the setup wizard. Players need HTTPS in front of it; see the README.",
+    "features": null,
+    "docker_images": {
+        "openmw-web (latest)": "ghcr.io/virtastic/openmw-web-server:latest"
+    },
+    "file_denylist": [],
+    "startup": "/usr/local/bin/docker-entrypoint.sh",
+    "config": {
+        "files": "{}",
+        "startup": "{\"done\": \"entrypoint.mode\"}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/ash\nmkdir -p /mnt/server/data/gamedata /mnt/server/play\n",
+            "container": "alpine:3.20",
+            "entrypoint": "ash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Port",
+            "description": "Port the server listens on. Leave as the server's own port.",
+            "env_variable": "OMW_PORT",
+            "default_value": "{{SERVER_PORT}}",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Data directory",
+            "description": "Where saves, config and Morrowind game files live (game files go in gamedata/ inside it).",
+            "env_variable": "OMW_DATA",
+            "default_value": "/home/container/data",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Player app directory",
+            "description": "Where the setup wizard installs the player app.",
+            "env_variable": "OMW_CLIENT",
+            "default_value": "/home/container/play",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Mode",
+            "description": "single is the only mode this egg supports.",
+            "env_variable": "OMW_DEFAULT_MODE",
+            "default_value": "single",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string|in:single",
+            "field_type": "text"
+        },
+        {
+            "name": "Heap (MB)",
+            "description": "Node heap cap. Keep it under the server's memory limit.",
+            "env_variable": "OMW_HEAP_MB",
+            "default_value": "256",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|min:128",
+            "field_type": "text"
+        }
+    ]
+}
