@@ -448,7 +448,11 @@ function kit.placeAvatar(obj, id, e)
     local okp, cur = pcall(function() return obj.position end)
     if okp and cur and (cur - tgt):length2() <= 4 then return end -- within 2 units
     pcall(function()
-        obj:teleport(inviteCellArg(key), tgt, { rotation = util.transform.rotateZ(e.yaw or 0), onGround = false })
+        -- NO ROTATION: a rotation option is a yaw-only transform, which zeroed the PITCH on every
+        -- placement -- melee reach below eye level (combat.cpp actorVerticalAngle) and arrows aimed
+        -- level on most frames while the owner moved. Without one the body keeps its own facing,
+        -- which avatar.lua already turns to the owner's yaw and pitch every frame.
+        obj:teleport(inviteCellArg(key), tgt, { onGround = false })
     end)
 end
 
@@ -493,7 +497,10 @@ local function puppetRecordId(id, name)
     -- No look yet: a template body until the first PlayerAppearance, whose relay always
     -- rebuilds (MP_PlayerAppearance: no previous look is never "same").
     if not app then print('[mp] puppet #' .. tostring(id) .. ' built from the template (no appearance yet)') end
-    local draft = { template = template, name = name }
+    -- mwscript '': the template's own script (a villager's, or retail's first NPC record's) ran
+    -- on every puppet, and on the avatar it restarted with reset locals at every placement
+    -- (a same-cell teleport re-adds the local script, objectbindings.cpp).
+    local draft = { template = template, name = name, mwscript = '' }
     if app then
         draft.race = app.race
         draft.class = app.class
@@ -911,7 +918,12 @@ local function avatarStatsTick(now)
                     mp = { c = m.current, b = m.base },
                     ft = { c = ft.current, b = ft.base },
                     -- Backlog 73: knocked down here = the owner must stop walking (player.lua).
-                    kd = (mp.isKnockedDown and mp.isKnockedDown(p.obj)) == true or nil,
+                    -- ...or PARALYZED: a placed avatar no longer freezes its owner by refusing to
+                    -- move, so the owner walked on (and dragged it) until the 1 Hz effect relay.
+                    kd = ((mp.isKnockedDown and mp.isKnockedDown(p.obj)) == true or (function()
+                        local ok, e = pcall(function() return types.Actor.activeEffects(p.obj):getEffect('paralyze') end)
+                        return ok and e ~= nil and (e.magnitude or 0) > 0
+                    end)()) or nil,
                     -- Backlog 312: a block since the last report; the owner plays its sound.
                     blk = (function() local s = mp.takeBlock and mp.takeBlock(p.obj); return s ~= '' and s or nil end)() }
             end)

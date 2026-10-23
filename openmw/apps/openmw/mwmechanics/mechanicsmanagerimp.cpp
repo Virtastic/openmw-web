@@ -1794,7 +1794,10 @@ namespace MWMechanics
             }
         }
         stats.getAiSequence().stack(MWMechanics::AiCombat(target), ptr);
-        if (target == getPlayer())
+        // An AVATAR is a player too (the sim peer's real players; getPlayer() there is its dummy):
+        // a guard fighting one must not give up when it is out of reach, and guards pursuing that
+        // same avatar join -- only those, not guards chasing someone else.
+        if (MWMechanics::isPlayerOrAvatar(target))
         {
             // if guard starts combat with player, guards pursuing player should do the same
             if (ptr.getClass().isClass(ptr, "Guard"))
@@ -1810,7 +1813,8 @@ namespace MWMechanics
                     {
                         MWMechanics::AiSequence& aiSeq
                             = actor.getPtr().getClass().getCreatureStats(actor.getPtr()).getAiSequence();
-                        if (aiSeq.getTypeId() == MWMechanics::AiPackageTypeId::Pursue)
+                        if (aiSeq.getTypeId() == MWMechanics::AiPackageTypeId::Pursue
+                            && (target == getPlayer() || aiSeq.getActivePackage().getTarget() == target))
                         {
                             aiSeq.stopPursuit();
                             aiSeq.stack(MWMechanics::AiCombat(target), ptr);

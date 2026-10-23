@@ -490,6 +490,13 @@ namespace MWMechanics
         const auto& actorClass = actor.getClass();
         if (!actorClass.isActor() || actor == getPlayer())
             return;
+        // NOT ON THE SIM PEER. Its "player" is a dummy body parked where the first player arrived,
+        // so NPCs walking past that spot stopped and turned to greet empty air (and a dialogue
+        // hold's turn to the real talker was undone while the dummy stood near). Players' own
+        // engines still play the greeting voice for the NPCs around them.
+        static const bool simPeer = std::getenv("OPENMW_MP_SYSTEM") != nullptr;
+        if (simPeer)
+            return;
 
         const CreatureStats& actorStats = actorClass.getCreatureStats(actor);
         const MWMechanics::AiSequence& seq = actorStats.getAiSequence();

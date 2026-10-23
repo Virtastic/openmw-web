@@ -3991,7 +3991,7 @@ do
     g:find("mp.isSystem and mp.isSystem() and net.flags and net.flags.clientAuthority == true then\n                    kit.placeAvatar(p.obj, e.id, e)", 1, true) ~= nil)
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
   check('a placed avatar is not walked from inputs', av:find('\n                moveAxis, sideAxis = 0, 0\n', 1, true) ~= nil)
-  check('a placed avatar does not jump from inputs', av:find("if placed then\n                if jumpDue or jumpLatch then placedFatigue.jump() end -- a jump the owner's engine made\n                self.controls.jump = false", 1, true) ~= nil)
+  check('a placed avatar does not jump from inputs', av:find("if placed then\n                if jumpDue or jumpLatch then placedFatigue.jump(bit(ctl.flags, 1)) end -- a jump the owner's engine made\n                self.controls.jump = false", 1, true) ~= nil)
   check('the policy carries the placement mode', av:find('if data.placed ~= nil then placed = data.placed == true end', 1, true) ~= nil
     and g:find('avatarObjIds = ids, placed = placed', 1, true) ~= nil)
   if mk then
@@ -4013,7 +4013,8 @@ do
     local o = body(0, 0, 0)
     place(o, 7, { x = 100, y = 0, z = 5, yaw = 1.5 })
     check('a moved owner moves the avatar there', #o.tp == 1 and o.tp[1].pos.x == 100 and o.tp[1].cell == '' and o.tp[1].opt.onGround == false)
-    check('facing comes with it', o.tp[1] and o.tp[1].opt.rotation.yaw == 1.5)
+    check('no rotation is passed: the body keeps the aim avatar.lua turns it to (pitch included)',
+      o.tp[1] ~= nil and o.tp[1].opt.rotation == nil)
     place(o, 7, { x = 101, y = 0, z = 5, yaw = 1.5 })
     check('a rounding error does not nudge a body mid-swing', #o.tp == 1, tostring(#o.tp))
     local c = body(0, 0, 0)
@@ -4030,7 +4031,7 @@ print('avatar.lua -- a placed body spends fatigue for running, swimming, sneakin
 do
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
   local a = av:find('local placedFatigue = {}', 1, true)
-  local b = a and select(2, av:find('\nfunction placedFatigue.jump()', a, true))
+  local b = a and select(2, av:find('\nfunction placedFatigue.jump(sneak)', a, true))
   b = b and select(2, av:find('\nend\n', b, true))
   local GM = { fFatigueRunBase = 5, fFatigueRunMult = 2, fFatigueSwimWalkBase = 2.5, fFatigueSwimWalkMult = 4,
     fFatigueSwimRunBase = 7, fFatigueSwimRunMult = 1, fFatigueSneakBase = 1.5, fFatigueSneakMult = 1.5,
@@ -4078,7 +4079,7 @@ do
   check('the placed branch spends run fatigue before zeroing the axes',
     av:find('placedFatigue.move(frameDt, moveAxis, sideAxis, bit(ctl.flags, 0), bit(ctl.flags, 1))\n                moveAxis, sideAxis = 0, 0', 1, true) ~= nil)
   check('the placed branch charges a jump the owner made',
-    av:find('if jumpDue or jumpLatch then placedFatigue.jump() end', 1, true) ~= nil)
+    av:find('if jumpDue or jumpLatch then placedFatigue.jump(bit(ctl.flags, 1)) end', 1, true) ~= nil)
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   check('puppet.lua remembers a punch this engine already voiced',
     pp:find('if not weapon and attack.successful and attack.damage and attack.damage.fatigue then lastPunchSoundAt = lastSwingAt end', 1, true) ~= nil)
@@ -4180,6 +4181,65 @@ do
     ac:find('local yaw = math.acos(math.max(-1, math.min(1, d.y / len))) * (d.x < 0 and -1 or 1)', 1, true) ~= nil)
   local cp = io.open('./openmw/files/data/scripts/mp/companion.lua'):read('*a')
   check('companion.lua says what the hold did', cp:find("print(string.format('[mp] dialogue hold %s on %s", 1, true) ~= nil)
+end
+
+-- ====================================== the bug scan's fixes (2026-10-23)
+print('scan fixes -- placement keeps the aim, fatigue follows the engine rules, puppets carry no mwscript')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('placement passes no rotation (a yaw-only transform zeroed the pitch)',
+    g:find("obj:teleport(inviteCellArg(key), tgt, { onGround = false })", 1, true) ~= nil
+    and not g:find('rotation = util.transform.rotateZ(e.yaw or 0), onGround = false', 1, true))
+  check('puppet records carry no template mwscript', g:find("local draft = { template = template, name = name, mwscript = '' }", 1, true) ~= nil)
+  check('a paralyzed avatar stops its owner (kd)', g:find("getEffect('paralyze')", 1, true) ~= nil)
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  local a = av:find('local placedFatigue = {}', 1, true)
+  local b = a and select(2, av:find('\nfunction placedFatigue.jump(sneak)', a, true))
+  b = b and select(2, av:find('\nend\n', b, true))
+  local GM = { fFatigueRunBase = 5, fFatigueRunMult = 2, fFatigueSwimWalkBase = 2.5, fFatigueSwimWalkMult = 4,
+    fFatigueSwimRunBase = 7, fFatigueSwimRunMult = 1, fFatigueSneakBase = 1.5, fFatigueSneakMult = 1.5,
+    fFatigueJumpBase = 5, fFatigueJumpMult = 10 }
+  local function mk(o)
+    local ft = { current = 100 }
+    local env = setmetatable({
+      core = { getGMST = function(k) return GM[k] end }, self = { object = {} },
+      mp = { isKnockedDown = function() return o.down == true end },
+      types = { Actor = {
+        stats = { dynamic = { fatigue = function() return ft end } },
+        getEncumbrance = function() return o.enc or 50 end, getCapacity = function() return 100 end,
+        isSwimming = function() return o.swim == true end,
+        activeEffects = function() return { getEffect = function(_, id) return id == 'levitate' and { magnitude = o.fly and 10 or 0 } or nil end } end,
+      } },
+    }, { __index = _G })
+    local chunk = a and b and loadstring(av:sub(a, b) .. '\nreturn placedFatigue')
+    if not chunk then return nil end
+    setfenv(chunk, env)
+    return chunk(), ft
+  end
+  local pf, ft = mk({})
+  check('placedFatigue (scan version) is where this test expects it', pf ~= nil)
+  if pf then
+    pf, ft = mk({ fly = true }); pf.move(1, 1, 0, true, false)
+    check('running while levitating costs nothing (the engine: isrunning && !flying)', ft.current == 100, tostring(ft.current))
+    pf, ft = mk({ swim = true }); pf.move(1, 1, 0, false, true)
+    check('sneak toggled while swimming costs the swim rate, not the sneak rate', math.abs(ft.current - 95.5) < 1e-6, tostring(ft.current))
+    for _, case in ipairs({ { 'sneaking', { }, true }, { 'swimming', { swim = true }, false }, { 'levitating', { fly = true }, false },
+        { 'over-encumbered', { enc = 150 }, false }, { 'knocked down', { down = true }, false } }) do
+      pf, ft = mk(case[2]); pf.jump(case[3])
+      check('no jump fatigue while ' .. case[1] .. ' (the engine refuses that jump)', ft.current == 100, tostring(ft.current))
+    end
+    pf, ft = mk({}); pf.jump(false)
+    check('a real jump still costs', math.abs(ft.current - 90) < 1e-6, tostring(ft.current))
+  end
+  check('the jump call passes the sneak flag', av:find('placedFatigue.jump(bit(ctl.flags, 1))', 1, true) ~= nil)
+  check('a restore is capped at base + modifier (a Fortify raises the cap)', av:find('math.min(stat.base + (stat.modifier or 0), stat.current + d.g)', 1, true) ~= nil)
+  local ac = io.open('./openmw/apps/openmw/mwmechanics/actors.cpp'):read('*a')
+  check('the sim peer skips the greeting (its player is a dummy)', ac:find('static const bool simPeer = std::getenv("OPENMW_MP_SYSTEM") != nullptr;', 1, true) ~= nil)
+  local cr = io.open('./openmw/apps/openmw/mwclass/creature.cpp'):read('*a')
+  check('creature.cpp records an avatar\'s hit attempt (as npc.cpp)', select(2, cr:gsub('MWMechanics::isPlayerOrAvatar%(attacker%)', '')) >= 2)
+  local mm = io.open('./openmw/apps/openmw/mwmechanics/mechanicsmanagerimp.cpp'):read('*a')
+  check('a guard fighting an avatar keeps at it, and only its own pursuers join',
+    mm:find('if (MWMechanics::isPlayerOrAvatar(target))', 1, true) ~= nil and mm:find('aiSeq.getActivePackage().getTarget() == target', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

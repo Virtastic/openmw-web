@@ -79,6 +79,12 @@ function placedFatigue.encumbrance()
     if not ok or not e or not c then return 0, false end
     return (c > 0 and e / c or 1), e > c -- getNormalizedEncumbrance; over capacity spends nothing
 end
+function placedFatigue.flying()
+    local ok, e = pcall(function() return types.Actor.activeEffects(self):getEffect('levitate') end)
+    return ok and e ~= nil and (e.magnitude or 0) > 0
+end
+-- The engine's own order (character.cpp): sneak only on land and not flying, swimming next, a run
+-- not while flying. Levitating costs nothing.
 function placedFatigue.move(dt, move, side, run, sneak)
     local speed = math.min(1, math.sqrt((move or 0) ^ 2 + (side or 0) ^ 2))
     if speed <= 0 or not (dt and dt > 0) then return end
@@ -86,16 +92,23 @@ function placedFatigue.move(dt, move, side, run, sneak)
     if over then return end
     local G = core.getGMST
     local okw, swim = pcall(types.Actor.isSwimming, self)
+    swim = okw and swim
+    local fly = placedFatigue.flying()
     local loss = 0
-    if sneak then loss = G('fFatigueSneakBase') + enc * G('fFatigueSneakMult')
-    elseif okw and swim then
+    if sneak and not swim and not fly then loss = G('fFatigueSneakBase') + enc * G('fFatigueSneakMult')
+    elseif swim then
         loss = run and (G('fFatigueSwimRunBase') + enc * G('fFatigueSwimRunMult'))
             or (G('fFatigueSwimWalkBase') + enc * G('fFatigueSwimWalkMult'))
-    elseif run then loss = G('fFatigueRunBase') + enc * G('fFatigueRunMult') end
+    elseif run and not fly then loss = G('fFatigueRunBase') + enc * G('fFatigueRunMult') end
     placedFatigue.spend(loss * dt * speed)
 end
-function placedFatigue.jump()
-    local enc = placedFatigue.encumbrance()
+-- Only a jump the engine would make (character.cpp / physicssystem.cpp): not sneaking, swimming,
+-- flying, over-encumbered or on the floor -- the key alone is not a jump.
+function placedFatigue.jump(sneak)
+    local okw, swim = pcall(types.Actor.isSwimming, self)
+    local okk, down = pcall(function() return mp.isKnockedDown and mp.isKnockedDown(self.object) end)
+    local enc, over = placedFatigue.encumbrance()
+    if sneak or (okw and swim) or placedFatigue.flying() or over or (okk and down) then return end
     placedFatigue.spend(core.getGMST('fFatigueJumpBase') + enc * core.getGMST('fFatigueJumpMult'))
 end
 local avatarObjIds = {}
@@ -473,7 +486,7 @@ return {
             self.controls.run = bit(ctl.flags, 0)
             self.controls.sneak = bit(ctl.flags, 1)
             if placed then
-                if jumpDue or jumpLatch then placedFatigue.jump() end -- a jump the owner's engine made
+                if jumpDue or jumpLatch then placedFatigue.jump(bit(ctl.flags, 1)) end -- a jump the owner's engine made
                 self.controls.jump = false -- the owner's jump arrives as poses
                 jumpDue, jumpLatch = nil, false
             elseif timed then
@@ -584,7 +597,7 @@ return {
                         if d.b then stat.base = d.b end
                         -- A restore carries its change (`g`, playerstate.ts): added to what the
                         -- body holds NOW, so a bite or a report in between is not undone (s165).
-                        if d.g then stat.current = math.max(0, math.min(stat.base, stat.current + d.g))
+                        if d.g then stat.current = math.max(0, math.min(stat.base + (stat.modifier or 0), stat.current + d.g)) -- base + modifier: a Fortify raises the cap; capping at base cut a fortified bar on every spend (prod scan 2026-10-23)
                         elseif d.c then stat.current = d.c end
                     end
                 end

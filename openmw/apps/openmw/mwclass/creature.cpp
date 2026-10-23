@@ -371,18 +371,20 @@ namespace MWClass
                 setOnPcHitMe = MWBase::Environment::get().getMechanicsManager()->actorAttacked(ptr, attacker);
         }
 
-        // Attacker and target store each other as hitattemptactor if they have no one stored yet
+        // Attacker and target store each other as hitattemptactor if they have no one stored yet.
+        // isPlayerOrAvatar, as npc.cpp: on the sim peer a player's blow comes from their AVATAR, and
+        // a creature that did not record it gave up the fight and its allies never joined.
         if (!attacker.isEmpty() && attacker.getClass().isActor())
         {
             MWMechanics::CreatureStats& statsAttacker = attacker.getClass().getCreatureStats(attacker);
             // First handle the attacked actor
             if (!stats.getHitAttemptActor().isSet()
-                && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
+                && (statsAttacker.getAiSequence().isInCombat(ptr) || MWMechanics::isPlayerOrAvatar(attacker)))
                 stats.setHitAttemptActor(attacker.getCellRef().getRefNum());
 
             // Next handle the attacking actor
             if (!statsAttacker.getHitAttemptActor().isSet()
-                && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
+                && (statsAttacker.getAiSequence().isInCombat(ptr) || MWMechanics::isPlayerOrAvatar(attacker)))
                 statsAttacker.setHitAttemptActor(ptr.getCellRef().getRefNum());
         }
 
