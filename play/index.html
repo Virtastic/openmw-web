@@ -5141,10 +5141,16 @@ try {
   // Only the PRESS is withheld from SDL, never `click`: the panel's own handlers listen for
   // click, and shielding that would break every button (the Enter trap, once more). Focus
   // still lands because it is a default action, which propagation cannot stop.
+  // EVERY OVERLAY OF OURS, the onboarding tour and the confirm dialog too. Without them a click
+  // on the tour's Next was also a press into the game behind it (chargen's own buttons), and the
+  // diagnostic below logged it as a lost click: prod 2026-10-23, 17 of
+  // "[ui] click at N,N went to <omw-tour-next> canvas pointer-events=none" in 3 sessions -- each
+  // a player clicking through the tour, the canvas correctly inert while it was up.
+  var OVERLAYS = '#omw-social, #omw-chat, #omw-uname, #omw-tour, #omw-ask';
   ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(type){
     window.addEventListener(type, function(e){
       if (!uiRefs) return;
-      if (e.target && e.target.closest && e.target.closest('#omw-social, #omw-chat, #omw-uname'))
+      if (e.target && e.target.closest && e.target.closest(OVERLAYS))
         e.stopImmediatePropagation();
     }, true);
   });
@@ -5155,7 +5161,7 @@ try {
     if (!uiRefs) return;
     var top = document.elementFromPoint(e.clientX, e.clientY);
     var id = top ? (top.id || top.tagName + (top.className ? '.' + String(top.className).split(' ')[0] : '')) : 'null';
-    var inOverlay = !!(top && top.closest && top.closest('#omw-social, #omw-chat, #omw-uname'));
+    var inOverlay = !!(top && top.closest && top.closest(OVERLAYS));
     if (!inOverlay || document.pointerLockElement){
       mpLog('[ui] click at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
         + ' went to <' + id + '>'
@@ -5661,6 +5667,11 @@ try {
     document.getElementById('omw-tour-next').innerHTML = (tourIdx === tourDeck.length - 1) ? "Let's go ▸" : 'Next ▸';
   }
   var tourPaused = false;
+  // ONE HOLD FOR THE PANEL, however many times it is filled. The tour opening over a notice (or a
+  // notice over the tour) took a second uiHold that one close never gave back: the canvas stayed
+  // pointer-events:none and the game ignored the mouse with nothing on screen.
+  var tourHeld = false;
+  function tourHold(on){ if (on !== tourHeld){ tourHeld = on; uiHold(on); } }
   function openTour(which){
     which = which || 'unlocked';
     if (tourShown[which]) return;
@@ -5673,14 +5684,14 @@ try {
     // world, so stopping the world is safe and a modal you cannot dismiss while something
     // walks up to you is not. The unlock tour does not pause: by then you are in a live world
     // and pausing only your own client would freeze your view while everyone else moves.
-    uiHold(true);
+    tourHold(true);
     tourPaused = (which === 'intro');
     if (tourPaused) cmd('pause:on');
   }
   function closeTour(){ if (!tourEl.classList.contains('show')) return;
     tourEl.classList.remove('show');
     if (tourPaused) { tourPaused = false; cmd('pause:off'); }
-    uiHold(false);
+    tourHold(false);
     // A notice has no key: it reports something that just happened, so "seen" is meaningless
     // and writing one would make the next occurrence silent.
     if (tourKey) { try { localStorage.setItem(tourKey, '1'); } catch(e){} } }
@@ -5752,7 +5763,7 @@ try {
     document.getElementById('omw-tour-dots').innerHTML = '';
     document.getElementById('omw-tour-next').innerHTML = 'Got it';
     tourEl.classList.add('show');
-    uiHold(true);
+    tourHold(true);
     tourPaused = false;
   }
   // Exported like __omwLog and __omwLoading: showNotice is block-local (depth 1 of block 4),
