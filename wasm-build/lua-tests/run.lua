@@ -4495,6 +4495,15 @@ do
   check('PCKnownWerewolf applies to an avatar target', src(ENG .. 'mwmechanics/combat.cpp'):find('|| (isPlayerOrAvatar(target)', 1, true) ~= nil)
   check('the guard pursuit skips a werewolf avatar',
     ac:find('if (body.getClass().isNpc() && body.getClass().getNpcStats(body).isWerewolf())', 1, true) ~= nil)
+
+  -- 12. the peer never names itself as a combat target
+  g = src('./openmw/files/data/scripts/mp/global.lua')
+  do
+    local a = g:find('playerIdOf = function(obj)', 1, true)
+    local guard = a and g:find('if not (mp.isSystem and mp.isSystem()) then', a, true)
+    local loop = a and g:find('for _, pl in ipairs(world.players) do', a, true)
+    check('playerIdOf skips world.players on the sim peer', guard and loop and guard < loop and guard - a < 400)
+  end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

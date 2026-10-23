@@ -1895,9 +1895,13 @@ local function start()
         -- sees the stand-in for that same person.
         playerIdOf = function(obj)
             if not (obj and obj:isValid()) then return nil end
-            for _, pl in ipairs(world.players) do
-                if pl:isValid() and pl.id == obj.id then
-                    return net.state == 'Joined' and net.playerId or nil
+            -- The sim peer's player is a parked dummy: a fight on it names nobody, never the
+            -- peer's own id (1.7.0). Its avatars are found in puppets below.
+            if not (mp.isSystem and mp.isSystem()) then
+                for _, pl in ipairs(world.players) do
+                    if pl:isValid() and pl.id == obj.id then
+                        return net.state == 'Joined' and net.playerId or nil
+                    end
                 end
             end
             for id, p in pairs(puppets) do
