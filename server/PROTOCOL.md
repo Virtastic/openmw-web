@@ -151,6 +151,7 @@ event `MP_MoveBatch` whose body is an LSER array of
 |---|---|---|
 | `PlayerCellChange` | C→S, relayed S→C with `id` added | `{cellKey=string, x=number, y=number, z=number}` — `cellKey` = `"x,y"` for exteriors (comma, integers) or the lowercased interior cell name (≤128 chars; ≤4096 distinct cells per session). Updates server occupancy; receivers despawn/teleport that player's puppet. A SAME-cell change of more than 1024 units is refused (counted `cell_jump`) unless explained within 5 s by a cast, a door, a dialogue, or within 15 s by a resurrect/join (#361). The sim peer's changes are not relayed to others. |
 | `PlayerLeaveView` | S→C only | `{id=number}` — that player is no longer in YOUR view. See below. |
+| `ClientVisibility` | C→S | `{hidden=bool}` — the page's tab went to the background / came back (`visibilitychange` → page command `vis:hidden\|shown` → player.lua). While hidden the server holds this client's `0x0101`/`0x0103`/`0x0200` to the newest frame of each (sent when shown), relays the player's last pose once with run/jump/use and animVel cleared (the avatar stands still), and does not disconnect it with `BACKLOG` below 4 × `maxBufferedBytesHard`. Ignored from a system peer. |
 
 ### Interest management & LOD (M9, `0x0101` and `0x0200`)
 
@@ -353,7 +354,8 @@ Server → client:
 - `{"t":"SessionDisconnect", "code":"<CODE>", "detail":"human-readable"}` then close.
   Codes: `BAD_PROTO BAD_ENGINE BAD_CONTENT AUTH_FAILED BANNED SUPERSEDED KICKED RATE
   BACKLOG IP_CAP SERVER_FULL SHUTDOWN`. `BACKLOG` = outbound buffer overflow past
-  `maxBufferedBytesHard` (the client stopped reading — a background tab; transient, reconnect).
+  `maxBufferedBytesHard` (the client stopped reading; transient, reconnect). A tab that reported
+  itself hidden (`ClientVisibility`) is held idle instead, up to 4 × that ceiling.
   `IP_CAP` = too many connections from one address, sent at socket accept (close 1008).
 
 Rules: one active session per account (later login supersedes, old socket gets

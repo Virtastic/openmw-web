@@ -78,3 +78,59 @@ test('a stalled reader gets one merged frame per stream once it drains', async (
   bob.close();
   await Promise.all([peer.closed, bob.closed]);
 });
+
+test('a hidden tab is idle: streams held to the newest frame, no BACKLOG, avatar stands still', async (t) => {
+  const server = await startServer({ requireGameData: false,
+    dataDir: tmpDataDir(),
+    port: 0,
+    host: '127.0.0.1',
+    configOverride: { limits: { maxConnsPerIp: 200, loginPerMinPerIp: 10_000 }, server: { password: PEER_PASS } },
+  });
+  t.after(() => server.close());
+  let stalled = 0;
+  Connection.bufferedAmountReader = (conn) => (conn.player?.name === 'hid_bob' ? stalled : undefined);
+  t.after(() => { Connection.bufferedAmountReader = undefined; });
+
+  const peer = await TestClient.simPeer(server.port, PEER_PASS, 'hid_peer');
+  const bob = await TestClient.connect(server.port);
+  const { playerId: bobId } = await bob.joinAsNew('hid_bob');
+  await bob.waitEvent('PlayerList');
+  const carol = await TestClient.connect(server.port);
+  await carol.joinAsNew('hid_carol');
+  await carol.waitEvent('PlayerList');
+  peer.sendCellChange('94,94', 0, 0, 0);
+  const epoch = ((await peer.waitEvent('ActorAuthorityGrant')).value as { epoch: number }).epoch;
+  for (const c of [bob, carol]) {
+    c.sendCellChange('94,94', 0, 0, 0);
+    await c.waitEvent('ActorAuthorityInfo');
+  }
+  bob.sendMove({ x: 10, y: 0, z: 0, flags: 1, animVel: 120 });
+  await carol.waitBatch((b) => b.entries.some((e) => e.id === bobId && e.pose.animVel === 120));
+  // Past the cell-entry grace, so the hard ceiling would bite on a visible tab.
+  await new Promise((r) => setTimeout(r, 2100));
+
+  bob.sendEvent('ClientVisibility', { hidden: true });
+  // Observers see the avatar stop: same spot, motion cleared.
+  const idle = await carol.waitBatch((b) => b.entries.some((e) => e.id === bobId && e.pose.animVel === 0));
+  const e = idle.entries.find((x) => x.id === bobId)!;
+  assert.equal(e.pose.x, 10);
+  assert.equal(e.pose.flags & 1, 0, 'still running in place');
+
+  bob.inbox.actorBatches.length = 0;
+  stalled = 1_048_577; // past maxBufferedBytesHard: a visible tab would be kicked
+  for (let i = 0; i < 5; i++) peer.sendActorMoveBatch(epoch, [actor(1, i)]);
+  await carol.waitActorBatch((b) => b.batch.entries[0]!.pose.x === 4);
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(bob.isClosed, false, 'a hidden tab was kicked with BACKLOG');
+  assert.equal(bob.inbox.actorBatches.length, 0, 'lossy frames went to a hidden tab');
+
+  stalled = 0;
+  bob.sendEvent('ClientVisibility', { hidden: false });
+  const got = await bob.waitActorBatch();
+  assert.equal(got.batch.entries[0]!.pose.x, 4, 'shown: the newest state');
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(bob.inbox.actorBatches.length, 0, 'more than the newest frame was queued');
+
+  for (const c of [peer, bob, carol]) c.close();
+  await Promise.all([peer.closed, bob.closed, carol.closed]);
+});

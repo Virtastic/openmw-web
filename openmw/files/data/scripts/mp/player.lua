@@ -742,6 +742,11 @@ local function dispatch(cmd)
             core.sendGlobalEvent('mpSocial', body)
         end
 
+        -- The page's tab went to the background or came back (index.html visibilitychange):
+        -- the server holds our pose streams to the newest frame and stands the avatar still.
+        local vis = cmd:match('^vis:(%a+)$')
+        if vis then mp.sendEvent('ClientVisibility', { hidden = vis == 'hidden' }) end
+
         local uiWhich = cmd:match('^openui:(%a+)$')
         if uiWhich then core.sendGlobalEvent('mpOpenUi', { which = uiWhich }) end
 

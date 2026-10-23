@@ -286,6 +286,9 @@ export class Connection implements Peer {
   private readonly held = new Map<string, Buffer>();
   private inflight = 0;
   private heldTimer?: NodeJS.Timeout;
+  // The page reported its tab hidden (ClientVisibility): lossy streams wait in `held` until it
+  // is shown again, the avatar stands still, and a backlog does not end the session.
+  private hidden = false;
 
   constructor(
     private readonly ws: WebSocket,
@@ -385,12 +388,17 @@ export class Connection implements Peer {
     // A cell entry lands nine cell docs at once (sendCellStateAround); for ~2 s after
     // one, a full buffer is that burst draining, not a reader that has stopped.
     const entering = Date.now() - (this.player?.cellStateBurstAt ?? 0) < 2000;
-    if (buffered > maxBufferedBytesHard && !entering) {
-      log('info', 'conn.backpressure_drop', { ip: this.ip, player: this.player?.name, buffered });
+    // A HIDDEN TAB IS IDLE, NOT GONE (#210/#183). A background tab reads slowly or not at all,
+    // and BACKLOG sent it through a reconnect for nothing: its lossy streams are already held
+    // to one frame each, so what fills the buffer is reliable state it will read when shown.
+    // ponytail: a fixed 4x memory backstop; a per-client byte cap if hidden tabs grow it.
+    const hard = this.hidden ? maxBufferedBytesHard * 4 : maxBufferedBytesHard;
+    if (buffered > hard && !entering) {
+      log('info', 'conn.backpressure_drop', { ip: this.ip, player: this.player?.name, buffered, hidden: this.hidden });
       this.disconnect('BACKLOG', 'outbound buffer overflow (client is not reading)');
       return false;
     }
-    if (this.held.size === 0 && this.inflight === 0 && buffered <= maxBufferedBytes) {
+    if (this.held.size === 0 && this.inflight === 0 && !this.hidden && buffered <= maxBufferedBytes) {
       this.sendLossy(frame);
       return true;
     }
@@ -424,7 +432,7 @@ export class Connection implements Peer {
   private flushHeld(): void {
     clearTimeout(this.heldTimer);
     this.heldTimer = undefined;
-    if (this.held.size === 0 || this.inflight > 0 || this.state === 'CLOSED') return;
+    if (this.held.size === 0 || this.inflight > 0 || this.hidden || this.state === 'CLOSED') return;
     if (this.bufferedBytes > this.ctx.config.limits.maxBufferedBytes) {
       this.armFlush();
       return;
@@ -436,7 +444,7 @@ export class Connection implements Peer {
 
   // A write in flight flushes on completion; with none (over the soft limit), poll.
   private armFlush(): void {
-    if (this.inflight > 0 || this.heldTimer) return;
+    if (this.inflight > 0 || this.hidden || this.heldTimer) return;
     this.heldTimer = setTimeout(() => this.flushHeld(), 50);
     this.heldTimer.unref();
   }
@@ -851,6 +859,11 @@ export class Connection implements Peer {
       this.handleCellChange(value);
       return;
     }
+    if (name === 'ClientVisibility') {
+      const hidden = value instanceof Map ? value.get('hidden') : undefined;
+      if (typeof hidden === 'boolean' && !this.isSystem) this.setHidden(hidden);
+      return;
+    }
     // No AdminCommand event any more. Operator commands enter through ONE door, the
     // dashboard's POST /admin/api/command (server.ts runCommand -> Admin.exec); a client
     // cannot ask for them. The in-game admin window that sent this is gone with it.
@@ -1182,6 +1195,29 @@ export class Connection implements Peer {
       // outage was judged against wherever the client last authored, possibly long ago and
       // far away. The canonical pose is the honest baseline.
       p.moveAnchor = { x: p.pose!.x, y: p.pose!.y, z: p.pose!.z, at: now };
+    }
+  }
+
+  // The page's tab went to the background or came back (play/index.html -> player.lua).
+  private setHidden(hidden: boolean): void {
+    if (this.hidden === hidden) return;
+    this.hidden = hidden;
+    const player = this.player!;
+    log('info', 'conn.visibility', { player: player.name, hidden });
+    if (!hidden) {
+      this.flushHeld(); // the newest state of every stream, once
+      return;
+    }
+    // IDLE: the avatar stands where it was. A hidden tab's engine barely ticks, so its last pose
+    // may be mid-stride (run bit, walk speed) and every observer's puppet would run on the spot
+    // until it came back. Same pose, motion cleared, through the normal accepted-pose paths.
+    if (!player.pose) return;
+    player.pose = { ...player.pose, flags: player.pose.flags & ~(1 | 4 | 8), animVel: 0 };
+    player.poseVersion++;
+    this.ctx.relayPose?.(player);
+    if (this.ctx.config.limits.clientAuthority && player.inChargen !== true) {
+      this.ctx.worldPeer()?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
+        nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose: player.pose }])));
     }
   }
 
