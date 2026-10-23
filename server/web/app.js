@@ -92,6 +92,13 @@ async function refreshState() {
 // GitHub on every page load would be noise for everyone involved. The RESULT is cached in
 // sessionStorage beside the once-per-session flag, or a reload would clear the badge while
 // the flag still suppressed the re-check.
+// Release tag `a` newer than `b` ("v1.6.8" vs "v1.6.6"), field by field: different is not newer.
+const tagNewer = (a, b) => {
+  const x = String(a).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const y = String(b).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
 let updatesBehind = (() => { try { return sessionStorage.getItem('vtUpdBehind') === '1'; } catch { return false; } })();
 function setUpdatesBehind(v) {
   updatesBehind = v;
@@ -4488,9 +4495,10 @@ async function pageUpdates() {
           <span class="vt-mono">openmw-web-${latestTag}.zip</span> from the
           <a href="https://github.com/Virtastic/openmw-web/releases" target="_blank" rel="noopener">releases page</a>
           into <span class="vt-mono">./play</span>. Reload the game page afterwards; no restart needed.</p>`;
-  } else if (e.tag === latestTag) {
+  } else if (e.tag && !tagNewer(latestTag, e.tag)) {
+    // Not older than the newest release (a hotfix can be ahead of it): nothing to offer.
     eng.innerHTML = html`<div class="text-success">
-      <i class="bi bi-check-circle me-1"></i>Players get ${latestTag}, the newest release.</div>`;
+      <i class="bi bi-check-circle me-1"></i>Players get ${e.tag}, the newest release.</div>`;
   } else {
     eng.innerHTML = html`
       <p>${raw(e.tag

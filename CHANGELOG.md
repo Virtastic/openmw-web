@@ -2,6 +2,13 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.9
+
+**The Updates page only offers a newer release.** A server running a hotfix that was ahead of
+the newest published release was told the older one "is out", with nothing it could do about
+it. The server and game-client cards now compare versions properly, so a server on the newest
+version says so. 1.6.7 and 1.6.8 were never published as GitHub releases; this one is.
+
 ## 1.6.8
 
 A second hotfix from the logs and a scan of the code for bugs of the same kind.
