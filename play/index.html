@@ -1713,7 +1713,9 @@ try {
    // which skips the census intro and spawns directly in --start. Passing --new-game forced the
    // full Imperial-Prison-Ship intro (bypass=false), leaving a headless player stuck in the boat.
    // Set here (not preRun) because emscripten captures Module.arguments before preRun callbacks.
-   arguments: (function(){
+   // __omwSkipMenu: no title menu, so no logo movies (the boot preload leaves them out). Kept here:
+   // emscripten may trap a later read of Module.arguments.
+   arguments: (function(a){ window.__omwSkipMenu = a.indexOf('--skip-menu') >= 0; return a; })((function(){
      try {
        var m = /[?&]start=([^&]+)/.exec(location.search);
        // '+' IS A SPACE HERE. A world change rebuilds the query with URLSearchParams, which
@@ -1737,7 +1739,7 @@ try {
        }
      } catch (e) {}
      return [];
-   })(),
+   })()),
    // ONE PAINTED FRAME BEFORE THE ENGINE BLOCKS. main() starts in the task that releases the last
    // run dependency, so a creep started there never reached the compositor and the bar sat still.
    // 'ld-paint' is held until every other dependency is gone, then released a frame later (or after
@@ -4170,6 +4172,14 @@ try {
                  // office: 35 files, 1.9 MB, each a 0.4-0.6 s stall when it played cold (prod
                  // 2026-10-21, [sfs] slow read CharGen Class2.mp3, chargenboat1.mp3, ...).
                  if (window.__omwNewGame) StreamFS.mounted(/\/Sound\/Vo\/Misc\/chargen/i).forEach(function(p){ pre.push({ path: p }); });
+                 // THE BOOT MOVIES: each was read cold as it played (prod 2026-10-23, [sfs] slow reads of
+                 // the logo and intro .bik). The two logos play when the title menu does (11 MB), the
+                 // intro only for a new game (26 MB). Names from engine.cpp's Movies_* fallbacks above;
+                 // last in the list, so the content chunks take the in-memory LRU first.
+                 var BOOT_MOVIES = /^\/mwdata\/video\/(bethesda logo|mw_logo|mw_intro)\.bik$/i;
+                 if (!window.__noMovies) StreamFS.mounted(BOOT_MOVIES).forEach(function(p){
+                   if (/mw_intro/i.test(p) ? window.__omwNewGame : !window.__omwSkipMenu) pre.push({ path: p });
+                 });
                  StreamFS.preload(pre, function(d){
                    if (!LD || !d.total) return;
                    LD.set(null, 'Downloading the game data', Math.round(d.bytes / 1048576) + ' MB · ' + Math.round(d.done * 100 / d.total) + '%');
@@ -4177,6 +4187,11 @@ try {
                  }, 180000).then(function(d){
                    window.__omwPreload = d;
                    if (d) append('[mw] preloaded ' + d.done + '/' + d.total + ' chunks, ' + Math.round(d.bytes / 1048576) + ' MB fetched, ' + (StreamFS.stats().preMem || 0) + ' in memory');
+                   // THE SPLASH SCREENS, AFTER THE BOOT'S OWN DATA. Every loading screen picks one at
+                   // random and read it cold (prod 2026-10-23: splash .tga in the slow reads). Retail has
+                   // 11 of 3 MB each, 33 MB: too much to hold the boot for, so the prefetch fetches them
+                   // into the store behind the game's own reads.
+                   try { StreamFS.prefetchPaths(StreamFS.mounted(/^\/mwdata\/splash\//i).map(function(p){ return p.slice(8); }), false); } catch (e) {}
                    release();
                  }, release);
                } catch (e) { release(); }

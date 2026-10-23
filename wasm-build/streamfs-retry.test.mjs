@@ -238,6 +238,12 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 8, 'eight files queued');
   // ...and it starts at release, not 20 s later (prod 2026-10-23: the first steps in town cold).
   assert.ok(/StreamFS\.warm\(WARM_RE, WARM_FIRST\); \} catch \(e\) \{\}\s+\}, 2000\);/.test(html), 'the warm-up starts 2 s after release');
+  // THE BOOT PRELOAD names the logo and intro movies; the splash screens go to the background prefetch.
+  const movies = new RegExp(html.match(/var BOOT_MOVIES = \/(.*)\/i;/)[1], 'i');
+  assert.deepEqual(['Video/bethesda logo.bik', 'video/MW_Logo.bik', 'Video/mw_intro.bik', 'Video/mw_credits.bik', 'Video/mw_menu.bik']
+    .map((p) => movies.test('/mwdata/' + p)), [true, true, true, false, false]);
+  const pfSplash = html.match(/StreamFS\.prefetchPaths\(StreamFS\.mounted\(\/(.*)\/i\)\.map\(function\(p\)\{ return p\.slice\(8\); \}\), false\)/);
+  assert.ok(pfSplash && new RegExp(pfSplash[1], 'i').test('/mwdata/Splash/Splash_Netch.tga') && '/mwdata/'.length === 8, 'splash screens prefetched by VFS path');
   const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/(mwdata|mods)\/|\?v=2$/g, ''));
   // Archives first: the next town comes out of them (prod 2026-10-20: Fx-first left Morrowind.bsa
   // cold at the Seyda Neen dock, a 26.5 s freeze). Then Fx smallest first, creatures, music.
