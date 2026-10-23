@@ -2,6 +2,49 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.0
+
+Multiplayer that feels like single player: everything the logs and a code scan found that still
+behaved differently with friends.
+
+**Less stutter.** The game used to freeze for half a second waiting on files it streams. Now:
+- loading screens and the opening movies are fetched ahead of time;
+- the background download of the game archives starts 2 s after you arrive, not 20 s;
+- each nearby cell's prefetch also names the clothing and armour its NPCs wear and the ground
+  textures, and a cell you come back to is prefetched again.
+
+**Creatures and NPCs stay where they really are.**
+- Fish and cliff racers no longer drift hundreds of units away. A creature crossing a cell
+  border kept running its own AI on your screen, and fliers and swimmers steered at the wrong
+  speed.
+- A summoned skeleton that expired, or a creature the server no longer has, no longer stands
+  around forever.
+- NPCs that are put back on their path keep facing the way they walk.
+
+**Friends look right.**
+- Khajiit and Argonian friends have their tails.
+- A death the server never saw no longer leaves you lying there.
+- A long fall knocks you down for everyone.
+
+**Crime and combat follow the game's rules.**
+- A scripted ambush attacks you.
+- A guard chases you for a small theft.
+- Paying your fine calms your own witnesses only.
+- Guards defend you against creatures.
+- A kill by magic is a murder.
+- Hitting your own companion isn't assault.
+- Command spells and werewolf rules apply to every player.
+
+**Health and magicka are counted once.** A Fortify Health potion no longer heals its full
+strength for free. Drain and Fortify Magicka no longer count twice. A ring of Restore Health no
+longer regenerates at double speed. Fatigue you recover by resting is no longer lost.
+
+**Smoother on slow connections.**
+- The server never queues stale positions behind a slow link; it sends only the newest.
+- A friend's moves go out the moment they arrive.
+- NPC movement is timed by when the server made it, not when it arrived.
+- A tab in the background is marked idle instead of being disconnected.
+
 ## 1.6.9
 
 **The Updates page only offers a newer release.** A server running a hotfix that was ahead of
