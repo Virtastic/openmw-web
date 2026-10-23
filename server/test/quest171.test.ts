@@ -59,3 +59,26 @@ test("a guest's quest write right after their own scripted activation persists t
   assert.equal(doc.globals?.['mp_lever_gate'], 1, 'the activation-backed global was not saved');
   assert.equal(doc.globals?.['mp_far_gate'], undefined, 'an activation from afar must not back a write');
 });
+
+// Item 4: the replay guard (backlog 335) holds only in the join-time window after JournalSync.
+test('a regress to a logged stage is a replay just after JournalSync, and a restart after it', async (t) => {
+  const { Quests } = await import('../src/core/quests');
+  const { host, guest } = await party(t);
+  const idx = (e: { value: unknown }) => val(e, 'index') as number;
+  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 10 });
+  assert.equal(idx(await guest.waitEvent('JournalEntry', jq('mq_rep'), 3000)), 10);
+  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 50 });
+  assert.equal(idx(await guest.waitEvent('JournalEntry', jq('mq_rep'), 3000)), 50);
+  guest.inbox.events.length = 0;
+  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 10 }); // inside the window: the replay's echo
+  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 60 }); // fence
+  assert.equal(idx(await guest.waitEvent('JournalEntry', jq('mq_rep'), 3000)), 60);
+  assert.equal(guest.inbox.events.filter((e) => e.name === 'JournalEntry' && idx(e) === 10).length, 0, 'a replay echo was relayed');
+  const windowMs = Quests.REPLAY_WINDOW_MS;
+  Quests.REPLAY_WINDOW_MS = 0;
+  t.after(() => { Quests.REPLAY_WINDOW_MS = windowMs; });
+  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 10 });
+  const e = await guest.waitEvent('JournalEntry', jq('mq_rep'), 3000);
+  assert.equal(idx(e), 10, 'the restart is relayed');
+  assert.equal(val(e, 'regress'), true);
+});

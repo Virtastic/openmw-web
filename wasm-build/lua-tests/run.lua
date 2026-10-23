@@ -1596,8 +1596,8 @@ do
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   -- 335: the echo guard is a per-quest SET of applied stages, not one slot.
   check('quests.lua keeps a per-quest set of applied stages and drops their echoes (335)',
-    q:find('applied[questId][index] = true', 1, true) ~= nil
-    and q:find('if applied[questId] and applied[questId][stage] then return end', 1, true) ~= nil
+    q:find('applied[questId][index] = core.getRealTime()', 1, true) ~= nil
+    and q:find('if at and core.getRealTime() - at <= APPLIED_ECHO_S then return end', 1, true) ~= nil
     and q:find('\n    applied = {}\n', 1, true) ~= nil)
   -- 336: a refused declaration is forgotten at most 3 times per kind while it stands still.
   check('identity.lua caps forgetDeclared at 3 per kind until the fingerprint changes (336)',
@@ -4595,6 +4595,38 @@ do
   local sent = 0
   for _, c in ipairs(e.calls.events) do if c.name == 'JournalEntry' then sent = sent + 1 end end
   check('applying the network never echoes a JournalEntry back', sent == 0, sent .. ' sent')
+end
+
+print('1.7.1 quests.lua -- a replayed stage is an echo for a moment, not for the session; a local restart is sent')
+do
+  local e, q = questEnv()
+  q.handlers.MP_JournalSync({ quests = { mq = 40 }, journalLog = {
+    { q = 'mq', i = 20, d = 1, m = 1, dm = 1 }, { q = 'mq', i = 40, d = 2, m = 1, dm = 2 } } })
+  local function sentStages()
+    local out = {}
+    for _, c in ipairs(e.calls.events) do if c.name == 'JournalEntry' then out[#out + 1] = c.body.index end end
+    return out
+  end
+  q.onQuestUpdate('mq', 20) -- the engine's echo of the replayed log line, a frame later
+  check('the echo of a replayed stage is swallowed', #sentStages() == 0)
+  e.advance(60)
+  q.onQuestUpdate('mq', 20) -- the player restarts the quest to a stage the log replayed
+  local s = sentStages()
+  check('a restart to a replayed stage, later in the session, is sent', #s == 1 and s[1] == 20, table.concat(s, ','))
+  q.handlers.MP_JournalEntry({ questId = 'mq', index = 5, regress = true })
+  q.onQuestUpdate('mq', 5)
+  check('the echo of an applied regression is still swallowed', #sentStages() == 1)
+end
+
+do
+  local e, q, stages = questEnv()
+  q.handlers.MP_JournalSync({ quests = { mq = 10 }, journalLog = {
+    { q = 'mq', i = 10, d = 1, m = 1, dm = 1 }, { q = 'mq', i = 20, d = 2, m = 1, dm = 2 }, { q = 'mq', i = 30, d = 3, m = 1, dm = 3 } } })
+  for _, st in ipairs({ 10, 20, 30, 10 }) do q.onQuestUpdate('mq', st) end -- the engine's echoes, a frame later
+  local n = 0
+  for _, c in ipairs(e.calls.events) do if c.name == 'JournalEntry' then n = n + 1 end end
+  check("a restarted quest's sync lands at the map stage and none of its log echoes travel", stages.mq == 10 and n == 0,
+    'stage ' .. tostring(stages.mq) .. ', ' .. n .. ' sent')
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

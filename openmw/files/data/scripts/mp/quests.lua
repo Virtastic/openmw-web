@@ -61,6 +61,7 @@ local journal = {} -- questId -> index (diff cache AND echo guard)
 -- replaying a 3-stage log arrives as three echoes that `journal` (a single slot, already at
 -- the last stage) would read as local regressions and send back (backlog 335).
 local applied = {}
+local APPLIED_ECHO_S = 5 -- how long an applied stage's onQuestUpdate counts as its echo
 local journalSent = 0 -- JournalEntry broadcasts WE originated (echo-guard evidence)
 local journalSynced = false -- MP_JournalSync consumed?
 local pendingJournal = {} -- questId -> index observed locally before the sync landed
@@ -140,8 +141,10 @@ local function applyJournalEntry(questId, index, stamp, regress)
     -- the first local quest signal look like a fresh local change.
     local cached = journal[questId]
     journal[questId] = (regress or cached == nil) and index or math.max(cached, index)
+    -- Kept through a network regression: JournalSync's map lands after its log, and the log's
+    -- later stages still echo a frame later. Entries expire (APPLIED_ECHO_S) instead.
     applied[questId] = applied[questId] or {}
-    applied[questId][index] = true
+    applied[questId][index] = core.getRealTime()
     local player = playerObj()
     if not player then
         pendingApply[#pendingApply + 1] = { q = questId, i = index, stamp = stamp, regress = regress } -- retried from tick()
@@ -200,7 +203,13 @@ function quests.onQuestUpdate(questId, stage)
     stage = asInt(stage)
     if applying or type(questId) ~= 'string' or stage == nil then return end
     if journal[questId] == stage then return end -- echo of an applied entry
-    if applied[questId] and applied[questId][stage] then return end -- echo of a replayed log stage
+    -- Echo of a replayed log stage -- but only for a moment (1.7.1). The engine reports an
+    -- apply a frame later; held for the whole session, the set swallowed a REAL restart to
+    -- any stage the log had ever replayed, and the quest's later steps with it.
+    local at = applied[questId] and applied[questId][stage]
+    if at and core.getRealTime() - at <= APPLIED_ECHO_S then return end
+    -- The local player moved this quest DOWN (a restart): its old echo set is stale.
+    if journal[questId] ~= nil and stage < journal[questId] then applied[questId] = nil end
     journal[questId] = stage
     if not journalSynced then
         -- Broadcasting before the join-time sync would race the server's stored state.

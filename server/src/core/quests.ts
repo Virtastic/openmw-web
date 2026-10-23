@@ -343,14 +343,19 @@ export class Quests {
     // TES3MP failure is a disconnect mid-quest permanently corrupting progression
     // (Tribunal MQ, issue #268 — open since 2017): the stage was in memory and the crash
     // took it. A quest step a player has earned must survive the next instant.
-    const record = (): void => {
+    // Max unless this is an authorised regression (1.7.1): the doc never moves down on a write
+    // the arbitration below did not explicitly allow to.
+    const record = (regress: boolean): void => {
       if (ownerChar === undefined) return;
       this.ctx.players.update(ownerChar, (doc) => {
-        (doc.journal ??= {})[questId] = idx;
+        const log = (doc.journal ??= {});
+        log[questId] = regress ? idx : Math.max(log[questId] ?? -1, idx);
         this.logEntry(doc, questId, idx);
       }, 'now');
     };
-    if (!this.ctx.isShared('journal')) { record(); return; } // individual mode: never relayed
+    // Individual mode: never relayed, and the player's own engine is the only writer of its
+    // own log, so a lower stage is its own restart.
+    if (!this.ctx.isShared('journal')) { record(true); return; }
 
     const shared = this.ctx.cells.sharedQuest();
     const current = shared.journal[questId];
@@ -371,18 +376,29 @@ export class Quests {
     // Backlog 335: an owner's relog replays JournalSync's log through the engine, and every
     // stage the client did not recognise as an echo comes back as a regress. A regress to a
     // stage the log already holds is a replay, not the campaign moving: no write, no relay.
-    if (regressing && ownerChar !== undefined
+    // ONLY IN THE REPLAY WINDOW (1.7.1). Applied all session, it ate every restart to a stage
+    // the log already held -- a repeatable quest's first step, every time.
+    if (regressing && ownerChar !== undefined && this.inReplayWindow(player)
       && (this.ctx.players.getCached(ownerChar)?.journalLog ?? []).some((e) => e.q === questId && e.i === idx)) {
       log('debug', 'quest.journal_regress_replay', { questId, have: current, got: idx, from: player.name });
       return;
     }
     if (!advances && !regressing) return; // identical index: nothing to do
-    const out: JsLike = { questId, index: idx, ...(typeof actorRefId === 'string' ? { actorRefId } : {}) };
+    // `regress` tells every receiver this lower stage is authorised (quests.lua applies max
+    // otherwise, so a lagging entry can never walk its quest back).
+    const out: JsLike = { questId, index: idx, ...(regressing ? { regress: true } : {}), ...(typeof actorRefId === 'string' ? { actorRefId } : {}) };
     if (this.guestWriteUnbacked(player, 'JournalEntry')) { this.relayAll(player.id, 'JournalEntry', out); return; } // #366
     shared.journal[questId] = idx;
     this.ctx.cells.saveShared();
-    record();
+    record(regressing);
     this.relayAll(player.id, 'JournalEntry', out);
+  }
+
+  // The join-time replay window: JournalSync was sent this long ago at most. Echoes of its
+  // replayed log arrive a frame or so after the client applies it; a slow boot applies late.
+  static REPLAY_WINDOW_MS = 15_000;
+  private inReplayWindow(player: Player): boolean {
+    return player.journalSyncAt !== undefined && Date.now() - player.journalSyncAt <= Quests.REPLAY_WINDOW_MS;
   }
 
   // Backlog 257: the dated, ordered log behind the questId->index map. One line per entry
@@ -465,6 +481,7 @@ export class Quests {
     const owner = this.ctx.ownerCharId();
     const borrowed = this.ctx.isShared('journal') && owner !== undefined && owner !== player.charId;
     const topics = [...(logChar === undefined ? [] : (this.ctx.players.getCached(logChar)?.topics ?? []))];
+    player.journalSyncAt = Date.now(); // opens the replay window (journal() backlog 335)
     player.peer.sendEvent('JournalSync', { quests, borrowed, journalLog, topics });
   }
 

@@ -189,6 +189,18 @@ test('the owner and the peer may regress a journal stage; a guest may not', asyn
   assert.equal(idx(await guest.waitEvent('JournalEntry', je, 3000)), 20, 'an advance below the old maximum is not lost');
   peer.sendEvent('JournalEntry', { questId: 'mq_restart', index: 5 }); // the simulator's scripts may too
   assert.equal(idx(await guest.waitEvent('JournalEntry', je, 3000)), 5, "the peer's regress is authoritative");
+  // 1.7.1: a restart to a stage the log ALREADY holds, once the join-time replay window has
+  // closed, is the campaign moving (not a replay), and it says so.
+  const { Quests } = await import('../src/core/quests');
+  const windowMs = Quests.REPLAY_WINDOW_MS;
+  Quests.REPLAY_WINDOW_MS = 0;
+  t.after(() => { Quests.REPLAY_WINDOW_MS = windowMs; });
+  host.sendEvent('JournalEntry', { questId: 'mq_restart', index: 20 });
+  assert.equal(idx(await guest.waitEvent('JournalEntry', je, 3000)), 20);
+  host.sendEvent('JournalEntry', { questId: 'mq_restart', index: 10 }); // 10 is in the log already
+  const again = await guest.waitEvent('JournalEntry', je, 3000);
+  assert.equal(idx(again), 10, 'a restart to an already-logged stage is not a replay outside the window');
+  assert.equal((again.value as { regress?: boolean }).regress, true, 'the relayed restart is flagged as a regression');
   host.inbox.events.length = 0;
   // #366: a guest's journal write persists only out of a conversation (a dialogue lock).
   guest.sendEvent('DialogueLock', { net: 7, cellKey: '0,0', want: true });

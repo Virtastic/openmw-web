@@ -154,6 +154,7 @@ export interface Player {
   // conversation: a server-validated pickup (OnPCAdd), a container take, a door, a scripted
   // activation (ObjectActivated) or a cell entry (area triggers). quests.ts guestWriteUnbacked.
   questTriggerAt?: number;
+  journalSyncAt?: number; // when JournalSync was last sent: the log-replay window (quests.ts)
   // Where this player's last cell change / teleport claimed they landed. While set, the
   // peer's avatar poses are ignored for them: the avatar teleports on the RELAY of the cell
   // change, so its stream still says the old place for a while -- and one stale sample is a
