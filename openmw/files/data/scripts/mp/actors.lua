@@ -864,15 +864,39 @@ end
 -- reached the Ghostgate for the guest. The engine notes the move (mwmp/puppets.hpp) under the
 -- cell the actor is LEAVING, the one somebody holds; the holder teleports the real one. The
 -- holder itself says nothing: its move is the authoritative one and streams out as a pose.
-function actors.notePosition(obj, cellName, pos)
+-- 1.7.1: a SETTLING move (count 0: SetPos runs, a script's per-frame Move/MoveWorld) is held
+-- per actor and sent once it has not moved for POSITION_SETTLE_S -- the server allows five
+-- position claims a minute, and a script walking an NPC a frame at a time would spend them in
+-- a tenth of a second and then lose the move that mattered: where it stopped. The cell key of
+-- the FIRST held note is kept (the cell somebody holds); position and facing are the latest.
+local POSITION_SETTLE_S = 0.5
+actors.settlingMoves = {} -- obj.id -> { obj, cellName, pos, at }
+function actors.notePosition(obj, cellName, pos, now)
     if not (obj and obj:isValid()) or type(pos) ~= 'table' or type(pos.x) ~= 'number' then return end
+    if pos.count == 0 and now == nil then
+        local held = actors.settlingMoves[obj.id]
+        local first = held and held.pos.cellKey or pos.cellKey
+        actors.settlingMoves[obj.id] = { obj = obj, cellName = cellName,
+            pos = { x = pos.x, y = pos.y, z = pos.z, rotZ = pos.rotZ, cellKey = first }, at = core.getRealTime() }
+        return
+    end
     local cellKey = type(pos.cellKey) == 'string' and pos.cellKey ~= '' and pos.cellKey or actors.cellKeyOfObj(obj)
     if not cellKey or actors.isHolderOf(cellKey) then return end
     local body = withAddr({
         cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0,
-        position = { cell = tostring(cellName or ''), x = pos.x, y = pos.y or 0, z = pos.z or 0 },
+        position = { cell = tostring(cellName or ''), x = pos.x, y = pos.y or 0, z = pos.z or 0,
+            rotZ = type(pos.rotZ) == 'number' and pos.rotZ or nil },
     }, obj)
     if body then mp.sendEvent('ActorAI', body) end
+end
+
+function actors.flushSettlingMoves(now)
+    for id, m in pairs(actors.settlingMoves) do
+        if now - m.at >= POSITION_SETTLE_S then
+            actors.settlingMoves[id] = nil
+            actors.notePosition(m.obj, m.cellName, m.pos, now)
+        end
+    end
 end
 
 -- SCRIPTED SAY (backlog 217). "Say" from a script the peer runs (Dagoth Ur's lines) played to
@@ -978,7 +1002,8 @@ actors.handlers.MP_ActorAI = function(data)
         -- A scripted teleport from a non-holder (notePosition); the server sends it to the
         -- holder only. An empty cell name is the default exterior, resolved from x,y.
         local p = data.position
-        pcall(function() obj:teleport(tostring(p.cell or ''), util.vector3(p.x, p.y or 0, p.z or 0)) end)
+        local opts = type(p.rotZ) == 'number' and { rotation = util.transform.rotateZ(p.rotZ) } or nil
+        pcall(function() obj:teleport(tostring(p.cell or ''), util.vector3(p.x, p.y or 0, p.z or 0), opts) end)
         return
     end
     if data.done == true then
@@ -1289,6 +1314,7 @@ end
 -- --------------------------------------------------------------- tick
 
 function actors.tick(now)
+    actors.flushSettlingMoves(now)
     -- Non-holder: keep trying to puppet our cell's actors. Attaching ONLY on
     -- MP_ActorAuthorityInfo loses the race — that event lands on our PlayerCellChange,
     -- while the cell's actors are still streaming in, so cellActors() is empty or partial

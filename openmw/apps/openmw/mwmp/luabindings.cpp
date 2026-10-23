@@ -523,6 +523,8 @@ namespace MWMP
                 e["x"] = n.mPos[0];
                 e["y"] = n.mPos[1];
                 e["z"] = n.mPos[2];
+                if (n.mHasRot)
+                    e["rotZ"] = n.mRotZ;
                 out[i++] = e;
             }
             return out;

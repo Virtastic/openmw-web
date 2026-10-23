@@ -4711,5 +4711,34 @@ do
   check('the window opened: the lock is kept', run(true) == false)
 end
 
+print('1.7.1 actors.lua -- a per-frame scripted move reaches the holder once, where the actor settles, with its facing')
+do
+  fresh()
+  package.loaded['scripts.mp.actors'] = nil
+  local env = stubs.install({})
+  package.loaded['scripts.mp.quests'] = { isTalkingTo = function() return false end }
+  local actors = require('scripts.mp.actors')
+  actors.init({ ownIdFn = function() return 7 end, netIdOf = function() return 42 end })
+  local npc = { id = 'npc', isValid = function() return true end, cell = { isExterior = true, gridX = 0, gridY = 0 } }
+  local function claims()
+    local out = {}
+    for _, c in ipairs(env.calls.events) do if c.name == 'ActorAI' and c.body.position then out[#out + 1] = c.body end end
+    return out
+  end
+  for i = 1, 60 do -- a script's Move, one frame at a time
+    actors.notePosition(npc, '', { count = 0, x = i, y = 0, z = 0, rotZ = 1.5, cellKey = '0,0' })
+    env.advance(1 / 60)
+    actors.flushSettlingMoves(env.now())
+  end
+  check('no claim while the actor is still being moved', #claims() == 0, #claims() .. ' sent')
+  env.advance(0.6)
+  actors.flushSettlingMoves(env.now())
+  local c = claims()
+  check('one claim once it settles, at the final position and facing', #c == 1 and c[1].position.x == 60 and c[1].position.rotZ == 1.5,
+    #c .. ' sent')
+  actors.notePosition(npc, '', { count = 1, x = 5, y = 0, z = 0, cellKey = '0,0' })
+  check('a one-shot move (PositionCell) is still sent at once', #claims() == 2)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

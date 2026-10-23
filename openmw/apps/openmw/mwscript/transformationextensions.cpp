@@ -34,6 +34,35 @@ namespace MWScript
 {
     namespace Transformation
     {
+        namespace
+        {
+            // Multiplayer client (1.7.1, backlog 216's other half): SetPos, SetAngle, Move,
+            // MoveWorld and SetAtStart moved an actor the peer simulates, on an AI-off puppet,
+            // and only PositionCell/Position told the holder. Same note, under the cell the
+            // actor was in BEFORE the op (the one somebody holds), with where it ended up and
+            // its facing. `settle` (count 0) marks a per-frame op: the Lua side sends only the
+            // position the actor comes to rest at, never one claim a frame.
+            bool notesScriptMove(const MWWorld::Ptr& ptr)
+            {
+                return MWMP::isClient() && ptr.isInCell() && ptr.getClass().isActor()
+                    && ptr != MWMechanics::getPlayer();
+            }
+
+            void noteScriptMove(const MWWorld::Ptr& moved, const std::string& cellKeyBefore, bool settle)
+            {
+                if (!moved.isInCell())
+                    return;
+                const ESM::Position& pos = moved.getRefData().getPosition();
+                MWMP::ScriptNote note{ "position", moved.getCellRef().getRefNum(), false, {}, settle ? 0 : 1,
+                    cellKeyBefore,
+                    moved.getCell()->isExterior() ? std::string() : std::string(moved.getCell()->getCell()->getNameId()),
+                    { pos.pos[0], pos.pos[1], pos.pos[2] } };
+                note.mHasRot = true;
+                note.mRotZ = pos.rot[2];
+                MWMP::recordScriptNote(std::move(note));
+            }
+        }
+
         void moveStandingActors(const MWWorld::Ptr& ptr, const osg::Vec3f& diff)
         {
             std::vector<MWWorld::Ptr> actors;
@@ -167,6 +196,8 @@ namespace MWScript
                 float ax = ptr.getRefData().getPosition().rot[0];
                 float ay = ptr.getRefData().getPosition().rot[1];
                 float az = ptr.getRefData().getPosition().rot[2];
+                const bool note = notesScriptMove(ptr);
+                const std::string noteCell = note ? MWMP::cellKeyOf(*ptr.getCell()) : std::string();
 
                 // XYZ axis use the inverse (XYZ) rotation order like vanilla SetAngle.
                 // UVW axis use the standard (ZYX) rotation order like TESCS/OpenMW-CS and the rest of the game.
@@ -188,6 +219,8 @@ namespace MWScript
                 else if (axis == "w")
                     MWBase::Environment::get().getWorld()->rotateObject(
                         ptr, osg::Vec3f(ax, ay, angle), MWBase::RotationFlag_none);
+                if (note)
+                    noteScriptMove(ptr, noteCell, false);
             }
         };
 
@@ -334,8 +367,13 @@ namespace MWScript
                     return;
                 }
 
-                dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext())
-                    .updatePtr(ptr, MWBase::Environment::get().getWorld()->moveObjectBy(ptr, newPos - curPos, true));
+                const bool note = notesScriptMove(ptr);
+                const std::string noteCell = note ? MWMP::cellKeyOf(*ptr.getCell()) : std::string();
+                MWWorld::Ptr moved = MWBase::Environment::get().getWorld()->moveObjectBy(ptr, newPos - curPos, true);
+                dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext()).updatePtr(ptr, moved);
+                // SetPos x / y / z usually come as a run in one frame: settled, sent once.
+                if (note)
+                    noteScriptMove(moved, noteCell, true);
             }
         };
 
@@ -735,13 +773,17 @@ namespace MWScript
                 if (!ptr.isInCell())
                     return;
 
+                const bool note = notesScriptMove(ptr);
+                const std::string noteCell = note ? MWMP::cellKeyOf(*ptr.getCell()) : std::string();
+
                 MWBase::Environment::get().getWorld()->rotateObject(
                     ptr, ptr.getCellRef().getPosition().asRotationVec3());
 
-                dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext())
-                    .updatePtr(ptr,
-                        MWBase::Environment::get().getWorld()->moveObject(
-                            ptr, ptr.getCellRef().getPosition().asVec3()));
+                MWWorld::Ptr moved
+                    = MWBase::Environment::get().getWorld()->moveObject(ptr, ptr.getCellRef().getPosition().asVec3());
+                dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext()).updatePtr(ptr, moved);
+                if (note)
+                    noteScriptMove(moved, noteCell, false);
             }
         };
 
@@ -786,8 +828,13 @@ namespace MWScript
                 // We should move actors, standing on moving object, too.
                 // This approach can be used to create elevators.
                 moveStandingActors(ptr, diff);
-                dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext())
-                    .updatePtr(ptr, MWBase::Environment::get().getWorld()->moveObjectBy(ptr, diff, false));
+                const bool note = notesScriptMove(ptr);
+                const std::string noteCell = note ? MWMP::cellKeyOf(*ptr.getCell()) : std::string();
+                MWWorld::Ptr moved = MWBase::Environment::get().getWorld()->moveObjectBy(ptr, diff, false);
+                dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext()).updatePtr(ptr, moved);
+                // Per frame: settled on the Lua side, so a script walking an NPC is one claim.
+                if (note)
+                    noteScriptMove(moved, noteCell, true);
             }
         };
 
@@ -821,8 +868,13 @@ namespace MWScript
                 // We should move actors, standing on moving object, too.
                 // This approach can be used to create elevators.
                 moveStandingActors(ptr, diff);
-                dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext())
-                    .updatePtr(ptr, MWBase::Environment::get().getWorld()->moveObjectBy(ptr, diff, false));
+                const bool note = notesScriptMove(ptr);
+                const std::string noteCell = note ? MWMP::cellKeyOf(*ptr.getCell()) : std::string();
+                MWWorld::Ptr moved = MWBase::Environment::get().getWorld()->moveObjectBy(ptr, diff, false);
+                dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext()).updatePtr(ptr, moved);
+                // Per frame: settled on the Lua side, so a script walking an NPC is one claim.
+                if (note)
+                    noteScriptMove(moved, noteCell, true);
             }
         };
 

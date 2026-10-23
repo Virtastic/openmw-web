@@ -221,6 +221,9 @@ namespace MWMP
         std::string mCellKey; // the OBJECT's cell (before a move), in the wire's key form
         std::string mCellName; // position: the destination interior's name, "" for an exterior
         float mPos[3] = { 0.f, 0.f, 0.f }; // spawn, position
+        // position (1.7.1): the actor's z rotation after the move, when the op set one.
+        bool mHasRot = false;
+        float mRotZ = 0.f;
     };
     void recordScriptNote(ScriptNote note);
     std::vector<ScriptNote> takeScriptNotes();

@@ -829,7 +829,9 @@ export class WorldState {
         const pt = p instanceof Map ? p as LTable : undefined;
         const x = pt ? finite(pt.get('x')) : undefined, y = pt ? finite(pt.get('y')) : undefined, z = pt ? finite(pt.get('z')) : undefined;
         const cell = pt?.get('cell');
+        const rotZ = pt?.get('rotZ'); // 1.7.1: SetAngle/SetAtStart facing, radians
         if (!cellKey || !ref || x === undefined || y === undefined || z === undefined
+          || (rotZ !== undefined && (finite(rotZ) === undefined || Math.abs(rotZ as number) > 64))
           || Math.abs(x) > MAX_ABS_COORD || Math.abs(y) > MAX_ABS_COORD || Math.abs(z) > MAX_ABS_COORD
           || (cell !== undefined && (typeof cell !== 'string' || cell.length > MAX_CELL_KEY))) {
           this.invalid(player, name);
