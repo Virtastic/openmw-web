@@ -4399,6 +4399,13 @@ do
       check('no claim for a cell we hold ourselves', #sent == 2)
     end
   end
+
+  -- 3. a relayed fight on an avatar goes through startCombat
+  local ls = src(ENG .. 'mwlua/localscripts.cpp')
+  check('_startAiCombat on an avatar calls MechanicsManager::startCombat',
+    ls:find('if (MWMP::isAvatar(target.ptr().getCellRef().getRefNum()))', 1, true) ~= nil
+    and ls:find('getMechanicsManager()->startCombat(ptr, target.ptr(), nullptr);', 1, true) ~= nil
+    and ls:find('#include "../mwmp/puppets.hpp"', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

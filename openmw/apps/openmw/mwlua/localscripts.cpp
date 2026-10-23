@@ -12,6 +12,7 @@
 #include "../mwmechanics/aiwander.hpp"
 #include "../mwmechanics/attacktype.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmp/puppets.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/ptr.hpp"
 
@@ -173,6 +174,13 @@ namespace MWLua
         };
         selfAPI["_startAiCombat"] = [](SelfObject& self, const LObject& target, bool cancelOther) {
             const MWWorld::Ptr& ptr = self.ptr();
+            // MP: a fight relayed onto a player's AVATAR goes through startCombat, as the
+            // engine's own fights do: the taunt, the hit-attempt actor, the allies joining.
+            if (MWMP::isAvatar(target.ptr().getCellRef().getRefNum()))
+            {
+                MWBase::Environment::get().getMechanicsManager()->startCombat(ptr, target.ptr(), nullptr);
+                return;
+            }
             MWMechanics::AiSequence& ai = ptr.getClass().getCreatureStats(ptr).getAiSequence();
             ai.stack(MWMechanics::AiCombat(target.ptr()), ptr, cancelOther);
         };
