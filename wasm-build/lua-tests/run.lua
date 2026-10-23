@@ -2314,7 +2314,7 @@ do
   local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
   check('global.lua counts a puppet death in MP_PlayerStatsDynamic and mirrors puppetDeaths',
     gl:find("puppetDeaths[key] = (puppetDeaths[key] or 0) + 1", 1, true) ~= nil
-    and gl:find("local key = tostring(data.id)", 1, true) ~= nil
+    and gl:find("local key = kit.idKey(data.id)", 1, true) ~= nil
     and gl:find("mp.set('puppetDeaths', json.encode(puppetDeaths))", 1, true) ~= nil)
 end
 
@@ -4688,6 +4688,26 @@ do
   local pick = a and g:find('local pos = (queued and queued.pos) or lastPose[id] or p.obj.position', a, true)
   local d = a and g:find('despawnPuppet(id)', a, true)
   check('the target is read before the despawn drops the queued move', q and pick and d and q < pick and pick < d)
+end
+
+print('1.7.1 a numeric id keys the same on Lua 5.4 and LuaJIT ("p:2", never "p:2.0")')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local body = g:match('(function kit%.idKey%(id%).-\nend)')
+  local kit = {}
+  local okL = body and pcall(assert((loadstring or load)('local kit = ...\n' .. body)), kit)
+  check('kit.idKey loads on its own', okL and type(kit.idKey) == 'function')
+  if okL then
+    check('a double id keys as an integer', kit.idKey(2.0) == '2' and kit.idKey(2) == '2' and kit.idKey(123456789.0) == '123456789')
+    check('a string id is left alone', kit.idKey('abc') == 'abc')
+  end
+  check('no player-id key in global.lua is built with tostring',
+    g:find("'p:' .. tostring(", 1, true) == nil and g:find('m[tostring(id)]', 1, true) == nil
+    and select(2, g:gsub("'p:' %.%. kit%.idKey%(id%)", '')) == 2)
+  check('puppetDeaths keys by kit.idKey', g:find('local key = kit.idKey(data.id) -- json.encode wants string keys', 1, true) ~= nil)
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  check('the netObjects mirrors key net ids with %.0f',
+    ob:find("netObjs[string.format('%.0f', netId)]", 1, true) ~= nil and ob:find("netNames[string.format('%.0f', netId)]", 1, true) ~= nil)
 end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

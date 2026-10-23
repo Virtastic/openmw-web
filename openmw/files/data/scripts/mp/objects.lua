@@ -1522,7 +1522,7 @@ function objects.tick(now)
         lastMirror = now
         local netObjs = {}
         for netId, obj in pairs(netToObj) do
-            if obj:isValid() then netObjs[tostring(netId)] = obj.recordId end
+            if obj:isValid() then netObjs[string.format('%.0f', netId)] = obj.recordId end
         end
         mp.set('netObjects', json.encode(netObjs))
         -- Display names of the net objects: a PLACEHOLDER stand-in still "exists", so the
@@ -1530,7 +1530,7 @@ function objects.tick(now)
         local netNames = {}
         for netId, obj in pairs(netToObj) do
             if obj:isValid() then
-                netNames[tostring(netId)] = worldmp.recordNameOf(obj.recordId) or ''
+                netNames[string.format('%.0f', netId)] = worldmp.recordNameOf(obj.recordId) or ''
             end
         end
         mp.set('netObjectNames', json.encode(netNames))

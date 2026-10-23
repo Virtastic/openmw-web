@@ -30,6 +30,11 @@ local kit = {}
 function kit.mirrorCarry()
     mp.set('switchCarry', (pendingFlip or '') .. '|' .. (worldUrls.lastOut or ''))
 end
+-- A player id as a table key or mirror key. LSER numbers are doubles, and Lua 5.4's tostring(2.0)
+-- is "2.0" where LuaJIT's is "2": the same id keyed two ways on two engines (objects.lua netKey).
+function kit.idKey(id)
+    return type(id) == 'number' and string.format('%.0f', id) or tostring(id)
+end
 
 -- Chargen gate: multiplayer surfaces (chat, social, leaving your solo world) unlock only once
 -- character creation is DONE (race/class/sign chosen — mwscript CharGenState == -1). Mirrored
@@ -540,7 +545,7 @@ local function pushEquipmentToPuppet(id)
         -- COUNT WHAT IS ON ITS WAY IN. At spawn the doc grant and this push (twice) ran in one
         -- frame, each reading 0 because adds land at the end of it, so every equipped item was
         -- granted three times -- a player in heavy armour spawned carrying three sets.
-        local key = 'p:' .. tostring(id)
+        local key = 'p:' .. kit.idKey(id)
         if reconcile.held(inventory, key, grantId) == 0 then
             local okc, item = pcall(function() return world.createObject(grantId) end)
             if okc then
@@ -683,7 +688,7 @@ local function applyAvatarDoc(id)
     -- wrong damage.
     pcall(function()
         local inventory = types.Actor.inventory(obj)
-        local key = 'p:' .. tostring(id)
+        local key = 'p:' .. kit.idKey(id)
         local items = {}
         for _, entry in ipairs(doc.inventory or {}) do
             items[#items + 1] = { id = worldmp.toLocal(entry.id), n = entry.n or 1 }
@@ -1509,7 +1514,7 @@ local function mirrorPuppets()
             end)
             table.sort(actives)
             local okD, dead = pcall(types.Actor.isDead, p.obj)
-            m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z,
+            m[kit.idKey(id)] = { x = pos.x, y = pos.y, z = pos.z,
                 name = rec and rec.name or p.name, eq = eq, actives = actives, dead = okD and dead or false, falls = p.falls or 0,
                 flags = lastFlags[id] or 0, jumps = jumpEdges[id] or 0, stance = okS and st or -1 }
         end
@@ -2895,7 +2900,7 @@ local eventHandlers = {
         -- (0.5 s) could sample that window or miss it (s131 #179/#181: 'the host sees the guest drown'
         -- passed one run in two). Event-driven, so nothing is sampled.
         if data.hp and data.hp.c <= 0 and not (was and was.hp and was.hp.c <= 0) and puppets[data.id] then
-            local key = tostring(data.id) -- json.encode wants string keys (#183: a numeric key threw and aborted the whole handler)
+            local key = kit.idKey(data.id) -- json.encode wants string keys (#183: a numeric key threw and aborted the whole handler)
             puppetDeaths[key] = (puppetDeaths[key] or 0) + 1
             mp.set('puppetDeaths', json.encode(puppetDeaths))
         end
