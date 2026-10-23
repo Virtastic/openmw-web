@@ -538,6 +538,17 @@ namespace MWMP
                     out[i++] = id.serializeText();
             return out;
         };
+        // 1.7.1: the topics the player KNOWS (DialogueManager::mKnownTopics) -- what AddTopic
+        // and a conversation's hyperlinks unlock, and what NPCs offer. journal(player).topics
+        // holds only the topics actually asked about, so an AddTopic unlock never travelled.
+        // Ids round-trip through types.Player.addTopic (deserializeText).
+        api["knownTopics"] = [](sol::this_state state) {
+            sol::table out(state, sol::create);
+            int i = 1;
+            for (const std::string& id : MWBase::Environment::get().getDialogueManager()->getKnownTopicIds())
+                out[i++] = id;
+            return out;
+        };
         api["startGlobalScript"] = [luaManager = context.mLuaManager](std::string_view id) {
             // stringRefId, not deserializeText: the latter only resolves ids already interned
             // (see getDeadCount above) and a script this session never ran is exactly that.

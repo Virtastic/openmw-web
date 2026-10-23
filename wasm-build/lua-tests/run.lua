@@ -4563,6 +4563,8 @@ local function questEnv()
   fresh()
   package.loaded['scripts.mp.quests'] = nil
   local e = stubs.install({})
+  e.core.factions = { records = {} } -- quests.tick diffs these with a player present
+  e.types.Player.getCrimeLevel = function() return 0 end
   local stages = {}
   e.types.Player.quests = function()
     return setmetatable({}, { __index = function(_, id)
@@ -4627,6 +4629,33 @@ do
   for _, c in ipairs(e.calls.events) do if c.name == 'JournalEntry' then n = n + 1 end end
   check("a restarted quest's sync lands at the map stage and none of its log echoes travel", stages.mq == 10 and n == 0,
     'stage ' .. tostring(stages.mq) .. ', ' .. n .. ' sent')
+end
+
+print('1.7.1 quests.lua -- an AddTopic unlock (the engine known-topic set) is diffed and sent; an applied topic goes through addTopic')
+do
+  local e, q = questEnv()
+  local known = { 'Background' }
+  e.mp.knownTopics = function() return known end
+  local added = {}
+  e.types.Player.addTopic = function(_, id)
+    if id == 'no such topic' then error('topic record not found') end
+    added[#added + 1] = id
+  end
+  q.tick(0) -- baseline
+  known = { 'Background', 'Dwemer Puzzle Box' } -- a dialogue result's AddTopic
+  q.tick(1)
+  local sent
+  for _, c in ipairs(e.calls.events) do if c.name == 'TopicsLearned' then sent = c.body.topics end end
+  check('a topic only AddTopic unlocked is sent', sent ~= nil and #sent == 1 and sent[1] == 'dwemer puzzle box',
+    sent and table.concat(sent, ',') or 'nothing sent')
+  q.handlers.MP_TopicsLearned({ topics = { 'Ald-ruhn', 'no such topic' } })
+  check('a synced topic is applied through the engine addTopic', #added == 1 and added[1] == 'Ald-ruhn')
+  local said = false
+  for _, p in ipairs(e.calls.prints) do if p:find('addTopic "no such topic" failed', 1, true) then said = true end end
+  check('a failed addTopic is printed', said)
+  e.types.Player.addTopic = function(_, id) added[#added + 1] = id end
+  q.handlers.MP_TopicsLearned({ topics = { 'no such topic' } })
+  check('a failed topic is not marked applied, so the next sync retries it', added[#added] == 'no such topic')
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

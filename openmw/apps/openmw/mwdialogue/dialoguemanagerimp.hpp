@@ -96,6 +96,8 @@ namespace MWDialogue
 
         void addTopic(const ESM::RefId& topic) override;
 
+        std::vector<std::string> getKnownTopicIds() const override;
+
         void addChoice(std::string_view text, int choice) override;
         const std::vector<std::pair<std::string, int>>& getChoices() const override;
 

@@ -86,6 +86,15 @@ namespace MWDialogue
         mKnownTopics.insert(topic);
     }
 
+    std::vector<std::string> DialogueManager::getKnownTopicIds() const
+    {
+        std::vector<std::string> out;
+        out.reserve(mKnownTopics.size());
+        for (const ESM::RefId& topic : mKnownTopics)
+            out.push_back(topic.serializeText());
+        return out;
+    }
+
     const MWDialogue::KeywordSearch& DialogueManager::getKeywordSearch() const
     {
         const auto& dialogue = MWBase::Environment::get().getESMStore()->get<ESM::Dialogue>();

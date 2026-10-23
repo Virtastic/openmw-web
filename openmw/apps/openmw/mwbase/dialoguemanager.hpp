@@ -59,6 +59,9 @@ namespace MWBase
 
         virtual void addTopic(const ESM::RefId& topic) = 0;
 
+        // MP: every topic the player knows (mKnownTopics, what NPCs offer), serialized ids.
+        virtual std::vector<std::string> getKnownTopicIds() const = 0;
+
         virtual void addChoice(std::string_view text, int choice) = 0;
         virtual const std::vector<std::pair<std::string, int>>& getChoices() const = 0;
 

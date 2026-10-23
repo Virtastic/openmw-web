@@ -356,18 +356,32 @@ local appliedTopics = {}
 -- normal play, so it costs one table lookup per diff and changes nothing for a player.
 local testLearned = {}
 
+local topicReadFailed = false -- topicSet's failure is printed once, not every diff
 local function topicSet()
     local player = playerObj()
     if not player then return nil end
-    local ok, set = pcall(function()
-        local out = {}
-        -- types.Player.journal(player).topics -- the topic store hangs off the JOURNAL
-        -- binding, not off the player directly.
-        for id in pairs(types.Player.journal(player).topics) do out[id] = true end
-        for id in pairs(testLearned) do out[id] = true end
-        return out
+    local out = {}
+    -- 1.7.1: the engine's KNOWN topics (DialogueManager::mKnownTopics, mp.knownTopics) -- an
+    -- AddTopic unlock lands there and nowhere else, so diffing only the journal's asked-about
+    -- topics never sent one. The journal set stays for an engine baked before the binding.
+    local okKnown, errKnown = pcall(function()
+        if not mp.knownTopics then error('no mp.knownTopics') end
+        for _, id in ipairs(mp.knownTopics()) do out[string.lower(id)] = true end
     end)
-    return ok and set or nil
+    -- types.Player.journal(player).topics -- the topic store hangs off the JOURNAL
+    -- binding, not off the player directly.
+    local okJournal, errJournal = pcall(function()
+        for id in pairs(types.Player.journal(player).topics) do out[string.lower(id)] = true end
+    end)
+    if not (okKnown or okJournal) then
+        if not topicReadFailed then
+            topicReadFailed = true
+            print('[mp] topics: cannot read known topics: ' .. tostring(errKnown) .. ' / ' .. tostring(errJournal))
+        end
+        return nil
+    end
+    for id in pairs(testLearned) do out[id] = true end
+    return out
 end
 
 -- BASELINE FIRST, THEN LEARN. A client that has not diffed yet has knownTopics == nil, and the
@@ -383,7 +397,7 @@ end
 function quests.testLearnTopic(id)
     if type(id) ~= 'string' or id == '' then return end
     if knownTopics == nil then knownTopics = topicSet() or {} end
-    testLearned[id] = true
+    testLearned[string.lower(id)] = true
 end
 
 local function diffTopics()
@@ -413,14 +427,22 @@ function quests.applyTopics(list)
     if not player or type(list) ~= 'table' then return end
     if knownTopics == nil then knownTopics = topicSet() or {} end
     for _, id in ipairs(list) do
-        if type(id) == 'string' and id ~= '' and not knownTopics[id] then
-            knownTopics[id] = true
-            pcall(function() types.Player.addTopic(player, id) end)
-            -- OBSERVABLE RECEIPT. addTopic itself leaves no trace a script can read, so without
-            -- this the receiving half of topic sync cannot be asserted on at all -- which is
-            -- half of why this feature went unproven for so long. Recorded, not mirrored here;
-            -- the mirror below publishes it on the ordinary beat.
-            appliedTopics[#appliedTopics + 1] = id
+        local key = type(id) == 'string' and id ~= '' and string.lower(id) or nil
+        if key and not knownTopics[key] then
+            knownTopics[key] = true
+            -- DialogueManager::addTopic (mwlua/types/player.cpp): the topic joins mKnownTopics,
+            -- so NPCs offer it. A failure (a topic this content lacks) is said, and left out
+            -- of the baseline so the next sync retries it.
+            local ok, err = pcall(function() types.Player.addTopic(player, id) end)
+            if ok then
+                -- OBSERVABLE RECEIPT. addTopic itself leaves no trace a script can read, so
+                -- without this the receiving half of topic sync cannot be asserted on at all.
+                -- Recorded, not mirrored here; the mirror below publishes it on the ordinary beat.
+                appliedTopics[#appliedTopics + 1] = id
+            else
+                knownTopics[key] = nil
+                print('[mp] topics: addTopic "' .. id .. '" failed: ' .. tostring(err))
+            end
         end
     end
 end
