@@ -2,6 +2,36 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.1
+
+Quests, dialogue and scripts in multiplayer, from a scan of everything that still behaved
+differently from single player.
+
+**Quest progress is kept.**
+- A guest's quest step made outside a conversation (picking up the item, using the object,
+  walking into the place) is now saved, not just shown.
+- A quest never jumps back a stage because two updates crossed.
+- Restarting a quest works.
+- Topics a conversation unlocks are remembered after a relog.
+- A world without an owner no longer loses what its NPCs did.
+
+**Everyone sees the same world.**
+- World-wide flags (the Blight, the Ghostfence) survive a restart.
+- A flag the server overruled snaps back on your screen too.
+- NPC script variables are saved with the right NPC.
+- An NPC a script moves, turns or slides stays there.
+- A conversation that never opens no longer blocks that NPC for everyone.
+
+**Scripts aimed at "the player" find a real player on the server.** Distance, line of sight
+and detection checks (GetDistance, GetLOS, GetDetected) now look at the nearest real player
+instead of a placeholder.
+
+**Small engine timing fixes.**
+- An object deleted mid-move is still deleted.
+- An NPC told to move twice in one moment ends up in the right place.
+- A friend's rebuilt body appears where they are.
+- Their gear is never doubled.
+
 ## 1.7.0
 
 Multiplayer that feels like single player: everything the logs and a code scan found that still
