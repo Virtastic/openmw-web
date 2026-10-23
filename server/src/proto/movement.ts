@@ -16,7 +16,7 @@ export interface PlayerPose {
   pitch: number; // u8, 0..255 = -pi/2..+pi/2
   flags: number; // u8: bit0 run, bit1 sneak, bit2 jump-edge, bit3 use (attacking), bit4 weaponDrawn, bit5 spellReady
   animVel: number; // u8, 0..255 = 0..2x base walk speed
-  counter: number; // u8, reserved 0 in M1
+  counter: number; // u8: bit0 = bytes 18-19 hold a u16 sample time (peer actor poses; PROTOCOL.md)
 }
 
 // ------------------------------------------------------------- quantization
@@ -68,7 +68,7 @@ export function writeMove(pose: PlayerPose, b: Buffer, off: number): void {
   b.writeUInt8(pose.flags & 0xff, off + 15);
   b.writeUInt8(pose.animVel & 0xff, off + 16);
   b.writeUInt8(pose.counter & 0xff, off + 17);
-  b.writeUInt16LE(0, off + 18); // padding to the specced 20 bytes (reserved, zero)
+  b.writeUInt16LE(0, off + 18); // sample time: player poses carry none (actor batches relay raw)
 }
 
 export function packMove(pose: PlayerPose): Buffer {

@@ -51,6 +51,41 @@ const REBASE_MAX = 8192;
  *  is invisible to a person and ends a flood without disconnecting anybody. */
 const CHAT_PER_SEC = 5;
 const CHAT_BURST = 20;
+
+// THE LOSSY FAMILY: state streams where only the newest frame matters. Payload layout per type
+// (after the 6-byte envelope): `hdr` header bytes ending in a u8 count, then count entries of
+// `size` bytes whose first `key` bytes name the entity (u16 player id, or the 8-byte ref).
+const LOSSY: Record<number, { hdr: number; size: number; key: number } | undefined> = {
+  [MSG_PLAYER_MOVE_BATCH]: { hdr: 1, size: 22, key: 2 },
+  [MSG_PLAYER_STATE_BATCH]: { hdr: 1, size: 26, key: 2 },
+  [MSG_ACTOR_MOVE_BATCH]: { hdr: 5, size: 28, key: 8 },
+};
+const LOSSY_KIND: Record<number, string> = {
+  [MSG_PLAYER_MOVE_BATCH]: 'move', [MSG_PLAYER_STATE_BATCH]: 'state', [MSG_ACTOR_MOVE_BATCH]: 'actor',
+};
+
+/** Two pending frames of one lossy stream folded into one: every entry of `newer`, plus each
+ *  entry of `older` whose entity `newer` does not carry. A batch is not the whole picture --
+ *  actors.lua chunks a big cell into 255-actor batches, the peer hears one player per 0x0101 --
+ *  so replacing the older frame outright would freeze whatever only it carried. Takes the
+ *  newer frame's envelope (its seq). Capped at the u8 count; the overflow is the OLDER entries. */
+export function mergeLossy(older: Buffer, newer: Buffer): Buffer {
+  const l = LOSSY[newer.readUInt16LE(0)]!;
+  const h = 6 + l.hdr;
+  const seen = new Set<string>();
+  for (let off = h; off + l.size <= newer.length; off += l.size) seen.add(newer.toString('latin1', off, off + l.key));
+  const parts: Buffer[] = [newer];
+  let n = newer[h - 1]!;
+  for (let off = h; off + l.size <= older.length && n < 255; off += l.size) {
+    if (seen.has(older.toString('latin1', off, off + l.key))) continue;
+    parts.push(older.subarray(off, off + l.size));
+    n++;
+  }
+  if (parts.length === 1) return newer;
+  const out = Buffer.concat(parts);
+  out[h - 1] = n;
+  return out;
+}
 import { handleAvatarEffectsBatch, handleAvatarItemStatesBatch, handleAvatarSkillUse, handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
@@ -98,6 +133,7 @@ type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 // connection.ts has no import cycle with server.ts.
 export interface ServerCtx {
   worldPeer(): Player | undefined; // THE world peer (server.ts): the single simulator
+  relayPose?(p: Player): void; // an accepted pose, to near observers now (MoveBroadcaster.relayNow)
   config: Config;
   accounts: AccountStore;
   roster: Roster;
@@ -244,6 +280,15 @@ export class Connection implements Peer {
   static netDelay = netDelayFromEnv();
   private readonly inQ = Connection.netDelay?.();
   private readonly outQ = Connection.netDelay?.();
+  // LATEST STATE WINS (sendBinaryFrame). `held` is at most one pending frame per lossy stream
+  // (type, plus the epoch for actor batches), folded together until the socket drains;
+  // `inflight` counts lossy frames handed to the socket whose write has not completed.
+  private readonly held = new Map<string, Buffer>();
+  private inflight = 0;
+  private heldTimer?: NodeJS.Timeout;
+  // The page reported its tab hidden (ClientVisibility): lossy streams wait in `held` until it
+  // is shown again, the avatar stands still, and a backlog does not end the session.
+  private hidden = false;
 
   constructor(
     private readonly ws: WebSocket,
@@ -322,32 +367,93 @@ export class Connection implements Peer {
   // still holds.
   sendBinaryFrame(type: number, frame: Buffer): boolean {
     if (this.ws.readyState !== this.ws.OPEN) return false;
-    // Movement and actor batches are the only stale-tolerant traffic on the wire, so they
-    // are what gets shed when a client stops draining: a dropped pose is corrected by the
-    // next one. Session- and event-tier frames (chat, journal, object ops, admin) are
-    // never shed — losing one loses state, not a frame.
-    if (type === MSG_PLAYER_MOVE_BATCH || type === MSG_ACTOR_MOVE_BATCH) {
-      const { maxBufferedBytes, maxBufferedBytesHard } = this.ctx.config.limits;
-      const buffered = this.bufferedBytes;
-      // A cell entry lands nine cell docs at once (sendCellStateAround); for ~2 s after
-      // one, a full buffer is that burst draining, not a reader that has stopped.
-      const entering = Date.now() - (this.player?.cellStateBurstAt ?? 0) < 2000;
-      if (buffered > maxBufferedBytesHard && !entering) {
-        log('info', 'conn.backpressure_drop', { ip: this.ip, player: this.player?.name, buffered });
-        this.disconnect('BACKLOG', 'outbound buffer overflow (client is not reading)');
-        return false;
-      }
-      if (buffered > maxBufferedBytes) {
-        metrics.backpressureDropped.inc({ kind: type === MSG_ACTOR_MOVE_BATCH ? 'actor' : 'move' });
-        return false;
-      }
-    }
     // Binary frames are already compact and mostly incompressible (packed poses/floats), so
     // per-message deflate buys nothing on them — but permessage-deflate allocates a ~256 KB
     // zlib context PER SOCKET, which is ~19 MB at 64 players. Skipping it is a memory fix
     // that happens to shave a little latency too.
-    this.wsSend(frame, { compress: false });
+    if (LOSSY[type] === undefined) {
+      this.wsSend(frame, { compress: false });
+      return true;
+    }
+    // LATEST STATE WINS. Poses (0x0101), actor batches (0x0200) and own-body corrections
+    // (0x0103) are the only stale-tolerant traffic on the wire: a client that is behind wants
+    // the newest pose, not every pose in order. So each stream keeps at most ONE frame queued
+    // for this client: while an earlier lossy frame is still being written (or the buffer is
+    // over the soft limit) a new one is folded into the pending one by entity (mergeLossy),
+    // and the pending set goes out when the write completes. Session- and event-tier frames
+    // (chat, journal, object ops, admin) never wait here and never drop -- losing one loses
+    // state, not a frame -- and keep their order among themselves.
+    const { maxBufferedBytes, maxBufferedBytesHard } = this.ctx.config.limits;
+    const buffered = this.bufferedBytes;
+    // A cell entry lands nine cell docs at once (sendCellStateAround); for ~2 s after
+    // one, a full buffer is that burst draining, not a reader that has stopped.
+    const entering = Date.now() - (this.player?.cellStateBurstAt ?? 0) < 2000;
+    // A HIDDEN TAB IS IDLE, NOT GONE (#210/#183). A background tab reads slowly or not at all,
+    // and BACKLOG sent it through a reconnect for nothing: its lossy streams are already held
+    // to one frame each, so what fills the buffer is reliable state it will read when shown.
+    // ponytail: a fixed 4x memory backstop; a per-client byte cap if hidden tabs grow it.
+    const hard = this.hidden ? maxBufferedBytesHard * 4 : maxBufferedBytesHard;
+    if (buffered > hard && !entering) {
+      log('info', 'conn.backpressure_drop', { ip: this.ip, player: this.player?.name, buffered, hidden: this.hidden });
+      this.disconnect('BACKLOG', 'outbound buffer overflow (client is not reading)');
+      return false;
+    }
+    if (this.held.size === 0 && this.inflight === 0 && !this.hidden && buffered <= maxBufferedBytes) {
+      this.sendLossy(frame);
+      return true;
+    }
+    const key = type === MSG_ACTOR_MOVE_BATCH ? `${type}:${frame.readUInt32LE(6)}` : String(type);
+    const prev = this.held.get(key);
+    // A superseded pending frame is what "shed" means now; true is still the honest answer
+    // (callers mark the pose delivered): its entities ride in the merged frame, or a newer
+    // pose of theirs does.
+    if (prev) metrics.backpressureDropped.inc({ kind: LOSSY_KIND[type]! });
+    this.held.set(key, prev ? mergeLossy(prev, frame) : frame);
+    this.armFlush();
     return true;
+  }
+
+  private sendLossy(frame: Buffer): void {
+    const go = () => {
+      if (this.ws.readyState !== this.ws.OPEN) return;
+      // In flight only if it did NOT go straight to the kernel: on a draining socket the write
+      // completes inside send(), nothing waits, and back-to-back frames all go out (a burst
+      // of peer frames is still every frame). The callback always runs later (next tick).
+      let waiting = false;
+      this.ws.send(frame, { compress: false }, () => {
+        if (waiting && --this.inflight === 0) this.flushHeld();
+      });
+      if (this.ws.bufferedAmount > 0) {
+        waiting = true;
+        this.inflight++;
+      }
+    };
+    // Frames waiting in the harness delay FIFO are on the emulated wire, not in our buffer:
+    // they do not count as in flight until the socket has them.
+    if (this.outQ) this.outQ.push(go);
+    else go();
+  }
+
+  // The write completed (or the poll fired): send every pending frame, oldest seq first so the
+  // client's movement-family stale-drop (one cursor across all three types) keeps them all.
+  private flushHeld(): void {
+    clearTimeout(this.heldTimer);
+    this.heldTimer = undefined;
+    if (this.held.size === 0 || this.inflight > 0 || this.hidden || this.state === 'CLOSED') return;
+    if (this.bufferedBytes > this.ctx.config.limits.maxBufferedBytes) {
+      this.armFlush();
+      return;
+    }
+    const frames = [...this.held.values()].sort((a, b) => a.readUInt32LE(2) - b.readUInt32LE(2));
+    this.held.clear();
+    for (const f of frames) this.sendLossy(f);
+  }
+
+  // A write in flight flushes on completion; with none (over the soft limit), poll.
+  private armFlush(): void {
+    if (this.inflight > 0 || this.hidden || this.heldTimer) return;
+    this.heldTimer = setTimeout(() => this.flushHeld(), 50);
+    this.heldTimer.unref();
   }
 
   // Refuse a connection at setup (bad engine hash / bad content). Identical to disconnect()
@@ -388,6 +494,8 @@ export class Connection implements Peer {
     if (this.state === 'CLOSED') return;
     this.state = 'CLOSED';
     this.flushRtt();
+    clearTimeout(this.heldTimer);
+    this.held.clear();
     // A client that just drops the socket never goes through disconnect(); without this
     // the disconnect total would only ever see server-initiated closes.
     if (!this.closeCounted) {
@@ -758,6 +866,11 @@ export class Connection implements Peer {
       this.handleCellChange(value);
       return;
     }
+    if (name === 'ClientVisibility') {
+      const hidden = value instanceof Map ? value.get('hidden') : undefined;
+      if (typeof hidden === 'boolean' && !this.isSystem) this.setHidden(hidden);
+      return;
+    }
     // No AdminCommand event any more. Operator commands enter through ONE door, the
     // dashboard's POST /admin/api/command (server.ts runCommand -> Admin.exec); a client
     // cannot ask for them. The in-game admin window that sent this is gone with it.
@@ -1092,6 +1205,29 @@ export class Connection implements Peer {
     }
   }
 
+  // The page's tab went to the background or came back (play/index.html -> player.lua).
+  private setHidden(hidden: boolean): void {
+    if (this.hidden === hidden) return;
+    this.hidden = hidden;
+    const player = this.player!;
+    log('info', 'conn.visibility', { player: player.name, hidden });
+    if (!hidden) {
+      this.flushHeld(); // the newest state of every stream, once
+      return;
+    }
+    // IDLE: the avatar stands where it was. A hidden tab's engine barely ticks, so its last pose
+    // may be mid-stride (run bit, walk speed) and every observer's puppet would run on the spot
+    // until it came back. Same pose, motion cleared, through the normal accepted-pose paths.
+    if (!player.pose) return;
+    player.pose = { ...player.pose, flags: player.pose.flags & ~(1 | 4 | 8), animVel: 0 };
+    player.poseVersion++;
+    this.ctx.relayPose?.(player);
+    if (this.ctx.config.limits.clientAuthority && player.inChargen !== true) {
+      this.ctx.worldPeer()?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
+        nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose: player.pose }])));
+    }
+  }
+
   // 0x0100 PlayerMove: stale-seq drop, bounds sanity, store latest pose.
   private handleMove(seq: number, payload: Buffer): void {
     const player = this.player!;
@@ -1183,6 +1319,7 @@ export class Connection implements Peer {
     player.moveSeq = seq;
     player.pose = pose;
     player.poseVersion++;
+    this.ctx.relayPose?.(player);
     // The peer hears every accepted move AT ONCE, as a one-entry move batch (a message it
     // already decodes): the broadcaster only sends it players near where it is parked, and
     // the avatar has to stand where its owner is for NPCs to fight and see them there.

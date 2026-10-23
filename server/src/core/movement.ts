@@ -26,6 +26,11 @@ import { PEER_POSE_FRESH_MS } from './players';
 // no gain over the host's own run-to-run noise (p50 425-525 ms either way) for ~33% more near-tier
 // traffic, so it was reverted (#181).
 export const BATCH_INTERVAL_MS = 66;
+// ON ARRIVAL, AT THE CLIENT'S RATE (relayNow). player.lua sends at 15 Hz (SEND_INTERVAL); this is
+// that interval with room for jitter, so an honest client's every pose goes out as it lands and
+// a faster one (moveMsgsPerSec allows 40) cannot multiply the fan-out: the extra poses wait for
+// the tick, which only ever sends the newest.
+export const RELAY_MIN_MS = 50;
 // Sanity bound on a pose, not a world size: 512000 (62.5 cells) left Tamriel Rebuilt's mainland,
 // which reaches cell -60 (~491k units), 2.5 cells of headroom, and past it a player was invisible
 // and frozen to everyone else with no message. 4,000,000 is ~488 cells; poses travel as float32
@@ -214,6 +219,7 @@ interface View {
   version: number; // last poseVersion actually DELIVERED; -1 = none yet (force-include)
   seenTick: number; // last tick this pair was in the interest set (sweep marker)
   sent: boolean; // a pose landed -> the client spawned a puppet -> it needs a leave signal
+  near: boolean; // near LOD tier as of the last tick: poses go out on arrival (relayNow)
 }
 
 // Per-recipient change tracking: an unknown sender (join, cell entry, or re-entering the
@@ -235,6 +241,7 @@ export class MoveBroadcaster {
   private readonly stagedVer: number[] = [];
   private readonly index = new CellIndex();
   private readonly cand: Player[] = [];
+  private readonly relayedAt = new Map<number, number>(); // sender id -> last relayNow fan-out
   // Sender-candidates examined this tick. This is the number the spatial index exists to
   // flatten, and it is asserted directly in the tests — CPU time is a proxy that moves for
   // a dozen unrelated reasons, whereas this counts the exact work the index removes.
@@ -290,10 +297,13 @@ export class MoveBroadcaster {
       if (p.inChargen === true) continue;
       if (p.peerPoseAt === undefined || nowMs - p.peerPoseAt > PEER_POSE_FRESH_MS) continue;
       if (!p.pose || p.lastInputSeq === undefined) continue;
-      p.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH,
-        nextBroadcastSeq(), packPlayerStateBatch([
-          { id: p.id, lastInputSeq: p.lastInputSeq, pose: p.statePose ?? p.pose },
-        ])));
+      // NOTHING NEW, NOTHING SENT. While the peer stalls the same sample sat here for 2 s and
+      // went out 30 times; the client already drops a sample acknowledging no new input.
+      const payload = packPlayerStateBatch([{ id: p.id, lastInputSeq: p.lastInputSeq, pose: p.statePose ?? p.pose }]);
+      if (p.stateSent?.equals(payload)) continue;
+      if (p.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH, nextBroadcastSeq(), payload))) {
+        p.stateSent = payload;
+      }
     }
 
     const inWorld = this.roster.inWorld();
@@ -305,6 +315,7 @@ export class MoveBroadcaster {
     for (const p of inWorld) liveIds.add(p.id);
     // Drop state for recipients that left.
     for (const id of this.perRecipient.keys()) if (!liveIds.has(id)) this.perRecipient.delete(id);
+    for (const id of this.relayedAt.keys()) if (!liveIds.has(id)) this.relayedAt.delete(id);
     // SENDERS ARE HUMANS ONLY. The sim peer is infrastructure with an avatar standing wherever
     // it happens to simulate from — broadcasting its pose made every client spawn a PUPPET of
     // it, a silent NPC named "player <id>" (the roster excludes system peers, so the puppet
@@ -396,20 +407,19 @@ export class MoveBroadcaster {
       const sender = this.inSet[i]!;
       let view = views.get(sender.id);
       if (!view) {
-        view = { version: -1, seenTick: tickNo, sent: false };
+        view = { version: -1, seenTick: tickNo, sent: false, near: false };
         views.set(sender.id, view);
       } else {
         view.seenTick = tickNo; // mark BEFORE any skip: skipped != out of view
       }
+      const st = lodStride(this.inD2[i]!, s);
+      view.near = st === 1;
       if (!sender.pose) continue; // nothing to relay yet
       if (view.version === sender.poseVersion) continue; // unchanged since last batch
       // LOD. version < 0 is a first sighting or a re-entry: it bypasses the stride so the
       // puppet appears immediately rather than up to a second later. The id term spreads
       // the low-rate tiers across ticks instead of bunching every far peer onto one frame.
-      if (view.version >= 0) {
-        const st = lodStride(this.inD2[i]!, s);
-        if (st > 1 && (tickNo + sender.id) % st !== 0) continue;
-      }
+      if (view.version >= 0 && st > 1 && (tickNo + sender.id) % st !== 0) continue;
       if (this.entries.length >= 255) break;
       this.entries.push({ id: sender.id, pose: sender.pose });
       // Staged, NOT committed: the send below can be shed under backpressure, and marking
@@ -417,6 +427,33 @@ export class MoveBroadcaster {
       // moves again — which for someone standing still never happens.
       this.stagedViews.push(view);
       this.stagedVer.push(sender.poseVersion);
+    }
+  }
+
+  // AN ACCEPTED POSE GOES OUT WHEN IT LANDS, not on the next 66 ms tick: waiting for the tick
+  // added 0-66 ms (33 on average) to every remote player's lag, for nothing. Only to observers
+  // that already have this sender in view at the NEAR tier: visibility, first sightings and the
+  // mid/far strides stay the tick's (it sees the version and skips what went out here). One
+  // frame for every recipient, like the actor relay. Rate-limited per sender to the client's
+  // send rate (RELAY_MIN_MS), except a jump or use edge, which is one sample long.
+  relayNow(sender: Player): void {
+    if (sender.system === true || !sender.pose) return;
+    const now = Date.now();
+    if ((sender.pose.flags & POSE_EDGE_BITS) === 0 && now - (this.relayedAt.get(sender.id) ?? -Infinity) < RELAY_MIN_MS) return;
+    this.relayedAt.set(sender.id, now);
+    let frame: Buffer | undefined;
+    for (const [rid, views] of this.perRecipient) {
+      const view = views.get(sender.id);
+      if (!view || !view.near || view.version < 0 || view.version === sender.poseVersion) continue;
+      const recipient = this.roster.get(rid);
+      // The peer already heard it (connection.ts handleMove); the tick covers it otherwise.
+      if (!recipient || !recipient.inWorld || recipient.system === true) continue;
+      // The view is as of the last tick; a cell change since then must not leak a pose.
+      if (!cellsVisible(recipient.cellKey, sender.cellKey)) continue;
+      frame ??= packEnvelope(MSG_PLAYER_MOVE_BATCH, nextBroadcastSeq(), packMoveBatch([{ id: sender.id, pose: sender.pose }]));
+      if (!recipient.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, frame)) continue;
+      view.version = sender.poseVersion;
+      view.sent = true;
     }
   }
 

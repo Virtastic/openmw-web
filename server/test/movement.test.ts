@@ -261,7 +261,7 @@ function harness(settings?: InterestSettings) {
     players.push(p);
     return p;
   };
-  const bc = new MoveBroadcaster({ inWorld: () => players } as unknown as Roster, 1_000_000, settings);
+  const bc = new MoveBroadcaster({ inWorld: () => players, get: (id: number) => players.find((p) => p.id === id) } as unknown as Roster, 1_000_000, settings);
   // Moving bumps poseVersion, exactly as the live PlayerMove path does.
   const moveTo = (p: Player, x: number): void => {
     p.pose = { ...p.pose!, x };
@@ -488,6 +488,55 @@ test('LOD: a distant player yields strictly fewer updates than a near one', () =
   // Nobody is culled: every tier still gets a live stream.
   assert.ok(f >= 1);
   assert.equal(h.leaves(1, 4), 0);
+});
+
+test('relayNow: a near observer gets the pose on arrival, mid/far stay on the tick, at the client rate', async () => {
+  const h = harness(settings({ interestRadius: 0, lodNearRadius: 1000, lodMidRadius: 3000, lodNearHz: 15, lodMidHz: 5, lodFarHz: 1 }));
+  const sender = h.add(1, '0,0', 0);
+  h.add(2, '0,0', 500); // near
+  h.add(3, '0,0', 2000); // mid
+  h.bc.tick(); // first sightings: everyone in view, tiers known
+  const before2 = h.updates(2, 1);
+  const before3 = h.updates(3, 1);
+  h.moveTo(sender, 10);
+  h.bc.relayNow(sender);
+  assert.equal(h.updates(2, 1), before2 + 1, 'the near observer did not get the pose on arrival');
+  assert.equal(h.updates(3, 1), before3, 'the mid tier must keep its stride (LOD)');
+  h.bc.tick(); // nothing new for the near observer: no duplicate
+  assert.equal(h.updates(2, 1), before2 + 1, 'the tick resent what relayNow delivered');
+  // Faster than the client's own rate: the extra pose waits for the tick.
+  h.moveTo(sender, 20);
+  h.bc.relayNow(sender);
+  assert.equal(h.updates(2, 1), before2 + 1, 'not rate-limited to the client send rate');
+  // A jump edge is one sample long: it goes regardless.
+  sender.pose = { ...sender.pose!, flags: 4 };
+  sender.poseVersion++;
+  h.bc.relayNow(sender);
+  assert.equal(h.updates(2, 1), before2 + 2, 'the jump edge was held back');
+  await new Promise((r) => setTimeout(r, 60));
+  h.moveTo(sender, 30);
+  h.bc.relayNow(sender);
+  assert.equal(h.updates(2, 1), before2 + 3);
+});
+
+test('an unchanged 0x0103 is not resent', () => {
+  const sent: number[] = [];
+  const p = {
+    id: 1, name: 'p1', inWorld: true, cellKey: undefined, poseVersion: 1, lastInputSeq: 7,
+    peerPoseAt: Date.now(),
+    pose: { x: 1, y: 0, z: 0, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 },
+    peer: { sendEvent: () => {}, sendBinaryFrame: (type: number) => { sent.push(type); return true; } },
+  } as unknown as Player;
+  const bc = new MoveBroadcaster({ inWorld: () => [p], get: () => p } as unknown as Roster, 1_000_000);
+  bc.tick();
+  bc.tick();
+  bc.tick();
+  assert.equal(sent.filter((t) => t === 0x0103).length, 1, 'the same sample went out again');
+  p.lastInputSeq = 8; // the peer consumed another input
+  bc.tick();
+  p.pose = { ...p.pose!, x: 2 }; // or the body moved
+  bc.tick();
+  assert.equal(sent.filter((t) => t === 0x0103).length, 3);
 });
 
 test('shared serialization: every recipient decodes its own frame, seq strictly increasing', () => {

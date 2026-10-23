@@ -173,6 +173,7 @@ export interface Player {
   peerPoseAt?: number;
   poseVersion: number;
   poseSentVersion?: number; // poseVersion as of the last MoveBroadcaster tick (acceptPeerPose)
+  stateSent?: Buffer; // the last 0x0103 payload the tick sent this player (unchanged = not resent)
   // Phase 3.6: wall-clock of the last accepted pose, for the plausible-speed envelope.
   lastPoseAt?: number;
   /** CONSECUTIVE implausible speed WINDOWS. A single one is ordinary, so enforcement waits for

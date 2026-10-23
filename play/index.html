@@ -1607,6 +1607,9 @@ try {
  // is registered ONLY while a game is running (engine flips Module.__omwRunning).
  document.addEventListener('visibilitychange', function(){
    if (document.visibilityState === 'hidden' && window.__omwSync) window.__omwSync();
+   // Tell the server (player.lua 'vis:'): a hidden tab is idle, not gone -- it holds this
+   // client's pose streams to the newest frame and does not kick it for a backlog.
+   if (window.omw && window.Module && Module.__omwRunning) window.omw.send('vis:' + (document.hidden ? 'hidden' : 'shown'));
  });
  window.addEventListener('pagehide', function(){ if (window.__omwSync) window.__omwSync(); });
  (function(){

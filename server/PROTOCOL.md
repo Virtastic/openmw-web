@@ -114,7 +114,8 @@ signal exists or is needed (the peer-pose freshness window, **2 s** — `PEER_PO
   and keeps the seq-matched pose for that player's own `0x0103`. A server that ignores the
   bit applies both in order, so the seq-matched one wins.
 - **`0x0103` PlayerStateBatch (S→C).** Same entry layout as `0x0105`. Each player receives
-  their OWN entry on the broadcast tick — pose + `lastInputSeq` — which is the anchor for
+  their OWN entry on the broadcast tick — pose + `lastInputSeq`, only when either changed
+  since the last one sent (an unchanged sample is not resent) — which is the anchor for
   client-side reconciliation (predict + smooth blend via capped physics offsets; hard snap
   past the threshold). The local player never renders from the delayed interpolation
   buffer: `RENDER_DELAY` is for remote puppets only.
@@ -125,7 +126,13 @@ signal exists or is needed (the peer-pose freshness window, **2 s** — `PEER_PO
 (world units) · `12` u16 yaw (0..65535 ≡ 0..2π, wraps) · `14` u8 pitch
 (0..255 ≡ −π/2..+π/2, clamped) · `15` u8 flags (bit0 run, bit1 sneak, bit2 jump-edge,
 bit3 inAir, bit4 weaponDrawn, bit5 spellReady) · `16` u8 animVel (0..255 ≡ 0..2× base walk
-speed, clamped) · `17` u8 counter (0 in M1) · `18-19` reserved, MUST be zero.
+speed, clamped) · `17` u8 counter: bit0 = bytes 18-19 carry a sample time, other bits 0 ·
+`18-19` u16 SAMPLE TIME, the sender's monotonic ms clock mod 65536, when bit0 is set (else
+zero). Today only the peer's `0x0200` actor poses are stamped (netmanager.cpp, one stamp per
+batch); player poses leave all three bytes zero (under the WoW model the client's own timing
+rides `0x0102`'s `simMs`, not the pose). Decoders that predate the stamp ignore bytes 17-19,
+so old and new clients and peers interoperate; a receiver without bit0 falls back to arrival
+time (interp.lua).
 Sent at ~15 Hz while moving + edge-triggered (jump, stop); receivers drop any frame whose
 envelope `seq` ≤ the last seen from that sender. Movement has its OWN server rate budget
 (~40 msg/s) separate from the general bucket.
@@ -134,7 +141,10 @@ envelope `seq` ≤ the last seen from that sender. Movement has its OWN server r
 
 `u8 count` then `count ×` (`u16 playerId` + the 20-byte PlayerMove payload). Server
 broadcasts on a 66 ms tick containing the latest pose of every VISIBLE player that moved
-since the last tick. Visibility = same cell, or adjacent exterior grid cells, narrowed by
+since the last tick. An accepted `0x0100` is also forwarded ON ARRIVAL, as a one-entry batch,
+to every observer that already has that player in view at the near LOD tier (at most every
+50 ms per sender, the client's 15 Hz with jitter room; a jump/use edge always goes); the tick
+then skips what already went out, and keeps visibility, first sightings and the mid/far tiers. Visibility = same cell, or adjacent exterior grid cells, narrowed by
 interest management (below). When a player first becomes visible (join, cell entry, or
 re-entering the interest radius), the server sends their current pose in the next batch
 unconditionally. Client transport decodes this in C++ and delivers ONE global Lua
@@ -147,6 +157,7 @@ event `MP_MoveBatch` whose body is an LSER array of
 |---|---|---|
 | `PlayerCellChange` | C→S, relayed S→C with `id` added | `{cellKey=string, x=number, y=number, z=number}` — `cellKey` = `"x,y"` for exteriors (comma, integers) or the lowercased interior cell name (≤128 chars; ≤4096 distinct cells per session). Updates server occupancy; receivers despawn/teleport that player's puppet. A SAME-cell change of more than 1024 units is refused (counted `cell_jump`) unless explained within 5 s by a cast, a door, a dialogue, or within 15 s by a resurrect/join (#361). The sim peer's changes are not relayed to others. |
 | `PlayerLeaveView` | S→C only | `{id=number}` — that player is no longer in YOUR view. See below. |
+| `ClientVisibility` | C→S | `{hidden=bool}` — the page's tab went to the background / came back (`visibilitychange` → page command `vis:hidden\|shown` → player.lua). While hidden the server holds this client's `0x0101`/`0x0103`/`0x0200` to the newest frame of each (sent when shown), relays the player's last pose once with run/jump/use and animVel cleared (the avatar stands still), and does not disconnect it with `BACKLOG` below 4 × `maxBufferedBytesHard`. Ignored from a system peer. |
 
 ### Interest management & LOD (M9, `0x0101` and `0x0200`)
 
@@ -194,9 +205,17 @@ stored pose at the cell-change coordinates so never-moving players still spawn f
 visible peers; move `seq` is strictly increasing per connection; movement bytes count
 against `bytesPerSec` but not `msgsPerSec` (own `moveMsgsPerSec` budget, default 40, and a
 separate `actorMoveMsgsPerSec` budget, default 60, for `ActorMoveBatch`). Exceeding either
-movement budget DROPS the frame; it does not close the session. Outbound, movement and
-actor batches are also dropped for a client whose send queue is over `maxBufferedBytes`, and
-such a client is disconnected with `RATE` past `maxBufferedBytesHard`.
+movement budget DROPS the frame; it does not close the session.
+
+**Outbound: latest state wins.** `0x0101`, `0x0103` and `0x0200` are state streams, so a
+client never has more than ONE frame of each queued (per epoch for `0x0200`): while an
+earlier lossy frame is still being written to its socket, or its send queue is over
+`maxBufferedBytes`, a newer frame is folded into the pending one BY ENTITY (player id, or
+actor ref) -- newest pose wins, an entity only the older frame carried is kept (a big cell
+arrives as several 255-actor batches) -- and the pending frames go out, oldest `seq` first,
+once the write completes. The merged frame carries the newer frame's `seq`. Every other
+frame is reliable: never held, never dropped, sent in order. A client is disconnected with
+`BACKLOG` once its send queue passes `maxBufferedBytesHard` (not within 2 s of a cell entry).
 
 ### `0x0002` Event (M0)
 
@@ -341,7 +360,8 @@ Server → client:
 - `{"t":"SessionDisconnect", "code":"<CODE>", "detail":"human-readable"}` then close.
   Codes: `BAD_PROTO BAD_ENGINE BAD_CONTENT AUTH_FAILED BANNED SUPERSEDED KICKED RATE
   BACKLOG IP_CAP SERVER_FULL SHUTDOWN`. `BACKLOG` = outbound buffer overflow past
-  `maxBufferedBytesHard` (the client stopped reading — a background tab; transient, reconnect).
+  `maxBufferedBytesHard` (the client stopped reading; transient, reconnect). A tab that reported
+  itself hidden (`ClientVisibility`) is held idle instead, up to 4 × that ceiling.
   `IP_CAP` = too many connections from one address, sent at socket accept (close 1008).
 
 Rules: one active session per account (later login supersedes, old socket gets
@@ -517,7 +537,7 @@ content-file objects, addressed by RefNum userdata (`ref`), exactly like M3 cont
 
 | name | dir | body / layout |
 |---|---|---|
-| `ActorMoveBatch` | holder→S→C (binary `0x0200`) | `[u32 epoch][u8 count]` + count × (`8-byte ref` + 20-byte pose, same pose layout as PlayerMove); server infers cell from the holder, validates epoch, relays cell-scoped |
+| `ActorMoveBatch` | holder→S→C (binary `0x0200`) | `[u32 epoch][u8 count]` + count × (`8-byte ref` + 20-byte pose, same pose layout as PlayerMove, sample-time stamped by the peer); server infers cell from the holder, validates epoch, relays the bytes cell-scoped untouched. The client decodes a stamp as `st` (ms mod 65536) on each `MP_ActorMoveBatch` entry, and puppets interpolate on it |
 | `ActorStatsDynamic` | holder→S→C | `{cellKey, epoch, ref, hp={c,b}, mp={c,b}, ft={c,b}}` |
 | `ActorEquip` | holder→S→C | `{cellKey, epoch, ref, slots={[n]=recordId,…}}` |
 | `ActorAI` | holder→S→C | `{cellKey, epoch, ref|net, combat=u16|false}` — who the actor now fights (a player id) or that it stopped; puppets mirror the state so vanilla's own checks (no rest with an enemy on you) read true. `{…, travel={x,y,z}}` — the holder's own scripted travel. There is no `pkg=` package hint |
