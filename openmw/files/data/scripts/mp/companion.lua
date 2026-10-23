@@ -251,9 +251,15 @@ return {
     },
     eventHandlers = {
         MP_DialogueHold = function(data)
+            -- Said, so a "they walked off mid-conversation" report can be traced: did the hold
+            -- reach this body, and did the park take (prod 2026-10-23).
+            local okA, pkg = pcall(function() return I.AI.getActivePackage() end)
+            print(string.format('[mp] dialogue hold %s on %s: active=%s held=%s', data.on and 'ON' or 'off',
+                tostring(self.object.recordId), tostring(okA and pkg and pkg.type), tostring(heldSince ~= nil)))
             if data.on then
                 if heldSince then return end
-                local ok = pcall(function() I.AI.startPackage({ type = 'Wander', distance = 0, cancelOther = false }) end)
+                local ok, err = pcall(function() I.AI.startPackage({ type = 'Wander', distance = 0, cancelOther = false }) end)
+                if not ok then print('[mp] dialogue hold park FAILED: ' .. tostring(err)) end
                 if ok then heldSince = core.getRealTime() end
             elseif heldSince then
                 releaseHold()

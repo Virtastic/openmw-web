@@ -817,7 +817,7 @@ export class Quests {
     }
     if (!player.system) { this.releaseDialogueLocks(player.id); player.lastDialogueAt = Date.now(); }
     this.dialogueLocks.set(ref.key, { playerId: player.id, cellKey, ref });
-    this.holdForDialogue(ref, cellKey, true);
+    this.holdForDialogue(ref, cellKey, true, player.id);
     player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: true });
   }
 
@@ -825,11 +825,16 @@ export class Quests {
   // wandering, so it walked off on everyone else's screen and the talker's copy jumped to
   // wherever it had got to when the window closed. The holder parks the NPC (a distance-0
   // Wander on top of its stack, companion.lua) for as long as the lock is held.
-  private holdForDialogue(ref: ObjRef, cellKey: string, hold: boolean): void {
+  // `by`: who is talking, so the holder can turn the NPC to face them -- the engine's own
+  // greeting turn (actors.cpp updateGreetingState) faces the PEER's dummy player, not them.
+  private holdForDialogue(ref: ObjRef, cellKey: string, hold: boolean, by?: number): void {
     const holderId = this.ctx.holderOf?.(cellKey);
     const holder = holderId === undefined ? undefined : this.ctx.roster.get(holderId);
+    // Logged both ways: "they walked away while I talked" is either a hold nobody could take
+    // (no holder for that cell) or one the peer did not apply (its [mp] dialogue hold line).
+    log('info', 'quests.dialogue_hold', { ref: ref.key, cellKey, hold, holder: holder?.inWorld ? holder.name : null });
     if (!holder?.inWorld) return;
-    holder.peer.sendEvent('ActorAI', { ...objRefToJs(ref), cellKey, epoch: 0, hold });
+    holder.peer.sendEvent('ActorAI', { ...objRefToJs(ref), cellKey, epoch: 0, hold, ...(hold && by !== undefined ? { by } : {}) });
   }
 
   // Release every lock held by a player (disconnect), or only those bound to a cell they

@@ -188,7 +188,9 @@ local function actualSpeed(obj, pos)
     local m = movedFrom[key]
     if not m then movedFrom[key] = { x = pos.x, y = pos.y, t = now, v = 0 }; return 0 end
     local dt = now - m.t
-    if dt >= 0.2 then
+    -- 0.5 s, not 0.2: at the peer's 20 fps a 0.2 s window holds 4 frames, so one frame more or
+    -- less read a steady walk 25 % fast -- past the run threshold (see actorPose).
+    if dt >= 0.5 then
         local d = math.sqrt((pos.x - m.x) ^ 2 + (pos.y - m.y) ^ 2)
         m.v = d < 512 and d / dt or 0 -- a teleport is not a speed
         m.x, m.y, m.t = pos.x, pos.y, now
@@ -200,14 +202,27 @@ local function actorPose(obj)
     local pos = obj.position
     local okV, walkSpeed, speed = pcall(speedsOf, obj)
     if not okV then walkSpeed, speed = 0, 0 end
-    local animVel = walkSpeed > 0 and (math.max(speed, actualSpeed(obj, pos) / 1.2) / walkSpeed) or 0 -- 1.2: a walk's measured jitter is not a run
+    -- MEASURED ONLY WHERE THE FORMULA LIES. A creature's run animation carries it past its
+    -- formula speed (root motion, s190), so for a creature what it covered decides. An NPC moves
+    -- at exactly its formula speed, run or walk, and the measurement only added noise: a walking
+    -- townsperson read as running for a moment, every other screen played the run, then the
+    -- walk -- "NPCs start sprinting and go back to walking" (prod 2026-10-23).
+    local isNpc = types.NPC.objectIsInstance(obj)
+    local measured = isNpc and 0 or actualSpeed(obj, pos)
+    local animVel = walkSpeed > 0 and (math.max(speed, measured / 1.2) / walkSpeed) or 0 -- 1.2: a walk's measured jitter is not a run
     -- Coarse AI-package hint from motion (reading a foreign actor's AI package is not
     -- exposed to global scripts; motion is a good enough facing/anim hint for puppets).
     -- Bit 0 (run): types.Actor.isRunning does not exist, so the bit was never set and a running
     -- guard outpaced its walking puppet into a snap every cooldown (#286). Motion decides:
     -- faster than a walk is a run.
     local flags = 0
-    if animVel > 1.05 then flags = flags + 1 end
+    -- ...and a creature's run has HYSTERESIS: in at 1.15x a walk, out only below 1.02x, so a
+    -- measurement wobbling round one threshold does not flip the gait every window.
+    local m = movedFrom[obj.id]
+    local running = animVel > ((m and m.run) and 1.02 or 1.15)
+    if isNpc then running = animVel > 1.05 end -- the formula is clean: a run is 2-3x a walk
+    if m then m.run = running end
+    if running then flags = flags + 1 end
     -- Posture (bits 4/5, the player pose's bits): an NPC fighting someone on the holder must
     -- look like it everywhere else -- weapon out, spell readied -- or a player takes damage
     -- from a body standing at ease. puppet.lua mirrors the stance; it still never swings.
@@ -967,6 +982,21 @@ actors.handlers.MP_ActorAI = function(data)
         -- #77: someone is talking to this NPC. The server sends it to the holder only; a
         -- puppet's AI is off anyway. companion.lua parks it and lets it go.
         if not puppetActors[refKeyOf(obj)] then
+            -- FACE THE ONE TALKING. In single player the engine turns an NPC to the player on its
+            -- greeting (actors.cpp updateGreetingState); here its "player" is the peer's dummy,
+            -- so it kept its back to whoever spoke to it. Turned once, in place, toward their body.
+            local body = data.hold == true and data.by ~= nil and deps.playerObjOf and deps.playerObjOf(data.by) or nil
+            if body and body:isValid() then
+                pcall(function()
+                    local d = body.position - obj.position
+                    local len = math.sqrt(d.x * d.x + d.y * d.y)
+                    if len < 1 then return end
+                    -- yaw from +Y toward +X; acos, not atan2: the peer is LuaJIT, the browser 5.4
+                    local yaw = math.acos(math.max(-1, math.min(1, d.y / len))) * (d.x < 0 and -1 or 1)
+                    local cellArg = obj.cell and not obj.cell.isExterior and obj.cell.name or ''
+                    obj:teleport(cellArg, obj.position, { rotation = util.transform.rotateZ(yaw), onGround = true })
+                end)
+            end
             pcall(function() obj:sendEvent('MP_DialogueHold', { on = data.hold == true }) end)
         end
         return

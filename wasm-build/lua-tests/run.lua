@@ -718,7 +718,7 @@ do
     pp:find('or (steering and dist2d > 48)', 1, true) ~= nil)
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
   check('actors.lua sets the run bit from how fast the body actually moved (s190: root-motion creatures)',
-    ac:find('math.max(speed, actualSpeed(obj, pos) / 1.2)', 1, true) ~= nil)
+    ac:find('local measured = isNpc and 0 or actualSpeed(obj, pos)', 1, true) ~= nil and ac:find('math.max(speed, measured / 1.2)', 1, true) ~= nil)
   check('actors.lua prunes movedFrom (one entry per actor id ever streamed, for the life of the world)',
     ac:find('if now - old.t > 10 then movedFrom[k] = nil end', 1, true) ~= nil)
   check('player.lua does not reconcile against a hop in the air (s191), but never skips the hard snap',
@@ -1469,7 +1469,7 @@ do
   local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
   -- #286: types.Actor.isRunning does not exist; bit 0 comes from speed vs walk speed.
   check('actorPose sets the run bit from animVel, never from a nonexistent isRunning',
-    ac:find('if animVel > 1.05 then flags = flags + 1 end', 1, true) ~= nil
+    ac:find('if isNpc then running = animVel > 1.05 end', 1, true) ~= nil and ac:find('if running then flags = flags + 1 end', 1, true) ~= nil
     and not ac:find('pcall(isRunning', 1, true))
   -- #287: a dead snapshot entry is not teleported + re-killed at every re-anchor.
   check('the authority grant loop skips dead snapshot entries',
@@ -4169,6 +4169,31 @@ do
   check('identity.tick watches falls every frame', id:find('    identity.fallWatch()\n    trackLocalChange()', 1, true) ~= nil)
   check('the claim carries it as hp.fall', id:find('claim.hp.fall = math.floor(fall.owed * 10 + 0.5) / 10', 1, true) ~= nil)
   check('a peer report marks the bar overwritten', id:find('fall.reported = true', 1, true) ~= nil)
+end
+
+-- ====================================== NPC gait and the face-the-talker turn
+print('actors.lua -- NPCs walk from the formula; the held NPC turns to the talker (prod 2026-10-23)')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('the measured speed only feeds creatures', ac:find('local measured = isNpc and 0 or actualSpeed(obj, pos)', 1, true) ~= nil)
+  check('a creature run has hysteresis (in 1.15, out 1.02)', ac:find("animVel > ((m and m.run) and 1.02 or 1.15)", 1, true) ~= nil)
+  check('the speed is measured over 0.5 s, not 0.2', ac:find('if dt >= 0.5 then', 1, true) ~= nil)
+  check('a hold with a talker turns the NPC toward their body',
+    ac:find("deps.playerObjOf and deps.playerObjOf(data.by)", 1, true) ~= nil)
+  -- The yaw formula itself: +Y is yaw 0, +X is +90 degrees (player.lua faceCmd uses atan(dx, dy)).
+  local function yawOf(dx, dy)
+    local len = math.sqrt(dx * dx + dy * dy)
+    return math.acos(math.max(-1, math.min(1, dy / len))) * (dx < 0 and -1 or 1)
+  end
+  local near = function(a, b) return math.abs(a - b) < 1e-9 end
+  check('facing +Y is yaw 0', near(yawOf(0, 5), 0))
+  check('facing +X is +pi/2', near(yawOf(5, 0), math.pi / 2))
+  check('facing -X is -pi/2', near(yawOf(-5, 0), -math.pi / 2))
+  check('facing -Y is pi', near(math.abs(yawOf(0, -5)), math.pi))
+  check('the formula in actors.lua is this one',
+    ac:find('local yaw = math.acos(math.max(-1, math.min(1, d.y / len))) * (d.x < 0 and -1 or 1)', 1, true) ~= nil)
+  local cp = io.open('./openmw/files/data/scripts/mp/companion.lua'):read('*a')
+  check('companion.lua says what the hold did', cp:find("print(string.format('[mp] dialogue hold %s on %s", 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

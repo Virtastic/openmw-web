@@ -2,6 +2,29 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.7
+
+A hotfix for combat and NPCs in multiplayer, found in the logs of a live session.
+
+**Stamina is spent again.** Since 1.6.6 a jump or a sprint drained your stamina bar and it
+refilled at once: the server's copy of your character is now placed where you are rather than
+walking, so it never paid for running or jumping, and its full bar overwrote yours. It pays the
+game's own costs for running, swimming, sneaking and jumping now.
+
+**Your swings land as hard as you held them.** A press that came in while your character was still
+finishing the last swing started the next one late, and most blows went out at the weakest
+strength whatever you did (the minimum damage, and only the base stamina cost, which is why stamina
+seemed to come back so fast). The swing now winds up as long as you held the button.
+
+**A fall hurts again.** Since 1.6.6 long falls cost nothing; your game measures the fall and the
+server takes it off your health.
+
+**Punches sound once**, not twice.
+
+**NPCs walk.** A walking townsperson no longer breaks into a run for a moment and back.
+
+**NPCs turn to face you when you talk to them**, as in the single-player game.
+
 ## 1.6.6
 
 **Your character moves where you see it.** Multiplayer now works the way World of Warcraft does:

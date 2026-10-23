@@ -266,7 +266,7 @@ test('a dialogue lock parks the NPC on the holder until it is released', async (
   await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
   const bob = await TestClient.connect(server.port);
   t.after(() => bob.close());
-  await bob.joinAsNew('Bob');
+  const bobId = (await bob.joinAsNew('Bob')).playerId;
   await bob.waitEvent('PlayerList');
   bob.sendCellChange('0,0', 0, 0, 0);
   await bob.waitEvent('PlayerCellChange');
@@ -274,6 +274,9 @@ test('a dialogue lock parks the NPC on the holder until it is released', async (
   await bob.waitEvent('DialogueLockResult');
   const parked = await peer.waitEvent('ActorAI', (v) => (v as { hold?: boolean }).hold === true, 3000);
   assert.deepEqual((parked.value as { ref?: unknown }).ref, NPC_REF, 'the holder is told which NPC to park');
+  // ...and who is talking, so it turns to face them (the engine's greeting turn faces the
+  // peer's dummy player, not the person speaking).
+  assert.equal((parked.value as { by?: number }).by, bobId, 'the hold carries the talker');
   bob.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: false });
   await peer.waitEvent('ActorAI', (v) => (v as { hold?: boolean }).hold === false, 3000);
   // Walking off mid-conversation lets it go too (releaseDialogueLocks on a cell change).
