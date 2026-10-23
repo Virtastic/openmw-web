@@ -724,7 +724,9 @@ export function adminRoutes(deps: AdminDeps) {
           ok: true,
           current: deps.version,
           latest,
-          behind: latest !== '' && latest !== deps.version,
+          // NEWER, not different: a server ahead of the newest GitHub release (a hotfix shipped
+          // before its release was cut) was told to "update" to an older version.
+          behind: isNewerVersion(latest, deps.version),
           // The game client is its own component with its own currency: it updates in
           // place from the release zip, no restart, when the deployment mounts it.
           engine: deps.clientDir ? engineStatus(deps.clientDir)
@@ -1245,3 +1247,13 @@ export function adminRoutes(deps: AdminDeps) {
 /** Un-confirmed TOTP secrets, in memory only: an enrolment that is never confirmed should
  *  evaporate rather than sit on an account as a half-configured second factor. */
 const pendingTotp = new Map<string, { secret: string; at: number }>();
+
+/** Whether release `a` ("1.6.8", a leading v allowed) is newer than `b`, field by field. */
+export function isNewerVersion(a: string, b: string): boolean {
+  const parse = (v: string) => v.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const x = parse(a), y = parse(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  }
+  return false;
+}
