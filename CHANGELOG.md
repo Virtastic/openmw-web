@@ -2,6 +2,27 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.6.8
+
+A second hotfix from the logs and a scan of the code for bugs of the same kind.
+
+**A fall really hurts now.** 1.6.7's fix never fired: with the server running your character, your
+game skipped fall damage altogether. It now measures the fall and hands it to the server.
+
+**Looking up or down survives the server placing you**, and a paralysed character stops.
+
+**Stamina follows the game's rules**: no cost to run while levitating, swimming costs the swim rate,
+and a jump the game would refuse costs nothing. A Fortify Health or Fatigue spell is no longer
+clipped back to your base when the server restores a bar.
+
+**Creatures and guards fight back properly.** A creature you hit remembers who hit it (its allies
+join in), and a guard fighting you does not give up when you step out of reach.
+
+**NPCs no longer greet the server's placeholder player**, and puppets carry no leftover scripts.
+
+**The admin dashboard's Updates card** no longer says "No game engine is installed" on a server
+whose players load the game from elsewhere.
+
 ## 1.6.7
 
 A hotfix for combat and NPCs in multiplayer, found in the logs of a live session.
