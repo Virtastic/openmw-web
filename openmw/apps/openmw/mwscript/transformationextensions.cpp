@@ -107,7 +107,15 @@ namespace MWScript
                     }
                 }
 
-                const MWWorld::Ptr to = MWBase::Environment::get().getWorld()->searchPtr(name, false);
+                // 1.7.1: on the sim peer "Player" is a parked dummy, so GetDistance Player (area
+                // triggers, a guard's approach, Fargoth's lookout) measured to nobody. There it
+                // is the nearest avatar; singleplayer and clients get an empty Ptr and the
+                // unchanged lookup below.
+                MWWorld::Ptr to;
+                if (name == "player")
+                    to = MWMechanics::nearestAvatarTo(from);
+                if (to.isEmpty())
+                    to = MWBase::Environment::get().getWorld()->searchPtr(name, false);
                 if (to.isEmpty())
                 {
                     const std::string error = "Failed to find an instance of object " + name.toDebugString();

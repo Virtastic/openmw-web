@@ -4757,5 +4757,15 @@ do
     and ai:find('return MWBase::Environment::get().getWorld()->searchPtr(id, true, false);', 1, true) ~= nil
     and select(2, ai:gsub('searchPtr%(actorID, true, false%)', '')) == 0)
 end
+print('1.7.1 GetDistance "Player" on the sim peer measures to the nearest avatar, falling back to searchPtr')
+do
+  local tx = io.open('./openmw/apps/openmw/mwscript/transformationextensions.cpp'):read('*a')
+  local g = tx:find('class OpGetDistance', 1, true)
+  local a = g and tx:find('to = MWMechanics::nearestAvatarTo(from);', g, true)
+  local b = a and tx:find('if (to.isEmpty())\n                    to = MWBase::Environment::get().getWorld()->searchPtr(name, false);', a, true)
+  check('OpGetDistance tries the nearest avatar for "player", then the unchanged lookup', a ~= nil and b ~= nil
+    and tx:find('if (name == "player")', g, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
