@@ -54,8 +54,11 @@ PEER_RES=/usr/local/share/openmw/resources/vfs
 # box's pace rather than the game's (#152: s59, s175's weather, s10). The container gets the
 # device through the nvidia runtime, but not NVIDIA's EGL vendor file -- ci/jenkins/nvidia
 # supplies it, or glvnd picks Mesa's llvmpipe. HARNESS_GPU=0 forces software GL.
+# DEFAULT OFF SINCE 2026-10-23 -- TODO: BUY A NEW GPU. The M40's cooling failed (87 C idle); the
+# Jenkinsfile skips every harness stage (GPU_AVAILABLE), and a run started by hand renders in
+# software unless HARNESS_GPU=1 is set explicitly. Put the default back to 1 with the new card.
 GPU_ARGS=""
-if [ "${HARNESS_GPU:-1}" != "0" ] && docker info 2>/dev/null | grep -q 'Runtimes:.*nvidia'; then
+if [ "${HARNESS_GPU:-0}" != "0" ] && docker info 2>/dev/null | grep -q 'Runtimes:.*nvidia'; then
   GPU_ARGS="--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -v $HOST_SRC/ci/jenkins/nvidia:/nvjson:ro -e __EGL_VENDOR_LIBRARY_FILENAMES=/nvjson/10_nvidia.json -e SMOKE_GL=angle-gpu"
   echo "==> GPU: the harness renders on the box's NVIDIA GPU (HARNESS_GPU=0 to turn off)"
 fi

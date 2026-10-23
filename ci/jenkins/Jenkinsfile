@@ -19,12 +19,23 @@
 //   DEPLOY       ship the images to the test server (off for feature-branch bakes).
 //   RUN_HARNESS  run the MP browser harness on the images just built (ci/jenkins/run-harness.sh).
 //   SCENARIOS    space-separated scenario ids (s149 s152 ...); empty = the whole suite.
+// ================================================================================================
+// GPU DISABLED (2026-10-23) -- TODO: BUY A NEW GPU.
+// The builder's GPU (the Tesla M40 the browser harness renders on, angle-gpu since 2026-09-27)
+// lost its cooling: it sat at 87 C doing nothing. Every stage that renders -- the multiplayer
+// harness and the fresh-install rehearsal -- is switched off below by GPU_AVAILABLE, whatever
+// RUN_HARNESS asks for. The builds themselves (engine bake, gateway + sim peer) are CPU only and
+// keep running. Until the card is replaced, verify with the Lua runner and the server suite.
+// When a working GPU is back in the builder: set GPU_AVAILABLE to true (one line, below).
+// ================================================================================================
+def GPU_AVAILABLE = false
+
 pipeline {
   agent any
   parameters {
     string(name: 'BRANCH', defaultValue: 'dev', description: 'branch to build')
     booleanParam(name: 'DEPLOY', defaultValue: true, description: 'deploy engine + server to the test app server')
-    booleanParam(name: 'RUN_HARNESS', defaultValue: false, description: 'run the multiplayer browser harness after the build')
+    booleanParam(name: 'RUN_HARNESS', defaultValue: false, description: 'run the multiplayer browser harness after the build (IGNORED while GPU_AVAILABLE is false: the builder GPU needs replacing, see the top of the Jenkinsfile)')
     string(name: 'SCENARIOS', defaultValue: '', description: 'harness scenarios (e.g. "s149 s152"); empty = full suite')
   }
   // 120 min covered the engine (60) and server (45) budgets; a full harness sweep adds hours.
@@ -64,7 +75,8 @@ pipeline {
     }
 
     stage('Multiplayer harness') {
-      when { expression { params.RUN_HARNESS } }
+      // GPU_AVAILABLE: see the note at the top -- the harness renders on the builder's GPU.
+      when { expression { params.RUN_HARNESS && GPU_AVAILABLE } }
       steps {
         sh "SCENARIOS='${params.SCENARIOS}' bash /src/ci/jenkins/run-harness.sh"
       }
@@ -81,7 +93,7 @@ pipeline {
     // out (mp-harness.mjs: standalone) and this stage runs it on the same images. With the
     // full suite, or when it is named.
     stage('Fresh-install rehearsal') {
-      when { expression { params.RUN_HARNESS && (params.SCENARIOS.trim() == '' || params.SCENARIOS.contains('s170')) } }
+      when { expression { params.RUN_HARNESS && GPU_AVAILABLE && (params.SCENARIOS.trim() == '' || params.SCENARIOS.contains('s170')) } }
       steps { sh 'bash /src/ci/jenkins/run-fresh-install.sh' }
       post {
         always {
