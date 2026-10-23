@@ -771,7 +771,16 @@ namespace MWMechanics
 
             // Check if the target is a werewolf or aggressive creature
             bool targetIsCreature = !actor2.getClass().isNpc();
-            bool targetIsAggressiveCreature = targetIsCreature ? getFightTerm(actor2, player) >= 100
+            // MP: measured against the player the creature is FIGHTING -- on the peer that is
+            // an avatar, and getPlayer() is a parked dummy whose fight term means nothing.
+            MWWorld::Ptr creatureFoe = player;
+            if (targetIsCreature)
+            {
+                MWWorld::Ptr combatTarget;
+                if (creatureStats2.getAiSequence().getCombatTarget(combatTarget) && isPlayerOrAvatar(combatTarget))
+                    creatureFoe = combatTarget;
+            }
+            bool targetIsAggressiveCreature = targetIsCreature ? getFightTerm(actor2, creatureFoe) >= 100
                                                                : actor2.getClass().getNpcStats(actor2).isWerewolf();
             if (targetIsAggressiveCreature)
             {

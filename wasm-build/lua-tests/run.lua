@@ -4441,6 +4441,12 @@ do
     check('a shared fine still settles everything', #paid == 2 and paid[2] == 'shared', tostring(paid[2]))
     package.loaded['scripts.mp.quests'] = nil
   end
+
+  -- 5. guards defend players against creatures
+  check('a guard measures a creature against the player it fights, not the dummy',
+    ac:find('getCombatTarget(combatTarget) && isPlayerOrAvatar(combatTarget)', 1, true) ~= nil
+    and ac:find('getFightTerm(actor2, creatureFoe) >= 100', 1, true) ~= nil
+    and not ac:find('getFightTerm(actor2, player) >= 100', 1, true))
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
