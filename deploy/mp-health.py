@@ -41,6 +41,7 @@ no_pose = Counter()  # windows with a drawn NPC that has no pose stream of its o
 facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
 hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
 rtt50, rtt95, switch_ms, self_snaps, play_s = [], [], [], 0, 0.0
+npc_worst = Counter()  # visible windows' worst-off NPC (>= 300 u): record (puppet | run locally)
 seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set); data_setup = {}
 num = lambda s: re.sub(r'\d[\d.:x]*', 'N', s)
 f = lambda t, k: (re.search(k + r'=(\S+)', t) or [None, None])[1]
@@ -69,7 +70,12 @@ for e in lines():
     elif name == 'client.log':
         t, s = e.get('text', ''), e.get('session', '?')
         if t.startswith('[telemetry]'):
-            if ' hidden=1' not in t: play_s += 5
+            if ' hidden=1' not in t:
+                play_s += 5
+                w = f(t, 'npcWorst')  # index.html: record:distance:p|l
+                if w:
+                    parts = w.split(':')
+                    npc_worst[f"{parts[0]} ({'puppet' if parts[-1] == 'p' else 'run locally'})"] += 1
             m = re.search(r'npcPath p50=\d+ p95=(\d+) max=(\d+)', t)
             sn = f(t, 'snaps')
             if sn and sn.isdigit(): snaps += int(sn)
@@ -119,6 +125,7 @@ print(f"smoothness: NPC path p95 per 5 s window -- median {q(path95, .5)}, p90 {
 print(f"network: round trip (server-measured) median p50 {q(rtt50, .5)} ms, p95 of p95s {q(rtt95, .95)} ms ({len(rtt50)} samples)"
       f" | own body pulled back (SELF SNAP) {self_snaps} = {self_snaps / max(play_s / 3600, 1e-9):.1f}/h over {play_s / 3600:.1f} h played")
 print(f"world switches: click to playable p50 {q(switch_ms, .5)} ms, p95 {q(switch_ms, .95)} ms ({len(switch_ms)} switches)")
+print(f"NPCs drawn 300 u+ off their server path, worst per visible 5 s window:\n{top(npc_worst, 8)}")
 print(f"NPCs drawn with no pose stream of their own (5 s windows, by record):\n{top(no_pose, 6)}")
 print(f"hitches: {hitch} visible windows with a frame of 500 ms or more, {hitch_sfs} of them waiting 300 ms+ on streamed game files | {hidden_w} windows in a background tab (not counted)")
 print(f"facing: walking NPCs drawn turned round (>120 deg off the server) {facing_bad}/{facing_n} samples" + (f" ({100 * facing_bad / facing_n:.1f}%)" if facing_n else ''))

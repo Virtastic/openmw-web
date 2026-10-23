@@ -695,6 +695,7 @@ try {
    // against its own newest pose from the server in the last second. The live half of the 64 u
    // bar -- a software-rendered harness client cannot run fast enough to judge it.
    var npcGap = [], npcPath = [], npcFacingN = 0, npcFacingBad = 0, npcFacingWhy = [], npcNoPose = 0, npcNoPoseRec = {};
+   var npcWorst = { d2: -1 }, npcLocalFar = 0;
    var lastSfs = null;
    var sampleCell = '', cellChangedAt = 0;
    // The key the 0x200 tap files a drawn actor's poses under: 'n<netId>' for a named runtime
@@ -781,7 +782,14 @@ try {
            if (dq < bestPath) bestPath = dq;
          }
        }
-       if (bestPath < 1024 * 1024 || (own && bestPath < Infinity)) npcPath.push(Math.sqrt(bestPath));
+       if (bestPath < 1024 * 1024 || (own && bestPath < Infinity)) {
+         npcPath.push(Math.sqrt(bestPath));
+         // WHO, when it is far off (prod 2026-10-22/23: Seyda Neen windows with npcPath p50 368 /
+         // p95 3000+ for 30 s and no snap -- which a streamed puppet cannot do). The record, the
+         // distance, and whether this screen drives it as a puppet (p) or runs it locally (l).
+         if (bestPath > npcWorst.d2) npcWorst = { d2: bestPath, rec: rec.replace(/[\s:]+/g, '_'), p: p.puppet ? 'p' : 'l' };
+         if (bestPath > 300 * 300 && !p.puppet) npcLocalFar++;
+       }
      }
    }, 1000);
    setInterval(function(){
@@ -824,6 +832,7 @@ try {
        + ' puppeted=' + (s.puppetedActors || '?')
        + ' npcGap p50=' + gq(0.5) + ' p95=' + gq(0.95) + ' n=' + npcGap.length
        + ' npcPath p50=' + pq(0.5) + ' p95=' + pq(0.95) + ' max=' + pq(1) + ' n=' + npcPath.length
+       + (npcWorst.d2 >= 300 * 300 ? ' npcWorst=' + npcWorst.rec + ':' + Math.round(Math.sqrt(npcWorst.d2)) + ':' + npcWorst.p + ' npcLocalFar=' + npcLocalFar : '')
        + ' npcNoPose=' + npcNoPose + (npcNoPose ? ' noPoseRec=' + Object.keys(npcNoPoseRec).slice(0, 3).join(',') : '')
        + ' npcFacing bad=' + npcFacingBad + ' n=' + npcFacingN + (npcFacingWhy.length ? ' why=' + npcFacingWhy.join(',') : '')
        + ' wsRx=' + JSON.stringify(wsRx)
@@ -840,7 +849,7 @@ try {
        });
        line += ' state=' + JSON.stringify(keep);
      }
-     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = []; npcFacingN = 0; npcFacingBad = 0; npcFacingWhy = [];
+     frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = []; npcWorst = { d2: -1 }; npcLocalFar = 0; npcFacingN = 0; npcFacingBad = 0; npcFacingWhy = [];
      npcNoPose = 0; npcNoPoseRec = {}; wasHidden = false;
      fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
        body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
