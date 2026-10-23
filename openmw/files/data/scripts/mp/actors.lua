@@ -902,12 +902,14 @@ end
 -- thief's client, where the victim is an AI-off puppet: commitCrime started combat on a body
 -- that never executes it, so a Fight-70 NPC that would attack a thief just barked. Claimed to
 -- the holder like a taunt's combat result; the server admits it because it names ourselves.
-function actors.noteCrimeCombat(n)
+-- `pursue`: a guard that would ARREST (AiPursue) rather than fight -- a small crime's chase.
+function actors.noteCrimeCombat(n, pursue)
     local obj = n.ref
     local cellKey = type(n.cellKey) == 'string' and n.cellKey ~= '' and n.cellKey or nil
     local me = deps and deps.ownIdFn and deps.ownIdFn()
     if not (obj and obj:isValid() and cellKey and me) or held[cellKey] then return end
-    local body = withAddr({ cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, combat = me, crime = true }, obj)
+    local body = withAddr({ cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, combat = me, crime = true,
+        pursue = pursue == true or nil }, obj)
     if body then mp.sendEvent('ActorAI', body) end
 end
 
@@ -1022,10 +1024,12 @@ actors.handlers.MP_ActorAI = function(data)
         -- the AI resumes with the fight it was actually in, which is right.
         local foe = data.combat and deps.playerObjOf and deps.playerObjOf(data.combat) or nil
         if foe then
-            pcall(function() obj:sendEvent('StartAIPackage', { type = 'Combat', target = foe }) end)
+            -- `pursue`: a guard's arrest chase for a small crime, not a fight.
+            local pursue = data.pursue == true
+            pcall(function() obj:sendEvent('StartAIPackage', { type = pursue and 'Pursue' or 'Combat', target = foe }) end)
             -- The provoking shout (#227): AiCombat rolls iVoiceAttackOdds per swing on the
             -- holder, whose engine is headless; rolled once here, at the fight's start.
-            if puppetActors[refKeyOf(obj)] and mp.say then
+            if not pursue and puppetActors[refKeyOf(obj)] and mp.say then
                 pcall(function()
                     if math.random(0, 99) < (tonumber(core.getGMST('iVoiceAttackOdds')) or 0) then mp.say(obj, 'attack') end
                 end)

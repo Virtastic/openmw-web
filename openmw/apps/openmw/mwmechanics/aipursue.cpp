@@ -58,7 +58,17 @@ namespace MWMechanics
         const bool targetIsAvatar = MWMP::isAvatar(targetRef);
         const int bounty = targetIsAvatar ? MWMP::avatarBounty(targetRef) : target.getClass().getNpcStats(target).getBounty();
         if (bounty <= 0)
+        {
+            // An avatar's bounty may still be on its way (see mAvatarBountyGrace): wait, in
+            // place, a few seconds before dropping the chase. Never for the local player.
+            if (targetIsAvatar && mAvatarBountyGrace > 0.f)
+            {
+                mAvatarBountyGrace -= duration;
+                return false;
+            }
             return true;
+        }
+        mAvatarBountyGrace = 0.f; // a fine paid later ends the chase at once
 
         actor.getClass().getCreatureStats(actor).setDrawState(DrawState::Nothing);
 

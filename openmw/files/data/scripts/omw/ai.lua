@@ -11,7 +11,8 @@ local function startPackage(args)
         self:_startAiCombat(args.target, cancelOther)
     elseif args.type == 'Pursue' then
         if not args.target then error("target required") end
-        if not types.Player.objectIsInstance(args.target) then error("target must be a player") end
+        -- MP: on the sim peer a player's body is an avatar, an NPC (AiPursue takes any actor)
+        if not types.NPC.objectIsInstance(args.target) then error("target must be a player") end
         self:_startAiPursue(args.target, cancelOther)
     elseif args.type == 'Follow' then
         if not args.target then error("target required") end

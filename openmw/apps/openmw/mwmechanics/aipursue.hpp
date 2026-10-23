@@ -40,6 +40,12 @@ namespace MWMechanics
         }
 
         void writeState(ESM::AiSequence::AiSequence& sequence) const override;
+
+    private:
+        // MP: a pursuit of an AVATAR claimed from the thief's client (crimepursue) can reach
+        // the peer before that player's CrimeUpdate does; the bounty reads 0 for a moment.
+        // Seconds the chase waits for it; spent once a bounty has been seen.
+        float mAvatarBountyGrace = 3.f;
     };
 }
 #endif

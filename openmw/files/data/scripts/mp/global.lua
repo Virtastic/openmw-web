@@ -1267,6 +1267,8 @@ local function scriptNotesTick()
         elseif n.kind == 'crimecombat' or n.kind == 'scriptcombat' then
             -- scriptcombat: a world script's StartCombat Player on a puppet (same claim)
             actors.noteCrimeCombat(n)
+        elseif n.kind == 'crimepursue' then
+            actors.noteCrimeCombat(n, true) -- a guard's arrest chase, same claim
         else
             objects.onScriptNote(n)
         end

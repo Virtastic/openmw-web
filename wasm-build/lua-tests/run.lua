@@ -1884,7 +1884,7 @@ do
   -- #146: a witness that picked a fight on the thief's client is claimed to the holder.
   check("a client's crime-combat witness is claimed as ActorAI combat+crime and the server admits it",
     mm:find('MWMP::recordScriptNote({ "crimecombat"', 1, true) ~= nil
-    and ac:find('combat = me, crime = true }, obj)', 1, true) ~= nil
+    and ac:find('combat = me, crime = true,', 1, true) ~= nil
     and ws:find("const crime = body.get('crime') === true;", 1, true) ~= nil
     and ws:find('(!crime && this.dialogueHolder?.(ref.key) !== player.id)', 1, true) ~= nil)
 end
@@ -4362,6 +4362,43 @@ do
   check('scripted StartCombat Player on a puppet is noted (scriptcombat)',
     ax:find('"scriptcombat"', 1, true) ~= nil and ax:find('MWMP::isPuppet(actor.getCellRef().getRefNum())', 1, true) ~= nil)
   check('scriptcombat is claimed like crimecombat', g:find("n.kind == 'crimecombat' or n.kind == 'scriptcombat'", 1, true) ~= nil)
+
+  -- 2. a guard's pursuit for a small crime
+  local mm = src(ENG .. 'mwmechanics/mechanicsmanagerimp.cpp')
+  check('a stacked AiPursue on a client is noted (crimepursue)', mm:find('"crimepursue"', 1, true) ~= nil)
+  check('crimepursue is claimed with pursue = true', g:find('actors.noteCrimeCombat(n, true)', 1, true) ~= nil)
+  local al = src('./openmw/files/data/scripts/mp/actors.lua')
+  check('MP_ActorAI starts Pursue for a pursue claim', al:find("type = pursue and 'Pursue' or 'Combat'", 1, true) ~= nil)
+  check('omw/ai.lua lets Pursue target an avatar (an NPC)',
+    src('./openmw/files/data/scripts/omw/ai.lua'):find('if not types.NPC.objectIsInstance(args.target) then error("target must be a player")', 1, true) ~= nil)
+  local ap = src(ENG .. 'mwmechanics/aipursue.cpp')
+  check('the peer waits for the avatar\'s CrimeUpdate before dropping the chase',
+    ap:find('if (targetIsAvatar && mAvatarBountyGrace > 0.f)', 1, true) ~= nil and ap:find('mAvatarBountyGrace = 0.f;', 1, true) ~= nil)
+  do -- behaviour: noteCrimeCombat's body
+    local a = al:find('\nfunction actors.noteCrimeCombat(n, pursue)', 1, true)
+    local b = a and select(2, al:find('\nend\n', a, true))
+    local sent = {}
+    local env = setmetatable({
+      actors = { epochOf = function() return 7 end }, held = {},
+      deps = { ownIdFn = function() return 42 end },
+      withAddr = function(t) return t end,
+      mp = { sendEvent = function(name, body) sent[#sent + 1] = { name, body } end },
+    }, { __index = _G })
+    local chunk = a and b and loadstring(al:sub(a, b))
+    check('noteCrimeCombat (pursue version) is where this test expects it', chunk ~= nil)
+    if chunk then
+      setfenv(chunk, env); chunk()
+      local obj = { isValid = function() return true end }
+      env.actors.noteCrimeCombat({ ref = obj, cellKey = 'balmora' }, true)
+      env.actors.noteCrimeCombat({ ref = obj, cellKey = 'balmora' })
+      check('a pursue claim names us, is a crime and asks for Pursue',
+        sent[1] and sent[1][2].combat == 42 and sent[1][2].crime == true and sent[1][2].pursue == true)
+      check('a combat claim carries no pursue', sent[2] and sent[2][2].pursue == nil)
+      env.held.balmora = { epoch = 1 }
+      env.actors.noteCrimeCombat({ ref = obj, cellKey = 'balmora' }, true)
+      check('no claim for a cell we hold ourselves', #sent == 2)
+    end
+  end
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

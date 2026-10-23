@@ -1448,6 +1448,11 @@ namespace MWMechanics
                 if (!observerStats.getAiSequence().isInPursuit())
                 {
                     observerStats.getAiSequence().stack(AiPursue(player), actor);
+                    // Multiplayer client: the guard here is an AI-off puppet, so the arrest
+                    // never ran. Claimed to the holder as a pursuit (scripts/mp crimepursue).
+                    if (MWMP::isClient() && player == getPlayer() && actor.isInCell())
+                        MWMP::recordScriptNote({ "crimepursue", actor.getCellRef().getRefNum(), false, {}, 1,
+                            MWMP::cellKeyOf(*actor.getCell()) });
                 }
             }
             else
