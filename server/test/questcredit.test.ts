@@ -129,6 +129,7 @@ test('an owner replaying a 3-stage log after a relog writes nothing and relays n
   const before = JSON.stringify(w.players.getCached('alice'));
   const relayed = w.events('bob', 'JournalEntry').length;
   // The relog: JournalSync replayed 10, 20, 30 into the engine; the echoes 10 and 20 arrive.
+  w.quests.sendJournalSync(alice); // the relog's sync opens the replay window (1.7.1)
   for (const i of [10, 20]) w.quests.handleEvent(alice, 'JournalEntry', entry('MQ', i));
   assert.equal(JSON.stringify(w.players.getCached('alice')), before, 'zero JournalEntry writes');
   assert.equal(w.journalOf('alice').MQ, 30, 'the campaign did not rewind');
