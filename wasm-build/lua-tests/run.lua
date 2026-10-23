@@ -1445,7 +1445,7 @@ do
       and q:find('mp.addJournalEntryAt(questId, index, stamp.d, stamp.m, stamp.dm)', 1, true) ~= nil
       and q:find('quest:addJournalEntry(index)', 1, true) ~= nil)
   check('a pre-player entry keeps its stamp and order through the retry',
-    q:find('for _, e in ipairs(retry) do applyJournalEntry(e.q, e.i, e.stamp) end', 1, true) ~= nil)
+    q:find('for _, e in ipairs(retry) do applyJournalEntry(e.q, e.i, e.stamp, e.regress) end', 1, true) ~= nil)
   -- 259: only a named exterior becomes a visited location.
   local h = w:match('handlers%.MP_WorldMapExplored = function%(data%)(.-)\nend')
   check('MP_WorldMapExplored skips unnamed cells', h ~= nil
@@ -4553,6 +4553,48 @@ do
   re:push({ t = re.buf[#re.buf].at + 0.05, x = 0, y = 0, z = 0, yaw = 0, pitch = 0, flags = 0, st = re.buf[#re.buf].st })
   check('a repeated stamp re-bases instead of stacking two samples on one instant',
     re.buf[#re.buf].t > re.buf[#re.buf - 1].t)
+end
+
+-- ============================================================ 1.7.1 quests.lua: journal never walks backwards
+-- A relayed entry set quest.stage unconditionally, so a lagging engine's entry (or a log line
+-- replayed under a later stage) moved a quest back. Only an authorised regression may.
+print('1.7.1 quests.lua -- a network journal entry raises the stage; only a flagged regression lowers it')
+local function questEnv()
+  fresh()
+  package.loaded['scripts.mp.quests'] = nil
+  local e = stubs.install({})
+  local stages = {}
+  e.types.Player.quests = function()
+    return setmetatable({}, { __index = function(_, id)
+      return setmetatable({}, {
+        __index = function(_, k)
+          if k == 'stage' then return stages[id] or 0 end
+          if k == 'addJournalEntry' then return function(_, i) stages[id] = i end end
+        end,
+        __newindex = function(_, k, v) if k == 'stage' then stages[id] = v end end,
+      })
+    end })
+  end
+  local q = require('scripts.mp.quests')
+  local player = { id = 'player' }
+  q.init({ playerFn = function() return player end, ownCellKeyFn = function() return '0,0' end })
+  return e, q, stages
+end
+do
+  local e, q, stages = questEnv()
+  q.handlers.MP_JournalEntry({ questId = 'mq', index = 40 })
+  check('an entry raises the stage', stages.mq == 40)
+  q.handlers.MP_JournalEntry({ questId = 'mq', index = 20 })
+  check('a lower unflagged entry does not move the quest back', stages.mq == 40, tostring(stages.mq))
+  q.handlers.MP_JournalEntry({ questId = 'mq', index = 10, regress = true })
+  check('a flagged regression (a restart) lands', stages.mq == 10, tostring(stages.mq))
+  q.handlers.MP_JournalSync({ quests = { mr = 10 }, journalLog = {
+    { q = 'mr', i = 10, d = 1, m = 1, dm = 1 }, { q = 'mr', i = 20, d = 2, m = 1, dm = 2 }, { q = 'mr', i = 30, d = 3, m = 1, dm = 3 },
+  } })
+  check("JournalSync's map is the current stage over a log holding a restarted quest's later stages", stages.mr == 10, tostring(stages.mr))
+  local sent = 0
+  for _, c in ipairs(e.calls.events) do if c.name == 'JournalEntry' then sent = sent + 1 end end
+  check('applying the network never echoes a JournalEntry back', sent == 0, sent .. ' sent')
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

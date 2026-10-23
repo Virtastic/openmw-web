@@ -129,17 +129,22 @@ end
 -- `stamp` (optional, from JournalSync's journalLog): {d=dayspassed, m=month, dm=day of
 -- month} the entry was earned on. With mp.addJournalEntryAt the engine keeps that date;
 -- without it (older engine) the entry lands dated today, as before (backlog 257).
-local function applyJournalEntry(questId, index, stamp)
+-- `regress` (1.7.1): the server says this is an AUTHORISED move down (an owner's or the
+-- peer's restart, JournalSync's authoritative map). Anything else only ever raises the stage:
+-- a relayed entry from a lagging engine, or a log line replayed under a later stage, used to
+-- set quest.stage unconditionally and walk the quest backwards.
+local function applyJournalEntry(questId, index, stamp, regress)
     -- Cache FIRST: the engine's onQuestUpdate for this apply arrives a frame later and is
     -- recognised as our own echo by value. Caching before the player-object check matters:
     -- JournalSync can land before world.players[1] exists, and an unseeded cache would make
     -- the first local quest signal look like a fresh local change.
-    journal[questId] = index
+    local cached = journal[questId]
+    journal[questId] = (regress or cached == nil) and index or math.max(cached, index)
     applied[questId] = applied[questId] or {}
     applied[questId][index] = true
     local player = playerObj()
     if not player then
-        pendingApply[#pendingApply + 1] = { q = questId, i = index, stamp = stamp } -- retried from tick()
+        pendingApply[#pendingApply + 1] = { q = questId, i = index, stamp = stamp, regress = regress } -- retried from tick()
         return false
     end
     local all = types.Player.quests(player)
@@ -150,6 +155,10 @@ local function applyJournalEntry(questId, index, stamp)
         print('[mp] journal: no quest record "' .. tostring(questId) .. '" in this content')
         return false
     end
+    local okHave, have = pcall(function() return quest.stage end)
+    local target = index
+    if not regress and okHave and type(have) == 'number' and have > index then target = have end
+    journal[questId] = target
     applying = true
     -- addJournalEntry writes the REAL entry text from the content records; quest.stage alone
     -- only moves the index (mwdialogue/quest.cpp:52 — "The index must be set even if no
@@ -175,11 +184,12 @@ local function applyJournalEntry(questId, index, stamp)
     -- which means the client would silently stop reporting ANY local quest progress from that
     -- moment on. No error, no recovery, and the player's quests simply stop travelling.
     -- belt and braces: never assume addEntry left the index where we want it.
-    local okStage, stageErr = pcall(function() quest.stage = index end)
+    -- max(local, index) unless authorised: addEntry may have moved the index to `index`.
+    local okStage, stageErr = pcall(function() quest.stage = target end)
     applying = false
     if not okStage then
         print('[mp] journal: could not set stage for "' .. tostring(questId) .. '" @'
-            .. tostring(index) .. ': ' .. tostring(stageErr))
+            .. tostring(target) .. ': ' .. tostring(stageErr))
         return false
     end
     return true
@@ -643,7 +653,7 @@ local handlers = {}
 handlers.MP_JournalEntry = function(data)
     local index = asInt(data.index)
     if type(data.questId) ~= 'string' or index == nil then return end
-    applyJournalEntry(data.questId, index)
+    applyJournalEntry(data.questId, index, nil, data.regress == true)
 end
 
 handlers.MP_JournalSync = function(data)
@@ -688,7 +698,9 @@ handlers.MP_JournalSync = function(data)
     end
     for questId, index in pairs(data.quests or {}) do
         local idx = asInt(index)
-        if type(questId) == 'string' and idx then applyJournalEntry(questId, idx) end
+        -- The map is the campaign's CURRENT stage, restarts included: authoritative over the
+        -- log above, which may hold later stages of a quest that was since restarted.
+        if type(questId) == 'string' and idx then applyJournalEntry(questId, idx, nil, true) end
     end
     -- The campaign's learned topics (backlog 51), through the same path a live TopicsLearned
     -- takes -- so they land in the baseline and are never re-announced as a discovery.
@@ -1082,7 +1094,7 @@ function quests.tick(now)
     if next(pendingApply) and playerObj() then
         local retry = pendingApply
         pendingApply = {}
-        for _, e in ipairs(retry) do applyJournalEntry(e.q, e.i, e.stamp) end
+        for _, e in ipairs(retry) do applyJournalEntry(e.q, e.i, e.stamp, e.regress) end
     end
     if now >= nextDiffAt then
         nextDiffAt = now + DIFF_INTERVAL
