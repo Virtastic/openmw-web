@@ -311,8 +311,8 @@ export const metrics = {
     new Counter('omwmp_player_input_forwarded_total', 'PlayerInput frames forwarded to the world peer.', [])),
   playerInputDropped: reg(
     new Counter('omwmp_player_input_dropped_total', 'PlayerInput frames dropped.', ['reason'])),
-  // kind: move | actor. Outbound lossy frames dropped because the socket's send queue was
-  // over [limits] maxBufferedBytes; a rising rate means a client is not keeping up.
+  // kind: move | state | actor. Pending lossy frames superseded by a newer one before the
+  // socket drained (connection.ts latest-state-wins); a rising rate means a client is not keeping up.
   backpressureDropped: reg(
     new Counter('omwmp_backpressure_dropped_total', 'Lossy outbound frames dropped on a backed-up socket.', ['kind']),
   ),

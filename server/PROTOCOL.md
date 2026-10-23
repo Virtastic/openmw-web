@@ -194,9 +194,17 @@ stored pose at the cell-change coordinates so never-moving players still spawn f
 visible peers; move `seq` is strictly increasing per connection; movement bytes count
 against `bytesPerSec` but not `msgsPerSec` (own `moveMsgsPerSec` budget, default 40, and a
 separate `actorMoveMsgsPerSec` budget, default 60, for `ActorMoveBatch`). Exceeding either
-movement budget DROPS the frame; it does not close the session. Outbound, movement and
-actor batches are also dropped for a client whose send queue is over `maxBufferedBytes`, and
-such a client is disconnected with `RATE` past `maxBufferedBytesHard`.
+movement budget DROPS the frame; it does not close the session.
+
+**Outbound: latest state wins.** `0x0101`, `0x0103` and `0x0200` are state streams, so a
+client never has more than ONE frame of each queued (per epoch for `0x0200`): while an
+earlier lossy frame is still being written to its socket, or its send queue is over
+`maxBufferedBytes`, a newer frame is folded into the pending one BY ENTITY (player id, or
+actor ref) -- newest pose wins, an entity only the older frame carried is kept (a big cell
+arrives as several 255-actor batches) -- and the pending frames go out, oldest `seq` first,
+once the write completes. The merged frame carries the newer frame's `seq`. Every other
+frame is reliable: never held, never dropped, sent in order. A client is disconnected with
+`BACKLOG` once its send queue passes `maxBufferedBytesHard` (not within 2 s of a cell entry).
 
 ### `0x0002` Event (M0)
 
