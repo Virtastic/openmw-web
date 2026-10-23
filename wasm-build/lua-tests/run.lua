@@ -4727,5 +4727,38 @@ do
     and ai:find('return MWBase::Environment::get().getWorld()->searchPtr(id, true, false);', 1, true) ~= nil
     and select(2, ai:gsub('searchPtr%(actorID, true, false%)', '')) == 0)
 end
+
+print('1.7.1 avatar.lua keeps its policy (placed, pvp, the avatar set) across a script reload')
+do
+  local names = { 'openmw.core', 'openmw.self', 'openmw.types', 'openmw.interfaces', 'openmw.mp', 'openmw.util' }
+  local saved = {}
+  for _, m in ipairs(names) do saved[m] = package.loaded[m] end
+  package.loaded['openmw.core'] = { getRealTime = function() return 0 end, sendGlobalEvent = function() end }
+  package.loaded['openmw.self'] = { controls = {}, object = { id = 'av' }, enableAI = function() end }
+  package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1 }, getStance = function() return 0 end,
+    setStance = function() end, inventory = function() return { getAll = function() return {} end } end } }
+  package.loaded['openmw.interfaces'] = {}
+  package.loaded['openmw.mp'] = {}
+  package.loaded['openmw.util'] = { vector3 = function(x, y, z) return { x = x, y = y, z = z } end }
+  local okA, av = pcall(dofile, './openmw/files/data/scripts/mp/avatar.lua')
+  check('avatar.lua loads under the stubs', okA and av and av.engineHandlers, tostring(av))
+  if okA and av then
+    local eh = av.engineHandlers
+    check('avatar.lua has onSave and onLoad', type(eh.onSave) == 'function' and type(eh.onLoad) == 'function')
+    av.eventHandlers.mpAvatarPolicy({ pvp = true, placed = true, avatarObjIds = { a1 = true, a2 = true } })
+    local data = eh.onSave()
+    local okB, again = pcall(dofile, './openmw/files/data/scripts/mp/avatar.lua')
+    if okB and again then
+      check('a fresh copy starts with no policy', again.engineHandlers.onSave().placed == false)
+      again.engineHandlers.onLoad(data)
+      local back = again.engineHandlers.onSave()
+      check('onLoad restores placed, pvpEnabled and avatarObjIds',
+        back.placed == true and back.pvpEnabled == true and back.avatarObjIds.a1 == true and back.avatarObjIds.a2 == true)
+      again.engineHandlers.onLoad(nil)
+      check('an empty save (an older body) is a no-op', again.engineHandlers.onSave().placed == true)
+    end
+  end
+  for _, m in ipairs(names) do package.loaded[m] = saved[m] end
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

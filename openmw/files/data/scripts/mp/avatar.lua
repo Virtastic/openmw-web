@@ -359,6 +359,19 @@ return {
             -- belonging to nobody. See mwmp/puppets.hpp.
             if mp.setAvatar then mp.setAvatar(self.object, true) end
         end,
+        -- The policy outlives a script reload (puppet.lua onLoad): the engine unloads an
+        -- inactive object's scripts and brings them back through onSave/onLoad, and the policy
+        -- is only re-pushed on a cadence -- until then a reloaded avatar walked by its own
+        -- physics (placed false) and let every player's blow through (an empty veto set).
+        onSave = function()
+            return { placed = placed, pvpEnabled = pvpEnabled, avatarObjIds = avatarObjIds }
+        end,
+        onLoad = function(data)
+            if type(data) ~= 'table' then return end
+            placed = data.placed == true
+            pvpEnabled = data.pvpEnabled == true
+            if type(data.avatarObjIds) == 'table' then avatarObjIds = data.avatarObjIds end
+        end,
         onUpdate = function(dt)
             frameNo = frameNo + 1
             frameDt = dt or 0
