@@ -49,6 +49,8 @@ export default async function run(ctx) {
     await a.client.cmd(`joinfriend:${await acctOf(a.client, C)}`);
     await a.client.waitFor(`window.omw && window.omw.state && window.omw.state.state === "Joined" && String(window.omw.state.dialTarget||"").indexOf("priv-rt-c") >= 0`, 300_000, 'A lands in C\'s world');
     await grantLockerSession(a.client, GW_PORT, a.account);
+    // Stamped when the loading screen RELEASES, a few seconds after Joined (the settle hold).
+    await a.client.waitFor('Number((window.__omwBoot||{}).switchMs||0) > 0', 120_000, 'the switch time on the boot timeline').catch(() => {});
     const aSwitch = Number(await a.client.eval('(window.__omwBoot||{}).switchMs||0'));
     ctx.log(`ok: A is visiting C (switch took ${aSwitch} ms)`);
     assert.ok(aSwitch > 0, 'the destination must report the switch time (switchMs on its boot timeline)');
@@ -70,6 +72,7 @@ export default async function run(ctx) {
     await grantLockerSession(a.client, GW_PORT, a.account);
     await a.client.waitFor(`window.omw.state.whereNow === 'party'`, 60_000,
       'A must arrive home in Party: the flip queued while visiting must survive the reload');
+    await a.client.waitFor('Number((window.__omwBoot||{}).switchMs||0) > 0', 120_000, 'the switch time home').catch(() => {});
     const home = Number(await a.client.eval('(window.__omwBoot||{}).switchMs||0'));
     ctx.log(`ok: A is home in Party (switch took ${home} ms)`);
 

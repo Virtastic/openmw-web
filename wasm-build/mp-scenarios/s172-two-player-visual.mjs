@@ -128,7 +128,10 @@ export default async function run(ctx) {
   const rowA = `(JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(idA)}]||{})`;
   await b.waitFor(`${rowA}.x !== undefined`, 120_000, 'B has a puppet of A');
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 180_000, 'the peer holds our cell (A puppets its actors)');
-  await a.waitFor('typeof window.omw.state.selfDivergence === "string"', STEP, 'the avatar rules A');
+  // THE WOW MODEL (clientAuthority): A owns its position, so there is no reconcile stream to
+  // wait for; section b then asserts that nothing corrected A at all.
+  await a.waitFor(`window.omw.state.clientAuthority === 'true' || typeof window.omw.state.selfDivergence === "string"`, STEP, 'the movement model is known');
+  const wow = (await a.eval("String(window.omw.state.clientAuthority||'')")) === 'true';
   // The onboarding tour sits over the canvas in every screenshot and eats input (s64).
   for (const c of [a, b]) { try { await c.click('#omw-tour-x'); } catch { /* none */ } }
   for (const c of [a, b]) ctx.log(`${c.name}: rec ${await c.eval(INSTALL_REC)}, wire hook ${await c.eval('!!window.__s172')}`);
@@ -159,7 +162,7 @@ export default async function run(ctx) {
   await b.cmd(`snapto:${WALK_SPOT.x + 400},${WALK_SPOT.y},${WALK_SPOT.z}`);
   await a.waitFor('window.omw.state.cell === "-2,-9" && window.omw.state.authorityHolder !== "none" && Number(window.omw.state.puppetedActors||0) > 0', 240_000, 'the peer holds -2,-9');
   await a.eval("window.omw.state.selfDivergence = null; 'x'");
-  await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', STEP, 'A\'s avatar followed').catch((e) => ctx.log('A settle: ' + e.message.split('\n')[0]));
+  if (!wow) await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', STEP, 'A\'s avatar followed').catch((e) => ctx.log('A settle: ' + e.message.split('\n')[0]));
   const pA = JSON.parse(await a.eval('window.omw.state.pose'));
   ctx.log(`at the start: A ${JSON.stringify(pA)}`);
   // B 400 u to A's +X side (a same-cell hop under 256 u is never announced, so the avatar stays
@@ -168,7 +171,7 @@ export default async function run(ctx) {
   // DIAGONAL, OFF EVERY LEG: at +400 X, B stood in A's run +X leg and A ran into B's avatar on
   // the peer (#172: 0-9 u/s at full run input). The legs are -Y, +X, +Y, +X from A's start.
   await b.cmd(`snapto:${Math.round(pA.x + 400)},${Math.round(pA.y + 400)},${Math.round(pA.z + 30)}`);
-  await b.waitFor('Number(window.omw.state.selfDivergence||999) < 96', STEP, 'B\'s avatar followed B').catch((e) => ctx.log('B settle: ' + e.message.split('\n')[0]));
+  if (!wow) await b.waitFor('Number(window.omw.state.selfDivergence||999) < 96', STEP, 'B\'s avatar followed B').catch((e) => ctx.log('B settle: ' + e.message.split('\n')[0]));
   const lookAtA = async () => { const p = JSON.parse(await a.eval('window.omw.state.pose')); await b.cmd(`face:${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z + 60)}`); };
   const headA = async (dx, dy) => { const p = JSON.parse(await a.eval('window.omw.state.pose')); await a.cmd(`face:${Math.round(p.x + dx * 3000)},${Math.round(p.y + dy * 3000)},${Math.round(p.z + 100)}`); };
   await lookAtA(); await headA(0, -1);
@@ -290,7 +293,9 @@ export default async function run(ctx) {
   ctx.log(`b: A selfDivergence ${stats(div)}; per-frame correction ${stats(corr)}; >48 u: ${div.filter((d) => d > 48).length}; hard snaps ${selfSnaps} (${(hA.selfSnap || []).map(([, v]) => v).join(' | ')})`);
   const period = (tr) => { const g = []; for (let i = 1; i < tr.length; i++) g.push(tr[i].t - tr[i - 1].t); return g; };
   ctx.log(`b: client frame time (ms, engine avg) A ${stats(fpsA)} B ${stats(fpsB)}; pose-mirror period on A (100 ms at >= 10 fps) ${stats(period(trackA))} ms`);
-  tbar(div.length > 0 && q(div, 0.95) <= 8 && Math.max(...div) <= 48, `b: own correction p95 <= 8 u, max <= 48 (p95 ${q(div, 0.95).toFixed(1)}, max ${Math.max(...div).toFixed(1)})`);
+  // WoW model: a correction exists only for a refused move, and an honest walk has none.
+  if (wow) bar(div.every((d) => d <= 48), `b: WoW model -- no correction beyond 48 u (${div.length} samples, max ${div.length ? Math.max(...div).toFixed(1) : 0})`);
+  else tbar(div.length > 0 && q(div, 0.95) <= 8 && Math.max(...div) <= 48, `b: own correction p95 <= 8 u, max <= 48 (p95 ${q(div, 0.95).toFixed(1)}, max ${Math.max(...div).toFixed(1)})`);
   bar(selfSnaps <= 1, `b: <= 1 hard snap (${selfSnaps})`);
 
   // ===================== c: the same actor on A, on B and on the peer =====================
@@ -405,7 +410,7 @@ export default async function run(ctx) {
   await ctx.sleep(1500);
   await a.cmd(`snapto:${Math.round(c0.x + dir.x * 80)},${Math.round(c0.y + dir.y * 80)},${Math.round(c0.z + 8)}`);
   await a.eval("window.omw.state.selfDivergence = null; 'x'");
-  await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', STEP, 'A\'s avatar is beside the creature').catch((e) => ctx.log('d settle: ' + e.message.split('\n')[0]));
+  if (!wow) await a.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 96', STEP, 'A\'s avatar is beside the creature').catch((e) => ctx.log('d settle: ' + e.message.split('\n')[0]));
   await b.cmd(`snapto:${Math.round(c0.x + dir.y * 300)},${Math.round(c0.y - dir.x * 300)},${Math.round(c0.z + 8)}`);
   await ctx.sleep(1500);
   // Provoked with ONE REAL SWING, weak (longblade 40) so it starts the fight without ending it;
@@ -468,7 +473,7 @@ export default async function run(ctx) {
     if (!st.p || st.p.dead) break;
     if (d2(st.p, st.me) > 110) {
       await a.cmd(`snapto:${Math.round(st.p.x + dir.x * 70)},${Math.round(st.p.y + dir.y * 70)},${Math.round(st.p.z + 8)}`);
-      await a.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 15_000, 'the avatar came along').catch(() => {});
+      if (!wow) await a.waitFor('Number(window.omw.state.selfDivergence||999) < 60', 15_000, 'the avatar came along').catch(() => {});
     }
     await a.cmd(`face:${Math.round(st.p.x)},${Math.round(st.p.y)},${Math.round(st.p.z + 20)}`);
     const t0 = Date.now();

@@ -599,6 +599,9 @@ dispatch.SessionWelcome = function(msg)
     -- M5: server rules the client must honour locally (PvP gating, difficulty display).
     net.flags = (type(msg.flags) == 'table' and msg.flags ~= json.null) and msg.flags or {}
     mp.set('pvp', tostring(net.flags.pvp == true))
+    -- Which movement model this world runs (the WoW model: the client owns its position), so a
+    -- scenario asserts the right thing: under it there is no reconcile stream to wait for.
+    mp.set('clientAuthority', tostring(net.flags.clientAuthority == true))
     mp.set('playerId', tostring(msg.playerId))
     -- Character slots + onboarding profile: the account's slot list, which one this
     -- session plays, and whether the server demands a completed profile before Ready.

@@ -35,7 +35,10 @@ export default async function run(ctx) {
   const a = await ctx.launchClient('bot-a', '', BOOT);
   await a.waitFor('String(window.omw.state.baselineReady||"") === "1"', 120_000, 'the character is settled (the join-time restore is done)');
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 120_000, 'the cell is peer-held');
-  await a.waitFor('typeof window.omw.state.selfDivergence === "string"', 60_000, 'the avatar rules our pose');
+  // THE WOW MODEL (clientAuthority): the client owns its position, so there is no reconcile
+  // stream to wait for and nothing to settle -- the walk must simply never step back.
+  await a.waitFor(`window.omw.state.clientAuthority === 'true' || typeof window.omw.state.selfDivergence === "string"`, 60_000, 'the movement model is known');
+  const wow = (await a.eval("String(window.omw.state.clientAuthority||'')")) === 'true';
   ctx.log(`ok: peer-held, delay 150 ms, divergence at rest ${await a.eval('window.omw.state.selfDivergence')}`);
 
   // Walk +Y for 4 s; the pose mirror is 2 Hz. Sample through the walk and the stop.
@@ -54,6 +57,7 @@ export default async function run(ctx) {
   assert.ok(walked > 100, `the walk barely moved (${walked.toFixed(0)} units)`);
   assert.ok(worst <= BACKWARD_TOLERANCE, `rubber-band: Y went back ${worst.toFixed(1)} units in one 500 ms sample`);
 
+  if (wow) { ctx.log('WoW model: no reconcile to settle; the monotonic walk above is the bar'); return; }
   // Stopped: the avatar catches up within a couple of RTTs and the divergence settles.
   // ONE CORRECTION PER FRESH SAMPLE, and a fresh sample needs a new input seq (player.lua
   // onSelfState) -- one per FRAME on a ~1 fps harness client, each moving 25 % of the gap

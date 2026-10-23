@@ -64,7 +64,11 @@ export default async function run(ctx) {
   ctx.log(`player take-offs ${takeoffs}, avatar landings ${landings}, self snaps ${snaps.length}; pulled ${pull.toFixed(0)} u in all; divergence p50 ${q(0.5).toFixed(1)} p95 ${q(0.95).toFixed(1)} max ${q(1).toFixed(1)} (n=${dv.length})`);
   for (const l of lines.slice(-6)) ctx.log('  ' + l.replace(/^.*\[mp\]/, '[mp]').slice(0, 160));
   assert.ok(takeoffs >= 6, `the player barely jumped (${takeoffs})`);
-  assert.ok(landings >= Math.floor(takeoffs * 0.7), `the avatar made ${landings} of the player's ${takeoffs} jumps`);
+  // Under the WoW model the avatar is PLACED on the player's poses and never jumps by itself, so
+  // its own landings say nothing; the bar is that nothing pulled the player back at all.
+  const wow = (await a.eval("String(window.omw.state.clientAuthority||'')")) === 'true';
+  if (!wow) assert.ok(landings >= Math.floor(takeoffs * 0.7), `the avatar made ${landings} of the player's ${takeoffs} jumps`);
+  else assert.ok(pull < 50, `the WoW model pulled the hopping player ${pull.toFixed(0)} u`);
   assert.ok(pull < 400, `reconciliation pulled the hopping player ${pull.toFixed(0)} u (old code: 376-913)`);
   assert.deepEqual(snaps, [], 'a hard snap pulled the hopping player back');
   assert.deepEqual(a.luaErrors(), [], 'no Lua error');
