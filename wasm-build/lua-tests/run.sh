@@ -32,5 +32,12 @@ fi
 # the command into a Windows path, and the cd then fails inside the container. Docker's own
 # working-directory flag is not touched. MSYS_NO_PATHCONV covers the -v argument.
 export MSYS_NO_PATHCONV=1
+# AND COMPILED AS 5.4, which is what the BROWSER engine runs (the native peer is LuaJIT/5.1).
+# The two count a chunk's locals differently -- a generic `for` holds one more hidden local in
+# 5.4 -- so global.lua passed every 5.1 test here and refused to load in the browser ("too many
+# local variables", Jenkins #263). luac5.4 -p is the engine's own compile, nothing run.
 exec docker run --rm -v "$ROOT:/repo" -w /repo alpine:3 sh -c \
-  'apk add --no-cache lua5.1 >/dev/null 2>&1 && exec lua5.1 wasm-build/lua-tests/run.lua'
+  'apk add --no-cache lua5.1 lua5.4 >/dev/null 2>&1 \
+   && for f in openmw/files/data/scripts/mp/*.lua; do luac5.4 -p "$f" || { echo "FAIL $f does not compile under Lua 5.4 (the browser engine)"; exit 1; }; done \
+   && echo "  ok   every mp/*.lua compiles under Lua 5.4" \
+   && exec lua5.1 wasm-build/lua-tests/run.lua'

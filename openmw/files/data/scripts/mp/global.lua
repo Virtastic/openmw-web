@@ -3879,34 +3879,25 @@ local eventHandlers = {
     mpTestMemberVar = function(data) quests.testSetMemberVar(data.id, data.name, data.value) end,
 }
 
--- M3: object-sync appliers (MP_ObjectPlace/Delete/Move/Lock, MP_DoorState,
--- MP_Container*, MP_WorldCellState, MP_ObjectSpawnAck) live in objects.lua.
-for name, fn in pairs(objects.handlers) do
-    eventHandlers[name] = fn
-end
--- M4: actor-authority appliers (MP_ActorAuthority*, MP_ActorMoveBatch/StatsDynamic/Death,
--- MP_WorldKillCount) live in actors.lua.
-for name, fn in pairs(actors.handlers) do
-    eventHandlers[name] = fn
-end
--- M7: world-state appliers (MP_WorldTime, MP_WorldWeather*, MP_Record*, MP_WorldCellReset,
--- MP_WorldMapExplored, MP_Gui*) live in world.lua; M8 ops appliers in admin.lua.
-for name, fn in pairs(worldmp.handlers) do
-    eventHandlers[name] = fn
-end
-for name, fn in pairs(admin.handlers) do
-    eventHandlers[name] = fn
-end
--- M6: quest-layer appliers (MP_JournalEntry/JournalSync, MP_GlobalVarUpdate,
--- MP_MemberVarUpdate, MP_FactionUpdate, MP_CrimeUpdate, MP_DialogueLockResult) live in
--- quests.lua.
-for name, fn in pairs(quests.handlers) do
-    eventHandlers[name] = fn
-end
--- M5: combat appliers (MP_CombatHit/SpellHit/Cast/Projectile) live in combat.lua.
-for name, fn in pairs(combat.handlers) do
-    eventHandlers[name] = fn
-end
+-- The appliers that live in their own modules, merged in this order (a later module wins a
+-- shared name, as when these were six loops):
+--   M3 objects.lua (MP_ObjectPlace/Delete/Move/Lock, MP_DoorState, MP_Container*,
+--      MP_WorldCellState, MP_ObjectSpawnAck)
+--   M4 actors.lua (MP_ActorAuthority*, MP_ActorMoveBatch/StatsDynamic/Death, MP_WorldKillCount)
+--   M7 world.lua (MP_WorldTime, MP_WorldWeather*, MP_Record*, MP_WorldCellReset,
+--      MP_WorldMapExplored, MP_Gui*) and M8 admin.lua
+--   M6 quests.lua (MP_JournalEntry/JournalSync, MP_GlobalVarUpdate, MP_MemberVarUpdate,
+--      MP_FactionUpdate, MP_CrimeUpdate, MP_DialogueLockResult)
+--   M5 combat.lua (MP_CombatHit/SpellHit/Cast/Projectile)
+-- INSIDE A FUNCTION ON PURPOSE. This main chunk sits at Lua's 200-local limit, and a top-level
+-- `for ... in` holds hidden locals of its own -- one more under Lua 5.4 (the browser engine)
+-- than 5.1 -- so one new top-level local made global.lua refuse to load in the browser while
+-- the 5.1 test runner passed (Jenkins #263: "too many local variables" at the last loop).
+;(function(mods) -- the ; keeps Lua from reading this as a call on the line above
+    for _, mod in ipairs(mods) do
+        for name, fn in pairs(mod.handlers) do eventHandlers[name] = fn end
+    end
+end)({ objects, actors, worldmp, admin, quests, combat })
 -- puppet.lua -> here: a hit landed on a puppet; forward it to the victim's owner.
 eventHandlers.mpCombatHit = combat.onPuppetHit
 
@@ -3994,9 +3985,11 @@ end)
 -- A SERVER EVENT WITH NO BODY IS AN EMPTY ONE. Every MP_ handler indexes its body, and one that
 -- throws takes its whole subsystem down silently (the engine logs it and carries on). Normalised
 -- once, here, after every handler is assigned -- run.lua calls each one with none.
-for name, fn in pairs(eventHandlers) do
-    if name:sub(1, 3) == 'MP_' then eventHandlers[name] = function(data) return fn(data or {}) end end
-end
+;(function() -- in a function for the same reason as the merge above (; as there)
+    for name, fn in pairs(eventHandlers) do
+        if name:sub(1, 3) == 'MP_' then eventHandlers[name] = function(data) return fn(data or {}) end end
+    end
+end)()
 
 return {
     engineHandlers = {
