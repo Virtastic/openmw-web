@@ -118,6 +118,12 @@ local function notice(text)
     if deps.noticeFn then deps.noticeFn(text) end
 end
 
+-- The server's cell key for a cell: "x,y" for an exterior, the lowercased name otherwise.
+local function cellKeyOf(cell)
+    if not cell then return deps.ownCellKeyFn and deps.ownCellKeyFn() or nil end
+    return cell.isExterior and (cell.gridX .. ',' .. cell.gridY) or string.lower(cell.name)
+end
+
 -- ================================================================== journal
 
 -- `stamp` (optional, from JournalSync's journalLog): {d=dayspassed, m=month, dm=day of
@@ -419,6 +425,9 @@ function quests.onActivate(object, actor)
     if not object.contentFile then return end -- runtime objects have no portable RefNum
     local script = world.mwscript.getLocalScript(object)
     if not script then return end
+    -- 1.7.1: the server's trace for a quest write this activation's OnActivate may make outside
+    -- a conversation (quests.ts guestWriteUnbacked). Sent before the script runs, so it lands first.
+    mp.sendEvent('ObjectActivated', { ref = object, cellKey = cellKeyOf(object.cell) })
     -- The NPC we are talking to is already watched for the whole conversation (armWatch on
     -- the grant); the re-run activation must not shorten that to the 6 s window.
     if lockHeld and lockHeld.id == object.id and memberWatch[object.id] then return end
@@ -455,7 +464,7 @@ local function armHeldWatches(now)
     if now < heldScanAt or not (mp.isSystem and mp.isSystem()) or not deps.heldCellsFn then return end
     heldScanAt = now + SCRIPTED_SCAN_INTERVAL
     for _, cell in ipairs(deps.heldCellsFn()) do
-        local cellKey = cell.isExterior and (cell.gridX .. ',' .. cell.gridY) or string.lower(cell.name)
+        local cellKey = cellKeyOf(cell)
         local okc, list = pcall(function() return cell:getAll() end)
         for _, obj in ipairs(okc and list or {}) do
             if not memberWatch[obj.id] and npcAddr(obj) then

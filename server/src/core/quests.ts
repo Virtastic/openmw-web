@@ -97,6 +97,7 @@ export const QUEST_EVENTS = new Set([
   'DialogueLock',
   'TopicsLearned',
   'GlobalScriptsUpdate',
+  'ObjectActivated',
 ]);
 // A campaign's running global scripts: vanilla plus the expansions start well under a hundred.
 const MAX_SCRIPTS = 256;
@@ -168,6 +169,16 @@ export class Quests {
   // Otherwise the write is relayed live (the other clients' scripts stay in step for the
   // session) but not persisted, and counted. The host's own writes are unchanged.
   private static readonly GUEST_WRITE_GRACE_MS = 10_000;
+  // ...OR OUT OF A TRIGGER THE SERVER SAW (1.7.1). Quests also advance outside dialogue: an
+  // item's OnPCAdd, a lever's OnActivate, an area trigger on entering a cell. Those writes were
+  // relayed and never saved, so the step was soft-locked after the host relogged. Each has a
+  // server-validated trace stamped on player.questTriggerAt -- a pickup or container take the
+  // server granted, a door, a reach-checked ObjectActivated, an accepted cell change -- and a
+  // write within a few seconds of the guest's OWN trace persists. The anti-forgery shape is
+  // unchanged: a bare write with nothing behind it is still relayed, not saved, and counted.
+  // ponytail: an area trigger keyed on distance inside one cell (GetDistance player) has no
+  // server trace; if that soft-locks a real quest, stamp on the peer's proximity report.
+  private static readonly GUEST_TRIGGER_GRACE_MS = 5_000;
   holdsDialogue(playerId: number): boolean {
     for (const held of this.dialogueLocks.values()) if (held.playerId === playerId) return true;
     return false;
@@ -178,6 +189,7 @@ export class Quests {
     if (owner === undefined || owner === player.charId) return false;
     const nowMs = Date.now();
     if (player.lastDialogueAt !== undefined && nowMs - player.lastDialogueAt <= Quests.GUEST_WRITE_GRACE_MS) return false;
+    if (player.questTriggerAt !== undefined && nowMs - player.questTriggerAt <= Quests.GUEST_TRIGGER_GRACE_MS) return false;
     if (this.holdsDialogue(player.id)) return false;
     log('warn', 'quest.guest_write_unbacked', { from: player.name, name });
     this.ctx.noteAnomaly?.(player.accountKey, 'guest_quest_write');
@@ -216,8 +228,22 @@ export class Quests {
       case 'TopicsLearned': this.topics(player, body); break;
       case 'DialogueLock': this.dialogueLock(player, body); break;
       case 'GlobalScriptsUpdate': this.scripts(player, body); break;
+      case 'ObjectActivated': this.activated(player, body); break;
     }
     return true;
+  }
+
+  // A client activated an object that runs a local MWScript (quests.lua onActivate). Nothing
+  // is relayed or stored: it is the trace a guest's OnActivate quest write is judged against
+  // (guestWriteUnbacked), so it is reach-gated like every object edit -- you activate what you
+  // can see.
+  private activated(player: Player, body: LTable): void {
+    const ref = parseObjRef(body);
+    const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+    if (!ref || !cellKey) { this.drop(player, 'ObjectActivated', 'invalid shape'); return; }
+    if (player.system === true) return;
+    if (!cellsVisible(player.cellKey, cellKey)) { this.drop(player, 'ObjectActivated', 'activation from afar'); return; }
+    player.questTriggerAt = Date.now();
   }
 
   // ---------------------------------------------------------------- global scripts

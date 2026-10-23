@@ -150,6 +150,10 @@ export interface Player {
   lastCastAt?: number;
   lastDoorAt?: number;
   lastDialogueAt?: number;
+  // When this player last did something a quest script legitimately reacts to OUTSIDE a
+  // conversation: a server-validated pickup (OnPCAdd), a container take, a door, a scripted
+  // activation (ObjectActivated) or a cell entry (area triggers). quests.ts guestWriteUnbacked.
+  questTriggerAt?: number;
   // Where this player's last cell change / teleport claimed they landed. While set, the
   // peer's avatar poses are ignored for them: the avatar teleports on the RELAY of the cell
   // change, so its stream still says the old place for a while -- and one stale sample is a

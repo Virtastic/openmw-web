@@ -1423,6 +1423,9 @@ export class Connection implements Peer {
       }
     }
     if (oldCell !== undefined && oldCell !== cellKey) player.prevCellKey = oldCell;
+    // An accepted cell entry is what area-trigger scripts react to (quests.ts guestWriteUnbacked).
+    // The first placement after a join is not an entry anyone walked into.
+    if (oldCell !== undefined && oldCell !== cellKey && !this.isSystem) player.questTriggerAt = Date.now();
 
     // TELEPORT-HOPPING, bounded without any game data.
     //
