@@ -416,10 +416,17 @@ export class Connection implements Peer {
   private sendLossy(frame: Buffer): void {
     const go = () => {
       if (this.ws.readyState !== this.ws.OPEN) return;
-      this.inflight++;
+      // In flight only if it did NOT go straight to the kernel: on a draining socket the write
+      // completes inside send(), nothing waits, and back-to-back frames all go out (a burst
+      // of peer frames is still every frame). The callback always runs later (next tick).
+      let waiting = false;
       this.ws.send(frame, { compress: false }, () => {
-        if (--this.inflight === 0) this.flushHeld();
+        if (waiting && --this.inflight === 0) this.flushHeld();
       });
+      if (this.ws.bufferedAmount > 0) {
+        waiting = true;
+        this.inflight++;
+      }
     };
     // Frames waiting in the harness delay FIFO are on the emulated wire, not in our buffer:
     // they do not count as in flight until the socket has them.
