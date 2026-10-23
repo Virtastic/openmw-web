@@ -692,3 +692,42 @@ test("#106: a stuttering harness client still gets the peer's bars; a real one d
     }
   }
 });
+
+// A FALL THE OWNER'S ENGINE MEASURED (WoW model). The avatar is placed on the owner's poses and
+// never falls by itself, so a long fall cost nothing: the peer's next report restored the
+// owner's bar. The owner's claim carries hp.fall and the server takes it off the avatar -- a
+// LOSS only (a modified client can hurt nobody but itself), and only under clientAuthority.
+for (const clientAuthority of [true, false]) {
+  test(`hp.fall ${clientAuthority ? 'is taken off the avatar under the WoW model' : 'is ignored under the replay model (the avatar falls itself)'}`, async (t) => {
+    const server = await startServer({
+      requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+      configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16, clientAuthority } },
+    });
+    t.after(() => server.close());
+    const peer = await TestClient.simPeer(server.port, PEER_PASS);
+    t.after(() => peer.close());
+    const a = await TestClient.connect(server.port);
+    t.after(() => a.close());
+    a.playerId = (await a.joinAsNew('Faller'))['playerId'] as number;
+    await a.waitEvent('PlayerList');
+    a.sendCellChange('0,0', 0, 0, 0);
+    let seq = 0;
+    const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+    t.after(() => clearInterval(timer));
+    const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(90) }] }), 150);
+    t.after(() => clearInterval(reporter));
+    await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 90);
+    peer.inbox.events.length = 0;
+    a.sendEvent('PlayerStatsDynamic', { hp: { c: 90, b: 100, fall: 35 } });
+    await new Promise((r) => setTimeout(r, 400));
+    const restore = peer.inbox.events.find((e) => e.name === 'AvatarRestore' && (e.value as { id?: number }).id === a.playerId);
+    if (clientAuthority) {
+      assert.ok(restore, 'the fall never reached the avatar');
+      const hp = (restore!.value as { hp?: { c?: number; g?: number } }).hp;
+      assert.equal(hp?.c, 55, 'the avatar must lose what the fall cost');
+      assert.equal(hp?.g, -35, 'as a change, so a report in flight does not undo it');
+    } else {
+      assert.equal(restore, undefined, 'under the replay model the avatar falls itself: no second charge');
+    }
+  });
+}

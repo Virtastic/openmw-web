@@ -4126,5 +4126,50 @@ do
   check('mpAvatarInput feeds strike.input', av:find('strike.input(bit(data.flags, 3), core.getRealTime())', 1, true) ~= nil)
 end
 
+-- ====================================== a fall this engine measured reaches the claim
+print('identity.lua -- the landing\'s health drop is claimed as hp.fall (prod 2026-10-23)')
+do
+  local id = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
+  local a = id:find('local fall = { air = false', 1, true)
+  local b = a and select(2, id:find('\nfunction identity.fallWatch()', a, true))
+  b = b and select(2, id:find('\nend\n', b, true))
+  local function mk()
+    local st = { ground = true, hp = 100 }
+    local env = setmetatable({
+      identity = {}, self = {},
+      Actor = { isOnGround = function() return st.ground end,
+        stats = { dynamic = { health = function() return { current = st.hp } end } } },
+    }, { __index = _G })
+    local chunk = a and b and loadstring(id:sub(a, b) .. '\nreturn identity')
+    if not chunk then return nil end
+    setfenv(chunk, env)
+    return chunk(), st
+  end
+  local I, st = mk()
+  check('fallWatch is where this test expects it', I ~= nil)
+  if I then
+    local f = I._fall
+    local function frame(ground, hp, reported) st.ground, st.hp = ground, hp; if reported then f.reported = true end; I.fallWatch() end
+    frame(true, 100); frame(false, 100); frame(false, 100)
+    frame(true, 70)  -- the landing frame, damage on it
+    frame(true, 70); frame(true, 70)
+    check('a 30-point landing is owed', math.abs(f.owed - 30) < 1e-6, tostring(f.owed))
+    f.owed = 0
+    frame(false, 70); frame(true, 70); frame(true, 52); frame(true, 52) -- damage a frame late
+    check('damage landing a frame after touchdown is caught too', math.abs(f.owed - 18) < 1e-6, tostring(f.owed))
+    f.owed = 0
+    frame(false, 52); frame(true, 40); frame(true, 100, true); frame(true, 100)
+    check('a peer report overwriting the bar mid-window does not erase the drop already seen', math.abs(f.owed - 12) < 1e-6, tostring(f.owed))
+    f.owed = 0
+    frame(false, 100); frame(true, 100); frame(true, 100); frame(true, 100)
+    check('a soft landing owes nothing', f.owed == 0)
+    frame(true, 60); frame(true, 60); frame(true, 60)
+    check('damage while standing is not a fall', f.owed == 0)
+  end
+  check('identity.tick watches falls every frame', id:find('    identity.fallWatch()\n    trackLocalChange()', 1, true) ~= nil)
+  check('the claim carries it as hp.fall', id:find('claim.hp.fall = math.floor(fall.owed * 10 + 0.5) / 10', 1, true) ~= nil)
+  check('a peer report marks the bar overwritten', id:find('fall.reported = true', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

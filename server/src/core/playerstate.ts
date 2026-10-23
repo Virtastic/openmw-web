@@ -74,6 +74,9 @@ export interface StateCtx {
   // #393: limits.harness -- the scenarios declare +100 skills and level steps of 4. The rate
   // windows are skipped; the caps (100, 255, the jump limit) stand.
   harness?: boolean;
+  // [limits] clientAuthority (the WoW model): the avatar is placed on the owner's poses and never
+  // falls itself, so the owner's engine reports its fall damage (hp.fall) and it is taken here.
+  clientAuthority?: boolean;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -295,6 +298,14 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
       return (Math.abs(want - have.c) > 0.5 || b !== have.b) ? { c: want, b } : undefined;
     };
     const r = { hp: hp && raise('hp', hp), mp: mp && spend(mp), ft: ft && raise('ft', ft) };
+    // A FALL THE OWNER'S ENGINE MEASURED (identity.lua fallWatch). Under the WoW model the avatar
+    // never falls by itself, so without this a long fall cost nothing. A LOSS only, capped at
+    // the bar: the one thing a modified client can do with it is hurt itself.
+    const fallLoss = ctx.clientAuthority ? finite(tbl(body.get('hp'))?.get('fall')) : undefined;
+    if (fallLoss !== undefined && fallLoss > 0 && cur?.hp && !(player.avatarDead === true && cur.hp.c <= 0)) {
+      const base = r.hp ?? { c: cur.hp.c, b: cur.hp.b };
+      r.hp = { c: Math.max(0, base.c - Math.min(fallLoss, base.b)), b: base.b };
+    }
     if (!r.hp && !r.mp && !r.ft) return true; // nothing restored: consumed, not applied
     // Budget the HEALTH restoration (the one that decides whether you die) and the MAGICKA
     // one (the one that decides whether casting costs anything): a spend is accepted like a

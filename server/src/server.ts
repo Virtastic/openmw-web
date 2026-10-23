@@ -582,6 +582,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     roster,
     store: playerStore,
     harness: config.limits.harness,
+    clientAuthority: config.limits.clientAuthority, // the WoW model: the owner's fall damage (hp.fall) is taken
     recordOf: (id) => recordStore.get(id), // #359: active-effect adds budgeted by real magnitude
     // Chargen named the character: put that name on the slot, replacing the placeholder the
     // slot was auto-created with. Only ever an upgrade — a slot the player already named is
