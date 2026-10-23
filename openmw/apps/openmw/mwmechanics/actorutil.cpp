@@ -12,6 +12,8 @@
 
 #include <components/settings/values.hpp>
 
+#include "../mwmechanics/aipackage.hpp"
+#include "../mwmechanics/aisequence.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/magiceffects.hpp"
@@ -73,6 +75,21 @@ namespace MWMechanics
         if (actor == getPlayer())
             return true;
         return MWMP::isAvatar(actor.getCellRef().getRefNum());
+    }
+
+    MWWorld::Ptr getPlayerLeader(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty() || !actor.getClass().isActor())
+            return MWWorld::Ptr();
+        for (const auto& package : actor.getClass().getCreatureStats(actor).getAiSequence())
+        {
+            if (!package->sideWithTarget())
+                continue;
+            const MWWorld::Ptr target = package->getTarget();
+            if (isPlayerOrAvatar(target))
+                return target;
+        }
+        return MWWorld::Ptr();
     }
 
     bool inSimProcessingRange(const MWWorld::Ptr& actor)

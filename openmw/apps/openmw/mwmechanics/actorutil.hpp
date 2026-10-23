@@ -43,6 +43,11 @@ namespace MWMechanics
      *  blow. This is the predicate those gates want. */
     bool isPlayerOrAvatar(const MWWorld::Ptr& actor);
 
+    /** The player or avatar this actor sides with (follows, escorts): the target of the first
+     *  side-with package in its AiSequence that passes isPlayerOrAvatar. Empty when none. A
+     *  companion's crime is its leader's, and on the peer the leader is an avatar. */
+    MWWorld::Ptr getPlayerLeader(const MWWorld::Ptr& actor);
+
     /** MP (Phase 2): the werewolf stat swap, actor-generic. These used to live on
      *  MWWorld::Player (saveStats/setWerewolfStats/restoreStats), so only the singleton
      *  player could ever transform correctly; the snapshot now lives in the actor's own

@@ -4447,6 +4447,16 @@ do
     ac:find('getCombatTarget(combatTarget) && isPlayerOrAvatar(combatTarget)', 1, true) ~= nil
     and ac:find('getFightTerm(actor2, creatureFoe) >= 100', 1, true) ~= nil
     and not ac:find('getFightTerm(actor2, player) >= 100', 1, true))
+
+  -- 6. a magic kill is murder
+  local au = src(ENG .. 'mwmechanics/actorutil.cpp')
+  check('getPlayerLeader reads the first side-with package aimed at a player or avatar',
+    au:find('MWWorld::Ptr getPlayerLeader(const MWWorld::Ptr& actor)', 1, true) ~= nil
+    and au:find('if (!package->sideWithTarget())', 1, true) ~= nil and au:find('if (isPlayerOrAvatar(target))', 1, true) ~= nil)
+  check('an avatar\'s (or its companion\'s) killing spell reaches actorKilled as the caster',
+    ac:find('const bool casterIsPlayer = isPlayerOrAvatar(caster);', 1, true) ~= nil
+    and ac:find('creature, casterIsPlayer || !casterFollowsPlayer ? caster : player);', 1, true) ~= nil
+    and not ac:find('if (caster == player || playerFollowers.find(caster) != playerFollowers.end())', 1, true))
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

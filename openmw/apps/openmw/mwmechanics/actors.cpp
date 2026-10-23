@@ -859,9 +859,16 @@ namespace MWMechanics
                     {
                         if (caster.getClass().isNpc() && caster.getClass().getNpcStats(caster).isWerewolf())
                             caster.getClass().getNpcStats(caster).addWerewolfKill();
-                        if (caster == player || playerFollowers.find(caster) != playerFollowers.end())
+                        // MP: an avatar's spell is a player's spell (the crime lands on its
+                        // owner), and so is one cast by an avatar's companion -- actorKilled
+                        // finds that companion's leader. The local player's followers as before.
+                        const bool casterIsPlayer = isPlayerOrAvatar(caster);
+                        const bool casterFollowsPlayer
+                            = playerFollowers.find(caster) != playerFollowers.end();
+                        if (casterIsPlayer || casterFollowsPlayer || !getPlayerLeader(caster).isEmpty())
                         {
-                            MWBase::Environment::get().getMechanicsManager()->actorKilled(creature, player);
+                            MWBase::Environment::get().getMechanicsManager()->actorKilled(
+                                creature, casterIsPlayer || !casterFollowsPlayer ? caster : player);
                             actorKilled = true;
                             break;
                         }
