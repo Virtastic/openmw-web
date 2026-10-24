@@ -242,8 +242,15 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   const movies = new RegExp(html.match(/var BOOT_MOVIES = \/(.*)\/i;/)[1], 'i');
   assert.deepEqual(['Video/bethesda logo.bik', 'video/MW_Logo.bik', 'Video/mw_intro.bik', 'Video/mw_credits.bik', 'Video/mw_menu.bik']
     .map((p) => movies.test('/mwdata/' + p)), [true, true, true, false, false]);
-  const pfSplash = html.match(/StreamFS\.prefetchPaths\(StreamFS\.mounted\(\/(.*)\/i\)\.map\(function\(p\)\{ return p\.slice\(8\); \}\), false\)/);
-  assert.ok(pfSplash && new RegExp(pfSplash[1], 'i').test('/mwdata/Splash/Splash_Netch.tga') && '/mwdata/'.length === 8, 'splash screens prefetched by VFS path');
+  const pfBg = html.match(/StreamFS\.prefetchPaths\(StreamFS\.mounted\(\/(.*?)\/i\)\.concat\(StreamFS\.mounted\(\/(.*?)\/i\)\)\.map\(function\(p\)\{ return p\.slice\(8\); \}\), false\)/);
+  assert.ok(pfBg && new RegExp(pfBg[1], 'i').test('/mwdata/Music/Explore/mx_explore_2.mp3') && '/mwdata/'.length === 8, 'explore music prefetched by VFS path, first');
+  assert.ok(pfBg && new RegExp(pfBg[2], 'i').test('/mwdata/Splash/Splash_Netch.tga'), 'splash screens prefetched by VFS path');
+  // The arrival soundscape rides the boot preload (prod 2026-10-24: wind, dock, silt strider stalls).
+  const arrive = html.match(/StreamFS\.mounted\(\/(\^\\\/mwdata\\\/sound\\\/\(fx\\\/regn.*?)\/i\)\.forEach/);
+  assert.ok(arrive, 'the arrival sounds are in the boot preload');
+  const arriveRe = new RegExp(arrive[1], 'i');
+  assert.deepEqual(['Sound/Fx/REGN/wndTREE.wav', 'Sound/Fx/envrn/dockCREAK.wav', 'Sound/Cr/silt/silt01.wav', 'Sound/Fx/bodyfallMED.wav', 'Sound/Vo/Misc/x.mp3', 'Sound/Fx/envrn/boat_waves.wav']
+    .map((p) => arriveRe.test('/mwdata/' + p)), [true, true, true, true, false, false]);
   const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/(mwdata|mods)\/|\?v=2$/g, ''));
   // Archives first: the next town comes out of them (prod 2026-10-20: Fx-first left Morrowind.bsa
   // cold at the Seyda Neen dock, a 26.5 s freeze). Then Fx smallest first, creatures, music.

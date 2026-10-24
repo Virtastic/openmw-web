@@ -2,6 +2,16 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.2
+
+**Arriving somewhere no longer stutters on its sounds.** The wind, the dock creaking, a silt
+strider's call and a body falling were each read cold the first time they played, a short
+freeze on the Seyda Neen dock. They now come down with the game's start (about 4.5 MB). The
+explore music is fetched in the background ahead of the loading screens.
+
+The health report now says which files inside the game archives a stall waited on, so the next
+round of prefetching can name them.
+
 ## 1.7.1
 
 Quests, dialogue and scripts in multiplayer, from a scan of everything that still behaved

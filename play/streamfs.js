@@ -716,6 +716,24 @@
   }
 
   window.StreamFS = {
+    // WHAT INSIDE AN ARCHIVE a slow read was for: the entries of BSA `name` (its file name, as the
+    // slow-read line gives it) overlapping the chunk at `off`, at most `max`. Morrowind.bsa reads
+    // that no prefetch named (prod 2026-10-24: 9 of 26) cannot be fixed without knowing the file.
+    entriesAt(name, off, max) {
+      const want = String(name).toLowerCase(), out = [];
+      for (const p of S.urlSrcs.keys()) {
+        if (!/\.bsa$/i.test(p) || p.split('/').pop().toLowerCase() !== want) continue;
+        const d = bsaDir(p);
+        if (!d) return out;
+        const end = off + CHUNK;
+        for (const [file, e] of d) {
+          if (e[0] < end && e[0] + e[1] > off) { out.push(file); if (out.length >= (max || 3)) break; }
+        }
+        return out;
+      }
+      return out;
+    },
+
     // Live streaming cost: misses each blocked the main thread for a worker round-trip.
     // High misses + high evictions = the working set exceeds LRU_MAX and is thrashing.
     stats() { return Object.assign({ cached: S.cache.size, lruMax: LRU_MAX }, ST); },

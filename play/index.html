@@ -1642,7 +1642,10 @@ try {
      if (++n > 30) return;
      var c = ((window.omw && window.omw.state) || {}).cell || '';
      // pf=1: the cell prefetch had already named this chunk (streamfs pfSeen).
-     append('[sfs] slow read ' + file + '@' + Math.round(off / 1048576) + 'MB ' + ms + ' ms cell=' + c + ' pf=' + (named ? 1 : 0));
+     // in=: for an archive, the files inside that chunk -- what the prefetch should have named.
+     var inside = '';
+     try { if (/\.bsa$/i.test(file) && window.StreamFS.entriesAt) inside = window.StreamFS.entriesAt(file, off, 3).join(','); } catch (e) {}
+     append('[sfs] slow read ' + file + '@' + Math.round(off / 1048576) + 'MB ' + ms + ' ms cell=' + c + ' pf=' + (named ? 1 : 0) + (inside ? ' in=' + inside : ''));
    };
  })();
  window.__omwMark = function(name){
@@ -4159,6 +4162,10 @@ try {
                  // The footsteps too, on every boot: the first step of each kind was a stall
                  // (prod 2026-10-22: walkr_lt.wav, walkl_hv.wav). 54 files, 1 MB.
                  StreamFS.mounted(/^\/mwdata\/sound\/fx\/foot\//i).forEach(function(p){ pre.push({ path: p }); });
+                 // ...and the soundscape of arriving anywhere: region wind, the dock, a silt strider, a
+                 // body falling. Each was a first-play stall on the Seyda Neen dock (prod 2026-10-24:
+                 // wndTREE, wndCALM2, dockCREAK, silt01/02, bodyfallMED). About 4.5 MB.
+                 StreamFS.mounted(/^\/mwdata\/sound\/(fx\/regn\/|fx\/envrn\/dockcreak|cr\/silt\/|fx\/bodyfall)/i).forEach(function(p){ pre.push({ path: p }); });
                  // A NEW CHARACTER'S FIRST AREA, too: the archive chunks the prison ship and its
                  // opening read inside the same blocking start (recorded by s183's StreamFS.bootSet,
                  // Jenkins #245: 79 chunks; the random splash screens and explore music left out).
@@ -4194,7 +4201,8 @@ try {
                    // random and read it cold (prod 2026-10-23: splash .tga in the slow reads). Retail has
                    // 11 of 3 MB each, 33 MB: too much to hold the boot for, so the prefetch fetches them
                    // into the store behind the game's own reads.
-                   try { StreamFS.prefetchPaths(StreamFS.mounted(/^\/mwdata\/splash\//i).map(function(p){ return p.slice(8); }), false); } catch (e) {}
+                   // The explore music first (18 MB): a track starts on arrival and read cold (mx_explore_2).
+                   try { StreamFS.prefetchPaths(StreamFS.mounted(/^\/mwdata\/music\/explore\//i).concat(StreamFS.mounted(/^\/mwdata\/splash\//i)).map(function(p){ return p.slice(8); }), false); } catch (e) {}
                    release();
                  }, release);
                } catch (e) { release(); }

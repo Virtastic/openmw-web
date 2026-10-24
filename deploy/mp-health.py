@@ -37,6 +37,7 @@ ev = Counter(); warn = Counter(); sso_fail = Counter(); drops = Counter(); reape
 client_err = Counter(); peer_err = Counter(); accounts = set(); joined = set()
 path95, path_max, snaps, first_unheld, hold_capped = [], [], 0, 0, 0
 slow_reads = Counter()
+slow_inside = Counter()  # archive reads: the files inside the chunk (index.html in=)
 no_pose = Counter()  # windows with a drawn NPC that has no pose stream of its own (npcNoPose), by record
 facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
 hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
@@ -109,6 +110,8 @@ for e in lines():
         elif t.startswith('[sfs] slow read '):
             # The streamed files a player waited on, by name (index.html, 2026-10-21): what to warm next.
             slow_reads[t.split()[3].split('@')[0]] += 1
+            for name in (f(t, 'in') or '').split(','):
+                if name: slow_inside[name] += 1
         elif re.match(r'\[(mw|assets|data|boot)\] |\[[\d:.]+ I\] ', t):
             data_setup[s] = data_setup.get(s, 0) + 1  # info, not an error (#139 ships the boot's data setup)
         elif not t.startswith('[locker]'):
@@ -140,6 +143,7 @@ print(f'Lua errors (peer + clients): {lua_errors}')
 print(f"sim peer start failures: {ev['simpeer.start_timeout']}   peer errors:\n{top(peer_err, 8)}")
 print(f"refused player actions (a thing a player did that did nothing):\n{top(drops)}")
 print(f"streamed files the game waited on (>300 ms), by file:\n{top(slow_reads)}")
+print(f"...inside the archives (what the prefetch should name):\n{top(slow_inside)}")
 # Ranked by how many SESSIONS hit it: one tab left open logged 2,986 copies of one error.
 print('browser errors, by sessions that hit them [lines]:')
 print('\n'.join(f'  {len(v):4d} sessions [{client_err[k]:5d}]  {k}'
