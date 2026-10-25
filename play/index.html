@@ -1863,7 +1863,13 @@ try {
              // the flicker this is meant to remove. While this flag is set the boot screen is
              // not dismissed on first frame; holdUntilSimulated clears it when the world has
              // actually settled (or when it gives up).
-             window.__omwMPSettling = true;
+             // NOT FOR A NEW CHARACTER. Chargen cells are unheld by design, so there is no sim to
+             // wait for, and the screen held for one came back over the playing game: the intro
+             // stepped it aside, videoEnd brought it back "for the join", then "Settling the world"
+             // covered Jiub mid-sentence for 4 s (prod 2026-10-25: videoEnd=5380 released=9759,
+             // settling=1 chargen=1 on the prison ship, holder=none). A fresh slot releases on its
+             // first frame like single player; F5 mid-chargen keeps mpnew, so it does too.
+             window.__omwMPSettling = !window.__omwNewGame;
              // DEAD MAN'S SWITCH. Suppressing the engine's own "boot finished" dismissal means
              // something else must always take responsibility for clearing the screen — and
              // when the thing that was supposed to (the settle hold) turned out to be gated on

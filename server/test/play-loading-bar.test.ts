@@ -89,3 +89,23 @@ test('the loading screen steps aside while the intro movie plays', opts, () => {
   tick();
   assert.equal(els.loading.style.display, '', 'back for the join');
 });
+
+// A NEW CHARACTER IS NOT HELD. The settle hold kept the boot screen past the first frame, so the
+// intro's end brought it back and "Settling the world" covered the chargen ship (prod 2026-10-25).
+// A fresh slot (#mpnew=1 -> __omwNewGame) never raises the hold; once the first frame releases the
+// screen, the movie ending does not bring it back.
+test('a new character in chargen never gets the loading screen back over the game', opts, () => {
+  const line = /window\.__omwMPSettling = ([^;]+);/.exec(html)?.[1] ?? 'true';
+  const settling = (newGame: boolean) => new Function('window', `return ${line};`)({ __omwNewGame: newGame });
+  assert.equal(settling(true), false, 'a fresh slot has no settle hold');
+  assert.equal(settling(false), true, 'a returning character keeps it');
+  const { ld, els, window, tick } = boot();
+  ld.set(null, 'Loading Morrowind', '');
+  ld.done(); // the engine's first frame, unsuppressed
+  window.Module = { __omwVideo: 1 };
+  tick();
+  (window.Module as { __omwVideo: number }).__omwVideo = 0;
+  window.omw = { state: { state: 'Joined' } };
+  tick();
+  assert.ok(els.loading.cls.has('hide'), 'stays released after the movie and the join');
+});
