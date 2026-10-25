@@ -218,10 +218,25 @@
         for (let i = 0; i < pkey.length; i++) { h ^= pkey.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
         return pkey.replace(/[^A-Za-z0-9_.-]+/g, '_').slice(-80) + '.' + h.toString(16); // no backslash: this is a template literal
       };
+      // A BOUNDED SET OF OPEN FILES (prod 1.7.3, Chrome on Linux: a new character's whole window
+      // went grey ~400 warmed chunks after the release). Every file touched kept two sync handles
+      // -- two file descriptors -- for the life of the page, and the warm-up, the preload and the
+      // cell prefetch touch thousands of one-chunk loose sounds. On Linux that ran the process
+      // into its descriptor limit (1024 by default) and Chrome lost the GPU channel with it;
+      // Windows has no such limit. The least recently used file is closed past OPFS_OPEN and
+      // opened again when it is next read. Its close is queued behind the open, and every user
+      // of a handle reads or writes synchronously right after its await, so a caller already
+      // holding it finishes before the close runs.
+      const OPFS_OPEN = 64;
       function opfsFile(pkey) {
         if (opfsOff || !pkey) return Promise.resolve(null);
         let f = opfsFiles.get(pkey);
-        if (f) return f;
+        if (f) { opfsFiles.delete(pkey); opfsFiles.set(pkey, f); return f; }
+        if (opfsFiles.size >= OPFS_OPEN) {
+          const [oldKey, old] = opfsFiles.entries().next().value;
+          opfsFiles.delete(oldKey);
+          old.then((o) => { if (o) { try { o.h.close(); o.m.close(); } catch (err) { /* already gone */ } } });
+        }
         f = (async () => {
           if (!opfsRoot) opfsRoot = await (await navigator.storage.getDirectory()).getDirectoryHandle('sfs-chunks-v1', { create: true });
           const name = opfsName(pkey);

@@ -429,6 +429,30 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(cache3.size, 0, 'and removed from the Cache API');
   assert.deepEqual([...await mk(fsNav, cacheOf(new Map()), async () => ok(2)).opfsGet('Bloodmoon.esm@2', 0, 2, 2)], [7, 8], 'it is in the file now');
+
+  // OPEN HANDLES ARE BOUNDED (prod 1.7.3, Chrome on Linux: the window went grey ~400 warmed
+  // chunks in -- every file touched kept two handles, two descriptors, until the page closed).
+  // Warm a thousand one-chunk loose files; the open count stays small, and a file that was closed
+  // reads back when it is opened again.
+  let open = 0, peak = 0;
+  const counted = { storage: { getDirectory: async () => ({ getDirectoryHandle: async () => ({
+    getFileHandle: async (n) => ({ createSyncAccessHandle: async () => {
+      peak = Math.max(peak, ++open);
+      const h = handle(n); let shut = false;
+      return { ...h, read: (b, o) => { assert.ok(!shut, 'read after close'); return h.read(b, o); },
+        write: (b, o) => { assert.ok(!shut, 'write after close'); return h.write(b, o); },
+        close() { if (!shut) { shut = true; open--; } } };
+    } }),
+  }) }) } };
+  const lm = [];
+  const loose = Array.from({ length: 1000 }, (_, i) => ({ url: 'u' + i, pkey: 'Sound/fx/' + i + '.wav@1', size: 2 }));
+  const wl = new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response', 'navigator',
+    body.replace(/await nap\(30\)/g, 'null') + '; return { warm, opfsGet };')(async () => ok(2), AbortController, setTimeout, clearTimeout, cacheOf(new Map()), (m) => lm.push(m), Response, counted);
+  await wl.warm(loose, 2);
+  assert.equal(lm.filter((m) => m.warmed === 1).length, 1000, 'every loose file was warmed');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(peak <= 2 * 64 + 2, 'open handles stay bounded, peak ' + peak);
+  assert.deepEqual([...await wl.opfsGet(loose[0].pkey, 0, 2, 2)], [0, 0], 'a closed file reads back after reopening');
 }
 
 // THE NEXT CELL'S FILES (prod 2026-10-19..21: entering an exterior waited on ~40 chunk downloads,
