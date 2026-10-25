@@ -2,6 +2,18 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.4
+
+**A new character's intro is no longer covered by the loading screen.** After the intro movie,
+"Settling the world" came back over the prison ship for a few seconds while Jiub was already
+talking. Character creation has nothing to wait for, so a new character now starts on its first
+frame, as in single player. Returning characters keep the loading screen until their world is ready.
+
+**Chrome on Linux no longer goes grey when a new character starts.** The download cache kept every
+file it had touched open for the life of the page. Linux limits a process to 1024 open files by
+default, and Chrome ran out a few hundred files in. The cache now keeps at most 64 open and reopens
+the rest when they are next read.
+
 ## 1.7.3
 
 **Slow connections get into the world.** On a slow link the background downloads (the
