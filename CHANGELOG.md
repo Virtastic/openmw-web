@@ -2,6 +2,21 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.3
+
+**Slow connections get into the world.** On a slow link the background downloads (the
+archive warm-up and the cell prefetch) competed with the files the game was waiting on, and
+three players sat on the loading screen until the 5-minute cap let them in. A background
+download now steps aside when the game is waiting on a read. The cap also counts from the
+game's first frame instead of from page load, so a slow page load no longer uses it up.
+
+**Beast-race NPCs keep their tails.** An NPC of a beast race whose record named the human
+skeleton was drawn on that skeleton, and you got "Can't find attachment node Tail" and toe
+bone errors. The engine now uses the beast skeleton for them, as it already did for players.
+
+The HUD and sky textures are fetched ahead of the first loading screen. The health report no
+longer counts loading-screen and character-creation windows as hitches or missing poses.
+
 ## 1.7.2
 
 **Arriving somewhere no longer stutters on its sounds.** The wind, the dock creaking, a silt

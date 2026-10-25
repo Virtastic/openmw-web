@@ -1876,12 +1876,21 @@ try {
              // ponytail: a constant; the page reads no /status or welcome that could carry
              // the server's simPeer.startTimeoutMs. Add a mirror there if operators tune it.
              window.__omwSettleCeilingMs = 300000;
-             setTimeout(function(){
-               if (!window.__omwMPSettling) return;
-               window.__omwMPSettling = false;
-               try { window.__omwLoading.hide(); } catch (e) {}
-               try { if (window.__omwLog) window.__omwLog('[mp] settle hold released by timeout', 'err'); } catch (e) {}
-             }, window.__omwSettleCeilingMs + 10000);
+             // Counted from the engine's FIRST FRAME, not page start: the hold begins there. From
+             // page start, a slow link spent the whole ceiling downloading the engine and the
+             // archives (prod 2026-10-24: firstFrame at 265-278 s) and the switch let the player
+             // into an unsettled world ~30 s after the game first drew. Before the first frame
+             // there is no game to release into: the engine's own read timeouts own that part.
+             (function settleCeiling(){
+               setTimeout(function(){
+                 if (!window.__omwMPSettling) return;
+                 var ff = window.__omwBoot && window.__omwBoot.firstFrame;
+                 if (ff === undefined || performance.now() - ff < window.__omwSettleCeilingMs + 10000) return settleCeiling();
+                 window.__omwMPSettling = false;
+                 try { window.__omwLoading.hide(); } catch (e) {}
+                 try { if (window.__omwLog) window.__omwLog('[mp] settle hold released by timeout', 'err'); } catch (e) {}
+               }, 5000);
+             })();
              ENV.OPENMW_MP_URL = mpUrl;
              // NOTE ON URL FLAGS — deliberately NOT blocked here, and the reasoning matters.
              //
@@ -4202,6 +4211,9 @@ try {
                    // 11 of 3 MB each, 33 MB: too much to hold the boot for, so the prefetch fetches them
                    // into the store behind the game's own reads.
                    // The explore music first (18 MB): a track starts on arrival and read cold (mx_explore_2).
+                   // The HUD and sky textures ahead of both: every session reads them, few chunks (prod
+                   // 2026-10-24: scroll, sun and stormy-sky .dds among the slow reads no prefetch named).
+                   try { StreamFS.prefetchPaths(['scroll', 'compass', 'door_icon', 'tx_cursor', 'target', 'tx_sun_05', 'tx_sun_flash_grey_05', 'tx_sky_stormy', 'tx_stars'].map(function(n){ return 'textures/' + n + '.dds'; }), false); } catch (e) {}
                    try { StreamFS.prefetchPaths(StreamFS.mounted(/^\/mwdata\/music\/explore\//i).concat(StreamFS.mounted(/^\/mwdata\/splash\//i)).map(function(p){ return p.slice(8); }), false); } catch (e) {}
                    release();
                  }, release);

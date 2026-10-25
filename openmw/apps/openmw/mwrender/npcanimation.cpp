@@ -534,7 +534,11 @@ namespace MWRender
         {
             const VFS::Path::Normalized model = Misc::ResourceHelpers::correctMeshPath(mNpc->mModel.getNormalized());
             isCustomModel = !isDefaultActorSkeleton(model);
-            smodel = Misc::ResourceHelpers::correctActorModelPath(model, mResourceSystem->getVFS());
+            // A beast race on a record naming a non-beast default skeleton keeps the beast one:
+            // base_anim.nif has no Tail node and no beast feet ("Can't find attachment node Tail",
+            // "RigGeometry did not find bone bip01 r toe0": prod 2026-10-24, a 1.7.2 MP session).
+            if (isCustomModel || !isBeast || Settings::models().mBaseanimkna.get() == model)
+                smodel = Misc::ResourceHelpers::correctActorModelPath(model, mResourceSystem->getVFS());
         }
 
         setObjectRoot(smodel, true, true, false);

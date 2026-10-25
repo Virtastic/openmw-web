@@ -81,7 +81,11 @@ for e in lines():
             m = re.search(r'npcPath p50=\d+ p95=(\d+) max=(\d+)', t)
             sn = f(t, 'snaps')
             if sn and sn.isdigit(): snaps += int(sn)
+            # Loading and chargen are not play: the prison ship's menus ran at 1-2 fps and a world
+            # settling compiles its first cell (prod 2026-10-24: most non-streaming hitches).
+            settling = ' settling=1' in t or ' chargen=1' in t
             if ' hidden=1' in t: hidden_w += 1
+            elif settling: pass
             else:
                 wf = re.search(r'worstFrameMs=(\d+)', t); ss = re.search(r'sfsStallMs=(\d+)', t)
                 if wf and int(wf[1]) >= 500:
@@ -98,7 +102,7 @@ for e in lines():
             # their paths (363 of 1532 windows, 2026-10-16/18). Visible windows only.
             if m and ' hidden=1' not in t: path95.append(int(m[1])); path_max.append(int(m[2]))
             np = f(t, 'npcNoPose')
-            if np and np.isdigit() and int(np):
+            if np and np.isdigit() and int(np) and ' settling=1' not in t:  # a settling world's peer may still be starting
                 for rec in (f(t, 'noPoseRec') or '?').split(','): no_pose[rec] += 1
         elif t.startswith('[boot] '):
             v = f(t, 'switchMs')  # click -> playable in the destination world (index.html)
@@ -127,7 +131,7 @@ print(f"funnel: sso ok {ev['auth.sso_ok']} | profile {ev['frontdoor.profile_set'
       f" | worlds started {ev['world.started']} | joins {ev['player.join_world']} | friends added {ev['social.friend_added']}")
 print(f"sign-ins refused:\n{top(sso_fail)}")
 print(f"worlds reaped:\n{top(reaped)}")
-print(f"stuck on the loading screen 5 min (settle timeout): {sum(v for k, v in client_err.items() if 'settle hold released' in k)}")
+print(f"let in on the settle ceiling (5 min after first frame, world not settled): {sum(v for k, v in client_err.items() if 'settle hold released' in k)}")
 print(f"smoothness: NPC path p95 per 5 s window -- median {q(path95, .5)}, p90 {q(path95, .9)}, p99 {q(path95, .99)}, max {q(path_max, 1)} u"
       f" ({len(path95)} windows) | snaps {snaps} | sessions whose first window was unheld {first_unheld}"
       f" | let in unheld on the hold's cap {hold_capped}")

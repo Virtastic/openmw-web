@@ -102,7 +102,12 @@
       // that ceiling: the page threw "read timeout" with a retry still to come, and the worker
       // went on writing into the shared buffer after the page had given up on it.
       const ATTEMPTS = 4, ATTEMPT_MS = 12000, BUDGET_MS = 48000;
-      async function rangeFetch(url, start, end, tries = ATTEMPTS, budget = BUDGET_MS) {
+      // A BACKGROUND fetch (bg: warm-up, cell prefetch) YIELDS to a read the game is waiting on: past
+      // 1.5 s in flight with the game waiting, it aborts and throws err.yielded for the caller to
+      // requeue. On a slow link a 2 MB background chunk shared the pipe with the game's read for
+      // tens of seconds (prod 2026-10-24: two players at ~100 KB/s, game reads of 10-48 s, three
+      // boots let in on the settle cap). A fast link finishes a chunk in ~0.2 s and never yields.
+      async function rangeFetch(url, start, end, tries = ATTEMPTS, budget = BUDGET_MS, bg = false) {
         let last;
         const seen = [];
         const fail = (err) => new Error(String(err && err.message || err) + ' [' + seen.join('; ') + ']');
@@ -114,7 +119,8 @@
           const ac = new AbortController();
           let t = setTimeout(() => ac.abort(), clock());
           const t0 = Date.now();
-          let what = '', got = 0;
+          let what = '', got = 0, yielded = false;
+          const yi = bg && setInterval(() => { if (fg > 0 && Date.now() - t0 > 1500) { yielded = true; ac.abort(); } }, 100);
           try {
             const r = await fetch(url, { headers: { Range: 'bytes=' + start + '-' + (end - 1) }, signal: ac.signal });
             what = r.status + ' cl=' + r.headers.get('content-length') + ' cr=' + r.headers.get('content-range');
@@ -135,7 +141,8 @@
             last = new Error('HTTP ' + r.status);
             last.http = r.status;
           } catch (err) { last = err; }
-          finally { clearTimeout(t); }
+          finally { clearTimeout(t); if (yi) clearInterval(yi); }
+          if (yielded) { const y = new Error('yielded to a game read'); y.yielded = true; throw y; }
           seen.push((what || 'no response') + ' ' + (last && (last.name + ': ' + last.message) || '').slice(0, 60) + ' got=' + got + ' ' + (Date.now() - t0) + 'ms');
           // A 4xx is an answer, not a blip: no retry (408/429 are blips).
           if (last.http >= 400 && last.http < 500 && last.http !== 408 && last.http !== 429) throw fail(last);
@@ -285,8 +292,9 @@
                 const old = cacheDead ? undefined : await cacheRead(ckey);
                 if (old) { await opfsAdopt(f.pkey, ckey, s, old, chunk); continue; }
                 let nb;
-                try { nb = await rangeFetch(f.url, s, Math.min(s + chunk, f.size)); }
+                try { nb = await rangeFetch(f.url, s, Math.min(s + chunk, f.size), ATTEMPTS, BUDGET_MS, true); }
                 catch (err) {
+                  if (err && err.yielded) { s -= chunk; continue; } // this chunk again, after the game's read
                   if (++fetchFails >= 5) { stop = 'fetch: ' + String(err && err.message || err).slice(0, 60); break outer; }
                   await nap(5000); continue;
                 }
@@ -304,8 +312,9 @@
               // later chunk would be downloaded and thrown away (prod 2026-10-15: warm-up stuck at
               // 38 chunks for two hours, every retry a 2 MB download for nothing).
               let buf;
-              try { buf = await rangeFetch(f.url, s, Math.min(s + chunk, f.size)); }
+              try { buf = await rangeFetch(f.url, s, Math.min(s + chunk, f.size), ATTEMPTS, BUDGET_MS, true); }
               catch (err) {
+                if (err && err.yielded) { s -= chunk; continue; }
                 if (++fetchFails >= 5) { stop = 'fetch: ' + String(err && err.message || err).slice(0, 60); break outer; }
                 await nap(5000); continue;
               }
@@ -429,11 +438,14 @@
               if (buf) await opfsAdopt(j.f.pkey, ckey, j.s, buf, chunk);
             }
             if (!buf) {
-              buf = await rangeFetch(j.f.url, j.s, end, 2, 20000);
+              buf = await rangeFetch(j.f.url, j.s, end, 2, 20000, true);
               fetched++;
               if (!(await opfsPut(j.f.pkey, j.s, buf, chunk))) await cachePut(ckey, buf);
             }
-          } catch (err) { buf = undefined; /* the engine reads it itself on entry */ }
+          } catch (err) {
+            if (err && err.yielded) return one(j); // waits out the game's read, then this chunk again
+            buf = undefined; /* the engine reads it itself on entry */
+          }
           if (buf && want.has(j.fi + ':' + j.s)) keep.set(j.fi + ':' + j.s, buf);
         };
         const lane = async () => { while (next < jobs.length) await one(jobs[next++]); };
@@ -725,6 +737,7 @@
         if (!/\.bsa$/i.test(p) || p.split('/').pop().toLowerCase() !== want) continue;
         const d = bsaDir(p);
         if (!d) return out;
+        if (off === 0) out.push('(directory)'); // the archive's header and file table: read at mount
         const end = off + CHUNK;
         for (const [file, e] of d) {
           if (e[0] < end && e[0] + e[1] > off) { out.push(file); if (out.length >= (max || 3)) break; }

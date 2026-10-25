@@ -61,6 +61,23 @@ rf = load(async () => { calls++; throw new TypeError('Failed to fetch'); }, 1000
 await assert.rejects(rf('u', 0, 2), /Failed to fetch/);
 assert.equal(calls, 4);
 
+// A BACKGROUND fetch yields to a game read: aborted once the game waits, err.yielded, no retry.
+// A foreground fetch (bg false) with the game waiting is not touched.
+{
+  const code = body.replace(/t0 > 1500/, 't0 > 30');
+  const [bgf, setFg] = new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout',
+    code + '; return [rangeFetch, (n) => { fg = n; }];')(
+    (url, opts) => { calls++; return new Promise((res, rej) => opts.signal.addEventListener('abort', () => rej(new Error('aborted')))); },
+    AbortController, setTimeout, clearTimeout);
+  calls = 0; setFg(1);
+  await assert.rejects(bgf('u', 0, 2, 4, 48000, true), (e) => e.yielded === true);
+  assert.equal(calls, 1, 'a yielded fetch is not retried: the caller requeues it');
+  calls = 0;
+  const fgRead = bgf('u', 0, 2, 1, 300);
+  await assert.rejects(fgRead, (e) => !e.yielded);
+  setFg(0);
+}
+
 // THE PREFETCH GETS ONE DEADLINED ATTEMPT. It used a bare fetch with no deadline: stalled, it held
 // the read of the same chunk (which waits on it) past the main thread's 60 s timeout.
 calls = 0;
