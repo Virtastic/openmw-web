@@ -78,6 +78,33 @@
     + '<path d="M24 22v10M20 28l4 4 4-4"/></svg>';
   if (singlePlayer) $('#glyph').innerHTML = CLOUD_GLYPH;
 
+  // CHROME OR EDGE ON A COMPUTER, SAID BEFORE SIGN-IN. The engine is a wasm64 build that only
+  // Chromium runs; a Firefox or Safari player used to sign in, wait for a download and only then
+  // meet "Browser not supported" on the game page. The brand is what decides it (Firefox 134+
+  // passes the memory64 probe and still cannot carry the game), the probe catches an old
+  // Chromium, and the phone test is the launcher's (engineUnsupported). Insecure pages are
+  // already explained above, and they hide the brand list, so they are not judged here.
+  const unsupported = (() => {
+    if (/[?&]forceUnsupported\b/.test(location.search)) return true;
+    const chromium = !!navigator.userAgentData?.brands?.some((b) => b.brand === 'Chromium');
+    let mem64 = true;
+    try { new WebAssembly.Memory({ initial: 1n, maximum: 2n, address: 'i64' }); } catch { mem64 = false; }
+    const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+    const phone = touch && Math.min(innerWidth, innerHeight) < 820 && Math.max(innerWidth, innerHeight) < 1100;
+    return !chromium || !mem64 || phone;
+  })();
+  if (self.isSecureContext && unsupported) {
+    $('#options').innerHTML = '<div class="note err">This game runs in <b>Chrome</b> or <b>Edge</b> '
+      + 'on a desktop or laptop. Open this page there.</div>'
+      + '<button class="btn" type="button" id="copyLink">Copy this link</button>';
+    const copy = $('#copyLink');
+    copy.onclick = async () => {
+      try { await navigator.clipboard.writeText(location.href); copy.textContent = 'Link copied'; }
+      catch { copy.textContent = location.href; }
+    };
+    return;
+  }
+
   let auth = null;
   try { auth = await (await fetch('/auth/providers', { cache: 'no-store' })).json(); } catch { /* handled below */ }
   const box = $('#options');
@@ -128,6 +155,13 @@
     }
   }
   box.innerHTML = out;
+  // Remembered for a refused 'state' (below): the link that was clicked, invite and all.
+  box.addEventListener('click', (e) => {
+    const a = e.target.closest('a.prov');
+    if (!a) return;
+    if (a.classList.contains('off')) { e.preventDefault(); $('#inviteCode')?.focus(); return; }
+    try { sessionStorage.setItem('omwmp:prov', a.href); } catch { /* blocked */ }
+  });
   if (auth.inviteRequired && invited) {
     // The server checks it only when the sign-in would create an account; a returning
     // player's is ignored.
@@ -165,9 +199,32 @@
         a.href = u.href;
       }
     };
-    $('#inviteCode').addEventListener('input', apply);
-    form.addEventListener('submit', (e) => { e.preventDefault(); apply(); });
-    note('This server is invite-only. Returning players sign in as usual; new players enter the invite code above, then pick a sign-in.' + help);
+    // NO CODE, NO NEW-PLAYER SIGN-IN. 750 strangers a week signed in without one, were refused
+    // after the provider round trip, and left (prod 2026-10-19..26). So the buttons wait for a
+    // code, and a returning player opens them with one click; this browser remembers them.
+    let returning = false;
+    try { returning = localStorage.getItem('omwmp:returning') === '1'; } catch { /* blocked */ }
+    const setOff = (off) => {
+      for (const a of box.querySelectorAll('a.prov')) {
+        a.classList.toggle('off', off);
+        if (off) a.setAttribute('aria-disabled', 'true'); else a.removeAttribute('aria-disabled');
+      }
+    };
+    let open = returning;
+    const back = document.createElement('a');
+    back.href = '#';
+    back.className = 'sub';
+    back.style.display = 'block';
+    back.textContent = 'Already have an account? Sign in';
+    back.onclick = (e) => { e.preventDefault(); open = true; setOff(false); back.hidden = true; };
+    back.hidden = returning;
+    box.append(back);
+    const gate = () => setOff(!open && !String($('#inviteCode').value || '').trim());
+    $('#inviteCode').addEventListener('input', () => { apply(); gate(); });
+    form.addEventListener('submit', (e) => { e.preventDefault(); apply(); gate(); });
+    gate();
+    note('This server is invite-only. New players: enter your invite code above, then pick a sign-in. '
+      + 'Returning players sign in as usual.' + help);
   }
 
   /**
@@ -186,6 +243,7 @@
    * to a server, written to an access log, or leaked through Referer.
    */
   const enterGame = (res) => {
+    try { localStorage.setItem('omwmp:returning', '1'); } catch { /* blocked */ }
     const acct = res.account ? `&mpaccount=${encodeURIComponent(res.account)}` : '';
     // The token always rides along: it is what buys server-side saves, whichever library the
     // game data itself comes from. mwdata=1 is what picks the library.
@@ -265,12 +323,42 @@
     history.replaceState(null, '', location.pathname);
     // Words for the codes a player can act on; anything else keeps the code for a bug report.
     const code = decodeURIComponent(err[1]); // a refused invite was already forgotten, above
+    // A LOST STATE COOKIE IS RETRIED ONCE, SILENTLY. The callback came back without the cookie
+    // its start set (a phone handing the provider page to another app, Back, a reload): 36 of
+    // those in a week, and 30 of the 33 people never tried again. The same link usually works.
+    if (code === 'state') {
+      let again = '';
+      try {
+        const last = Number(sessionStorage.getItem('omwmp:stateRetry') || 0);
+        if (Date.now() - last > 120000) again = sessionStorage.getItem('omwmp:prov') || '';
+        if (again) sessionStorage.setItem('omwmp:stateRetry', String(Date.now()));
+      } catch { /* blocked: say it instead */ }
+      if (again.startsWith(location.origin + '/auth/')) { location.href = again; return; }
+    }
+    // The codes server/src/auth/routes.ts sends back, in the launcher's words (handleSsoReturn).
     const said = {
-      invite_required: 'This server is invite-only, and that sign-in had no working invite. '
-        + 'Open the invite link from whoever runs it (it may have changed).',
-      invite_locked: 'Too many attempts with a wrong invite. Wait a while before trying again.',
       registration_disabled: 'This server is not taking new players.',
+      invite_required: 'This server is invite-only, and that sign-in had no working invite code. '
+        + 'Enter the code above and sign in again.',
+      invite_locked: 'Too many attempts with a wrong invite code. Wait a while before trying again.',
+      banned: 'This account is banned from this server.',
+      link_conflict: 'That sign-in is already linked to a different account. Sign in with the account it belongs to, or use another provider.',
+      provider_disabled: 'That sign-in provider is switched off on this server. Pick another.',
+      unknown_provider: 'That sign-in provider is not set up on this server. Pick another.',
+      disabled: 'That sign-in provider is switched off on this server. Pick another.',
+      provider_refused: 'The sign-in was cancelled, or the provider said no. Pick a sign-in to try again.',
+      provider_unreachable: 'The sign-in provider could not be reached. Try again in a moment.',
+      discovery: 'The sign-in provider could not be reached. Try again in a moment.',
+      network: 'The sign-in provider could not be reached. Try again in a moment.',
+      http: 'The sign-in provider answered with an error. Try again in a moment.',
+      busy: 'The sign-in provider is busy. Try again in a moment.',
+      rate: 'Too many sign-in attempts from your connection. Wait a minute and try again.',
+      not_signed_in: 'Your session has ended. Sign in again.',
+      state: 'The sign-in did not come back to this browser tab. Sign in again from this page, in this tab.',
+      bad_callback: 'The sign-in came back incomplete. Try again.',
+      account: 'The server could not set up your account. Try again; if it keeps happening, tell whoever runs this server.',
     }[code];
-    note(said ? esc(said) + (code === 'invite_required' ? helpLink : '') : `Sign-in did not finish (${esc(code)}). Try again.`, 'err');
+    note(said ? esc(said) + (code === 'invite_required' ? helpLink : '')
+      : `Sign-in did not finish (${esc(code.replace(/_/g, ' '))}). Try again.`, 'err');
   }
 })();

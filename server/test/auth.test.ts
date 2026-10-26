@@ -778,6 +778,19 @@ test('SSO respects the server registration policy', async (t) => {
     assert.equal(await guess('someone-else', 'letmein'), 'invite_locked', 'the same address is locked, not just the identity');
     assert.deepEqual(await accountNames(h.dataDir), []);
   });
+
+  await t.test('sign-ins with no invite at all spend no guesses: the invited player still gets in', async (tt) => {
+    resetInviteBudgets();
+    const h = await boot(tt, { login: { inviteCode: 'letmein' }, limits: { loginPerMinPerIp: 1000 } });
+    for (let i = 0; i < 30; i++) {
+      const out = await ssoLogin(h, { sub: `stranger-${i}`, nameHint: `S${i}` });
+      assert.equal(out.error, 'invite_required', out.location);
+    }
+    const { authorize, cookie } = await startFlow(h, 'custom', '?invite=letmein');
+    const code = h.idp.issueCode(authorize, { sub: 'friend', nameHint: 'Friend' });
+    const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', cookie);
+    assert.ok(fragment(res.headers.get('location')).get('mpticket'), res.headers.get('location') ?? '');
+  });
 });
 
 test('the /auth routes do not disturb the rest of the HTTP surface', async (t) => {

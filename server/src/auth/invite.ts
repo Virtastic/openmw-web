@@ -10,7 +10,7 @@
 // are budgeted on their own, per caller key (the IP, and the SSO identity when there is one)
 // AND server-wide, so rotating addresses or accounts buys nothing.
 //
-// EVERY ATTEMPT IS CHARGED, RIGHT OR WRONG, BEFORE THE COMPARISON. A legitimate player
+// EVERY ATTEMPT THAT CARRIES A CODE IS CHARGED, RIGHT OR WRONG, BEFORE THE COMPARISON. A legitimate player
 // spends one; and charging first is what makes the lockout mean something, because a
 // correct guess made while locked out is refused like any other.
 //
@@ -33,6 +33,10 @@ const digest = (s: string): Buffer => createHash('sha256').update(s, 'utf8').dig
  */
 export function checkInvite(expected: string, given: string | undefined, keys: string[]): 'ok' | 'wrong' | 'locked' {
   if (expected === '') return 'ok';
+  // NO CODE IS NOT A GUESS. Strangers who sign in without one must not spend the budgets: prod
+  // had 750 of them a week draining the server-wide bucket, and 58 invited players who then
+  // typed the right code were told "too many attempts" (2026-10-13..26).
+  if (!given || given.trim() === '') return 'wrong';
   for (const k of keys) {
     if (!perKey.allow(k)) { log('warn', 'auth.invite_locked', { scope: 'caller' }); return 'locked'; }
   }

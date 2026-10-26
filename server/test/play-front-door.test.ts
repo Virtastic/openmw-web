@@ -274,6 +274,15 @@ test('a refused invite says where to get one', () => {
     'helpLink is defined before the refusal note uses it');
 });
 
+test('the front door: no code keeps new-player sign-in shut, a lost state cookie retries once, Chromium only', () => {
+  assert.match(play, /const gate = \(\) => setOff\(!open && !String\(\$\('#inviteCode'\)\.value/, 'buttons wait for a code');
+  assert.match(play, /Already have an account\? Sign in/, 'returning players have a way in without one');
+  assert.match(play, /localStorage\.setItem\('omwmp:returning', '1'\)/, 'a sign-in that worked is remembered');
+  assert.match(play, /if \(code === 'state'\) \{[\s\S]*?omwmp:stateRetry[\s\S]*?location\.href = again/, 'state is retried');
+  assert.ok(play.indexOf("if (code === 'state')") < play.indexOf('const said = {'), 'retried before it is said');
+  assert.match(play, /b\.brand === 'Chromium'/, 'the browser gate names the brand');
+});
+
 test('a boot that cannot get its memory yet retries, then says so', clientOpts, () => {
   // prod 2026-10-20: "WebAssembly.Memory(): could not allocate memory" right after the same
   // browser's previous game ended; the boot screen just sat there.
