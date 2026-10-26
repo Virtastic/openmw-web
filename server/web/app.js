@@ -3155,6 +3155,47 @@ async function postFile(url, file, onProgress) {
   return fetch(`${url}&part=${id}`, { method: 'POST', headers: headers() });
 }
 
+const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+/**
+ * Pack {file, path} pairs into one stored (uncompressed) zip, for /mods/upload-bundle.
+ * Stored because voice clips and textures barely compress and the CPU is better spent sending.
+ * Every entry is read into memory to take its CRC, so callers keep a bundle to tens of MB.
+ */
+async function storedZip(items) {
+  const enc = new TextEncoder();
+  const body = [];
+  const central = [];
+  let off = 0;
+  for (const { file, path } of items) {
+    const data = new Uint8Array(await file.arrayBuffer());
+    const name = enc.encode(path);
+    let crc = -1;
+    for (let i = 0; i < data.length; i++) crc = CRC_TABLE[(crc ^ data[i]) & 255] ^ (crc >>> 8);
+    crc = (crc ^ -1) >>> 0;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x800, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true);
+    lh.setUint16(26, name.length, true);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true);
+    ch.setUint16(8, 0x800, true); ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true);
+    ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true); ch.setUint32(42, off, true);
+    body.push(lh, name, data);
+    central.push(ch, name);
+    off += 30 + name.length + data.length;
+  }
+  const cdSize = central.reduce((n, p) => n + p.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, items.length, true);
+  end.setUint16(10, items.length, true); end.setUint32(12, cdSize, true); end.setUint32(16, off, true);
+  return new Blob([...body, ...central, end]);
+}
+
 /** uploadArchive for a file too big for one request: the same answers, sent in parts. */
 async function uploadArchiveInParts(file, stage) {
   if (!/\.(zip|7z)$/i.test(file.name)) return uploadArchive({ name: file.name, size: 0 }, stage);
@@ -3707,7 +3748,7 @@ function wireUpload(onDone) {
     // request 401ing — looked identical to three corrupt files, and the operator was told
     // "2,847 failed: Sound/Fx/a.wav, ..." with no cause and nothing to do about it.
     const reasons = new Map();
-    const note = (why) => reasons.set(why, (reasons.get(why) ?? 0) + 1);
+    const note = (why, n = 1) => reasons.set(why, (reasons.get(why) ?? 0) + n);
     /** Set when continuing is pointless: session gone, server gone, disk full. */
     let stopped = null;
 
@@ -3741,24 +3782,47 @@ function wireUpload(onDone) {
     };
     paint(' · uploading…');
 
-    // EIGHT AT A TIME, not one. A Data Files folder is thousands of files and most of them
-    // are tiny voice clips, so the run was almost entirely round-trip latency: one request
-    // out, one answer back, repeat ten thousand times. Sending several at once turns that
-    // dead time into throughput, and the proxy speaks HTTP/2, so they share one connection
-    // rather than opening eight.
-    //
-    // Only safe because the temp-file collision is fixed: every request now writes its own
-    // temp path, so two uploads can never be mid-rename over the same target. Before that,
-    // this change would have turned a rare bug into the common case.
+    // SMALL FILES TRAVEL IN BUNDLES. A Data Files folder is ten thousand voice clips, and one
+    // request each was all round-trip latency: Firefox crawled on a gigabit line and Chromium
+    // gave up with "Failed to fetch" partway. So anything under 4 MB is packed into a stored
+    // zip of about 32 MB and the server unpacks it; masters, BSAs and music still go alone
+    // (in parts when over 64 MB). Hundreds of requests instead of ten thousand.
+    const SMALL = 4 * 1024 * 1024;
+    const BUNDLE = 32 * 1024 * 1024;
+    const jobs = [];
+    let open = null;
+    for (const e of entries) {
+      if (e.file.size >= SMALL) { jobs.push(e); continue; }
+      if (!open || open.size + e.file.size > BUNDLE || open.items.length >= 2000) {
+        jobs.push(open = { items: [], size: 0 });
+      }
+      open.items.push(e);
+      open.size += e.file.size;
+    }
+    const pathsOf = (job) => (job.items ? job.items.map((e) => e.path) : [job.path]);
+    // Raw body, not multipart: the server streams it straight to disk, and a multipart
+    // parser for a 400 MB archive would be a dependency plus a memory problem. The PATH
+    // travels in the query (or the bundle's entry names), because loose media is loaded by
+    // path and must keep its directory, "Music/Explore/mx_explore_1.mp3".
+    const post = async (job) => (job.items
+      ? postFile('/admin/api/mods/upload-bundle', await storedZip(job.items))
+      : postFile(`/admin/api/mods/upload?name=${encodeURIComponent(job.path)}`, job.file));
+    const accept = async (job, r) => {
+      if (!job.items) { done++; bytes += job.file.size; return; }
+      const body = await r.json();
+      const size = new Map(job.items.map((e) => [e.path, e.file.size]));
+      for (const p of body.added) { done++; bytes += size.get(p) ?? 0; }
+      skipped.push(...body.skipped);
+      for (const f of body.failed) { failed.push(f.file); note(f.error); }
+    };
+
+    // Several at once, not one: the proxy speaks HTTP/2, so they share one connection. Only
+    // safe because every request writes its own temp path (see uploadContent on the server).
     let cursor = 0;
-    const sendOne = async ({ file, path }) => {
+    const sendOne = async (job) => {
       try {
-        // Raw body, not multipart: the server streams it straight to disk, and a multipart
-        // parser for a 400 MB archive would be a dependency plus a memory problem. The PATH
-        // travels in the query, because loose media is loaded by path and must keep its
-        // directory, "Music/Explore/mx_explore_1.mp3", not "mx_explore_1.mp3".
-        const r = await postFile(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, file);
-        if (r.status === 400) { skipped.push(path); }      // not game data; expected in bulk
+        const r = await post(job);
+        if (r.status === 400 && !job.items) { skipped.push(job.path); } // not game data; expected in bulk
         else if (r.status === 401 || r.status === 403) {
           // Admin sessions live in memory, so a server restart (or a long upload outliving
           // its four hours) invalidates them mid-run. Every remaining request would 401 too:
@@ -3766,29 +3830,29 @@ function wireUpload(onDone) {
           stopped = 'You were signed out while this was uploading, so the rest were refused. '
             + 'Nothing already added was lost. Sign in again and drop the same folder in, '
             + 'files that are already there are simply skipped.';
-          failed.push(path);
+          failed.push(...pathsOf(job));
           return 'stop';
         } else if (r.status === 429) {
           // Backing off beats failing: this endpoint shares the session's request budget.
           await new Promise((res) => setTimeout(res, 2000));
-          const retry = await postFile(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, file);
-          if (retry.ok) { done++; bytes += file.size; }
-          else { failed.push(path); note('refused because uploads were coming too fast'); }
+          const retry = await post(job);
+          if (retry.ok) await accept(job, retry);
+          else { failed.push(...pathsOf(job)); note('refused because uploads were coming too fast', pathsOf(job).length); }
         } else if (!r.ok) {
-          failed.push(path);
+          failed.push(...pathsOf(job));
           const body = await r.json().catch(() => null);
-          note(body?.error || `rejected by the server (${r.status})`);
-        } else { done++; bytes += file.size; }
+          note(body?.error || `rejected by the server (${r.status})`, pathsOf(job).length);
+        } else await accept(job, r);
       } catch {
         // A dropped connection, which on a folder this size is a matter of time. One retry
         // covers a blip; a server that is actually down ends the run rather than grinding
         // through thousands of guaranteed failures.
         try {
-          const retry = await postFile(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, file);
-          if (retry.ok) { done++; bytes += file.size; }
-          else { failed.push(path); note('could not be sent'); }
+          const retry = await post(job);
+          if (retry.ok) await accept(job, retry);
+          else { failed.push(...pathsOf(job)); note('could not be sent', pathsOf(job).length); }
         } catch {
-          failed.push(path);
+          failed.push(...pathsOf(job));
           stopped = 'The connection to the server dropped, so the rest were not attempted. '
             + 'Check it is still running, then drop the same folder in again, anything '
             + 'already uploaded is skipped.';
@@ -3798,16 +3862,15 @@ function wireUpload(onDone) {
       return 'ok';
     };
 
-    const LANES = 8;
+    // Four: a bundle is held in memory while it is packed and sent, so lanes cost RAM.
+    const LANES = 4;
     const worker = async () => {
       for (;;) {
         if (stopped) return;
         const i = cursor++;
-        if (i >= entries.length) return;
-        if (await sendOne(entries[i]) === 'stop') return;
-        // Repaint on a cadence rather than per file: at eight lanes the counters move fast
-        // enough that rendering each one is its own cost.
-        if ((done + skipped.length + failed.length) % 25 === 0) paint(' · uploading…');
+        if (i >= jobs.length) return;
+        if (await sendOne(jobs[i]) === 'stop') return;
+        paint(' · uploading…');
       }
     };
     await Promise.all(Array.from({ length: LANES }, worker));

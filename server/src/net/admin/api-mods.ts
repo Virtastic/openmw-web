@@ -17,12 +17,14 @@ import {
 import { rm } from 'node:fs/promises';
 import { join, basename, dirname, resolve, sep } from 'node:path';
 import type { ServerResponse } from 'node:http';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { log } from '../../log';
 import {
   MODLIST_FILE, MODS_SUBDIR, readModDoc, resolveMods, writeModDoc, type ModEntry,
 } from '../../core/mods';
 import { computeConflicts, missingMasters } from '../../core/mod-conflicts';
+import { DEFAULT_LIMITS, listEntries, readEntry } from '../../core/zip';
 
 // The document, its schema and its migration live in core/mods.ts, so the load-order half of
 // this file and the mod-manager half cannot drift into two readers of one file.
@@ -468,8 +470,73 @@ export async function uploadContent(
     };
   }
 
-  log('info', 'admin.upload', { file: name, bytes: written });
+  log('debug', 'admin.upload', { file: name, bytes: written });
   return { ok: true, file: name, bytes: written };
+}
+
+// ------------------------------------------------------------------ bundles of small files
+//
+// A DATA FILES FOLDER IS TEN THOUSAND VOICE CLIPS, and one request each did not survive real
+// browsers: Firefox crawled on a gigabit line (all round trips, no throughput), and Chromium
+// gave up mid-run with "Failed to fetch" on every request after, the follow-up page load
+// included. So the dashboard packs small files into a stored (uncompressed) zip of about
+// 32 MB and sends that; each entry is then put through uploadContent exactly as if it had
+// arrived on its own, so every path rule, the escape check and temp-then-rename still apply.
+
+/** Largest bundle body accepted. The browser packs about 32 MB; Cloudflare refuses 100. */
+export const BUNDLE_MAX = 96 * 1024 * 1024;
+
+export type BundleResult =
+  | { ok: true; added: string[]; bytes: number; skipped: string[]; failed: { file: string; error: string }[] }
+  | { ok: false; status: number; error: string };
+
+export async function uploadBundle(
+  req: Readable,
+  res: ServerResponse,
+  dataDir: string,
+  gameDataDir: string,
+): Promise<BundleResult> {
+  const dir = join(dataDir, 'upload-parts');
+  mkdirSync(dir, { recursive: true });
+  const zip = join(dir, `bundle-${process.pid}-${uploadSeq++}.zip`);
+  try {
+    let n = 0;
+    try {
+      await pipeline(req, async function* (src: AsyncIterable<Buffer>) {
+        for await (const chunk of src) {
+          n += chunk.length;
+          if (n > BUNDLE_MAX) throw new Error('over cap');
+          yield chunk;
+        }
+      }, createWriteStream(zip));
+    } catch (err) {
+      if (n > BUNDLE_MAX) return { ok: false, status: 413, error: 'That bundle is larger than 96 MB.' };
+      log('error', 'admin.bundle_failed', { error: String(err) });
+      return { ok: false, status: 500, error: 'Could not save the upload. The data folder may be read-only or full.' };
+    }
+    const limits = { ...DEFAULT_LIMITS, maxEntries: 10_000, maxEntryBytes: BUNDLE_MAX, maxTotalBytes: BUNDLE_MAX };
+    let entries;
+    try { entries = listEntries(zip, limits); } catch (err) {
+      return { ok: false, status: 422, error: `The bundle arrived damaged (${(err as Error).message}).` };
+    }
+    const out: BundleResult & { ok: true } = { ok: true, added: [], bytes: 0, skipped: [], failed: [] };
+    for (const e of entries) {
+      if (e.isDir) continue;
+      let data: Buffer;
+      try { data = readEntry(zip, e, limits); } catch (err) {
+        out.failed.push({ file: e.path, error: `arrived damaged (${(err as Error).message})` });
+        continue;
+      }
+      const r = await uploadContent(Readable.from([data]), res, gameDataDir, e.path);
+      // Answered under the name the browser sent, so it can match each file to its own row.
+      if (r.ok) { out.added.push(e.path); out.bytes += r.bytes; }
+      else if (r.status === 400) out.skipped.push(e.path);
+      else out.failed.push({ file: e.path, error: r.error });
+    }
+    return out;
+  } finally {
+    await rm(zip, { force: true });
+  }
 }
 
 /**

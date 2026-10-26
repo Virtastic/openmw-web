@@ -27,6 +27,7 @@
 //   PUT  /admin/api/mods               [owner]     load order + mod order/switches
 //   POST /admin/api/upload-part        [owner]     one part of a big file (?id=&offset=)
 //   POST /admin/api/mods/upload        [owner]     one loose Data Files file
+//   POST /admin/api/mods/upload-bundle [owner]     a stored zip of small Data Files files
 //   POST /admin/api/mods/install       [owner]     a mod .zip -> staged, with its candidates
 //   POST /admin/api/mods/install/commit[owner]     which candidates to extract
 //   DEL  /admin/api/mods/:slug         [owner]     uninstall
@@ -65,7 +66,9 @@ import { settingsView, applySection, applyWizard, type WizardAnswers } from './a
 import { checkDomain, normaliseDomain, VERIFY_PATH, VERIFY_NONCE } from './setup-check';
 import { readDashboardTree } from './settings-store';
 import { writeCaddyfile } from './caddy-config';
-import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES } from './api-mods';
+import {
+  modsView, saveMods, uploadBundle, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES,
+} from './api-mods';
 import {
   appendPart, beginInstall, commitInstall, getInstallProgress, partSource, saveModOrder, uninstallMod,
   type Choice,
@@ -816,6 +819,17 @@ export function adminRoutes(deps: AdminDeps) {
       log(result.bytes > 1024 * 1024 ? 'info' : 'debug', 'admin.mods_uploaded',
         { by: ctx.accountKey, file: result.file });
       json(res, 200, { ok: true, file: result.file, bytes: result.bytes, restartRequired: true });
+      return true;
+    }
+    if (method === 'POST' && path === '/admin/api/mods/upload-bundle') {
+      // Budget-exempt for the same reason as /mods/upload, though far fewer requests now.
+      const ctx = await gate(req, res, auth, 'owner', true);
+      if (!ctx) return true;
+      const r = await uploadBundle(req, res, deps.dataDir, deps.gameDataDir);
+      if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
+      log('info', 'admin.mods_bundle_uploaded', { by: ctx.accountKey, added: r.added.length,
+        skipped: r.skipped.length, failed: r.failed.length, bytes: r.bytes });
+      json(res, 200, { ...r, restartRequired: r.added.length > 0 });
       return true;
     }
     if (method === 'PUT' && path === '/admin/api/mods') {

@@ -2,6 +2,17 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.8
+
+**Uploading a Data Files folder is fast, and works in Chrome.** The folder is ten thousand small
+voice clips, and each went up as its own request: Firefox crawled even on a gigabit line, and
+Chrome gave up partway with "Failed to fetch". Small files are now packed into bundles of about
+32 MB in the browser and unpacked on the server, so the whole folder is a few dozen requests.
+Every file still goes through the same checks as before.
+
+**The server console is quiet during an upload.** It used to log one line per uploaded file. It
+now logs one line per bundle, plus a line for each big file such as a master or BSA.
+
 ## 1.7.7
 
 **Tamriel Rebuilt installs on Pterodactyl and other small-/tmp hosts.** A `.7z` mod is unpacked
