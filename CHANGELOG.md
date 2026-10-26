@@ -2,6 +2,13 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.10
+
+**Returning players can always sign in.** On an invite-only server the sign-in buttons were
+greyed out until an invite code was typed, unless that browser remembered an earlier sign-in, so
+a returning player on a new browser was locked out. The buttons are always live again; the server
+still refuses to create a new account without a code.
+
 ## 1.7.9
 
 **Joining a world that is still starting no longer loops.** A cached game reached the world before

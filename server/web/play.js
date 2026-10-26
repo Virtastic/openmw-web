@@ -159,7 +159,6 @@
   box.addEventListener('click', (e) => {
     const a = e.target.closest('a.prov');
     if (!a) return;
-    if (a.classList.contains('off')) { e.preventDefault(); $('#inviteCode')?.focus(); return; }
     try { sessionStorage.setItem('omwmp:prov', a.href); } catch { /* blocked */ }
   });
   if (auth.inviteRequired && invited) {
@@ -199,30 +198,11 @@
         a.href = u.href;
       }
     };
-    // NO CODE, NO NEW-PLAYER SIGN-IN. 750 strangers a week signed in without one, were refused
-    // after the provider round trip, and left (prod 2026-10-19..26). So the buttons wait for a
-    // code, and a returning player opens them with one click; this browser remembers them.
-    let returning = false;
-    try { returning = localStorage.getItem('omwmp:returning') === '1'; } catch { /* blocked */ }
-    const setOff = (off) => {
-      for (const a of box.querySelectorAll('a.prov')) {
-        a.classList.toggle('off', off);
-        if (off) a.setAttribute('aria-disabled', 'true'); else a.removeAttribute('aria-disabled');
-      }
-    };
-    let open = returning;
-    const back = document.createElement('a');
-    back.href = '#';
-    back.className = 'sub';
-    back.style.display = 'block';
-    back.textContent = 'Already have an account? Sign in';
-    back.onclick = (e) => { e.preventDefault(); open = true; setOff(false); back.hidden = true; };
-    back.hidden = returning;
-    box.append(back);
-    const gate = () => setOff(!open && !String($('#inviteCode').value || '').trim());
-    $('#inviteCode').addEventListener('input', () => { apply(); gate(); });
-    form.addEventListener('submit', (e) => { e.preventDefault(); apply(); gate(); });
-    gate();
+    // THE BUTTONS ARE NEVER GREYED. 1.7.6 held them shut until a code was typed or this browser
+    // remembered a sign-in, which locked returning players out on any new browser or cleared
+    // storage (2026-10-26). The server refuses a new account without a code; that is the gate.
+    $('#inviteCode').addEventListener('input', apply);
+    form.addEventListener('submit', (e) => { e.preventDefault(); apply(); });
     note('This server is invite-only. New players: enter your invite code above, then pick a sign-in. '
       + 'Returning players sign in as usual.' + help);
   }
