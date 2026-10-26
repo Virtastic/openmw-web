@@ -122,10 +122,12 @@ case "$MODE" in
     # dir holding accounts and config that every world reads) and --base-port (the range it
     # allocates world ports from). It has no --data at all, and passing one makes it exit on
     # an unknown option — which is exactly what the first version of this script did.
+    # SERVER_PORT is the port a Pterodactyl panel allocates (deploy/pterodactyl): there the
+    # container must listen on the allocated port itself, and the panel sets nothing else.
     echo "{\"event\":\"entrypoint.mode\",\"mode\":\"gateway\"}"
     exec node --max-old-space-size="$HEAP" dist/gateway.mjs \
       --worlds "$DATA/worlds" --shared "$DATA" \
-      --port "${OMW_PORT:-8080}" --base-port "${OMW_BASE_PORT:-9000}" "$@"
+      --port "${OMW_PORT:-${SERVER_PORT:-8080}}" --base-port "${OMW_BASE_PORT:-9000}" "$@"
     ;;
   *)
     # Anything unrecognised falls through to single-world rather than refusing to start: a
