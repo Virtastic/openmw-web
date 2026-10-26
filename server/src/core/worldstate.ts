@@ -1785,7 +1785,9 @@ export class WorldState {
       // back: a friend entering after the kill found the smuggler chief standing again -- AI
       // off, unlootable, unkillable); and M6 per-object script locals (stored on every
       // MemberVarUpdate and never read back, so a joiner's copy started from the defaults).
-      player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, true));
+      // Not to a character still in creation (prod 2026-10-26): a stored dock-guard `state`
+      // of -1 skipped the race menu for every new character after the first (quests.ts memberVar).
+      player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, player.inChargen !== true));
     });
   }
 

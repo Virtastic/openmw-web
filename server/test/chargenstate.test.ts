@@ -87,3 +87,72 @@ test('finishing creation makes the player an occupant, so the peer\'s claim reac
   const info = await b.waitEvent('ActorAuthorityInfo', (v) => (v as { cellKey?: string }).cellKey === '-2,-9');
   assert.equal((info.value as { holderId?: number }).holderId, peer.playerId);
 });
+
+// AND NO ONE ELSE'S SCRIPT LOCALS (prod 2026-10-26). The dock guard's CharGenRaceNPC keeps
+// its step in a member var `state`; the peer's headless copy ran the whole dock sequence to
+// -1 in a second and a half, and that -1 -- relayed live, and stored for the cell snapshot --
+// skipped the client past Enableracemenu/EnablePlayerControls: controls off, no race menu.
+test('a character in creation neither receives nor files script locals; a finished one still does', async (t) => {
+  const { startServer } = await import('../src/server');
+  const { TestClient, tmpDataDir } = await import('./helpers');
+  const PASS = 'peer-secret-1';
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PASS }, limits: { maxConnsPerIp: 16 } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PASS);
+  t.after(() => peer.close());
+  const mv = (n: string) => (v: unknown) => (v as { name?: string })?.name === n;
+  const atDock = (v: unknown) => (v as { cellKey?: string }).cellKey === '-2,-9';
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  const done = await TestClient.connect(server.port);
+  t.after(() => done.close());
+  await done.joinAsNew('Veteran');
+  await done.waitEvent('PlayerList');
+  done.sendCellChange('-2,-9', 0, 0, 0);
+
+  const newbie = async (name: string, hex: string) => {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    c.hello();
+    await c.waitJson('SessionHelloOk');
+    c.register(name, 'hunter22', { characterId: 'c' + hex.repeat(12) }); // provisional = in creation
+    await c.waitJson('SessionWelcome');
+    c.sendJson({ t: 'SessionReady' });
+    c.sendCellChange('-2,-9', 0, 0, 0);
+    return c;
+  };
+  const b = await newbie('Newbie', 'ab');
+  await b.waitEvent('WorldCellState', atDock, 3000);
+  await sleep(200);
+
+  // The peer's copy of the guard finishes the sequence.
+  peer.sendEvent('MemberVarUpdate', { net: 41, name: 'state', value: -1, cellKey: '-2,-9' });
+  const got = await done.waitEvent('MemberVarUpdate', mv('state'), 3000);
+  assert.equal((got.value as { value?: number }).value, -1, "a finished character in the cell still gets the peer's locals");
+  // The creating client's own guard writes go nowhere.
+  b.sendEvent('MemberVarUpdate', { net: 42, name: 'chargen_own', value: 30, cellKey: '-2,-9' });
+  b.sendEvent('ChatSend', { text: 'fence' });
+  await done.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'fence', 3000);
+  await sleep(200);
+  assert.equal(b.inbox.events.filter((e) => e.name === 'MemberVarUpdate').length, 0,
+    "the peer's guard state must not reach a character still in creation");
+  assert.equal(done.inbox.events.filter((e) => e.name === 'MemberVarUpdate' && mv('chargen_own')(e.value)).length, 0,
+    "a creating character's locals are not relayed");
+
+  // The stored -1 does not meet the NEXT new character either; a finished one is restored it.
+  const c = await newbie('Second', 'cd');
+  const snap = await c.waitEvent('WorldCellState', atDock, 3000);
+  assert.equal((snap.value as { memberVars?: unknown }).memberVars, undefined, "no stored locals in a creating player's cell snapshot");
+  const v = await TestClient.connect(server.port);
+  t.after(() => v.close());
+  await v.joinAsNew('Later');
+  await v.waitEvent('PlayerList');
+  v.sendCellChange('-2,-9', 0, 0, 0);
+  const vs = await v.waitEvent('WorldCellState', atDock, 3000);
+  const vars = (vs.value as { memberVars?: Record<string, Record<string, number>> }).memberVars ?? {};
+  assert.deepEqual(Object.values(vars).map((o) => o['state']), [-1], 'a finished character is restored the stored state');
+  assert.ok(!Object.values(vars).some((o) => 'chargen_own' in o), 'nothing a creating character wrote was filed');
+});

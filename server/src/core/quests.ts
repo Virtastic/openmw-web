@@ -208,6 +208,8 @@ export class Quests {
   private relayCell(cellKey: string, exceptId: number, name: string, body: JsLike): void {
     for (const p of this.ctx.roster.inWorld()) {
       if (p.id === exceptId) continue;
+      // (prod 2026-10-26) No script locals into a character still in creation: see memberVar.
+      if (p.inChargen === true) continue;
       if (cellsVisible(p.cellKey, cellKey) || (p.system === true && this.ctx.holderOf?.(cellKey) === p.id)) p.peer.sendEvent(name, body);
     }
   }
@@ -723,6 +725,18 @@ export class Quests {
     // runs its own local script like any other).
     if (!ref || !name || value === undefined || !cellKey) {
       this.drop(player, 'MemberVarUpdate', 'invalid shape or no cell');
+      return;
+    }
+    // A character still in creation runs the opening's scripts alone (prod 2026-10-26: the
+    // dock guard's CharGenRaceNPC `state` is a member var, and since 1.7.1 the peer's copy
+    // measures GetDistance Player to the nearest avatar, so its headless engine -- SayDone is
+    // always true there -- ran 20 -> -1 in a second and a half while the client still waited
+    // on Dock1. The relayed -1 skipped Enableracemenu/EnablePlayerControls: controls stayed
+    // off, no race menu, and the stored -1 met every later new character the same way). So:
+    // nothing they write is filed, and nothing anyone writes reaches them -- the relay below
+    // and worldstate.ts sendCellState both skip an in-chargen player.
+    if (player.inChargen === true) {
+      log('debug', 'quest.member_in_chargen', { name, ref: ref.key, from: player.name });
       return;
     }
     const memberKey = `${cellKey}|${ref.key}|${name}`;
