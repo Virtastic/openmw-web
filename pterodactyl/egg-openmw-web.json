@@ -19,7 +19,7 @@
     },
     "scripts": {
         "installation": {
-            "script": "#!/bin/ash\nmkdir -p /mnt/server/data/gamedata /mnt/server/play\n",
+            "script": "#!/bin/ash\nmkdir -p /mnt/server/data/gamedata /mnt/server/play /mnt/server/tmp\n",
             "container": "alpine:3.20",
             "entrypoint": "ash"
         }
@@ -63,6 +63,16 @@
             "user_viewable": true,
             "user_editable": true,
             "rules": "required|string|in:single,gateway",
+            "field_type": "text"
+        },
+        {
+            "name": "Scratch directory",
+            "description": "Where .7z mods (Tamriel Rebuilt) are unpacked before install. Wings makes /tmp a 100 MB RAM disk, far too small, so this points at the server's own disk.",
+            "env_variable": "TMPDIR",
+            "default_value": "/home/container/tmp",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string",
             "field_type": "text"
         },
         {

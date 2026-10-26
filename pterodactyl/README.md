@@ -28,6 +28,10 @@ morrowind.example.com {
 
 ## Limits
 
+- Give it about 15 GB of disk if players will add Tamriel Rebuilt: its `.7z` archives are unpacked
+  on the server's disk (`TMPDIR`, `/home/container/tmp`) before install, because Wings makes `/tmp`
+  a 100 MB RAM disk. A server created from an egg older than this needs the `TMPDIR` variable
+  added (re-import the egg), or every `.7z` install fails with "No space left on device".
 - Multiplayer needs no extra allocations: world processes listen on `127.0.0.1:9000+` inside
   the container and players reach them through the gateway at `/w/<id>` on the one port. Pick
   multiplayer in the setup wizard (or set Mode to `gateway`).
