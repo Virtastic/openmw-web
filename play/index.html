@@ -4229,11 +4229,14 @@ try {
                  if (!window.__omwSkipMenu) StreamFS.mounted(/\/video\/menu_background\.bik$/i).forEach(function(p){ pre.push({ path: p }); });
                  StreamFS.preload(pre, function(d){
                    if (!LD || !d.total) return;
-                   LD.set(null, 'Downloading the game data', Math.round(d.bytes / 1048576) + ' MB · ' + Math.round(d.done * 100 / d.total) + '%');
+                   // The MB counts every chunk ready, not only the fetched ones: on a return visit they
+                   // come from this device and the bar read "0 MB" while the percent rose (2026-10-26).
+                   LD.set(null, d.bytes ? 'Downloading the game data' : 'Loading the game data from this device',
+                     Math.round((d.have || d.bytes) / 1048576) + ' MB · ' + Math.round(d.done * 100 / d.total) + '%');
                    LD.step(22 + Math.floor(23 * d.done / d.total));
                  }, 180000).then(function(d){
                    window.__omwPreload = d;
-                   if (d) append('[mw] preloaded ' + d.done + '/' + d.total + ' chunks, ' + Math.round(d.bytes / 1048576) + ' MB fetched, ' + (StreamFS.stats().preMem || 0) + ' in memory');
+                   if (d) append('[mw] preloaded ' + d.done + '/' + d.total + ' chunks, ' + Math.round(d.bytes / 1048576) + ' MB fetched of ' + Math.round((d.have || 0) / 1048576) + ' MB, ' + (StreamFS.stats().preMem || 0) + ' in memory');
                    // THE SPLASH SCREENS, AFTER THE BOOT'S OWN DATA. Every loading screen picks one at
                    // random and read it cold (prod 2026-10-23: splash .tga in the slow reads). Retail has
                    // 11 of 3 MB each, 33 MB: too much to hold the boot for, so the prefetch fetches them

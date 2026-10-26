@@ -2,6 +2,12 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.11
+
+**The loading bar counts what it loads.** On a return visit the game data comes from this
+device, and the bar read "0 MB" while the percent rose, because it only counted downloaded
+bytes. It now counts everything that is ready and says when it is loading from this device.
+
 ## 1.7.10
 
 **Returning players can always sign in.** On an invite-only server the sign-in buttons were

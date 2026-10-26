@@ -390,7 +390,8 @@
           if (!f.offs) for (let s = 0; s < f.size; s += chunk) offs.push(s);
           for (const s of offs) if (s < f.size) jobs.push({ f, s, fi });
         });
-        let done = 0, bytes = 0, next = 0;
+        // bytes: fetched over the network; have: every chunk ready, from this device's store too.
+        let done = 0, bytes = 0, have = 0, next = 0;
         const total = jobs.length;
         const one = async (j) => {
           const ckey = 'https://sfs.chunk/' + encodeURIComponent(j.f.pkey) + '/' + j.s;
@@ -409,13 +410,14 @@
             }
           } catch (err) { buf = undefined; /* the engine's own read fetches it */ }
           done++;
-          if (!buf) { postMessage({ preload: id, done, total, bytes }); return; }
+          if (buf) have += buf.length;
+          if (!buf) { postMessage({ preload: id, done, total, bytes, have }); return; }
           const copy = buf.slice(); // its own buffer, transferred; the store keeps the original
-          postMessage({ preload: id, done, total, bytes, fi: j.fi, s: j.s, buf: copy }, [copy.buffer]);
+          postMessage({ preload: id, done, total, bytes, have, fi: j.fi, s: j.s, buf: copy }, [copy.buffer]);
         };
         const lane = async () => { while (next < jobs.length) await one(jobs[next++]); };
         await Promise.all([lane(), lane(), lane(), lane()]);
-        postMessage({ preload: id, end: true, done, total, bytes });
+        postMessage({ preload: id, end: true, done, total, bytes, have });
       }
       // THE NEXT CELL'S FILES, BEFORE IT IS ENTERED (Scene::prefetchNearbyFiles via the page).
       // Two lanes, standing aside while the game waits on a read of its own. Every chunk lands in
