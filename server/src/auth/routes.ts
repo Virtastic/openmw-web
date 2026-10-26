@@ -241,7 +241,8 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       if (invite === 'locked')
         return fail(req, res, 'invite_locked', 'too many invite passphrase attempts', ip);
       if (invite === 'wrong')
-        return fail(req, res, 'invite_required', 'this server is invite-only', ip);
+        return fail(req, res, 'invite_required', pending.invite?.trim()
+          ? `wrong invite code (${pending.invite.trim().length} chars)` : 'no invite code', ip);
     }
     let resolved;
     try {

@@ -188,7 +188,7 @@
     const form = document.createElement('form');
     form.id = 'inviteForm';
     form.innerHTML = '<label class="fld"><span>Invite code (new players only)</span>'
-      + '<input id="inviteCode" name="invite" autocomplete="off" spellcheck="false" maxlength="128"></label>';
+      + '<input id="inviteCode" name="invite" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128"></label>';
     box.prepend(form);
     const apply = () => {
       const code = String($('#inviteCode').value || '').trim();

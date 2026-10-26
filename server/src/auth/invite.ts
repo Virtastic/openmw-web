@@ -25,7 +25,11 @@ let perKey = new IpRateLimiter(5 / 60, 5); // 5 tries, then one every 12 minutes
 // to an hour (returning players never reach this gate). Logged, so the operator sees it.
 let serverWide = new TokenBucket(20 / 3600, 20);
 
-const digest = (s: string): Buffer => createHash('sha256').update(s, 'utf8').digest();
+// A TYPED CODE IS READ, NOT COPIED. Prod's code mixes case with 0/O and 1/l/I, and the compare was
+// exact: invited players typed it from Discord (a phone capitalises the first letter) and were
+// refused until locked out (2026-10-26). Case, those look-alikes and spaces no longer count.
+const fold = (s: string): string => s.replace(/\s+/g, '').toLowerCase().replace(/o/g, '0').replace(/[il]/g, '1');
+const digest = (s: string): Buffer => createHash('sha256').update(fold(s), 'utf8').digest();
 
 /**
  * 'ok' when no passphrase is set or `given` matches; 'wrong' when it does not; 'locked' when

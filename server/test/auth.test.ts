@@ -21,7 +21,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { startServer, type RunningServer } from '../src/server';
 import type { DeepPartial, Config } from '../src/config';
 import { LoginTicketStore } from '../src/auth/identities';
-import { resetInviteBudgets } from '../src/auth/invite';
+import { checkInvite, resetInviteBudgets } from '../src/auth/invite';
 import { TestClient, tmpDataDir } from './helpers';
 
 // ------------------------------------------------------------- mock provider
@@ -777,6 +777,12 @@ test('SSO respects the server registration policy', async (t) => {
     assert.equal(await guess('guesser', 'letmein'), 'invite_locked', 'the right passphrase after the budget ran out');
     assert.equal(await guess('someone-else', 'letmein'), 'invite_locked', 'the same address is locked, not just the identity');
     assert.deepEqual(await accountNames(h.dataDir), []);
+  });
+
+  await t.test('a typed invite code ignores case, spaces and 0/O 1/l/I, and nothing else', () => {
+    resetInviteBudgets();
+    assert.equal(checkInvite('Ab0lI1xYz', ' aBOL1i XyZ ', ['k:typed']), 'ok');
+    assert.equal(checkInvite('Ab0lI1xYz', 'Ab0lI1xYq', ['k:typed']), 'wrong');
   });
 
   await t.test('sign-ins with no invite at all spend no guesses: the invited player still gets in', async (tt) => {
