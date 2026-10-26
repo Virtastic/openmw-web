@@ -12,12 +12,12 @@
 // of them produces a game that looks installed and breaks somewhere else. The operator is asked
 // which, with the contents of each spelled out.
 
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { copyFile, rename, rm } from 'node:fs/promises';
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statfsSync, statSync, writeFileSync } from 'node:fs';
+import { copyFile, rename, rm, truncate } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import type { IncomingMessage } from 'node:http';
+import type { Readable } from 'node:stream';
 
 import { log } from '../../log';
 import { findDataFolders, slugify, type Candidate } from '../../core/mod-archive';
@@ -34,6 +34,21 @@ import {
 /** Where a staged upload waits between the two steps. Swept on a TTL, so NOTHING that must
  *  outlive the install may be written here. */
 const STAGING = 'mod-staging';
+/** Where a .7z is unpacked when /tmp is too small for it. Not under STAGING, whose sweep runs. */
+const SCRATCH = 'mod-scratch';
+
+/**
+ * The .7z scratch root: the container's own /tmp when it has room (fast, see below), else the
+ * data dir. Pterodactyl's Wings mounts /tmp as a 100 MB tmpfs, and Tamriel Data unpacks to
+ * gigabytes, so every Tamriel Rebuilt install there died on ENOSPC.
+ */
+export function scratchRoot(dataDir: string, need: number): string {
+  try {
+    const st = statfsSync(tmpdir());
+    if (st.bavail * st.bsize > need * 1.1 + 64 * 1024 * 1024) return join(tmpdir(), 'omw-mod-stage');
+  } catch { /* no statfs: fall back to the data dir, which is the one we know is big */ }
+  return join(dataDir, SCRATCH);
+}
 /** Per-mod file lists, for conflict detection. Kept away from STAGING, whose sweep would
  *  eventually delete them. */
 const MOD_META = MODS_META_DIR;
@@ -152,9 +167,87 @@ export async function streamToFile(
   }
 }
 
+// ------------------------------------------------------------------ uploads in parts
+//
+// ONE REQUEST PER FILE DOES NOT SURVIVE A PROXY. Cloudflare refuses any request body over
+// 100 MB with a bare 413, whatever the origin allows, and Morrowind.bsa is 300 MB and Tamriel
+// Data 1.5 GB. Seen on a Pterodactyl host: the game files had to be copied in by hand. So a big
+// file arrives as numbered parts appended to one file here, and the upload route it was meant
+// for is then called with `part=<id>` and reads that file instead of its body. Everything the
+// routes check, hash and place is unchanged; only where the bytes come from differs.
+const PARTS = 'upload-parts';
+/** Largest single part accepted. The browser sends 64 MB; this leaves room, under 100 MB. */
+export const PART_MAX = 96 * 1024 * 1024;
+
+export async function appendPart(
+  req: Readable,
+  dataDir: string,
+  id: string,
+  offset: number,
+  cap: number,
+): Promise<{ ok: true; size: number } | { ok: false; status: number; error: string }> {
+  if (!/^[0-9a-f]{32}$/.test(id) || !Number.isSafeInteger(offset) || offset < 0) {
+    return { ok: false, status: 400, error: 'bad part' };
+  }
+  const dir = join(dataDir, PARTS);
+  const path = join(dir, id);
+  mkdirSync(dir, { recursive: true });
+  if (offset === 0) void sweepDir(dir);
+  const have = existsSync(path) ? statSync(path).size : 0;
+  // A retried part arrives at an offset we already passed: drop what that attempt left. A part
+  // from beyond the end means one went missing, and appending would corrupt the file.
+  if (offset > have) return { ok: false, status: 409, error: 'A part of this upload went missing. Please upload again.' };
+  if (offset > 0 && offset < have) await truncate(path, offset);
+  const out = createWriteStream(path, { flags: offset === 0 ? 'w' : 'r+', start: offset });
+  let written = 0;
+  let over = false;
+  try {
+    await new Promise<void>((done, err) => {
+      req.on('data', (chunk: Buffer) => {
+        if (over) return;
+        written += chunk.length;
+        if (written > PART_MAX || offset + written > cap) {
+          over = true;
+          out.destroy();
+          req.destroy();
+          err(new Error('over cap'));
+          return;
+        }
+        if (!out.write(chunk)) { req.pause(); out.once('drain', () => req.resume()); }
+      });
+      req.on('error', err);
+      req.on('end', () => out.end(done));
+      out.on('error', err);
+    });
+  } catch (e) {
+    if (over) return { ok: false, status: 413, error: 'That file is larger than the upload limit.' };
+    log('error', 'admin.part_failed', { error: String(e) });
+    return { ok: false, status: 500, error: 'Could not save the upload. The data folder may be read-only or full.' };
+  }
+  return { ok: true, size: offset + written };
+}
+
+/**
+ * The body a route should read: the assembled parts when the URL names them, else the request.
+ * Undefined when the named parts are gone (swept, or never sent). `done` deletes them.
+ */
+export function partSource(req: Readable, dataDir: string, url: URL):
+  { src: Readable; done: () => Promise<void> } | undefined {
+  const id = url.searchParams.get('part');
+  if (id === null) return { src: req, done: async () => {} };
+  if (!/^[0-9a-f]{32}$/.test(id)) return undefined;
+  const path = join(dataDir, PARTS, id);
+  if (!existsSync(path)) return undefined;
+  req.resume(); // the finishing request has no body of its own; let it end
+  return { src: createReadStream(path), done: () => rm(path, { force: true }) };
+}
+
 /** Delete staged uploads nobody came back for. No timer: this runs when the next one arrives. */
 async function sweepStaging(dataDir: string): Promise<void> {
-  const dir = join(dataDir, STAGING);
+  return sweepDir(join(dataDir, STAGING));
+}
+
+async function sweepDir(dir: string): Promise<void> {
   let names: string[];
   try { names = readdirSync(dir); } catch { return; }
   const cutoff = Date.now() - STAGE_TTL_MS;
@@ -202,7 +295,7 @@ export interface Staged {
 
 /** Step one: take the upload, look inside, and report what is in there. Nothing is installed. */
 export async function beginInstall(
-  req: IncomingMessage,
+  req: Readable,
   dataDir: string,
   archiveName: string,
   cap: number,
@@ -329,13 +422,15 @@ async function commitInstallLocked(
 
   let scratch = '';
   if (kind === '7z') {
-    const stageRoot = join(tmpdir(), 'omw-mod-stage');
+    const stageRoot = scratchRoot(dataDir, entries.reduce((n, e) => n + e.size, 0));
     scratch = join(stageRoot, token);
     try {
+      // Both roots swept: the other one may hold an orphan from an earlier install.
+      await rm(join(tmpdir(), 'omw-mod-stage'), { recursive: true, force: true });
+      await rm(join(dataDir, SCRATCH), { recursive: true, force: true });
       // A crash mid-install would orphan an earlier scratch, so leftovers go here, on the
       // next install — both in today's stage root and in the mods folder, where an older
       // build kept its scratch (.stage-*) and an upgrade would otherwise strand one forever.
-      await rm(stageRoot, { recursive: true, force: true });
       mkdirSync(join(gameDataDir, MODS_SUBDIR), { recursive: true }); // first install: no mods dir yet
       for (const n of readdirSync(join(gameDataDir, MODS_SUBDIR), { withFileTypes: true })) {
         if (n.isDirectory() && n.name.startsWith('.stage-')) {

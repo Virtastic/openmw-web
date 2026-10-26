@@ -2,6 +2,18 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.7
+
+**Tamriel Rebuilt installs on Pterodactyl and other small-/tmp hosts.** A `.7z` mod is unpacked
+before it is placed, and that happened in `/tmp`, which Pterodactyl's Wings makes a 100 MB RAM
+disk: every Tamriel Rebuilt install there failed with "No space left on device". The server now
+checks the room first and unpacks on its data disk when `/tmp` is too small. Nothing to set.
+
+**Big uploads get through Cloudflare.** Cloudflare refuses any single request over 100 MB with a
+bare 413, whatever the server allows, so `Morrowind.bsa` (300 MB) and large mod archives could
+not be uploaded from the dashboard behind it and had to be copied in by hand. Files over 64 MB
+are now sent in parts and put back together on the server.
+
 ## 1.7.6
 
 **Invite codes that look right now work.** A typed code ignores case, spaces, and the look-alikes

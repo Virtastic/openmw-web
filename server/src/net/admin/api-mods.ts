@@ -16,7 +16,8 @@ import {
 } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join, basename, dirname, resolve, sep } from 'node:path';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { ServerResponse } from 'node:http';
+import type { Readable } from 'node:stream';
 import { log } from '../../log';
 import {
   MODLIST_FILE, MODS_SUBDIR, readModDoc, resolveMods, writeModDoc, type ModEntry,
@@ -373,7 +374,7 @@ export function gameDataWritable(dir: string): boolean {
 let uploadSeq = 0;
 
 export async function uploadContent(
-  req: IncomingMessage,
+  req: Readable,
   res: ServerResponse,
   gameDataDir: string,
   rawName: string,

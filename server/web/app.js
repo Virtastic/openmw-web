@@ -3068,6 +3068,7 @@ function pollInstall(stage, token) {
  * bar. Everything else here is fetch; this is the exception that earns itself.
  */
 function uploadArchive(file, stage) {
+  if (file.size > UPLOAD_PART) return uploadArchiveInParts(file, stage);
   return new Promise((done, fail) => {
     if (!/\.(zip|7z)$/i.test(file.name)) {
       // Named before the upload rather than after: there is no point sending 400 MB to be told.
@@ -3121,6 +3122,63 @@ function uploadArchive(file, stage) {
     installPhase(stage, 'Uploading', sizeOf(file.size), 0);
     xhr.send(file);
   });
+}
+
+/**
+ * POST a file's bytes to an upload route; resolves with the Response that route gave.
+ *
+ * A FILE OVER 100 MB NEVER REACHES THE SERVER IN ONE REQUEST behind Cloudflare: it answers
+ * 413 itself, whatever the server would allow, and Morrowind.bsa is 300 MB. So anything over
+ * one part goes to /upload-part in pieces, each retried once, and the route is then called
+ * with `part=<id>` and an empty body; the server reads the assembled file in its place. A part
+ * that fails with an HTTP status hands that Response back, so 401 and 413 read as they always
+ * did.
+ */
+const UPLOAD_PART = 64 * 1024 * 1024;
+async function postFile(url, file, onProgress) {
+  const headers = () => ({ authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' });
+  if (file.size <= UPLOAD_PART) {
+    return fetch(url, { method: 'POST', headers: headers(), body: file, duplex: 'half' });
+  }
+  const id = [...crypto.getRandomValues(new Uint8Array(16))]
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
+  for (let off = 0; off < file.size; off += UPLOAD_PART) {
+    const send = () => fetch(`/admin/api/upload-part?id=${id}&offset=${off}`, {
+      method: 'POST', headers: headers(), body: file.slice(off, off + UPLOAD_PART),
+    });
+    let r;
+    try { r = await send(); } catch { r = await send(); }
+    if (!r.ok && r.status >= 500) r = await send();
+    if (!r.ok) return r;
+    onProgress?.(Math.min(off + UPLOAD_PART, file.size), file.size);
+  }
+  return fetch(`${url}&part=${id}`, { method: 'POST', headers: headers() });
+}
+
+/** uploadArchive for a file too big for one request: the same answers, sent in parts. */
+async function uploadArchiveInParts(file, stage) {
+  if (!/\.(zip|7z)$/i.test(file.name)) return uploadArchive({ name: file.name, size: 0 }, stage);
+  uploadRunning = true;
+  let r;
+  try {
+    installPhase(stage, 'Uploading', sizeOf(file.size), 0);
+    r = await postFile(`/admin/api/mods/install?name=${encodeURIComponent(file.name)}`, file,
+      (sent, total) => {
+        if (sent < total) installPhase(stage, 'Uploading', `${sizeOf(sent)} of ${sizeOf(total)}`, (sent / total) * 100);
+        else installPhase(stage, 'Opening the archive', file.name);
+      });
+  } catch {
+    throw new Error('The upload did not finish. The connection dropped, or the server '
+      + 'restarted while it was going.');
+  } finally {
+    uploadRunning = false;
+  }
+  const body = await r.json().catch(() => ({}));
+  if (r.status === 401 || r.status === 403) {
+    throw new Error('Your session ended during the upload. Sign in again and retry.');
+  }
+  if (r.status !== 200) throw new Error(body.error || `The upload failed (HTTP ${r.status}).`);
+  return body;
 }
 
 /** Add-files panel, shared by the mods page and the wizard's game-data step. */
@@ -3699,12 +3757,7 @@ function wireUpload(onDone) {
         // parser for a 400 MB archive would be a dependency plus a memory problem. The PATH
         // travels in the query, because loose media is loaded by path and must keep its
         // directory, "Music/Explore/mx_explore_1.mp3", not "mx_explore_1.mp3".
-        const r = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, {
-          method: 'POST',
-          headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
-          body: file,
-          duplex: 'half',
-        });
+        const r = await postFile(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, file);
         if (r.status === 400) { skipped.push(path); }      // not game data; expected in bulk
         else if (r.status === 401 || r.status === 403) {
           // Admin sessions live in memory, so a server restart (or a long upload outliving
@@ -3718,12 +3771,7 @@ function wireUpload(onDone) {
         } else if (r.status === 429) {
           // Backing off beats failing: this endpoint shares the session's request budget.
           await new Promise((res) => setTimeout(res, 2000));
-          const retry = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, {
-            method: 'POST',
-            headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
-            body: file,
-            duplex: 'half',
-          });
+          const retry = await postFile(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, file);
           if (retry.ok) { done++; bytes += file.size; }
           else { failed.push(path); note('refused because uploads were coming too fast'); }
         } else if (!r.ok) {
@@ -3736,12 +3784,7 @@ function wireUpload(onDone) {
         // covers a blip; a server that is actually down ends the run rather than grinding
         // through thousands of guaranteed failures.
         try {
-          const retry = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, {
-            method: 'POST',
-            headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
-            body: file,
-            duplex: 'half',
-          });
+          const retry = await postFile(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, file);
           if (retry.ok) { done++; bytes += file.size; }
           else { failed.push(path); note('could not be sent'); }
         } catch {

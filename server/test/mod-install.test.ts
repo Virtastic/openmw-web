@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 
-import { commitInstall, uninstallMod, saveModOrder, PACK_LOOSE_ABOVE } from '../src/net/admin/mod-install';
+import { commitInstall, uninstallMod, saveModOrder, scratchRoot, appendPart, partSource, PACK_LOOSE_ABOVE } from '../src/net/admin/mod-install';
 import { readBsaNames } from '../src/core/bsa-pack';
 import { crc32, listEntries } from '../src/core/zip';
 import { emptyDoc, readModDoc, writeModDoc } from '../src/core/mods';
@@ -400,4 +400,31 @@ test('a mod under the packing threshold stays loose', async () => {
   assert.ok(res.ok, res.ok ? '' : res.error);
   assert.deepEqual(res.value[0]!.archives, []);
   assert.ok(existsSync(join(gameDataDir, 'mods', 'small', 'Meshes', 'a.nif')));
+});
+
+test('a .7z too big for /tmp unpacks under the data dir (Wings: /tmp is a 100 MB tmpfs)', () => {
+  assert.equal(scratchRoot('/d', 0), join(tmpdir(), 'omw-mod-stage'));
+  assert.equal(scratchRoot('/d', Number.MAX_SAFE_INTEGER), join('/d', 'mod-scratch'));
+});
+
+test('a file sent in parts is assembled in order, a retried part replaces itself, a gap is refused', async () => {
+  const { Readable } = await import('node:stream');
+  const dir = tmp();
+  const id = 'ab'.repeat(16);
+  const body = (s: string) => Readable.from([Buffer.from(s)]);
+  assert.deepEqual(await appendPart(body('hello '), dir, id, 0, 1e9), { ok: true, size: 6 });
+  assert.deepEqual(await appendPart(body('wXrld'), dir, id, 6, 1e9), { ok: true, size: 11 });
+  assert.deepEqual(await appendPart(body('world'), dir, id, 6, 1e9), { ok: true, size: 11 });
+  assert.equal((await appendPart(body('!'), dir, id, 20, 1e9) as { status: number }).status, 409);
+  assert.equal((await appendPart(body('x'), dir, '../etc', 0, 1e9) as { status: number }).status, 400);
+  assert.equal((await appendPart(body('toolong'), dir, id, 11, 12) as { status: number }).status, 413);
+
+  const got = partSource(body(''), dir, new URL(`http://x/?part=${id}`));
+  assert.ok(got);
+  const chunks: Buffer[] = [];
+  for await (const c of got.src) chunks.push(c as Buffer);
+  assert.equal(Buffer.concat(chunks).toString(), 'hello world');
+  await got.done();
+  assert.equal(partSource(body(''), dir, new URL(`http://x/?part=${id}`)), undefined);
+  assert.equal(partSource(body(''), dir, new URL('http://x/?part=nope')), undefined);
 });

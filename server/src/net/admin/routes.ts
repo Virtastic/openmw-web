@@ -25,6 +25,7 @@
 //   PUT  /admin/api/settings/:section  [owner]
 //   GET  /admin/api/mods               [viewer]
 //   PUT  /admin/api/mods               [owner]     load order + mod order/switches
+//   POST /admin/api/upload-part        [owner]     one part of a big file (?id=&offset=)
 //   POST /admin/api/mods/upload        [owner]     one loose Data Files file
 //   POST /admin/api/mods/install       [owner]     a mod .zip -> staged, with its candidates
 //   POST /admin/api/mods/install/commit[owner]     which candidates to extract
@@ -66,7 +67,8 @@ import { readDashboardTree } from './settings-store';
 import { writeCaddyfile } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES } from './api-mods';
 import {
-  beginInstall, commitInstall, getInstallProgress, saveModOrder, uninstallMod, type Choice,
+  appendPart, beginInstall, commitInstall, getInstallProgress, partSource, saveModOrder, uninstallMod,
+  type Choice,
 } from './mod-install';
 import { engineStatus, resolveLatestRelease, startEngineUpdate } from './update-engine';
 import { requestServerUpdate, updateStatus } from './update-server';
@@ -788,14 +790,26 @@ export function adminRoutes(deps: AdminDeps) {
     }
     // Upload streams straight to disk, so it must NOT go through readJson's buffering, a
     // 400 MB archive is not a JSON body. Owner only: this writes files the engine will load.
+    // One part of a file too big for a single request through a proxy (see appendPart).
+    if (method === 'POST' && path === '/admin/api/upload-part') {
+      const ctx = await gate(req, res, auth, 'owner', true);
+      if (!ctx) return true;
+      const r = await appendPart(req, deps.dataDir, url.searchParams.get('id') ?? '',
+        Number(url.searchParams.get('offset')), MAX_UPLOAD_BYTES);
+      json(res, r.ok ? 200 : r.status, r.ok ? { size: r.size } : { error: r.error });
+      return true;
+    }
     if (method === 'POST' && path === '/admin/api/mods/upload') {
       // Budget-exempt: one request per file, and a Data Files folder is thousands of them.
       // See the parameter's own comment in auth.ts for why that is safe here.
       const ctx = await gate(req, res, auth, 'owner', true);
       if (!ctx) return true;
+      const body = partSource(req, deps.dataDir, url);
+      if (!body) { json(res, 400, { error: 'That upload has expired. Please upload again.' }); return true; }
       const result = await uploadContent(
-        req, res, deps.gameDataDir, url.searchParams.get('name') ?? '',
+        body.src, res, deps.gameDataDir, url.searchParams.get('name') ?? '',
       );
+      await body.done();
       if (!result.ok) { json(res, result.status, { error: result.error }); return true; }
       log('info', 'admin.mods_uploaded', { by: ctx.accountKey, file: result.file });
       json(res, 200, { ok: true, file: result.file, bytes: result.bytes, restartRequired: true });
@@ -841,9 +855,12 @@ export function adminRoutes(deps: AdminDeps) {
           + 'Remove ":ro" from the gamedata volume and restart.' });
         return true;
       }
+      const body = partSource(req, deps.dataDir, url);
+      if (!body) { json(res, 400, { error: 'That upload has expired. Please upload again.' }); return true; }
       const staged = await beginInstall(
-        req, deps.dataDir, url.searchParams.get('name') ?? 'mod.zip', MAX_UPLOAD_BYTES,
+        body.src, deps.dataDir, url.searchParams.get('name') ?? 'mod.zip', MAX_UPLOAD_BYTES,
       );
+      await body.done();
       if (!staged.ok) { json(res, staged.status, { error: staged.error }); return true; }
       log('info', 'admin.mod_staged', { by: ctx.accountKey, archive: staged.value.archive });
       json(res, 200, staged.value);
