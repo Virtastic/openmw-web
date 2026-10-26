@@ -469,7 +469,12 @@ function net.onClose()
         core.quit()
         return
     end
-    if net.state == 'Joined' or reconnecting then
+    -- `reconnecting` alone is not "was in the world": scheduleReconnect latches it inside the
+    -- pre-join boot grace too, so the SECOND refused dial of a world still booting landed here,
+    -- asked the page for a fresh ticket and stopped dialling -- 10 s later the player read
+    -- "sign-in was refused" over a world that was simply not up yet. Before the first join a
+    -- refused dial keeps retrying on the switchDeadline branch below.
+    if net.state == 'Joined' or (reconnecting and everJoined) then
         if net.resumeToken or (mp.getResumeToken and mp.getResumeToken() ~= '') then
             authMode = 'resume'
             triedResume = false

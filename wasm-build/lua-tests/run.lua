@@ -3772,6 +3772,22 @@ do
     tostring(first.token) .. ' / ' .. tostring(second.token) .. ' / ' .. tostring(third.token))
 end
 
+-- ============================================================ net.lua: a world still booting
+-- 2026-10-26: a cached engine dialled before the world listened; the gateway refused the
+-- upgrade twice and the second close asked the page for a fresh ticket (reconnecting was
+-- latched by the first) -- the dial loop stopped and 10 s later read "sign-in was refused".
+print('net.lua -- refused dials before the first join keep retrying, no ticket rescue')
+do
+  fresh()
+  local env = stubs.install({}) -- SSO: no password, no resume token
+  local net = require('scripts.mp.net')
+  net.start()
+  for _ = 1, 4 do net.onClose(); env.advance(5); net.tick() end
+  check('pre-join refusals stay in the dial loop and never ask for a fresh ticket',
+    env.calls.testSet.needFreshTicket == nil and net.state ~= 'Failed',
+    'needFreshTicket=' .. tostring(env.calls.testSet.needFreshTicket) .. ' state=' .. tostring(net.state))
+end
+
 print('friend sync: a friend\'s puppet jumps on a slow client, and a teleport is not walked')
 do
   -- The real puppet.lua, a friend (playerId), poses at the server's 66 ms tick.

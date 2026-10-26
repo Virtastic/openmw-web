@@ -20,6 +20,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
+import type { Duplex } from 'node:stream';
 import { clientIp, CLIENT_IP_HEADER } from '../net/ws';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,11 +32,18 @@ import { clientLogRoute, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../ne
 import { IpRateLimiter } from '../net/ratelimit';
 import { VERIFY_PATH } from '../net/admin/setup-check';
 
+/** How long a dial to a world that is starting is held before it is refused (the client then
+ *  retries on its own ladder), and how often the hold re-checks. */
+export const BOOT_HOLD_MS = 30_000;
+const BOOT_HOLD_POLL_MS = 250;
+
 export interface DirectoryDeps {
   worlds: WorldSupervisor;
   host: string;
   port: number;
   maxPerOwner: number;
+  /** Hold on a dial to a world still starting (default BOOT_HOLD_MS); tests shorten it. */
+  bootHoldMs?: number;
   // THE DASHBOARD, on the multiplayer server. gateway/admin.ts builds it; this router only
   // has to hand it the paths a game's router would claim (/admin, /, /play, the reachability
   // probe). deploy/Caddyfile keeps /admin off the internet exactly as it does for a game.
@@ -504,13 +512,43 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
         if (world) log('info', 'world.revived_on_dial', { id: m[1], owner });
       }
     }
-    if (!world || !world.up) {
-      // A world that is down must fail the handshake, not hang: the client's own retry ladder
-      // is what recovers, and it can only run if the socket closes.
+    if (!world) {
+      // A world that is not here must fail the handshake, not hang: the client's own retry
+      // ladder is what recovers, and it can only run if the socket closes.
       socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
       return;
     }
-    const upstream = netConnect({ host: '127.0.0.1', port: world.port }, () => {
+    if (world.up) { splice(req, socket, head, world.port); return; }
+    // A WORLD THAT IS STILL BOOTING IS HELD, NOT REFUSED. The launcher starts the world and
+    // navigates at once, and a cached engine dials within a few seconds — before the world
+    // listens, and up to a 5 s status poll before `up` says so. The instant 502 sent the client
+    // round its reconnect ladder over a game that was already rendering ("Waking the server"),
+    // and its second refusal read as a lost sign-in. Hold the socket until the world answers.
+    const id = world.id;
+    let gone = false;
+    socket.once('close', () => { gone = true; });
+    socket.on('error', () => { gone = true; });
+    void (async () => {
+      const until = Date.now() + (deps.bootHoldMs ?? BOOT_HOLD_MS);
+      while (!gone && Date.now() < until) {
+        await pollShared();
+        const w = deps.worlds.get(id);
+        if (!w) break;
+        if (w.up) { if (!gone) splice(req, socket, head, w.port); return; }
+        await new Promise((r) => setTimeout(r, BOOT_HOLD_POLL_MS));
+      }
+      if (gone) return;
+      log('warn', 'world.dial_refused_not_up', { id });
+      socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
+    })();
+  });
+  // One status sweep however many dials are waiting.
+  let polling: Promise<void> | undefined;
+  const pollShared = (): Promise<void> =>
+    (polling ??= deps.worlds.poll().catch(() => undefined).finally(() => { polling = undefined; }));
+
+  function splice(req: IncomingMessage, socket: Duplex, head: Buffer, port: number): void {
+    const upstream = netConnect({ host: '127.0.0.1', port }, () => {
       // Replay the handshake byte for byte, including anything already buffered in `head` —
       // but STAMP the real client address. After this splice the world sees a loopback socket,
       // so without it every client behind the gateway shares one address: maxConnsPerIp
@@ -533,7 +571,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     const bail = (): void => { try { upstream.destroy(); } catch { /* already gone */ } socket.destroy(); };
     upstream.on('error', bail);
     socket.on('error', bail);
-  });
+  }
 
   // The gateway receives the mod uploads in multiplayer mode (admin.ts runs on this port), so
   // Node's 5-minute default cut a 2.7 GB Tamriel_Data upload slower than ~9 MB/s off as "the

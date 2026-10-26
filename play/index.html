@@ -1041,6 +1041,7 @@ try {
    }
    return { set:set, fromLog:fromLog, done:finish, creep:creep, step:function(p){ if (boot) bootAt(p); }, show:show, withdraw:withdraw,
             hide: function(){ if (!locked) finish(); },
+            up: function(){ return !done; },
             lock:lock, unlock:unlock };
  })();
  // Full-screen fatal overlay: aborts, GPU context loss, unsupported browsers. The hidden dev
@@ -6122,7 +6123,12 @@ try {
         if (String(window.omw.state.serverRestarting || '') === '1') {
           window.__omwLoading.show('The server is restarting', 'Putting you back in…');
         } else if (everJoinedOnce) window.__omwLoading.show('Connection lost', 'Reconnecting…');
-        else window.__omwLoading.show('Starting your world', 'Waking the server, this takes a moment…');
+        // NEVER BACK OVER A RUNNING GAME. Before the first join the boot screen is either still
+        // up (say the world is waking) or already released to a rendering game -- putting it back
+        // then was the 2026-10-26 "Waking the server" curtain dropping over a world in view.
+        // uiHold above still pauses input; the status line says why.
+        else if (window.__omwLoading.up()) window.__omwLoading.show('Starting your world', 'Waking the server, this takes a moment…');
+        else setStatus('Waking the server, this takes a moment…');
       }
       // NOT WHILE THE BOOT SETTLE OWNS THE SCREEN. The first dial into a world that is still
       // coming up is routinely refused and retried, so a normal first join passes THROUGH
