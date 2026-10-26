@@ -4,7 +4,7 @@
     "exported_at": "2026-10-23T00:00:00+00:00",
     "name": "OpenMW Web",
     "author": "michael@stavridis.xyz",
-    "description": "Morrowind in the browser (openmw-web), single-player. Open /admin on the server port to run the setup wizard. Players need HTTPS in front of it; see the README.",
+    "description": "Morrowind in the browser (openmw-web), single-player or multiplayer on one port. Open /admin on the server port to run the setup wizard. Players need HTTPS in front of it; see the README.",
     "features": null,
     "docker_images": {
         "openmw-web (latest)": "ghcr.io/virtastic/openmw-web-server:latest"
@@ -27,12 +27,12 @@
     "variables": [
         {
             "name": "Port",
-            "description": "Port the server listens on. Leave as the server's own port.",
+            "description": "Leave empty: the server listens on its allocation (SERVER_PORT).",
             "env_variable": "OMW_PORT",
-            "default_value": "{{SERVER_PORT}}",
+            "default_value": "",
             "user_viewable": true,
             "user_editable": false,
-            "rules": "required|string",
+            "rules": "nullable|integer|between:1,65535",
             "field_type": "text"
         },
         {
@@ -57,12 +57,12 @@
         },
         {
             "name": "Mode",
-            "description": "single is the only mode this egg supports.",
+            "description": "single = one person's game; gateway = multiplayer on the same one port (worlds are proxied at /w/<id>). The setup wizard's choice wins over this.",
             "env_variable": "OMW_DEFAULT_MODE",
             "default_value": "single",
             "user_viewable": true,
-            "user_editable": false,
-            "rules": "required|string|in:single",
+            "user_editable": true,
+            "rules": "required|string|in:single,gateway",
             "field_type": "text"
         },
         {
