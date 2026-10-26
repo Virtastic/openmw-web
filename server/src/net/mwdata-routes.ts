@@ -24,6 +24,8 @@
 
 import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
+import { pipeline } from 'node:stream';
+import { constants as Z, createBrotliCompress, createGzip } from 'node:zlib';
 import { join, relative, resolve, sep } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HttpRoute } from './http';
@@ -34,6 +36,10 @@ import { MODS_SUBDIR, resolveMods, type ModDoc } from '../core/mods';
  *  (ms, integer). The browser folds `m` into its persistent chunk-cache key so a re-installed
  *  mod file of the same size does not serve the old bytes (backlog 306). */
 interface Entry { p: string; s: number; m: number }
+
+/** Compressed on a whole-file GET: the content files the boot downloads whole (streamfs.js
+ *  preload). Archives and media are already compressed or read by range. */
+const COMPRESS = /\.(esm|esp|omwaddon)$/i;
 
 /** Skipped wholesale: not game data, and one of them is an operator secret. */
 const SKIP_DIR = /^(\.|__pycache__$|node_modules$)/;
@@ -196,10 +202,12 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
 
     let size: number;
     let etag: string;
+    let mtimeMs: number;
     try {
       const st = await stat(path);
       if (!st.isFile()) throw new Error('not a file');
       size = st.size;
+      mtimeMs = st.mtimeMs;
       etag = `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
     } catch {
       res.writeHead(404); res.end(); return true;
@@ -221,10 +229,30 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
       'content-type': 'application/octet-stream',
       'cache-control': isModFile ? 'no-cache' : 'public, max-age=31536000, immutable',
       etag,
+      // The same URL answers raw (a Range) or compressed (a whole GET): no shared cache may hand
+      // one to the other. The client also asks for the whole file under its own query (z=1).
+      vary: 'accept-encoding',
     };
+    // THE CONTENT FILES, COMPRESSED (backlog: 94 MB of ESMs at boot, ~36 MB as brotli). Only a
+    // whole-file GET: a Range is always raw bytes. A fresh .br sibling when there is one (none
+    // ships in gamedata today); otherwise compressed on the fly as a stream -- brotli quality 5
+    // measured 31.6 MB for Morrowind.esm in 1.3 s, as small as a quality-11 sibling (31.9 MB).
+    let enc: 'br' | 'gzip' | undefined;
+    let sibling: string | undefined;
+    if (req.headers.range === undefined && COMPRESS.test(path)) {
+      const accept = String(req.headers['accept-encoding'] ?? '');
+      if (/\bbr\b/.test(accept)) enc = 'br';
+      else if (/\bgzip\b/.test(accept)) enc = 'gzip';
+      if (enc === 'br') {
+        try { if ((await stat(path + '.br')).mtimeMs >= mtimeMs) sibling = path + '.br'; } catch { /* none */ }
+      }
+      if (enc) { head['content-encoding'] = enc; head.etag = etag = etag.slice(0, -1) + '-' + enc + '"'; }
+    }
     if (req.headers['if-none-match'] === etag) { res.writeHead(304, head); res.end(); return true; }
     const ifRange = req.headers['if-range'];
-    const range = ifRange !== undefined && ifRange !== etag ? null
+    // A tag from a compressed whole GET names the same version of the file (size+mtime): the
+    // Range is honoured against it, raw.
+    const range = ifRange !== undefined && String(ifRange).replace(/-(br|gzip)"$/, '"') !== etag ? null
       : /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
     if (range && (range[1] !== '' || range[2] !== '')) {
       // A suffix range ("-500") is the last N bytes; otherwise start..end inclusive.
@@ -242,6 +270,18 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
       return true;
     }
 
+    if (enc) {
+      // No content-length: the compressed size is not known until it is sent.
+      res.writeHead(200, head);
+      if (req.method === 'HEAD') { res.end(); return true; }
+      const z = sibling ? undefined : enc === 'br'
+        ? createBrotliCompress({ params: { [Z.BROTLI_PARAM_QUALITY]: 5, [Z.BROTLI_PARAM_SIZE_HINT]: size } })
+        : createGzip();
+      const done = () => { /* a dropped client: the streams are destroyed */ };
+      if (z) pipeline(createReadStream(path), z, res, done);
+      else pipeline(createReadStream(sibling!), res, done);
+      return true;
+    }
     res.writeHead(200, { ...head, 'content-length': String(size) });
     if (req.method === 'HEAD') { res.end(); return true; }
     createReadStream(path).pipe(res);

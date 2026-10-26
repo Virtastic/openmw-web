@@ -213,3 +213,58 @@ test('mwdata-mods.json files carry an mtime for the chunk-cache key', async () =
     assert.ok(Number.isInteger(f.m) && f.m > 0, 'an integer mtime rides along');
   } finally { await s.stop(); }
 });
+
+// The boot downloads each content file whole (streamfs.js wholeFetch): 94 MB of ESMs raw, ~36 MB
+// as brotli. A whole GET is compressed; a Range is always raw bytes; Vary keeps a shared cache
+// (Cloudflare) from handing one to the other.
+test('a whole GET of a content file is compressed (br, else gzip); a Range stays raw', async () => {
+  const { brotliDecompressSync, gunzipSync } = await import('node:zlib');
+  const { request } = await import('node:http');
+  const dir = fixture();
+  const esm = Buffer.from('TES3'.repeat(5000));
+  writeFileSync(join(dir, 'Morrowind.esm'), esm);
+  const s = await serve(dir, 'serve');
+  // node's fetch decodes bodies itself; read the wire bytes instead.
+  const get = (headers: Record<string, string>) => new Promise<{ status: number; h: Record<string, unknown>; body: Buffer }>((ok, fail) => {
+    request(`${s.base}/mwdata/Morrowind.esm?v=2&z=1`, { headers }, (r) => {
+      const parts: Buffer[] = [];
+      r.on('data', (c: Buffer) => parts.push(c));
+      r.on('end', () => ok({ status: r.statusCode ?? 0, h: r.headers, body: Buffer.concat(parts) }));
+    }).on('error', fail).end();
+  });
+  try {
+    const br = await get({ 'accept-encoding': 'gzip, deflate, br' });
+    assert.equal(br.status, 200);
+    assert.equal(br.h['content-encoding'], 'br');
+    assert.equal(br.h.vary, 'accept-encoding');
+    assert.ok(br.body.length < esm.length / 10, 'smaller on the wire');
+    assert.ok(brotliDecompressSync(br.body).equals(esm), 'decodes to the file');
+
+    const gz = await get({ 'accept-encoding': 'gzip' });
+    assert.equal(gz.h['content-encoding'], 'gzip');
+    assert.ok(gunzipSync(gz.body).equals(esm));
+    assert.notEqual(gz.h.etag, br.h.etag, 'each encoding its own validator');
+
+    const raw = await get({ 'accept-encoding': 'gzip, br', range: 'bytes=4-11' });
+    assert.equal(raw.status, 206);
+    assert.equal(raw.h['content-encoding'], undefined, 'a Range is raw bytes');
+    assert.equal(raw.h.vary, 'accept-encoding');
+    assert.equal(raw.body.toString(), 'TES3TES3');
+
+    const plain = await get({});
+    assert.equal(plain.h['content-encoding'], undefined);
+    assert.ok(plain.body.equals(esm), 'no Accept-Encoding: the plain file');
+
+    // A fresh .br sibling is sent as it is.
+    const sibBytes = (await import('node:zlib')).brotliCompressSync(esm);
+    writeFileSync(join(dir, 'Morrowind.esm.br'), sibBytes);
+    const sib = await get({ 'accept-encoding': 'br' });
+    assert.equal(sib.h['content-encoding'], 'br');
+    assert.ok(sib.body.equals(sibBytes) && !sib.body.equals(br.body), 'the sibling itself, not a fresh compression');
+
+    // Not a content file: unchanged.
+    const media = await fetch(`${s.base}/mwdata/Music/Explore/track.mp3`, { headers: { 'accept-encoding': 'br' } });
+    assert.equal(media.headers.get('content-encoding'), null);
+    assert.equal(media.headers.get('content-length'), '3');
+  } finally { await s.stop(); }
+});

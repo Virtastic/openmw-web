@@ -383,15 +383,71 @@
       // 241 MB of writes the store answered slower than the hedge, so the engine fetched the whole
       // of Morrowind.esm again, a chunk at a time (prod 2026-10-21: 126/126 preloaded, then 21 slow
       // reads of 0.4-5.6 s and a 117 s engine start). A memory hit has no store and no worker in it.
+      // THE CONTENT FILES IN ONE COMPRESSED REQUEST. Range chunks are raw bytes: 94 MB of ESMs on
+      // every first boot, where the whole file as brotli is ~36 MB (Morrowind.esm 79.8 MB -> 31.9).
+      // A plain GET lets the browser take Content-Encoding br/gzip and hand back the decoded bytes;
+      // they are cut into the same chunks at the same keys the range path stores, so every later
+      // read, the warm-up and the eviction see no difference. Its own query (z=1) keeps the
+      // compressed answer apart from the raw ranges in any shared cache (Cloudflare). Throws on any
+      // failure: what arrived whole is stored, the rest goes by range (preload).
+      async function wholeFetch(f, chunk, onChunk) {
+        const ac = new AbortController();
+        let t = setTimeout(() => ac.abort(), ATTEMPT_MS);
+        let got = 0, fill = 0, part = new Uint8Array(Math.min(chunk, f.size));
+        try {
+          const r = await fetch(f.url + (f.url.indexOf('?') < 0 ? '?' : '&') + 'z=1', { signal: ac.signal });
+          if (r.status !== 200) throw new Error('HTTP ' + r.status);
+          const rd = r.body.getReader();
+          for (;;) {
+            const { done, value } = await rd.read();
+            if (done) break;
+            clearTimeout(t); t = setTimeout(() => ac.abort(), ATTEMPT_MS); // silence, not the whole read
+            for (let o = 0; o < value.length;) {
+              if (got >= f.size) throw new Error('longer than ' + f.size);
+              const n = Math.min(value.length - o, part.length - fill);
+              part.set(value.subarray(o, o + n), fill); fill += n; o += n; got += n;
+              if (fill === part.length) { await onChunk(got - fill, part); part = new Uint8Array(Math.min(chunk, f.size - got)); fill = 0; }
+            }
+          }
+          if (got !== f.size) throw new Error('short body ' + got + '/' + f.size);
+        } finally { clearTimeout(t); }
+      }
       async function preload(files, chunk, id) {
-        const jobs = [];
+        const jobs = [], wholes = [];
         files.forEach((f, fi) => {
+          if (f.whole && !f.offs) { wholes.push({ f, fi }); return; }
           const offs = f.offs || [];
           if (!f.offs) for (let s = 0; s < f.size; s += chunk) offs.push(s);
           for (const s of offs) if (s < f.size) jobs.push({ f, s, fi });
         });
         let done = 0, bytes = 0, next = 0;
-        const total = jobs.length;
+        const total = jobs.length + wholes.reduce((n, w) => n + Math.ceil(w.f.size / chunk), 0);
+        const give = (fi, s, buf) => {
+          const copy = buf.slice(); // its own buffer, transferred; the store keeps the original
+          postMessage({ preload: id, done, total, bytes, fi, s, buf: copy }, [copy.buffer]);
+        };
+        // Whole only when most of the file is missing: a returning player's stored chunks are not
+        // downloaded again. Whatever is left afterwards is a range job like any other.
+        const whole = async ({ f, fi }) => {
+          const left = new Set();
+          let missing = 0;
+          for (let s = 0; s < f.size; s += chunk) {
+            left.add(s);
+            let have = false;
+            try { have = (await opfsHas(f.pkey, s, chunk)) || !!(await cacheMatch('https://sfs.chunk/' + encodeURIComponent(f.pkey) + '/' + s, false)); } catch (err) { /* a miss */ }
+            if (!have) missing++;
+          }
+          if (missing * 2 > left.size) {
+            try {
+              await wholeFetch(f, chunk, async (s, buf) => {
+                bytes += buf.length;
+                if (!(await opfsPut(f.pkey, s, buf, chunk))) await cachePut('https://sfs.chunk/' + encodeURIComponent(f.pkey) + '/' + s, buf);
+                left.delete(s); done++; give(fi, s, buf);
+              });
+            } catch (err) { /* the rest by range */ }
+          }
+          jobs.unshift(...[...left].map((s) => ({ f, s, fi }))); // ahead of the rest, as before
+        };
         const one = async (j) => {
           const ckey = 'https://sfs.chunk/' + encodeURIComponent(j.f.pkey) + '/' + j.s;
           let buf;
@@ -410,10 +466,12 @@
           } catch (err) { buf = undefined; /* the engine's own read fetches it */ }
           done++;
           if (!buf) { postMessage({ preload: id, done, total, bytes }); return; }
-          const copy = buf.slice(); // its own buffer, transferred; the store keeps the original
-          postMessage({ preload: id, done, total, bytes, fi: j.fi, s: j.s, buf: copy }, [copy.buffer]);
+          give(j.fi, j.s, buf);
         };
         const lane = async () => { while (next < jobs.length) await one(jobs[next++]); };
+        // The content files FIRST, as when they led the job list: their chunks take the page's LRU
+        // before the sounds and movies do. The pipe is the limit either way.
+        await Promise.all(wholes.map(whole));
         await Promise.all([lane(), lane(), lane(), lane()]);
         postMessage({ preload: id, end: true, done, total, bytes });
       }
@@ -846,7 +904,9 @@
       const files = [];
       for (const it of items) {
         const src = S.urlSrcs.get(it.path);
-        if (src && src.pkey && src.size) files.push({ url: src.url, pkey: src.pkey, size: src.size, offs: it.offs || null, key: src.key });
+        // A content file asked for whole is downloaded whole, compressed (wholeFetch in the worker).
+        if (src && src.pkey && src.size) files.push({ url: src.url, pkey: src.pkey, size: src.size, offs: it.offs || null, key: src.key,
+          whole: !it.offs && /\.(esm|esp|omwaddon)$/i.test(it.path) });
       }
       if (!S.worker || !files.length || typeof caches === 'undefined' || (navigator.connection && navigator.connection.saveData)) return Promise.resolve(null);
       const id = ++S.nextId;
@@ -859,7 +919,7 @@
           if (d.buf && S.cache.size < LRU_MAX - 8) { S.cache.set(files[d.fi].key + ':' + d.s, d.buf); ST.preMem = (ST.preMem || 0) + 1; }
           delete d.buf;
           if (onProgress) try { onProgress(d); } catch (e) {} if (d.end) { clearTimeout(timer); end(d); } });
-        S.worker.postMessage({ preload: files.map(({ url, pkey, size, offs }) => ({ url, pkey, size, offs })), chunk: CHUNK, id });
+        S.worker.postMessage({ preload: files.map(({ url, pkey, size, offs, whole }) => ({ url, pkey, size, offs, whole })), chunk: CHUNK, id });
       });
     },
     // A FILE THE ENGINE WILL ASK FOR, BY ITS VFS PATH ("meshes/x/ex_hlaalu_b_01.nif"): fetch its

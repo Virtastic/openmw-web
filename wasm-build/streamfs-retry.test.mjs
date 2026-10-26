@@ -285,6 +285,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   const done = vm.runInContext("StreamFS.preload([{ path: '/mwdata/Morrowind.esm' }])", ctx);
   const msg = posted.at(-1);
   assert.equal(msg.preload[0].size, 5);
+  assert.equal(msg.preload[0].whole, true, 'a content file asked for whole goes as one compressed request');
   const before = ctx.StreamFS.stats().cached;
   ctx.worker.onmessage({ data: { preload: msg.id, done: 1, total: 1, bytes: 5, fi: 0, s: 0, buf: new Uint8Array([1, 2, 3, 4, 5]) } });
   ctx.worker.onmessage({ data: { preload: msg.id, end: true, done: 1, total: 1, bytes: 5 } });
@@ -538,6 +539,72 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
     body + '; return textureNames;')(async () => ok(1), AbortController, setTimeout, clearTimeout, {}, () => {}, Response, {});
   assert.deepEqual(w(new Uint8Array(Buffer.concat([nif, Buffer.from([0, 5, 0, 0, 0]), Buffer.from('Bip01'), Buffer.from([0, 9, 0, 0, 0]), Buffer.from('Textures\\Tx_Rock.DDS', 'latin1')])))
     .sort(), ['textures\\tx_rock.dds', 'tx_wood.tga']);
+}
+
+// THE CONTENT FILES IN ONE COMPRESSED REQUEST (94 MB of ESMs as raw ranges; ~36 MB as brotli).
+// The whole-file body (here in odd 7-byte pieces, as the browser hands a decoded stream over) is
+// cut into the range path's chunks at its keys: byte-identical in the store, nothing fetched again,
+// and the engine's later read answered from the store with no network. A body cut short leaves
+// the rest to ranges.
+{
+  const tpl = src.slice(src.indexOf('return `') + 'return `'.length);
+  const worker = tpl.slice(0, tpl.indexOf('`;')).replace('onmessage = async', 'const onmessage = async');
+  const file = Uint8Array.from({ length: 23 }, (_, i) => (i * 37 + 11) & 255);
+  const disk = new Map();
+  const handle = (name) => {
+    if (!disk.has(name)) disk.set(name, new Uint8Array(0));
+    return {
+      getSize: () => disk.get(name).length,
+      read: (b, { at }) => { const d = disk.get(name); const n = Math.max(0, Math.min(b.length, d.length - at)); b.set(d.subarray(at, at + n)); return n; },
+      write: (b, { at }) => { let d = disk.get(name); if (at + b.length > d.length) { const g = new Uint8Array(at + b.length); g.set(d); d = g; disk.set(name, d); } d.set(b, at); return b.length; },
+      flush() {}, close() {},
+    };
+  };
+  const nav = { storage: { getDirectory: async () => ({ getDirectoryHandle: async () => ({
+    getFileHandle: async (n) => ({ createSyncAccessHandle: async () => handle(n) }) }) }) } };
+  const caches = { open: async () => ({ match: async () => undefined, put: async () => {}, delete: async () => {} }) };
+  const seen = [];
+  let cutAt = Infinity;
+  const fetchFake = async (url, opts) => {
+    const range = opts && opts.headers && opts.headers.Range;
+    seen.push({ url, range });
+    if (range) { const [a, b] = range.slice(6).split('-').map(Number); return new Response(file.slice(a, b + 1), { status: 206 }); }
+    let o = 0;
+    return new Response(new ReadableStream({ pull(c) {
+      if (o >= Math.min(file.length, cutAt)) return o >= file.length ? c.close() : c.error(new TypeError('network error'));
+      c.enqueue(file.slice(o, Math.min(o + 7, file.length, cutAt))); o += 7;
+    } }), { status: 200 });
+  };
+  const mk = (msgs) => new Function('fetch', 'AbortController', 'setTimeout', 'clearTimeout', 'caches', 'postMessage', 'Response', 'navigator',
+    worker + '; return { preload, opfsGet, onmessage };')(fetchFake, AbortController, setTimeout, clearTimeout, caches, (m) => msgs.push(m), Response, nav);
+  const f = { url: 'https://h/mwdata/Morrowind.esm?v=2', pkey: 'Morrowind.esm@23', size: 23, offs: null, whole: true };
+  const msgs = [];
+  let w = mk(msgs);
+  await w.preload([f], 5, 1);
+  assert.deepEqual(seen, [{ url: 'https://h/mwdata/Morrowind.esm?v=2&z=1', range: undefined }], 'one whole-file request, under its own query');
+  assert.deepEqual(msgs.at(-1), { preload: 1, end: true, done: 5, total: 5, bytes: 23 });
+  for (let s = 0; s < 23; s += 5) assert.deepEqual([...await w.opfsGet(f.pkey, s, Math.min(s + 5, 23), 5)], [...file.slice(s, s + 5)], 'chunk ' + s + ' byte-identical');
+  assert.deepEqual(msgs.filter((m) => m.buf).map((m) => m.s), [0, 5, 10, 15, 20], 'every chunk handed to the page');
+  // A reload: everything stored, nothing fetched.
+  seen.length = 0;
+  w = mk([]);
+  await w.preload([f], 5, 2);
+  assert.equal(seen.length, 0, 'a stored file is not downloaded again');
+  // The engine's read of a chunk: from the store, no network.
+  const ctrl = new SharedArrayBuffer(8), data = new SharedArrayBuffer(5);
+  await w.onmessage({ data: { init: 1, ctrl, data } });
+  await w.onmessage({ data: { url: f.url, pkey: f.pkey, start: 10, end: 15, gen: 1, chunk: 5 } });
+  assert.deepEqual([new Int32Array(ctrl)[0], new Int32Array(ctrl)[1]], [1, 5]);
+  assert.deepEqual([...new Uint8Array(data)], [...file.slice(10, 15)]);
+  assert.equal(seen.length, 0, 'the read went to the store, not the network');
+  // Cut short at byte 12: chunks 0 and 5 came whole, 10..20 by range; the store is still exact.
+  disk.clear(); seen.length = 0; cutAt = 12;
+  const cut = [];
+  await mk(cut).preload([{ ...f, pkey: 'Cut.esm@23' }], 5, 3);
+  assert.deepEqual(seen.map((s) => s.range), [undefined, 'bytes=10-14', 'bytes=15-19', 'bytes=20-22'], 'the rest by range');
+  assert.equal(cut.at(-1).done, 5);
+  w = mk([]);
+  for (let s = 0; s < 23; s += 5) assert.deepEqual([...await w.opfsGet('Cut.esm@23', s, Math.min(s + 5, 23), 5)], [...file.slice(s, s + 5)]);
 }
 
 console.log('streamfs retry: ok');
