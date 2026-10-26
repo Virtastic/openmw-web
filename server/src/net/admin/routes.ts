@@ -811,7 +811,10 @@ export function adminRoutes(deps: AdminDeps) {
       );
       await body.done();
       if (!result.ok) { json(res, result.status, { error: result.error }); return true; }
-      log('info', 'admin.mods_uploaded', { by: ctx.accountKey, file: result.file });
+      // A Data Files folder is thousands of voice clips: one info line each buried a Pterodactyl
+      // console. The files an operator cares about (masters, BSAs) are the big ones.
+      log(result.bytes > 1024 * 1024 ? 'info' : 'debug', 'admin.mods_uploaded',
+        { by: ctx.accountKey, file: result.file });
       json(res, 200, { ok: true, file: result.file, bytes: result.bytes, restartRequired: true });
       return true;
     }
