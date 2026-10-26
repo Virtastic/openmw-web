@@ -11,6 +11,10 @@ refused". The gateway now holds a dial to a starting world (up to 30 s) and conn
 the world is up; the client keeps retrying until its first join instead of asking for a new
 sign-in; and the waking screen never covers a game that is already rendering.
 
+**Every way to install, on one page.** [`INSTALLING.md`](INSTALLING.md) lists the script,
+plain compose, your own proxy (nginx, Caddy, Traefik, Cloudflare Tunnel recipes), Pterodactyl and
+everything else, with what each is supported for, and why players need HTTPS whatever you pick.
+
 ## 1.7.8
 
 **Uploading a Data Files folder is fast, and works in Chrome.** The folder is ten thousand small
