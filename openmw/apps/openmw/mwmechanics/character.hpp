@@ -308,6 +308,8 @@ namespace MWMechanics
         void forceStateUpdate();
 
         bool isAttackPreparing() const;
+        // mwmp: "upper=<UpperBodyState> hit=<CharacterState> scripted=<0|1>" for the avatar probe.
+        std::string animStateProbe() const;
         bool isCastingSpell() const;
         bool isReadyToBlock() const;
         bool isKnockedDown() const;

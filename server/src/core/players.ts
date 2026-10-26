@@ -104,6 +104,10 @@ export interface Player {
   // dead-avatar bar reports (hp 0) are ignored so the respawned player is not re-killed
   // while the avatar body is being replaced on the peer.
   resurrectedAt?: number;
+  // Wall-clock of the last respawn. resurrectedAt is cleared by the first living bar report
+  // (~100 ms later), before the client's move to the respawn point arrives; this one stays,
+  // so that move is never refused as a jump.
+  respawnAt?: number;
   avatarDead?: boolean; // the peer's last bar report had hp 0 (346: the sync flush is the transition's only)
   // Wall-clock of the last sendCellStateAround: nine fat cell docs land in one burst and the
   // outbound hard ceiling is not what a healthy client crossing a city gate should die of.

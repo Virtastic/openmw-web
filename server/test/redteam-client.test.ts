@@ -208,6 +208,33 @@ test('a same-cell jump stream at flight speed is accepted; a jump from standing 
   assert.equal((await anomaliesOf(server.port, TOKEN, 'flyer')).cell_jump, 2, 'a hop past engine speed was accepted');
 });
 
+// Prod 2026-10-26: a guard killed a player, the respawn plugin sent them to town, and the peer's
+// first living bar report cleared resurrectedAt 114 ms later -- before the client's move to the
+// respawn point arrived. The move was refused (dist 1216), the avatar stayed at the death spot
+// and the player's swings never landed. The respawn has its own stamp; a refused jump hands the
+// owner back the server's spot so the two never stay split.
+test('a respawn move is explained after resurrectedAt clears; a refused jump corrects the owner', async (t) => {
+  const { server } = await boot(t);
+  const { c: a } = await join(t, server, 'Respawned');
+  const { c: b } = await join(t, server, 'Watcher');
+  const me = server.roster.get(a.playerId)!;
+  me.joinedWorldAt = Date.now() - 60_000;
+  me.lastDeclared = { x: 0, y: 0, z: 0, at: Date.now() - 60_000 };
+  me.pose = { ...me.pose!, x: 0, y: 0, z: 0 };
+  me.respawnAt = Date.now(); me.resurrectedAt = undefined; // the bar report already cleared it
+  a.sendCellChange('0,0', 3000, 0, 0);
+  await b.waitEvent('PlayerCellChange', (v) => (v as { id?: number; x?: number }).id === a.playerId && (v as { x?: number }).x === 3000);
+
+  me.respawnAt = undefined;
+  me.lastDeclared = { ...me.lastDeclared!, at: Date.now() - 60_000 };
+  me.pose = { ...me.pose!, x: 3000, y: 0, z: 0 };
+  a.inbox.stateBatches.length = 0;
+  a.sendCellChange('0,0', 3000, 3000, 0);
+  await fence(a, b);
+  assert.ok(a.inbox.stateBatches.some((sb) => sb.entries.some((e) => e.id === a.playerId && Math.abs(e.pose.x - 3000) < 1 && Math.abs(e.pose.y) < 1)),
+    'the refused jump did not send the owner back to the spot the server holds');
+});
+
 // #362 spellbook half: pins playerstate.ts handleSpellbook's byAccount check (commit 56e147e1) --
 // a custom record minted by ANOTHER account is refused (StateRefused{PlayerSpellbook}, anomaly
 // spellbook_foreign_record) and never lands in the doc; the minter's own add still does.

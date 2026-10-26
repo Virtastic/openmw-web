@@ -236,6 +236,7 @@ namespace MWMechanics
             const MWWorld::Ptr& player, const MWWorld::Ptr& item, const MWWorld::Ptr& victim, int count) override;
 
         bool isAttackPreparing(const MWWorld::Ptr& ptr) override;
+        std::string animStateProbe(const MWWorld::Ptr& ptr) override;
         bool isRunning(const MWWorld::Ptr& ptr) override;
         bool isSneaking(const MWWorld::Ptr& ptr) override;
 

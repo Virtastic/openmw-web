@@ -190,7 +190,7 @@ local function pressProbe(when)
             tostring(types.Actor.isDead(self)), hp.current, tostring(mp.isKnockedDown and mp.isKnockedDown(self.object)),
             tostring(types.Actor.getStance(self)), ft.current, ft.base, w and w.recordId or 'none',
             am and am.recordId or 'none', am and tostring(am.count) or '0', tostring(amTotal))
-            .. ' owner=' .. tostring(want) .. ' push=' .. lastPushSaid .. ' pack=' .. (function()
+            .. ' anim=' .. tostring(mp.animState and mp.animState(self.object)) .. ' owner=' .. tostring(want) .. ' push=' .. lastPushSaid .. ' pack=' .. (function()
                 local out = {}
                 for _, it in ipairs(types.Actor.inventory(self):getAll()) do
                     if types.Weapon.objectIsInstance(it) then

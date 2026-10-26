@@ -2,6 +2,15 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.12
+
+**Your hits land after you respawn.** When you died and the server sent you back to town, the
+server had already forgotten the respawn by the time your move arrived, so it refused the move.
+You stood in town while the server and the other players still saw you at the spot where you
+died, so your swings hit nothing. Respawns now have their own marker that lasts long enough for
+the move to arrive. And if the server ever refuses a jump, it sends you back to the spot it has
+for you, so you and the server can't end up in two different places.
+
 ## 1.7.11
 
 **The loading bar counts what it loads.** On a return visit the game data comes from this

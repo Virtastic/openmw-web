@@ -2932,6 +2932,12 @@ namespace MWMechanics
             || group == "attack3" || group == "swimattack3");
     }
 
+    std::string CharacterController::animStateProbe() const
+    {
+        return "upper=" + std::to_string(static_cast<int>(mUpperBodyState)) + " hit="
+            + std::to_string(static_cast<int>(mHitState)) + " scripted=" + (isScriptedAnimPlaying() ? "1" : "0");
+    }
+
     bool CharacterController::isAttackPreparing() const
     {
         return mUpperBodyState == UpperBodyState::AttackWindUp;

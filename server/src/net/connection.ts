@@ -1413,11 +1413,17 @@ export class Connection implements Peer {
         const explained = moving || player.inChargen === true || recent(player.lastCastAt) || recent(player.lastDoorAt)
           // Travel (silt strider, boat, guild guide) fires from a conversation that may have been
           // open far longer than 5 s: an open one explains the jump too (prod 2026-10-20, 53 ku).
-          || recent(player.lastDialogueAt) || this.ctx.quests.holdsDialogue(player.id) || recent(player.resurrectedAt, 15_000) || recent(player.joinedWorldAt, 15_000);
+          || recent(player.lastDialogueAt) || this.ctx.quests.holdsDialogue(player.id) || recent(player.resurrectedAt, 15_000) || recent(player.respawnAt, 15_000) || recent(player.joinedWorldAt, 15_000);
         if (!explained) {
           metrics.cellChangeRefused.inc();
           this.ctx.moderation.noteAnomaly(player.accountKey, 'cell_jump');
           log('warn', 'conn.cell_change_refused', { player: player.name, account: player.accountKey, cellKey, dist: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)) });
+          // Hand the owner back the spot the server and the peer's avatar are at, as a refused
+          // move does: a client left standing elsewhere swings at air the avatar never reaches.
+          if (this.ctx.config.limits.clientAuthority) {
+            player.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH, nextBroadcastSeq(),
+              packPlayerStateBatch([{ id: player.id, lastInputSeq: player.inputSeq ?? 0, pose: player.pose }])));
+          }
           return;
         }
       }

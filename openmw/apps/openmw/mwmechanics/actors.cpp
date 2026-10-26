@@ -993,6 +993,14 @@ namespace MWMechanics
         return it->second->getCharacterController().isAttackPreparing();
     }
 
+    std::string Actors::animStateProbe(const MWWorld::Ptr& ptr) const
+    {
+        const auto it = mIndex.find(ptr.mRef);
+        if (it == mIndex.end())
+            return "none";
+        return it->second->getCharacterController().animStateProbe();
+    }
+
     bool Actors::isRunning(const MWWorld::Ptr& ptr) const
     {
         const auto it = mIndex.find(ptr.mRef);

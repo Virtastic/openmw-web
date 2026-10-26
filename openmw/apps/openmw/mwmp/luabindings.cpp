@@ -405,6 +405,17 @@ namespace MWMP
                 return "ready";
             return "none";
         };
+        // 2026-10-26: after a respawn the avatar never swung (attacking=true body=ready at every
+        // press). A swing starts only from WeaponEquipped with no hit state and no scripted
+        // animation (character.cpp), so the probe prints the engine's own three.
+        api["animState"] = [](const sol::object& obj) -> std::string {
+            if (!obj.is<MWLua::Object>())
+                return "none";
+            const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return "none";
+            return MWBase::Environment::get().getMechanicsManager()->animStateProbe(ptr);
+        };
         // Backlog 230: TalkedToPc lives on CreatureStats, per engine, and no save carries it in
         // multiplayer -- every NPC greeted a returning player as a stranger. The player script
         // reads it off the NPCs around it, persists the set, and re-applies it on relog.

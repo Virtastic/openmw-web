@@ -119,6 +119,7 @@ namespace MWMechanics
         void setDeaths(const ESM::RefId& id, int count) { mDeathCount[id] = count; }
 
         bool isAttackPreparing(const MWWorld::Ptr& ptr) const;
+        std::string animStateProbe(const MWWorld::Ptr& ptr) const;
         bool isRunning(const MWWorld::Ptr& ptr) const;
         bool isSneaking(const MWWorld::Ptr& ptr) const;
 

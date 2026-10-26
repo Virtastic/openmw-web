@@ -363,6 +363,11 @@ namespace MWMechanics
         return mActors.isAttackPreparing(ptr);
     }
 
+    std::string MechanicsManager::animStateProbe(const MWWorld::Ptr& ptr)
+    {
+        return mActors.animStateProbe(ptr);
+    }
+
     bool MechanicsManager::isRunning(const MWWorld::Ptr& ptr)
     {
         CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);

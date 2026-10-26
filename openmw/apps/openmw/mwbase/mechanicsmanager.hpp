@@ -311,6 +311,7 @@ namespace MWBase
             const MWWorld::Ptr& player, const MWWorld::Ptr& item, const MWWorld::Ptr& victim, int count)
             = 0;
         virtual bool isAttackPreparing(const MWWorld::Ptr& ptr) = 0;
+        virtual std::string animStateProbe(const MWWorld::Ptr& ptr) = 0;
         virtual bool isRunning(const MWWorld::Ptr& ptr) = 0;
         virtual bool isSneaking(const MWWorld::Ptr& ptr) = 0;
 
