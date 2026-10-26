@@ -40,7 +40,8 @@ logs and accounts. Multiplayer (added in 1.1.0) is there too, behind an experime
 ## Quick start: your own server
 
 You need [Docker](https://docs.docker.com/get-started/get-docker/) and your own copy of
-Morrowind. Then:
+Morrowind. Then run the commands below. If you'd rather use your own proxy, a panel like
+Pterodactyl, or skip the script, see [`INSTALLING.md`](INSTALLING.md) for every option.
 
 ```bash
 git clone https://github.com/Virtastic/openmw-web.git

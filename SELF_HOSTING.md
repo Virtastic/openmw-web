@@ -2,6 +2,9 @@
 
 ## Quick start
 
+Want your own proxy instead of ours, a Pterodactyl panel, or no SSL? See
+[`INSTALLING.md`](INSTALLING.md) for every way to run it, and which ones we support.
+
 The whole server, set up from a browser. You need
 [Docker](https://docs.docker.com/get-started/get-docker/) and your own copy of Morrowind:
 
