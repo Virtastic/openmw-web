@@ -1182,11 +1182,19 @@ try {
      'The engine needs a secure page, and browsers only treat https:// (or this computer\'s own '
      + 'localhost) as one. Ask the server\'s owner for its https:// address, or play on the '
      + 'server machine itself at http://localhost.', false);
+ } else if (!(navigator.userAgentData && navigator.userAgentData.brands
+     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }))){
+   // CHROMIUM ONLY, by brand: Firefox 134+ passes both probes below and still cannot carry the
+   // game. The front door (server/web/play.js) and the launcher say this before sign-in; this
+   // is for whoever arrives by a pasted link.
+   fatalOverlay('Open this in Chrome or Edge',
+     'This game runs in Chrome or Edge on a desktop or laptop. Open this page there.',
+     false, { actionLabel: 'Back', actionHref: '/' });
  } else if (!self.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined'){
-   fatalOverlay('Browser not supported',
-     'This build needs SharedArrayBuffer + cross-origin isolation (COOP/COEP headers). '
-     + 'Use a desktop Chrome/Edge/Firefox, and serve via play/server.py or an HTTPS host '
-     + 'sending COOP: same-origin and COEP: require-corp.', false);
+   // Chromium on a secure page without isolation is the server's headers, not the player.
+   fatalOverlay('This server is not set up to run the game',
+     'The page arrived without the security headers the game needs (COOP: same-origin and '
+     + 'COEP: require-corp). Tell whoever runs this server.', false, { actionLabel: 'Back', actionHref: '/' });
  }
  // MEMORY64. The engine is a wasm64 build -- it addresses more than the 4 GiB a 32-bit wasm
  // module can reach, which is what makes a Tamriel Rebuilt load order fit at all. A browser
@@ -1205,9 +1213,9 @@ try {
        new WebAssembly.Memory({ initial: 1n, maximum: 262144n, shared: true, address: 'i64' });
        return true;
      } catch (e) { return false; } })()){
-   fatalOverlay('Browser not supported',
-     'This build needs WebAssembly Memory64, which your browser does not support. '
-     + 'Chrome/Edge 133+ or Firefox 134+ is required.', false);
+   fatalOverlay('Update your browser',
+     'This game needs a newer Chrome or Edge (version 133 or later). Update it, then open '
+     + 'this page again.', false, { actionLabel: 'Back', actionHref: '/' });
  }
  // WebGL context loss: OSG/OpenMW has no GPU-resource restore path, so the correct handling
  // tier is: sync saves, tell the user, reload cleanly (state comes back from IndexedDB).

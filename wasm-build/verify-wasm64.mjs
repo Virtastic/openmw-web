@@ -110,8 +110,8 @@ const gateText = String(gated.value ?? '').replace(/\s+/g, ' ');
 // Report the MATCHED overlay text, not the head of the page. Printing the first 90 characters
 // showed the normal title and "PREPARING...", which sits above the overlay -- so a correct
 // PASS looked like a false one and had to be re-checked by hand to be believed.
-const gateHit = gateText.match(/Browser not supported.{0,120}/i);
-check('gate blocks non-memory64', !!gateHit && /Memory64/i.test(gateHit[0]),
+const gateHit = gateText.match(/Update your browser.{0,120}/i);
+check('gate blocks non-memory64', !!gateHit && /version 133/i.test(gateHit[0]),
   gateHit ? `"${gateHit[0].trim()}"` : `(no overlay; body began "${gateText.slice(0, 60)}")`);
 
 // Remove the override and reload for the real run below.

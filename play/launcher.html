@@ -423,10 +423,9 @@ html.door .topbar, html.door .wrap { display:none !important }
        that DO work on a phone instead of a dead end. The cards below stay reachable on purpose:
        detection can be wrong, and being wrong should cost prominence, not access. -->
   <div class="unsupported" id="unsupported" hidden>
-    <h2>This needs a desktop browser</h2>
-    <p class="lead">The engine runs on your own machine, and that needs a desktop browser
-      with WebAssembly Memory64: <b>Chrome</b> or <b>Edge</b> 133+, <b>Brave</b>, or
-      <b>Firefox</b> 134+. From a phone you can still:</p>
+    <h2>This needs Chrome or Edge on a computer</h2>
+    <p class="lead">The game runs on your own machine, in <b>Chrome</b> or <b>Edge</b> 133+
+      (or Brave) on a desktop or laptop. Until you are there you can still:</p>
     <div class="u-actions">
       <a class="btn btn-solid" href="https://www.youtube.com/watch?v=iqZ20MtdD4I"
          target="_blank" rel="noopener">Watch it running <span class="arw">▸</span></a>
@@ -902,7 +901,10 @@ html.door .topbar, html.door .wrap { display:none !important }
    // short side just like a phone, but no phone is 1100 wide in either orientation.
    const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
    const phone = touch && Math.min(innerWidth, innerHeight) < 820 && Math.max(innerWidth, innerHeight) < 1100;
-   return noSAB || noMem64 || phone;
+   // Chromium by brand as well: Firefox 134+ passes every probe above and cannot carry the game.
+   const chromium = !!(navigator.userAgentData && navigator.userAgentData.brands
+     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }));
+   return noSAB || noMem64 || phone || !chromium;
  }
 
  (function gateOnCapability(){
