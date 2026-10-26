@@ -2,6 +2,25 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.6
+
+**Invite codes that look right now work.** A typed code ignores case, spaces, and the look-alikes
+0/O and 1/l/I, so a phone's auto-capital or a misread letter no longer locks someone out. Signing
+in without a code spends none of the address's guesses, and the sign-in buttons wait until a code
+is typed. The log now says "no invite code" or "wrong invite code" instead of one reason for both.
+
+**The front door says what went wrong.** Every sign-in failure is explained in words, with a way
+back and the help link. Browsers that cannot run the game (anything but Chrome or Edge on a
+computer) are told so up front instead of loading into a grey screen.
+
+**Boot holds up better.** A download cut off mid-way reloads once instead of hanging, a window
+resize during loading waits for the first frame, and the files most often streamed late are
+fetched up front.
+
+**Pterodactyl / Pelican egg** (`pterodactyl/`). Runs single player or multiplayer on the one port
+the panel allocates: the server listens on `SERVER_PORT`, and `OMW_CLIENT` puts the player app
+in a writable folder.
+
 ## 1.7.5
 
 **New characters can finish character creation again.** Since 1.7.1 the guard on the Seyda Neen
