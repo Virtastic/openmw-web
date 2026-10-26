@@ -2,6 +2,14 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.5
+
+**New characters can finish character creation again.** Since 1.7.1 the guard on the Seyda Neen
+dock never asked your race: controls switched off and the race menu never opened. The server's own
+copy of the guard ran his whole script in a second and a half, and its finished state reached your
+game before your guard had spoken, so your game skipped the step that opens the menu. A character in
+creation now runs the opening's scripts on its own, as in single player.
+
 ## 1.7.4
 
 **A new character's intro is no longer covered by the loading screen.** After the intro movie,
