@@ -290,3 +290,12 @@ test('a boot that cannot get its memory yet retries, then says so', clientOpts, 
   assert.ok(index.includes("var MKEY = 'omw-mem-retries'"), 'retries are bounded per tab');
   assert.ok(index.includes("fatalOverlay('Not enough memory to start the game'"), 'past the retries it says what to do');
 });
+
+test('boot survives a cut download and an early resize, and preloads the most-missed files', clientOpts, () => {
+  assert.ok(index.includes("var NKEY = 'omw-net-retry'"), 'a dropped download reloads once per tab');
+  assert.ok(index.includes("fatalOverlay('The download was interrupted'"), 'then says so');
+  assert.match(index, /Module\._omw_set_resolution && Module\.__omwRunning !== undefined\)\)\{\s*window\.__omwResizePending = true/,
+    'no resize reaches the engine before its first frame');
+  assert.ok(index.includes("window.__omwResizePending = false; window.dispatchEvent(new Event('resize'))"), 'the held resize is replayed');
+  assert.ok(index.includes('drcreak_opn|') && index.includes('menu_background\\.bik$/i'), 'the most-missed files are preloaded');
+});

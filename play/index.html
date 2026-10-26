@@ -1479,7 +1479,13 @@ try {
      if (resizeTimer) clearTimeout(resizeTimer);
      resizeTimer = setTimeout(function(){
        resizeTimer = null;
-       if (!(window.Module && Module._omw_set_resolution)) return; // engine not up yet
+       // ENGINE NOT UP YET: the export exists from instantiation, long before the window and
+       // viewer do, and a resize while the loading screen showed called into them half-built
+       // (prod: "memory access out of bounds" at boot). Remembered, and replayed on the first
+       // frame (the pump below), so the window still ends up the right size.
+       if (!(window.Module && Module._omw_set_resolution && Module.__omwRunning !== undefined)){
+         window.__omwResizePending = true; return;
+       }
        var dpr = window.devicePixelRatio || 1;
        var cssW = window.innerWidth || 1280, cssH = window.innerHeight || 720;
        var w = cssW * dpr, h = cssH * dpr;   // device pixels (match the boot IIFE)
@@ -4189,6 +4195,10 @@ try {
                  // body falling. Each was a first-play stall on the Seyda Neen dock (prod 2026-10-24:
                  // wndTREE, wndCALM2, dockCREAK, silt01/02, bodyfallMED). About 4.5 MB.
                  StreamFS.mounted(/^\/mwdata\/sound\/(fx\/regn\/|fx\/envrn\/dockcreak|cr\/silt\/|fx\/bodyfall)/i).forEach(function(p){ pre.push({ path: p }); });
+                 // ...and the most-missed sounds of the week: a fire, the shore, a door, the menu
+                 // click (prod 2026-10-19..26 slow reads: fire.wav 24, watr_wave.wav 23,
+                 // drcreak_opn.wav 19, drlatch_opn.wav 6, menu click.wav 6). Under 1 MB together.
+                 StreamFS.mounted(/^\/mwdata\/sound\/.*\/(fire|watr_wave|drcreak_opn|drcreak_cls|drlatch_opn|drlatch_cls|menu click)\.wav$/i).forEach(function(p){ pre.push({ path: p }); });
                  // A NEW CHARACTER'S FIRST AREA, too: the archive chunks the prison ship and its
                  // opening read inside the same blocking start (recorded by s183's StreamFS.bootSet,
                  // Jenkins #245: 79 chunks; the random splash screens and explore music left out).
@@ -4213,6 +4223,9 @@ try {
                  if (!window.__noMovies) StreamFS.mounted(BOOT_MOVIES).forEach(function(p){
                    if (/mw_intro/i.test(p) ? window.__omwNewGame : !window.__omwSkipMenu) pre.push({ path: p });
                  });
+                 // The title menu's own background movie, read cold behind the menu (prod 2026-10-19..26:
+                 // menu_background.bik in the slow reads 12 times). Only when the menu is shown.
+                 if (!window.__omwSkipMenu) StreamFS.mounted(/\/video\/menu_background\.bik$/i).forEach(function(p){ pre.push({ path: p }); });
                  StreamFS.preload(pre, function(d){
                    if (!LD || !d.total) return;
                    LD.set(null, 'Downloading the game data', Math.round(d.bytes / 1048576) + ' MB · ' + Math.round(d.done * 100 / d.total) + '%');
@@ -4356,6 +4369,10 @@ try {
          // the 500ms status poller so it is exact to one frame. __omwRunning is set by the engine's
          // own loop, so this fires once the player can genuinely see something.
          if (Module.__omwRunning !== undefined && window.__omwMark) window.__omwMark('firstFrame');
+         // A resize during the loading screen was held back (the resize handler); apply it now.
+         if (window.__omwResizePending && Module.__omwRunning !== undefined){
+           window.__omwResizePending = false; window.dispatchEvent(new Event('resize'));
+         }
          var b = performance.now();
          __frames++; __accum += (b - a);
          // ?glcount: exact GL calls THIS frame (cumulative delta bracketed by the pump).
@@ -4432,6 +4449,24 @@ try {
      fatalOverlay('Could not download the game',
        'A game file did not download after several tries (' + (e.reason && e.reason.message || e.reason) + '). '
        + 'Check your connection and reload.');
+   }
+   // A DOWNLOAD CUT OFF MID-BOOT. A dropped connection under the engine's own fetches (wasm,
+   // a package) rejects with the browser's bare words -- "network error", "Failed to fetch",
+   // "Load failed" -- and the loading screen sat there for good. One quiet reload per tab
+   // (the files already in the cache are not fetched again), then say it.
+   else if (/^network error$|Failed to fetch|Load failed|NetworkError/i.test(String(e.reason && e.reason.message || e.reason))
+       && !(window.Module && window.Module.__omwRunning !== undefined)) {
+     var NKEY = 'omw-net-retry', last = 0;
+     try { last = Number(sessionStorage.getItem(NKEY) || 0); } catch (x) {}
+     if (Date.now() - last > 120000) {
+       try { sessionStorage.setItem(NKEY, String(Date.now())); } catch (x) {}
+       append('[boot] download interrupted -- reloading once', 'err');
+       setTimeout(function(){ window.__omwAllowLeave = true; location.reload(); }, 1500);
+     } else {
+       fatalOverlay('The download was interrupted',
+         'Part of the game did not finish downloading. Check your connection, then reload; '
+         + 'what already arrived is kept.');
+     }
    }
  });
 </script>
