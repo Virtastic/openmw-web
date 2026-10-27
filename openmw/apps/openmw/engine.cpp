@@ -1293,6 +1293,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE void omw_set_clipboard(const char* text)
         SDL_SetClipboardText(text);
 }
 
+// OT3-13: the omw_debug_* exports (teleport, give a weapon, set the hour ...) are QA hooks. A
+// release bake leaves them out so devtools cannot call them; TEST_HOOKS=1 bakes compile them in.
+#ifdef OMW_TEST_HOOKS
 // Debug: point the camera (yaw/pitch in degrees) so we can verify object rendering without mouse-look.
 extern "C" EMSCRIPTEN_KEEPALIVE void omw_debug_look(float yawDeg, float pitchDeg)
 {
@@ -1393,6 +1396,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE int omw_debug_giveweapon()
     world->getPlayer().setDrawState(MWMechanics::DrawState::Weapon);
     return 1;
 }
+#endif // OMW_TEST_HOOKS
 #endif
 
 // Initialise and enter main loop.
