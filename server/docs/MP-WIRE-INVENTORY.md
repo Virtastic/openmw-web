@@ -47,6 +47,7 @@ Generated from the client Lua (`mp.sendEvent('Name', ...)`), the server routing 
 | PlayerItemAcquired | 3 | 2 |
 | PlayerLeaving | 2 | 2 |
 | PlayerLevel | 1 | 5 |
+| PlayerBooksRead | 1 | 1 |
 | PlayerMark | 1 | 1 |
 | PlayerSkills | 1 | 3 |
 | PlayerSpellbook | 1 | 4 |

@@ -117,6 +117,7 @@ namespace MWMechanics
         ///< @note Id must be lower-case
 
         bool hasBeenUsed(const ESM::RefId& id) const;
+        const std::set<ESM::RefId>& getUsedIds() const { return mUsedIds; }
         ///< @note Id must be lower-case
 
         int getBounty() const;
