@@ -244,6 +244,7 @@ writeCaddyfile(sharedDir, {
 const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, worldsDir,
   admin: adminRoute,
+  adminAllowFrom: config.admin.allowFrom,
   maintenance: () => maintenance.get(),
   // H1: one live world per account -- a player is in one place at a time, and at ~0.5 GB a
   // world, maxPlayers (the old default) let one account exhaust the box. The old default of 2

@@ -25,7 +25,7 @@ import type { BanStore } from '../persist/banstore';
 import type { IpRateLimiter } from '../net/ratelimit';
 import { clientIp, isSecureRequest, readCookie, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
 import { OidcError, OidcService, isProviderId, type ProviderId } from './oidc';
-import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, accountForVerifiedEmail, resolveSsoAccount } from './identities';
+import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, resolveSsoAccount } from './identities';
 import { log } from '../log';
 import { metrics } from '../metrics';
 import { allowSignup, checkInvite } from './invite';
@@ -228,10 +228,7 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     }
 
     // ---- login: resolve (iss,sub) to an account, creating one on first sight.
-    // A role holder's own verified address counts as known: it resolves to their existing
-    // account (identities.ts), so no account is created and the gates below do not apply.
-    const known = identities.get(identity.iss, identity.sub)
-      ?? accountForVerifiedEmail(accounts, provider, identity);
+    const known = identities.get(identity.iss, identity.sub);
     if (!known) {
       if (!config.login.allowRegistration)
         return fail(req, res, 'registration_disabled', 'this server does not accept new accounts', ip);
@@ -277,8 +274,14 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
         redirect(res, returnTo(back, 'ssoerr=no_access'));
         return true;
       }
-      // TOTP is deliberately not demanded on this path: the identity provider is already a
-      // second factor, and stacking ours on top would make SSO strictly worse than password.
+      // H6: owner and moderator sign in with password + TOTP only. The provider's own second
+      // factor is not ours to check, so an SSO session here is a viewer's.
+      if (account.dashboardRole !== 'viewer') {
+        log('warn', 'auth.admin_sso_needs_totp', { provider, account: resolved.accountKey, role: account.dashboardRole, ip });
+        if (back === '') { sendText(res, 403, 'owner and moderator sign in with password and authenticator code'); return true; }
+        redirect(res, returnTo(back, 'ssoerr=totp_required'));
+        return true;
+      }
       const adminToken = deps.adminSessions.mint(resolved.accountKey, ip);
       log('warn', 'admin.sso_login', { provider, account: resolved.accountKey, ip });
       metrics.auth.inc({ op: 'sso', result: 'success' });

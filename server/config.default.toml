@@ -368,6 +368,10 @@ allowConsole = true
 # counters, report queue, kick/ban/mute/broadcast). Empty = the dashboard is not served at
 # all, which is the right default: the in-game panel already covers a self-hosted world.
 dashboardToken = ""
+# H6: who may reach /admin on the multiplayer gateway, as client addresses or IPv4 CIDRs
+# (["203.0.113.7", "10.0.0.0/8"]). Anyone else gets 404, as if there were no dashboard.
+# Empty = no restriction (a self-host behind its own firewall); a public server sets it.
+allowFrom = []
 
 [moderation]
 # A4: durable chat log + /report inbox under <dataDir>/logs and <dataDir>/reports.

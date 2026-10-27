@@ -28,7 +28,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { log } from '../log';
 import { renderMetrics } from '../metrics';
 import type { WorldSupervisor, WorldMode, WorldInfo } from './worlds';
-import { clientLogRoute, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../net/http';
+import { addressAllowed, clientLogRoute, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../net/http';
 import { IpRateLimiter } from '../net/ratelimit';
 import { VERIFY_PATH } from '../net/admin/setup-check';
 
@@ -48,6 +48,8 @@ export interface DirectoryDeps {
   // has to hand it the paths a game's router would claim (/admin, /, /play, the reachability
   // probe). deploy/Caddyfile keeps /admin off the internet exactly as it does for a game.
   admin?: HttpRoute;
+  /** [admin] allowFrom (H6): who may reach /admin. Empty/absent = everyone. */
+  adminAllowFrom?: readonly string[];
   // Platform-wide maintenance (gateway/admin.ts). While it is on, nobody starts or joins a
   // game: POST /worlds and the /w/* dial both answer 503, and the games already running have
   // been told to close their own doors.
@@ -215,6 +217,11 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     // claims, so an operator's bookmark works on either program.
     if (deps.admin && (path === '/admin' || path.startsWith('/admin/') || path === '/'
         || path === '/play' || path === VERIFY_PATH)) {
+      // H6: off the internet. Outside the allowlist /admin is indistinguishable from no dashboard.
+      if ((path === '/admin' || path.startsWith('/admin/')) && deps.adminAllowFrom?.length
+          && !addressAllowed(clientIp(req), deps.adminAllowFrom)) {
+        json(res, 404, { error: 'not found' }); return;
+      }
       void Promise.resolve(deps.admin(req, res, url)).then((claimed) => {
         if (!claimed) json(res, 404, { error: 'not found' });
       }).catch((err) => {

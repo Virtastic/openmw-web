@@ -120,6 +120,25 @@ export function isPrivateAddress(addr: string): boolean {
   return /^f[cd]/i.test(addr); // fc00::/7 unique-local
 }
 
+/** Is `addr` (a clientIp() result) in `allow`: exact addresses, or IPv4 CIDRs like
+ *  "10.0.0.0/8". Used for [admin] allowFrom (H6). IPv6 entries match exactly only. */
+export function addressAllowed(addr: string, allow: readonly string[]): boolean {
+  const v4 = addr.startsWith('::ffff:') ? addr.slice(7) : addr;
+  const n = (ip: string): number | undefined => {
+    const p = ip.split('.').map(Number);
+    return p.length === 4 && p.every((x) => Number.isInteger(x) && x >= 0 && x <= 255)
+      ? ((p[0]! << 24) | (p[1]! << 16) | (p[2]! << 8) | p[3]!) >>> 0 : undefined;
+  };
+  return allow.some((entry) => {
+    const [net, bits] = entry.trim().split('/');
+    if (bits === undefined) return net === addr || net === v4;
+    const a = n(v4), b = n(net!), len = Number(bits);
+    if (a === undefined || b === undefined || !Number.isInteger(len) || len < 0 || len > 32) return false;
+    const mask = len === 0 ? 0 : (~0 << (32 - len)) >>> 0;
+    return ((a & mask) >>> 0) === ((b & mask) >>> 0);
+  });
+}
+
 // Set once at boot from [limits] trustCloudflareIp. A module-level switch rather than a
 // threaded parameter because clientIp is called from a dozen places that have no config in
 // hand, and the answer is a property of the DEPLOYMENT, not of the request.

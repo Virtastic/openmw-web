@@ -1,0 +1,53 @@
+// Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// H6: [admin] allowFrom keeps /admin off the internet on the multiplayer gateway.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ChildProcess } from 'node:child_process';
+import { WorldSupervisor } from '../src/gateway/worlds';
+import { startDirectory } from '../src/gateway/directory';
+import { addressAllowed } from '../src/net/http';
+
+test('addressAllowed: exact addresses and IPv4 CIDRs', () => {
+  assert.equal(addressAllowed('203.0.113.7', ['203.0.113.7']), true);
+  assert.equal(addressAllowed('::ffff:10.1.2.3', ['10.0.0.0/8']), true);
+  assert.equal(addressAllowed('192.168.1.130', ['192.168.1.0/24']), true);
+  assert.equal(addressAllowed('192.168.2.1', ['192.168.1.0/24']), false);
+  assert.equal(addressAllowed('8.8.8.8', ['0.0.0.0/0']), true);
+  assert.equal(addressAllowed('8.8.8.8', ['garbage/8', '10.0.0.0/33']), false);
+  assert.equal(addressAllowed('8.8.8.8', []), false);
+});
+
+async function gateway(t: test.TestContext, adminAllowFrom: string[]) {
+  const wdir = mkdtempSync(join(tmpdir(), 'omw-adm-'));
+  const worlds = new WorldSupervisor({
+    settings: {
+      worldsDir: wdir, gatewayPort: 8080, serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
+      basePort: 42000, maxWorlds: 1, idleReapMs: 60_000, startTimeoutMs: 1000, restartBackoffMs: 1000,
+      sharedDir: mkdtempSync(join(tmpdir(), 'omw-adm-shared-')),
+    },
+    spawner: () => { throw new Error('no worlds here'); },
+    fetchStatus: async () => ({ playerCount: 0, connectedCount: 0, maxPlayers: 1, name: 'x' }),
+  });
+  const dir = await startDirectory({
+    worlds, host: '127.0.0.1', port: 0, maxPerOwner: 1, worldsDir: wdir, adminAllowFrom,
+    admin: (_req, res) => { res.writeHead(200); res.end('dashboard'); return true; },
+  });
+  t.after(async () => { await dir.close(); worlds.stopAll(); });
+  return `http://127.0.0.1:${dir.port}`;
+}
+
+test('H6: /admin answers 404 outside [admin] allowFrom, and only /admin is gated', async (t) => {
+  const shut = await gateway(t, ['10.0.0.0/8']);
+  assert.equal((await fetch(`${shut}/admin`)).status, 404);
+  assert.equal((await fetch(`${shut}/admin/api/state`)).status, 404);
+  assert.equal((await fetch(`${shut}/`)).status, 200, 'the front page is not the dashboard');
+
+  const open = await gateway(t, ['127.0.0.1']);
+  assert.equal((await fetch(`${open}/admin`)).status, 200);
+  const unset = await gateway(t, []);
+  assert.equal((await fetch(`${unset}/admin/api/state`)).status, 200, 'empty = no restriction');
+});

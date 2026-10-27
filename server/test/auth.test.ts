@@ -838,13 +838,12 @@ test('the /auth routes do not disturb the rest of the HTTP surface', async (t) =
   });
 });
 
-// ---------------------------------------------------- SSO lands on a role holder's account
+// ---------------------------------------------------- SSO never lands on a role holder's account
 
-// The operator sets the dashboard up as realowner@example.com, then "Continue with Google" as
-// realowner@example.com. That is them: same account, dashboard and game, no invite needed.
-// And the guard that makes it safe: a self-registered account claiming an address is not a
-// role holder, so nobody can pre-register your email and catch your first Google sign-in.
-test('a verified Google email signs in AS the matching dashboard account, and only that', async (t) => {
+// H6: a verified Google email that matches a dashboard account's name or address is NOT that
+// account. Whoever controls the address at the provider would otherwise hold the dashboard.
+// A first sign-in is a new player (here: one that needs the invite), and nothing is linked.
+test('H6: a verified email matching a role holder does not sign in as that account', async (t) => {
   resetInviteBudgets();
   const h = await boot(t, { login: { inviteCode: 'letmein' } });
   const owner = await fetch(`${h.base}/admin/api/setup/owner`, {
@@ -853,24 +852,14 @@ test('a verified Google email signs in AS the matching dashboard account, and on
   });
   assert.equal(owner.status, 200);
 
-  // Dashboard: a session, not an invite_required, from the operator's own Google account.
   const { authorize, cookie } = await startFlow(h, 'google', '?return=admin');
   const code = h.idp2.issueCode(authorize, { sub: 'owner-google', email: 'RealOwner@example.com' });
   const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
-  assert.match(res.headers.get('location') ?? '', /\/admin#t=/, res.headers.get('location') ?? '');
+  assert.doesNotMatch(res.headers.get('location') ?? '', /#t=/, 'an email match minted a dashboard session');
 
-  // Game: the same account, and still no new one.
   const play = await ssoLogin(h, { sub: 'owner-google', email: 'realowner@example.com' }, 'google', h.idp2);
-  assert.ok(play.ticket, play.location);
+  assert.equal(play.error, 'invite_required', 'an email match signed in as the owner');
   assert.deepEqual(await accountNames(h.dataDir), ['realowner@example.com.json']);
-
-  // A squatter: a plain player account carrying someone else's address. Not a role holder,
-  // so their Google sign-in is a NEW player, which on this server needs the invite.
-  const squat = await h.server.accounts.register('squatter', 'squatter-password-1');
-  assert.ok(typeof squat !== 'string');
-  h.server.accounts.setEmail(squat, 'victim@example.com');
-  const victim = await ssoLogin(h, { sub: 'victim-google', email: 'victim@example.com' }, 'google', h.idp2);
-  assert.equal(victim.error, 'invite_required', 'the victim must not land in the squatter\'s account');
 });
 
 // ------------------------------------------------------------------- admin dashboard SSO
@@ -911,19 +900,27 @@ test('SSO into the admin dashboard: role required, session lands as /admin#t=', 
     body: JSON.stringify({ name: ssoAccount!.name, role: 'moderator' }),
   })).status, 200);
 
-  // Same identity again: this time the fragment carries a dashboard session token...
+  // H6: a moderator signs in with password + TOTP only; SSO turns them away with the reason.
+  assert.match(await adminSso('admin-sso-1'), /\/admin#ssoerr=totp_required$/,
+    'a moderator got a dashboard session from SSO alone');
+  assert.equal((await fetch(`${h.base}/admin/api/accounts/role`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: ssoAccount!.name, role: 'viewer' }),
+  })).status, 200);
+
+  // As a viewer, the same identity gets a dashboard session token...
   const second = await adminSso('admin-sso-1');
   const m = /\/admin#t=([^&]+)$/.exec(second);
   assert.ok(m, `expected /admin#t=<token>, got ${second}`);
   const adminToken = decodeURIComponent(m![1]!);
 
-  // ...that the admin API accepts, at the granted role. No TOTP challenge on this path:
-  // the identity provider is already a second factor.
+  // ...that the admin API accepts, at the viewer role.
   const state = await (await fetch(`${h.base}/admin/api/state`, {
     headers: { authorization: `Bearer ${adminToken}` },
   })).json() as { authed: boolean; role: string };
   assert.equal(state.authed, true);
-  assert.equal(state.role, 'moderator');
+  assert.equal(state.role, 'viewer');
 });
 
 // The invite-only front door links new players to where the invite code lives (a Discord, say).

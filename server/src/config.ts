@@ -181,7 +181,8 @@ export interface Config {
   // dashboardToken: bearer for the web admin dashboard (/admin). Empty = the whole
   // dashboard is off, which is the right default for a self-hoster who only wants the
   // in-game panel.
-  admin: { owners: string[]; allowConsole: boolean; dashboardToken: string };
+  // allowFrom: client addresses / IPv4 CIDRs that may reach /admin on the gateway (H6). Empty = all.
+  admin: { owners: string[]; allowConsole: boolean; dashboardToken: string; allowFrom: string[] };
   /** What the setup wizard recorded. Bookkeeping, not tuning &mdash; see config.default.toml. */
   setup: {
     completed: boolean; contentProfile: string; hosting: string;
@@ -650,6 +651,7 @@ function validate(t: Tree): Config {
       owners: reqStrArray(t, 'admin', 'owners'),
       allowConsole: reqBool(t, 'admin', 'allowConsole'),
       dashboardToken: reqStr(t, 'admin', 'dashboardToken'),
+      allowFrom: optStrArray(t, 'admin', 'allowFrom', []),
     },
     moderation: {
       chatLog: reqBool(t, 'moderation', 'chatLog'),
