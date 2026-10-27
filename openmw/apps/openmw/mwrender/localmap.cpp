@@ -867,7 +867,11 @@ namespace MWRender
         //     which retires the last "MyGUI is showing something else" theory outright.
         //   * the HUD panel stays BLACK while the readback reports blue -> it is showing a
         //     DIFFERENT texture, and that is the bug, sitting in the widget rather than here.
-        camera->setClearColor(osg::Vec4(0.2f, 0.4f, 0.8f, 1.f));
+        //
+        // NAMED (1.7.13): the target was full of fog colour, see osg_Fog_* below. Back to
+        // upstream black; the centre-pixel readback below stays as the confirmation -- a
+        // working map reports min < max, a fogged one a single flat value.
+        camera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 1.f));
         camera->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         camera->setRenderOrder(osg::Camera::PRE_RENDER);
 
@@ -915,6 +919,20 @@ namespace MWRender
         fog->setStart(10000000);
         fog->setEnd(10000000);
         stateset->setAttributeAndModes(fog, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+#ifdef __EMSCRIPTEN__
+        // THE MAP WAS FOGGED SOLID. On GLES the osg::Fog above is inert: the shaders read flat
+        // osg_Fog_* uniforms that StateUpdater feeds on the Scene Root from the MAIN view's fog
+        // (stateupdater.cpp). This camera looks down from above the cell's highest point with
+        // the whole 8192-unit cell in frame, so nearly every fragment lies past the view's fog
+        // end and came out as the flat fog colour: grey or blue-grey by day, black at night --
+        // exactly the "solid white/blue/black" minimap and the grey squares on the world map
+        // (which are these textures copied into the explored overlay). Override the uniforms
+        // the same way the attribute was meant to: start=end far away, scale 0 => fogValue 0
+        // for both linear and exponential fog.
+        stateset->addUniform(new osg::Uniform("osg_Fog_start", 10000000.f), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateset->addUniform(new osg::Uniform("osg_Fog_end", 10000000.f), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateset->addUniform(new osg::Uniform("osg_Fog_scale", 0.f), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+#endif
 
         // turn of sky blending
         stateset->addUniform(new osg::Uniform("far", 10000000.0f));
