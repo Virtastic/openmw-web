@@ -1874,6 +1874,19 @@ do
     and idn:find('function identity.applyTalkedTo(list)', 1, true) ~= nil
     and ps:find('PlayerTalkedTo: handleTalkedTo,', 1, true) ~= nil
     and g:find('MP_SelfTalkedTo = function(data)', 1, true) ~= nil)
+  -- OT3-8: a cast is paired with its hits by net id; a "beneficial" hit loses its harmful effects.
+  do
+    local cb = io.open('./openmw/files/data/scripts/mp/combat.lua'):read('*a')
+    check('spell hits pair with casts and the record decides Harmful',
+      cb:find("mp.sendEvent('CombatCast', { spellId = worldmp.toNet(data.spellId)", 1, true) ~= nil
+      and cb:find('core.magic.effects.records[e.id].harmful', 1, true) ~= nil)
+  end
+  -- OT3-16: skill books read are reported, persisted and flagged again at join.
+  check('read skill books survive a relog (no second skill-up)',
+    lb:find('api["usedIds"]', 1, true) ~= nil and lb:find('api["markUsed"]', 1, true) ~= nil
+    and idn:find("mp.sendEvent('PlayerBooksRead', { list = fresh })", 1, true) ~= nil
+    and idn:find('pcall(mp.markUsed, id)', 1, true) ~= nil
+    and ps:find('PlayerBooksRead: handleBooksRead,', 1, true) ~= nil)
   -- #221: the holder's package completion reaches the puppet's flag.
   check('AiSequence completion is noted on the holder and written onto puppets',
     ai:find('{ "aidone", actor.getCellRef().getRefNum()', 1, true) ~= nil

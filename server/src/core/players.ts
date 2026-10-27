@@ -152,6 +152,7 @@ export interface Player {
   // a spell cast (Recall/Intervention), an animated door, a conversation (guild guide, a
   // travel fare). A same-cell jump with none of them recent is a declared teleport.
   lastCastAt?: number;
+  casts?: Map<string, number>; // OT3-8: spell id (lowercase) -> when this player last cast it
   lastDoorAt?: number;
   lastDialogueAt?: number;
   // When this player last did something a quest script legitimately reacts to OUTSIDE a

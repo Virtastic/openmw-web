@@ -37,7 +37,7 @@ function harness(attackerCell: string, victimCell: string, holder = false) {
     // are about the relay, so this harness models degraded mode.
     holderOf: () => (holder ? 2 : undefined), epochOf: () => 1,
     allowPlayerHit: () => true,
-    knowsSource: () => true,
+    knowsSource: () => 'item' as const,
   });
   return { combat, attacker, victim };
 }
