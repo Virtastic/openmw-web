@@ -174,9 +174,11 @@ esmHashes = []
 
 [economy]
 # Public-realm rule: unique/named NPCs respawn there (the world is stateless), so their
-# corpses must drop nothing or every reset mints artifacts. Off for private/party
-# campaigns, which keep vanilla loot. Classification comes from content-table.json.
-noDrop = false
+# corpses must drop nothing or every reset mints artifacts. ON by default (E2, OT3-38): v2 is
+# one shared world. It also turns on account containment (quarantined and probation accounts
+# cannot drop). Set false only for a private campaign that keeps vanilla loot.
+# Classification comes from content-table.json.
+noDrop = true
 # Refuse a drop of an item the sender does not hold, rather than only counting it as an
 # anomaly. This became answerable once clients started reporting acquisitions per event
 # (PlayerItemAcquired): before that the server's picture of an inventory was up to 2 s stale,
@@ -184,10 +186,10 @@ noDrop = false
 # of something you never had. Enforcement was implemented on that stale picture once and
 # backed out for precisely that reason.
 #
-# OFF by default: the credit path is only as complete as the client reporting it, so leave this
-# off until the browser scenarios have exercised every acquisition path against a real engine.
-# Account-level containment is unaffected and remains the working defence meanwhile.
-refuseUnownedDrops = false
+# ON by default (E2, OT3-38) in the shared world. The credit path is only as complete as the
+# client reporting it; the full browser sweep (OT3-158) is the check that every acquisition
+# path credits. A false refusal shows as omwmp_unowned_drops_refused_total; set false to back it out.
+refuseUnownedDrops = true
 
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)

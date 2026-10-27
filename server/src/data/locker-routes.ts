@@ -17,6 +17,7 @@
 // SameSite=Lax cookie is not sent on a cross-origin fetch. The account is read from the
 // token, NEVER from the request body, which a client could forge.
 
+import { createHmac } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Locker, LockerFile } from './locker';
 import { clientIp, isSecureRequest, readCookie, setCookie } from '../net/http';
@@ -48,6 +49,24 @@ export const MWDATA_COOKIE = 'omw_mw';
 
 export function setMwdataCookie(req: IncomingMessage, res: ServerResponse, token: string): void {
   if (token) setCookie(res, MWDATA_COOKIE, token, { maxAgeSec: 24 * 60 * 60, path: '/', secure: isSecureRequest(req) });
+}
+
+// OT3-52: once /mwdata comes from R2 behind a Worker, the origin's omw_mw check never sees the
+// request, so the Worker checks this self-verifying cookie instead (infra/mwdata-worker). Minted
+// only for an account that owns the game right now, so revoking ownership stops new ones and
+// old ones die with their expiry. The key is OMW_MWDATA_HMAC_KEY, a prod secret: unset (dev,
+// self-host without the Worker) mints nothing.
+export const MWD_COOKIE = 'mwd';
+export const MWD_TTL_SEC = 12 * 60 * 60;
+
+export function mintMwd(key: string, accountKey: string, nowMs = Date.now()): string {
+  const body = `${Math.floor(nowMs / 1000) + MWD_TTL_SEC}.${Buffer.from(accountKey).toString('base64url')}`;
+  return `${body}.${createHmac('sha256', key).update(body).digest('base64url')}`;
+}
+
+function setMwdCookie(req: IncomingMessage, res: ServerResponse, accountKey: string): void {
+  const key = process.env.OMW_MWDATA_HMAC_KEY ?? '';
+  if (key) setCookie(res, MWD_COOKIE, mintMwd(key, accountKey), { maxAgeSec: MWD_TTL_SEC, path: '/mwdata', secure: isSecureRequest(req) });
 }
 
 /** May this request read the hosted game? A live locker session (Bearer or the cookie) whose
@@ -188,10 +207,12 @@ export function lockerRoutes(deps: LockerRouteDeps) {
         const esm = deps.locker.esmMode;
         // Re-issued here too, so a page restored from a saved token (F5, a new tab) still
         // gets the cookie the hosted-file reads need.
+        const owned = esm && await deps.locker.ownsGame(accountKey);
         if (esm) setMwdataCookie(req, res, token);
+        if (owned) setMwdCookie(req, res, accountKey);
         json(res, 200, {
           files: serves ? [] : deps.locker.requiredManifest(),
-          ...(esm ? { hosted: true, owned: await deps.locker.ownsGame(accountKey) } : {}),
+          ...(esm ? { hosted: true, owned } : {}),
           // What the world runs. A client missing any of these cannot join it, so the
           // launcher refuses to start rather than letting them find out three screens later.
           content: deps.requiredContent?.() ?? [],

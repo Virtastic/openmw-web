@@ -117,7 +117,8 @@ test('in your OWN world an unowned drop is counted, not refused', async (t) => {
 test('placements and drops both land; the drop is merely recorded', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    configOverride: { economy: { noDrop: true } } }); // what the public world runs with
+    // refuseUnownedDrops off: this checks the record-only layer, not the refusal in front of it.
+    configOverride: { economy: { noDrop: true, refuseUnownedDrops: false } } });
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);
@@ -160,7 +161,8 @@ test('placements and drops both land; the drop is merely recorded', async (t) =>
 test('a quarantined account cannot put anything into the shared world', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    configOverride: { economy: { noDrop: true }, metrics: { enabled: true, token: 'tok' } } });
+    // refuseUnownedDrops off: containment must refuse on its own, not ride the ownership refusal.
+    configOverride: { economy: { noDrop: true, refuseUnownedDrops: false }, metrics: { enabled: true, token: 'tok' } } });
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);

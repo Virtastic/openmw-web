@@ -577,7 +577,7 @@ function validate(t: Tree): Config {
     },
     economy: {
       noDrop: reqBool(t, 'economy', 'noDrop'),
-      refuseUnownedDrops: optBool(t, 'economy', 'refuseUnownedDrops', false),
+      refuseUnownedDrops: optBool(t, 'economy', 'refuseUnownedDrops', true),
     },
     locker: {
       // ON UNLESS SOMEBODY SAYS OTHERWISE. There was no off switch: "enabled" meant "storage
