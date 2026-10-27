@@ -826,7 +826,16 @@ try {
      // sfsSlowTop: the files the game waited on the NETWORK for, whole session, most first.
      var slowTop = sfs && sfs.slowBy ? Object.keys(sfs.slowBy).sort(function(x, y){ return sfs.slowBy[y] - sfs.slowBy[x]; }).slice(0, 2).map(function(k){ return k.replace(/\?.*$/, '') + ':' + sfs.slowBy[k]; }).join(',') : '';
      lastSfs = sfs ? { misses: sfs.misses, stallMs: sfs.stallMs, slow: sfs.slow || 0, pf: sfs.slowPf || 0, nopf: sfs.slowNoPf || 0 } : null;
+     // An actor not streamed for 10 s is out of every window above: drop it. Kept, the tap held
+     // every actor this session ever saw, 40 poses each, and the 1 s scan walked them all.
+     var taps = 0;
+     for (var tk in actorTap.last) { if (now - actorTap.last[tk].t > 10000) { delete actorTap.last[tk]; delete actorTap.hist[tk]; } else taps++; }
+     // pumps: engine frames per second (window.__fps) against fps (displayed frames): one each
+     // per refresh. heapMb/jsMb: the wasm heap and the JS heap (Chrome only), for growth.
+     var heapMb = window.Module && Module.wasmMemory ? Math.round(Module.wasmMemory.buffer.byteLength / 1048576) : '-';
+     var jsMb = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : '-';
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
+       + ' pumps=' + (window.__fps || 0) + ' heapMb=' + heapMb + ' jsMb=' + jsMb + ' taps=' + taps
        + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + (sfs.cacheSlow ? ' sfsCacheSlow=1' : '') + (sfs.store ? ' sfsStore=' + sfs.store : '') + (sfs.pfFiles ? ' sfsPf=' + sfs.pfFiles + '/' + (sfs.pfFetched || 0) : '') + ' sfsSlow=' + sfsD.slow + (sfsD.slow ? ' sfsSlowPf=' + sfsD.pf + '/' + sfsD.nopf : '') + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
        + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
@@ -4318,9 +4327,16 @@ try {
        // SINGLE frame driver (the engine no longer registers emscripten_set_main_loop):
        // visible tab -> next tick scheduled via requestAnimationFrame (vsync-aligned, smooth);
        // hidden tab  -> direct postMessage (unthrottled, game keeps running in background).
-       var scheduled = false;
+       // ONE CHAIN, EVER. `gen` names the live chain; a tick carrying an older one is dropped.
+       // The guard used to be `scheduled` alone, and pumpFrame clears it whichever chain called
+       // it: hiding the tab started a timer chain while the frozen rAF tick stayed queued, and
+       // on return BOTH ran on as rAF loops. Every hide/show added a loop, each one a full
+       // engine frame per refresh -- prod 2026-10-10/26: fps flat with session age in windows
+       // never hidden, 0.72x of the same cell after two hide/show cycles, 0.39x after three.
+       var scheduled = false, gen = 0;
        function scheduleNext(){
          if (scheduled) return; scheduled = true;
+         var g = gen;
          // Visible: run the frame INSIDE the rAF callback. Hidden: pace with a timer (~30fps
          // target; browsers throttle background timers further) and go through the
          // MessageChannel, which is NOT throttled in a background tab — an unpaced background
@@ -4346,10 +4362,11 @@ try {
          // assumed it was.
          //
          // The latency claim was never measured; the input regression is. Keep the hop.
-         if (document.hidden) setTimeout(function(){ mc.port2.postMessage(0); }, 33);
-         else requestAnimationFrame(function(){ mc.port2.postMessage(0); });
+         if (document.hidden) setTimeout(function(){ mc.port2.postMessage(g); }, 33);
+         else requestAnimationFrame(function(){ mc.port2.postMessage(g); });
        }
-       function pumpFrame(){
+       function pumpFrame(e){
+         if (e.data !== gen) return; // a superseded chain's tick (see `gen`)
          scheduled = false;
          var a = performance.now();
          try { if (Module._omw_pump_frame) Module._omw_pump_frame(); }
@@ -4387,12 +4404,12 @@ try {
        }
        // The hidden-tab path still arrives as a message; visible frames call pumpFrame directly.
        mc.port1.onmessage = pumpFrame;
-       // If the tab hides while an rAF-scheduled tick is frozen, take over directly.
-       // (The stale rAF firing later causes at most one harmless extra tick.)
+       // If the tab hides while an rAF-scheduled tick is frozen, take over directly; the frozen
+       // tick carries the old `gen` and is dropped when the tab shows again.
        document.addEventListener('visibilitychange', function(){
-         if (document.hidden && scheduled) mc.port2.postMessage(0);
+         if (document.hidden && scheduled) mc.port2.postMessage(++gen);
        });
-       mc.port2.postMessage(0);
+       mc.port2.postMessage(gen);
        append('[pump] frame pump started (rAF-paced when visible)');
      } catch(e){ append('[pump error] '+e,'err'); }
    },
