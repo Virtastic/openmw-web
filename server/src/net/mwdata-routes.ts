@@ -197,6 +197,11 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     try {
       const rel = decodeURIComponent(url.pathname.slice('/mwdata/'.length));
       if (rel === '' || rel.includes('\0')) throw new Error('bad path');
+      // M9: the manifest never lists what SKIP_DIR skips (a dot-folder holds an operator
+      // secret), so the serving path refuses the same segments rather than trusting nobody asks.
+      if (rel.split(/[\\/]/).some((seg) => SKIP_DIR.test(seg))) {
+        res.writeHead(404, { 'cache-control': 'no-store' }); res.end(); return true;
+      }
       path = resolve(deps.gameDataDir, rel);
       if (!path.startsWith(resolve(deps.gameDataDir) + sep)) throw new Error('escape');
     } catch {

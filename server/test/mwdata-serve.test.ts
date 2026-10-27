@@ -107,6 +107,26 @@ test('the path cannot escape the game-data folder', async () => {
   } finally { await s.stop(); }
 });
 
+test('dotfiles and skipped folders are never served, even by direct path (M9)', async () => {
+  const dir = fixture();
+  mkdirSync(join(dir, '.secrets'));
+  writeFileSync(join(dir, '.secrets', 'token'), 'operator secret');
+  writeFileSync(join(dir, '.env'), 'operator secret');
+  mkdirSync(join(dir, 'node_modules'));
+  writeFileSync(join(dir, 'node_modules', 'x.js'), 'operator secret');
+  const s = await serve(dir, 'serve');
+  try {
+    for (const attempt of ['/mwdata/.secrets/token', '/mwdata/.env', '/mwdata/%2esecrets/token',
+      '/mwdata/Music/..%2f.env', '/mwdata/Music%5c..%5c.env', '/mwdata/node_modules/x.js']) {
+      const r = await fetch(`${s.base}${attempt}`, { redirect: 'manual' });
+      assert.equal(r.status, 404, attempt);
+      assert.equal(r.headers.get('cache-control'), 'no-store', attempt);
+      assert.notEqual(await r.text(), 'operator secret', attempt);
+    }
+    assert.equal((await fetch(`${s.base}/mwdata/Morrowind.esm`)).status, 200);
+  } finally { await s.stop(); }
+});
+
 // --- delivery does not depend on the locker's storage backend ---------------------------------
 //
 // The wizard's storage question asks where UPLOADED FILES are kept, and it used to say that
