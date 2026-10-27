@@ -1176,7 +1176,40 @@ local function mirror()
     mp.set('cellScripted', json.encode(scripted))
 end
 
+-- PAST CHARGEN, EVERYTHING THE CENSUS EXIT GIVES. CharGenDoorExitCaptain is the one place
+-- vanilla re-enables the menus, and nothing re-runs it: a character whose windows went missing
+-- (chargen's disallowAll never undone, or a toggleVisible hide that settings.cfg keeps across
+-- reloads -- see mp.allowAllWindows) stayed that way, with the console off in MP. Re-applied
+-- every connection, so an already-stuck character is repaired on its next join. The package:
+-- Sellus hands it over once (journal 0 -> 1) and every later "duties" line adds nothing, so a
+-- character at stage 1 without it can never get it again. Run a beat after chargenReported so
+-- the restore's moveInto has landed (end-of-frame) before countOf reads the pack.
+local EXIT_REPAIR_DELAY = 2
+local exitRepairAt = nil -- false = done for this connection
+local function repairChargenExit(player)
+    if mp.allowAllWindows then mp.allowAllWindows() end -- nil on an engine older than the binding
+    local q = types.Player.quests(player)['a1_1_findspymaster']
+    local inv = types.Actor.inventory(player)
+    if q and q.stage == 1 and inv:countOf('bk_a1_1_caiuspackage') == 0 then
+        print('[mp] chargen repair: re-granting the package for Caius')
+        world.createObject('bk_a1_1_caiuspackage'):moveInto(inv)
+    end
+end
+
+local function exitRepairTick(now)
+    if not (deps.chargenReportedFn and deps.chargenReportedFn()) then exitRepairAt = nil; return end
+    if exitRepairAt == false then return end
+    exitRepairAt = exitRepairAt or now + EXIT_REPAIR_DELAY
+    if now < exitRepairAt then return end
+    local player = playerObj()
+    if not player then return end
+    exitRepairAt = false
+    local ok, err = pcall(repairChargenExit, player)
+    if not ok then print('[mp] chargen repair failed: ' .. tostring(err)) end
+end
+
 function quests.tick(now)
+    exitRepairTick(now)
     if next(pendingApply) and playerObj() then
         local retry = pendingApply
         pendingApply = {}

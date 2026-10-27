@@ -4999,5 +4999,36 @@ do
     g:find("local ok, err = pcall(function() data.obj:removeScript('scripts/mp/avatar.lua') end)", 1, true) ~= nil
     and g:find("data.obj:removeScript('scripts/mp/avatar.lua')\n", 1, true) == nil)
 end
+print('1.7.14 past chargen, every join: every window back, and the package if stage 1 lost it')
+do
+  local function join(stage, packed, reported)
+    fresh(); package.loaded['scripts.mp.quests'] = nil
+    local env = stubs.install({})
+    local granted, allowed = {}, 0
+    env.mp.allowAllWindows = function() allowed = allowed + 1 end
+    env.types.Player.quests = function() return { a1_1_findspymaster = stage and { stage = stage } or nil } end
+    env.types.Actor.inventory = function() return {
+      getAll = function() return {} end,
+      countOf = function(_, id) return (packed and id == 'bk_a1_1_caiuspackage') and 1 or 0 end,
+    } end
+    package.loaded['openmw.world'].createObject = function(id)
+      return { moveInto = function() granted[#granted + 1] = id end }
+    end
+    local q = require('scripts.mp.quests')
+    q.init({ playerFn = function() return { id = 'p' } end, chargenReportedFn = function() return reported end })
+    -- The other tick passes are not stubbed for a live player; only the repair is under test.
+    for t = 0, 5 do pcall(q.tick, t) end
+    return allowed, granted
+  end
+  local a, g = join(1, false, true)
+  check('a joined character past chargen gets every window allowed, once', a == 1, 'allowAllWindows x' .. a)
+  check('stage 1 without the package gets it back', #g == 1 and g[1] == 'bk_a1_1_caiuspackage', #g .. ' granted')
+  a, g = join(1, true, true)
+  check('a character still carrying it is not given a second', #g == 0, #g .. ' granted')
+  a, g = join(10, false, true)
+  check('past stage 1 (handed to Caius) nothing is granted', #g == 0, #g .. ' granted')
+  a, g = join(nil, false, false)
+  check('nothing runs before chargen is reported (mid-chargen, restore pending)', a == 0 and #g == 0)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

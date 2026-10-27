@@ -1787,6 +1787,14 @@ namespace MWGui
         updateVisible();
     }
 
+    void WindowManager::unhideAll()
+    {
+        for (GuiWindow wnd : { GW_Inventory, GW_Map, GW_Magic, GW_Stats })
+            findHiddenSetting(wnd)->set(false);
+        mShown = GW_ALL;
+        updateVisible();
+    }
+
     void WindowManager::forceHide(GuiWindow wnd)
     {
         mForceHidden = (GuiWindow)(mForceHidden | wnd);

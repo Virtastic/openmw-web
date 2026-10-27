@@ -56,6 +56,7 @@ namespace MWGui
         bool isSettingsWindowVisible() const override { return false; }
         bool isInteractiveMessageBoxActive() const override { return false; }
         void toggleVisible(MWGui::GuiWindow) override {}
+        void unhideAll() override {}
         void forceHide(MWGui::GuiWindow) override {}
         void unsetForceHide(MWGui::GuiWindow) override {}
         void disallowAll() override {}

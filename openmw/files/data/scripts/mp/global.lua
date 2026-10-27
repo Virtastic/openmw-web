@@ -1927,6 +1927,7 @@ local function start()
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         noticeFn = notice,
         rosterNameFn = rosterName,
+        chargenReportedFn = function() return chargenReported end, -- past chargen, record applied
         isMpPuppetFn = function(obj)
             local p = puppets[puppetBodies[obj.id] or false]
             return p ~= nil and p.obj.id == obj.id and p.obj:isValid()

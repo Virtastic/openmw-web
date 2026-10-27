@@ -142,6 +142,8 @@ namespace MWBase
         virtual bool isInteractiveMessageBoxActive() const = 0;
 
         virtual void toggleVisible(MWGui::GuiWindow wnd) = 0;
+        /// Undo every toggleVisible: show inventory/map/magic/stats again and clear their persisted hidden flags
+        virtual void unhideAll() = 0;
 
         virtual void forceHide(MWGui::GuiWindow wnd) = 0;
         virtual void unsetForceHide(MWGui::GuiWindow wnd) = 0;
