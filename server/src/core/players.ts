@@ -209,6 +209,8 @@ export interface Player {
    *  a real scenario — which is why unowned drops were only ever COUNTED. Credit arrives per
    *  event instead, and is cleared by the next snapshot (which now includes it). */
   pendingAcquired?: Map<string, number>;
+  // P4: gold accepted from inventory declarations in the current minute (playerstate.ts).
+  goldWindow?: { at: number; gained: number };
   // Backlog 337/384: the distinct far cells this session's ObjectEnabled messages have named.
   // A far exterior must be well-formed; at most MAX_FAR_ENABLE_CELLS distinct far cells.
   farEnableCells?: Set<string>;

@@ -54,6 +54,10 @@ const REP_RAISE_PER_WINDOW = 10;
 // #358: gold per PlayerInventory declaration. A merchant purse is <= 10k (Mudcrab), Creeper
 // pays 5k/day; no honest 2 s diff gains more than this.
 const GOLD_DELTA_MAX = 20_000;
+// P4: and per minute. 20k per 2 s declaration was ~600k/min for a client that just keeps
+// claiming; two full merchant purses a minute is already a fast honest seller.
+// ponytail: rolling cap, not a ledger -- a server-observed gold ledger replaces it.
+const GOLD_PER_MINUTE = 40_000;
 export const MAX_EQUIPMENT_SLOT = 20;
 
 export interface StateCtx {
@@ -71,6 +75,8 @@ export interface StateCtx {
   // #359: a custom record's body (m7 RecordStore), so an active-effect add can be budgeted by
   // the magnitude it actually carries. Absent = every effect is priced at the nominal value.
   recordOf?(id: string): { data: unknown; byAccount?: string } | undefined;
+  // P4: the content's item records (ContentTable.isKnownItem). Absent = every id passes.
+  isKnownItem?(id: string): boolean;
   // #393: limits.harness -- the scenarios declare +100 skills and level steps of 4. The rate
   // windows are skipped; the caps (100, 255, the jump limit) stand.
   harness?: boolean;
@@ -605,6 +611,12 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     const id = t ? recordId(t.get('id')) : undefined;
     const n = t ? finite(t.get('n')) : undefined;
     if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > (id === GOLD ? MAX_GOLD : MAX_COUNT)) return false;
+    // P4: an id no content file defines is an invented item. Drop that entry only: a stale
+    // whitelist then costs one modded item, never the whole inventory sync.
+    if (ctx.isKnownItem && !ctx.isKnownItem(id)) {
+      noteGain(ctx, player, 'inventory_unknown_record', { item: id, n });
+      continue;
+    }
     out.push({ id, n });
   }
   // Compare against what this character last declared, before overwriting it.
@@ -637,6 +649,17 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   if (newIds >= IMPLAUSIBLE_DISTINCT) {
     noteGain(ctx, player, 'inventory_breadth', { newItems: newIds, total: out.length });
     return false;
+  }
+  const goldGain = (out.find((i) => i.id === GOLD)?.n ?? 0) - (before.get(GOLD) ?? 0);
+  if (goldGain > 0) {
+    const now = Date.now();
+    const w = player.goldWindow && now - player.goldWindow.at < 60_000 ? player.goldWindow : { at: now, gained: 0 };
+    if (w.gained + goldGain > GOLD_PER_MINUTE) {
+      noteGain(ctx, player, 'inventory_gold_rate', { gained: w.gained, more: goldGain });
+      return false;
+    }
+    w.gained += goldGain;
+    player.goldWindow = w;
   }
   // PER-ITEM STATE, carried alongside rather than folded into the counts. `out` keeps its exact
   // shape because the client's restore grants the SHORTFALL between it and countOf(); changing
