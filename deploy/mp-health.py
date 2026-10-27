@@ -41,6 +41,7 @@ slow_inside = Counter()  # archive reads: the files inside the chunk (index.html
 no_pose = Counter()  # windows with a drawn NPC that has no pose stream of its own (npcNoPose), by record
 facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's heading (180s)
 hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
+frame_by_tier = defaultdict(lambda: ([], []))  # visible play windows by tier=: (fps, frameMs) -- frameMs is engine CPU ms per frame
 hitch_pf = [0, 0]  # those windows' slow streamed reads: [named by the cell prefetch already, never named] (sfsSlowPf)
 rtt50, rtt95, switch_ms, self_snaps, play_s = [], [], [], 0, 0.0
 npc_worst = Counter()  # visible windows' worst-off NPC (>= 300 u): record (puppet | run locally)
@@ -88,6 +89,9 @@ for e in lines():
             elif settling: pass
             else:
                 wf = re.search(r'worstFrameMs=(\d+)', t); ss = re.search(r'sfsStallMs=(\d+)', t)
+                fp, fm = f(t, 'fps'), f(t, 'frameMs')
+                if fp and fm not in (None, '-', '0') and float(fp) > 0:  # frameMs/tier ship from 1.7.15
+                    ft = frame_by_tier[f(t, 'tier') or '-']; ft[0].append(float(fp)); ft[1].append(float(fm))
                 if wf and int(wf[1]) >= 500:
                     hitch += 1
                     if ss and int(ss[1]) >= 300: hitch_sfs += 1
@@ -142,6 +146,9 @@ print(f"NPCs drawn 300 u+ off their server path, worst per visible 5 s window:\n
 print(f"NPCs drawn with no pose stream of their own (5 s windows, by record):\n{top(no_pose, 6)}")
 print(f"hitches: {hitch} visible windows with a frame of 500 ms or more, {hitch_sfs} of them waiting 300 ms+ on streamed game files"
       f" (their slow reads: {hitch_pf[0]} already named by the cell prefetch, {hitch_pf[1]} never named) | {hidden_w} windows in a background tab (not counted)")
+print('frame time by tier (visible play windows; frameMs high = CPU-bound, low with low fps = GPU-bound):\n' + ('\n'.join(
+    f"  {k:5s} fps p50 {q(v[0], .5)} p10 {q(v[0], .1)} | frameMs p50 {q(v[1], .5)} p90 {q(v[1], .9)} ({len(v[0])} windows)"
+    for k, v in sorted(frame_by_tier.items())) or '  (no frameMs yet)'))
 print(f"facing: walking NPCs drawn turned round (>120 deg off the server) {facing_bad}/{facing_n} samples" + (f" ({100 * facing_bad / facing_n:.1f}%)" if facing_n else ''))
 print(f'Lua errors (peer + clients): {lua_errors}')
 print(f"sim peer start failures: {ev['simpeer.start_timeout']}   peer errors:\n{top(peer_err, 8)}")
