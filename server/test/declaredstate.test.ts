@@ -17,6 +17,8 @@
 // not by truth.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
@@ -294,4 +296,32 @@ test('a PlayerMark lands in the doc; a malformed one is refused', async (t) => {
   await server.flush();
   const doc = readPlayerDoc(dataDir, charId) as { mark?: unknown };
   assert.deepEqual(doc.mark, { cell: 'Balmora, Guild of Mages', x: 1, y: 2.5, z: -3 });
+});
+
+// P4: with a content table carrying `items`, an id no content defines is dropped from the saved
+// inventory (the rest lands), and gold accepted per minute is capped.
+test('invented record ids are dropped and gold per minute is capped', async (t) => {
+  const dataDir = tmpDataDir();
+  writeFileSync(join(dataDir, 'content-table.json'), JSON.stringify({ items: ['gold_001', 'iron dagger'] }));
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+
+  const c = await TestClient.connect(server.port);
+  const { welcome } = await c.joinAsNew('Minter');
+  const charId = String(welcome['characterId']);
+  await c.waitEvent('PlayerList');
+  const send = async (items: { id: string; n: number }[]): Promise<unknown> => {
+    c.sendEvent('PlayerInventory', { items });
+    await new Promise((r) => setTimeout(r, 150));
+    await server.flush();
+    return readPlayerDoc(dataDir, charId)?.['inventory'];
+  };
+
+  assert.deepEqual(await send([{ id: 'Iron Dagger', n: 1 }, { id: 'made_up_sword', n: 1 }, { id: 'Generated:0x3', n: 1 }]),
+    [{ id: 'Iron Dagger', n: 1 }, { id: 'Generated:0x3', n: 1 }], 'only the invented id is dropped');
+  assert.deepEqual(await send([{ id: 'gold_001', n: 19_000 }]), [{ id: 'gold_001', n: 19_000 }]);
+  assert.deepEqual(await send([{ id: 'gold_001', n: 38_000 }]), [{ id: 'gold_001', n: 38_000 }]);
+  assert.deepEqual(await send([{ id: 'gold_001', n: 57_000 }]), [{ id: 'gold_001', n: 38_000 }],
+    'a third 19k inside the same minute must be refused');
+  c.close();
 });

@@ -27,6 +27,9 @@ export interface ContentTableDoc {
   questItems?: string[];
   uniqueActors?: string[];
   notableItems?: string[];
+  // Every carryable item record id in the deployment's content (tools/gen-content-table.mjs).
+  // Absent = no whitelist: inventory ids are taken as declared, as before.
+  items?: string[];
 }
 
 // Vanilla defaults. Deliberately small and high-confidence: these are the records the
@@ -63,12 +66,21 @@ export class ContentTable {
   readonly questItems: ReadonlySet<string>;
   readonly uniqueActors: ReadonlySet<string>;
   readonly notableItems: ReadonlySet<string>;
+  readonly items: ReadonlySet<string> | undefined;
 
   private constructor(doc: ContentTableDoc) {
     const lower = (xs: string[]) => new Set(xs.map((s) => s.toLowerCase()));
     this.questItems = lower(doc.questItems ?? DEFAULT_QUEST_ITEMS);
     this.uniqueActors = lower(doc.uniqueActors ?? DEFAULT_UNIQUE_ACTORS);
     this.notableItems = lower(doc.notableItems ?? DEFAULT_NOTABLE_ITEMS);
+    this.items = doc.items ? lower(doc.items) : undefined;
+  }
+
+  // An engine-minted record (a brewed potion, an enchanted item: "Generated:0x1", "$dynamic3")
+  // has no content id to check, so it always passes.
+  isKnownItem(recordId: string): boolean {
+    if (!this.items || recordId.startsWith('$') || recordId.startsWith('Generated:')) return true;
+    return this.items.has(recordId.toLowerCase());
   }
 
   isQuestItem(recordId: string): boolean {
@@ -95,6 +107,7 @@ export class ContentTable {
         questItems: table.questItems.size,
         uniqueActors: table.uniqueActors.size,
         notableItems: table.notableItems.size,
+        items: table.items?.size ?? 'unchecked',
       });
       return table;
     } catch (err) {
