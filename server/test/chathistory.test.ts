@@ -89,3 +89,33 @@ test('a muted speaker stays muted in the scrollback', async (t) => {
     (v) => String((v as { text?: string }).text ?? '').includes('potions'), 4000).catch(() => null);
   assert.equal(leaked, null, 'a muted speaker reached the listener through the scrollback');
 });
+
+// P6: a block silences LIVE chat in both directions, not only the replay on the next join.
+test('a block stops live chat both ways', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: CFG as never,
+  });
+  t.after(() => server.close());
+
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Pest', 'hunter22');
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Blocker', 'hunter22');
+
+  b.sendEvent('BlockAdd', { name: 'Pest' });
+  await b.waitEvent('SocialResult', (v) => (v as { op?: string }).op === 'BlockAdd');
+  const said = (who: TestClient, text: string) => (v: unknown) => String((v as { text?: string }).text ?? '') === text;
+
+  a.sendEvent('ChatSend', { channel: 'global', text: 'pest says hi' });
+  await a.waitEvent('ChatMessage', said(a, 'pest says hi'));
+  assert.equal(await b.waitEvent('ChatMessage', said(b, 'pest says hi'), 1500).catch(() => null), null,
+    'the blocker still heard the blocked player live');
+
+  b.sendEvent('ChatSend', { channel: 'global', text: 'blocker says hi' });
+  await b.waitEvent('ChatMessage', said(b, 'blocker says hi'));
+  assert.equal(await a.waitEvent('ChatMessage', said(a, 'blocker says hi'), 1500).catch(() => null), null,
+    'the blocked player still heard the blocker live');
+});

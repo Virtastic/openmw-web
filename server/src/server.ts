@@ -420,8 +420,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const chatCtx: ChatContext = {
     roster,
     // Mutes are enforced at DELIVERY (chat.ts), not in the client: a mute a modified
-    // client can ignore is not a mute.
-    isMuted: (listener, speaker) => socialRef?.isMuted(listener, speaker) ?? false,
+    // client can ignore is not a mute. A block (either direction) silences live chat too;
+    // before, it only filtered join replay and blocked players kept talking live.
+    isMuted: (listener, speaker) => (socialRef?.isMuted(listener, speaker) ?? false)
+      || socialStore.blockedEitherWay(listener, speaker),
     // The '@' tier is WORLD chat now: the people in your world are your group, no membership
     // list needed. Everyone co-present, yourself included.
     partyOf: (accountKey) => (roster.activeForAccount(accountKey)
@@ -585,6 +587,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     clientAuthority: config.limits.clientAuthority, // the WoW model: the owner's fall damage (hp.fall) is taken
     holderOf: (cellKey) => world.holderOf(cellKey), // bars only from an avatar the peer simulates
     recordOf: (id) => recordStore.get(id), // #359: active-effect adds budgeted by real magnitude
+    isKnownItem: (id) => contentTable.isKnownItem(id), // P4: invented record ids are dropped
     // Chargen named the character: put that name on the slot, replacing the placeholder the
     // slot was auto-created with. Only ever an upgrade — a slot the player already named is
     // left alone.
