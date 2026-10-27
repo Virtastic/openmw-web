@@ -206,6 +206,10 @@ export class AccountStore {
 
   private readonly db: DatabaseSync;
   private readonly keysOnDisk = new Set<string>(); // existsNow() without touching the disk
+  // H1: provisional character id -> the account it was handed to. A world is only ever built
+  // for an id THIS account was given (or a real slot), never any string of the right shape.
+  // In memory: a gateway restart forgets them and the launcher mints a fresh one.
+  private readonly provisional = new Map<string, string>();
 
   constructor(dataDir: string) {
     this.db = openDb(join(dataDir, 'accounts.db'), ACCOUNT_MIGRATIONS);
@@ -430,8 +434,19 @@ export class AccountStore {
    *  matters because the one signal that says "creation finished" is client-reported and can
    *  go missing: an earlier revision deleted real characters by treating its absence as proof
    *  of abandonment (see the regression test in characters.test.ts). */
-  provisionalCharacterId(): string {
-    return `c${randomBytes(12).toString('hex')}`;
+  provisionalCharacterId(accountKey?: string): string {
+    const id = `c${randomBytes(12).toString('hex')}`;
+    if (accountKey !== undefined) {
+      this.provisional.set(id, accountKey);
+      // ponytail: oldest-first eviction at 10k; a player mid-chargen past that re-mints an id.
+      if (this.provisional.size > 10_000) this.provisional.delete(this.provisional.keys().next().value!);
+    }
+    return id;
+  }
+
+  /** H1: was this provisional id handed to this account? */
+  isProvisionalFor(accountKey: string, charId: string): boolean {
+    return this.provisional.get(charId) === accountKey;
   }
 
   /** Write a provisional character into the account, now that creation has finished. Same cap

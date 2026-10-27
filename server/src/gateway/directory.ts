@@ -150,6 +150,11 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
   // is what gets rate-limited. Generous, because a legitimate reconnect ladder retries: this
   // only has to stop one address walking every priv-* directory on disk.
   const revives = new IpRateLimiter(30);
+  // H1: POST /worlds spawns a process too. Per account AND per address, so neither a token
+  // nor a pile of accounts behind one address can hammer it. Generous: a launcher retries
+  // once on 'restarting', and a player switching characters makes one create per switch.
+  const createsPerAccount = new IpRateLimiter(10);
+  const createsPerIp = new IpRateLimiter(60);
   // Clients dial wsPath on THIS origin — the only address they can reach, since a world's
   // port is internal and never published. So the projection deliberately does NOT carry an
   // address: `host` used to be a configured guess that defaulted to 127.0.0.1, which is a
@@ -393,10 +398,18 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
         // create a world for anyone -- which is exactly what was happening (401 on every
         // in-game create).
         const auth = req.headers.authorization ?? '';
-        const account = deps.isTrustedServer?.(auth)
+        const trusted = deps.isTrustedServer?.(auth) === true;
+        const account = trusted
           ? (typeof parsed.account === 'string' ? parsed.account : undefined)
           : deps.resolveAccount?.(auth);
         if (!account) { json(res, 401, { error: 'sign_in_first' }); return; }
+        // A trusted caller is a world process on the box, acting for many players: its address
+        // says nothing about who is asking, so only the account budget applies to it.
+        if ((!trusted && !createsPerIp.allow(clientIp(req))) || !createsPerAccount.allow(account)) {
+          log('warn', 'directory.create_rate_limited', { account });
+          json(res, 429, { error: 'slow_down' });
+          return;
+        }
         let id = parsed.id && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(parsed.id) ? parsed.id : undefined;
         // A PRIVATE WORLD IS MADE FOR A CHARACTER, so its id is DERIVED, never trusted from
         // the client. The launcher computed it locally, and a stale tab computed it from a
@@ -425,11 +438,29 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
         // characters. They are reaped shortly anyway; they must not block a live session first.
         // A world that was JUST created and not yet joined still counts, so the cap keeps
         // doing its job of stopping one account exhausting maxWorlds.
-        const mine = deps.worlds.list()
-          .filter((w) => w.ownerAccount === account && !w.abandoned);
-        if (!mine.some((w) => w.id === id) && mine.length >= deps.maxPerOwner) {
-          json(res, 429, { error: `at most ${deps.maxPerOwner} sessions per account` });
-          return;
+        //
+        // H1: one world per owner by default. A world nobody is connected to does not hold
+        // its place: backing out of chargen leaves a never-joined world, and refusing the next
+        // character over it is the lockout above all over again -- so it is stopped instead
+        // (stopped, not discarded: a revived world has cell state on disk). Read fresh, since
+        // a player who just pressed Exit counts as connected for up to a poll. A world process
+        // creating for a player is moving them OUT of the world it runs, hence one more.
+        const cap = deps.maxPerOwner + (trusted ? 1 : 0);
+        const mine = (): WorldInfo[] => deps.worlds.list().filter((w) => w.ownerAccount === account
+          && !w.abandoned && w.id !== id && !deps.worlds.isStopping(w.id));
+        if (deps.worlds.get(id)?.ownerAccount !== account) {
+          if (mine().length >= cap) {
+            await deps.worlds.poll();
+            for (const w of mine()) {
+              if (w.connectedCount > 0) continue;
+              log('info', 'directory.world_displaced', { account, displaced: w.id, for: id });
+              deps.worlds.stop(w.id);
+            }
+          }
+          if (mine().length >= cap) {
+            json(res, 429, { error: `at most ${deps.maxPerOwner} sessions per account` });
+            return;
+          }
         }
 
         const world = deps.worlds.ensure(id, mode as WorldMode, account);

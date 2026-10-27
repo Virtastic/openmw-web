@@ -225,7 +225,7 @@ export function characterRoutes(
         sendJson(res, 200, { ok: false, error: `You already have ${MAX_CHARACTERS} characters.` });
         return true;
       }
-      const id = accounts.provisionalCharacterId();
+      const id = accounts.provisionalCharacterId(accountKey);
       const now = new Date().toISOString();
       log('info', 'frontdoor.character_provisional', { account: account.name, id });
       sendJson(res, 200, { ok: true, character: { id, name: label, createdAt: now, lastPlayedAt: now, level: 1, needsChargen: true } });
@@ -496,12 +496,10 @@ export async function buildFrontDoor(
       // A NEW character is PROVISIONAL by design — the slot is only written when creation
       // finishes (adoptCharacter, at ChargenComplete) — so "must exist on the account" refused
       // every genuinely new character with no_such_character and broke character creation
-      // outright. Existence was never the load-bearing property; DERIVATION is: the world id
-      // comes from the same character id the client will boot with, so world-for-A,
-      // boot-with-B — the stale-tab bug this exists for — is impossible either way. The shape
-      // check is the same rule world auth applies before accepting a provisional character.
+      // outright. So a provisional id is accepted -- but only one /auth/characters handed to
+      // THIS account (H1): any string of the right shape let one account mint worlds without end.
       const char = account.characters?.find((c) => c.id === characterId);
-      if (!char && !/^c[0-9a-f]{24}$/.test(characterId)) return undefined;
+      if (!char && !accounts.isProvisionalFor(accountKey, characterId)) return undefined;
       const slug = (account.username ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '').slice(0, 40)
         || Math.abs([...accountKey].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)).toString(36);

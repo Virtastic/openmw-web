@@ -205,3 +205,14 @@ test('a character abandoned during creation leaves no trace at all', async (t) =
   const full = await j(call(base, auth, 'POST', { alias: 'OneTooMany' }));
   assert.equal(full.ok, false, 'the cap counts real characters, and only real ones');
 });
+
+// H1: a world is built only for a character the account owns or was handed, never for any id of
+// the right shape -- that let one account mint worlds without end.
+test('H1: a provisional id belongs to the account it was handed to, and only that one', async (t) => {
+  const { base, auth, accounts } = await boot(t);
+  const r = await j(call(base, auth, 'POST', {}));
+  const id = String(r.character.id);
+  assert.equal(accounts.isProvisionalFor('alice', id), true);
+  assert.equal(accounts.isProvisionalFor('bob', id), false, 'another account cannot borrow it');
+  assert.equal(accounts.isProvisionalFor('alice', 'c' + '0'.repeat(24)), false, 'a made-up id of the right shape');
+});

@@ -245,12 +245,12 @@ const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, worldsDir,
   admin: adminRoute,
   maintenance: () => maintenance.get(),
-  // One private world per player the server can hold. These are the SAME quantity seen from
-  // two directions — a solo world is where a player is when they are not in a shared one — so
-  // a cap below maxPlayers means a server advertising N seats cannot actually seat N people.
-  // It was a standalone default of 2, which locked an account out after two characters and
-  // read as an unexplained 429 mid-sign-in. --max-per-owner still overrides for a small host.
-  maxPerOwner: Number(values['max-per-owner'] ?? config.server.maxPlayers),
+  // H1: one live world per account -- a player is in one place at a time, and at ~0.5 GB a
+  // world, maxPlayers (the old default) let one account exhaust the box. The old default of 2
+  // locked accounts out after two characters because EMPTY worlds held their place; the
+  // directory now stops an owner's empty world instead of refusing (directory.ts).
+  // --max-per-owner still overrides.
+  maxPerOwner: Number(values['max-per-owner'] ?? 1),
   metricsToken: config.metrics.enabled ? config.metrics.token : '',
   frontDoor: frontDoor.route,
   // The operator's uploaded game files, from the SHARED dir — the same one the dashboard

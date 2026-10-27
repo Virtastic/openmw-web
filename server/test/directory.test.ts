@@ -19,6 +19,7 @@ class FakeChild extends EventEmitter {
 
 async function harness(maxWorlds = 5, maxPerOwner = 2) {
   const wdir = mkdtempSync(join(tmpdir(), 'omw-dir-'));
+  const occupied = new Set<number>(); // ports whose world reports a connected player
   const worlds = new WorldSupervisor({
     settings: {
       worldsDir: wdir, gatewayPort: 8080,
@@ -28,7 +29,7 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
-    fetchStatus: async (port) => ({ playerCount: 0, connectedCount: 0, maxPlayers: 32, name: `w${port}` }),
+    fetchStatus: async (port) => ({ playerCount: 0, connectedCount: occupied.has(port) ? 1 : 0, maxPlayers: 32, name: `w${port}` }),
   });
   await worlds.poll();
   const dir = await startDirectory({
@@ -42,7 +43,7 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
     isTrustedServer: (auth: string) => auth === 'Bearer platform-secret',
   });
   const base = `http://127.0.0.1:${dir.port}`;
-  return { worlds, dir, base, cleanup: async () => { await dir.close(); worlds.stopAll(); } };
+  return { worlds, dir, base, occupied, cleanup: async () => { await dir.close(); worlds.stopAll(); } };
 }
 
 test('directory: a stranger sees NO worlds — the friends list is the only door', async () => {
@@ -125,6 +126,7 @@ test('directory: one account cannot exhaust the platform', async () => {
         method: 'POST', headers: { authorization: 'Bearer greedy' }, body: JSON.stringify({ id, mode: 'private', account: 'greedy' }),
       });
       assert.equal(r.status, 200);
+      h.occupied.add(h.worlds.get(id)!.port); // somebody is in it, so it holds its place
     }
     const third = await fetch(`${h.base}/worlds`, {
       method: 'POST', headers: { authorization: 'Bearer greedy' }, body: JSON.stringify({ id: 's3', mode: 'private', account: 'greedy' }),
@@ -460,5 +462,47 @@ test('directory: a world reports its owner\'s flip and the directory adopts it a
     assert.equal((await patch('Bearer platform-secret', { mode: 'party', account: 'mallory' })).status, 403, 'a world may only report its own owner');
     assert.equal((await patch('Bearer platform-secret', { mode: 'party', account: 'alice' })).status, 200);
     assert.equal(h.worlds.get('alices-game')?.mode, 'party', 'the directory did not adopt the reported flip');
+  } finally { await h.cleanup(); }
+});
+
+// H1: one live world per owner. The second create is refused while the first is in use, and an
+// EMPTY one (backed out of chargen, never joined) gives way instead of locking the player out.
+test('H1: one world per owner; an empty one gives way, an occupied one refuses', async () => {
+  const h = await harness(10, 1);
+  const create = (id: string) => fetch(`${h.base}/worlds`, {
+    method: 'POST', headers: { authorization: 'Bearer solo' }, body: JSON.stringify({ id, mode: 'private' }),
+  });
+  try {
+    assert.equal((await create('a1')).status, 200);
+    assert.equal((await create('a2')).status, 200, 'an empty world must not lock the owner out');
+    assert.ok(!h.worlds.get('a1') || h.worlds.isStopping('a1'), 'the empty world was stopped to make room');
+    h.occupied.add(h.worlds.get('a2')!.port);
+    assert.equal((await create('a3')).status, 429, 'a second world while the first is played');
+    assert.equal((await create('a2')).status, 200, 'rejoining your own world is not a create');
+    // A world process moving its player elsewhere: the player is still in the world it runs.
+    const moved = await fetch(`${h.base}/worlds`, {
+      method: 'POST', headers: { authorization: 'Bearer platform-secret' },
+      body: JSON.stringify({ id: 'a4', mode: 'private', account: 'solo' }),
+    });
+    assert.equal(moved.status, 200, 'an in-game switch must not be refused by the world it leaves');
+  } finally { await h.cleanup(); }
+});
+
+test('H1: POST /worlds is rate limited per account', async () => {
+  const h = await harness(10, 1);
+  try {
+    const codes: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const r = await fetch(`${h.base}/worlds`, {
+        method: 'POST', headers: { authorization: 'Bearer spammer' }, body: JSON.stringify({ id: 'sp', mode: 'private' }),
+      });
+      codes.push(r.status);
+    }
+    assert.equal(codes.filter((c) => c === 200).length, 10);
+    assert.deepEqual(codes.slice(10), [429, 429]);
+    const other = await fetch(`${h.base}/worlds`, {
+      method: 'POST', headers: { authorization: 'Bearer bystander' }, body: JSON.stringify({ id: 'by', mode: 'private' }),
+    });
+    assert.equal(other.status, 200, 'another account keeps its own budget');
   } finally { await h.cleanup(); }
 });
