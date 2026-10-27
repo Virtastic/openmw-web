@@ -236,7 +236,7 @@ class H(http.server.SimpleHTTPRequestHandler):
 
     def send_head(self):
         # Launcher gate: ONLY the bare root serves the chooser, which is exactly what the
-        # deployed edge does (infra/nginx.conf: `location = / { try_files /launcher.html; }`).
+        # deployed edge does (deploy/Caddyfile).
         #
         # /index.html used to be rewritten too, with a query string as the escape hatch. That
         # made the gate depend on a query existing: the moment the launcher moved its boot

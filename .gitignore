@@ -167,7 +167,7 @@ data/caddy/Caddyfile
 /data.before-walkthrough*
 /gamedata.before-walkthrough*
 
-# release-bundle scratch used by infra/Dockerfile builds
+# release-bundle scratch
 dist/
 
 # A LOCAL compose override, never repo state. docker compose loads this file automatically,

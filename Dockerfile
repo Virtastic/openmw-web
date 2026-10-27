@@ -79,7 +79,7 @@ RUN --mount=type=cache,target=/ccache,id=omw-wasm64-ccache \
 # ---- runtime ---------------------------------------------------------------------------------
 FROM caddy:2-alpine AS runtime
 # Web root: the built engine artifacts (raw + .br — both needed; Range uses raw, full GET uses .br)
-# plus the tracked HTML/JS. The demo dataset is mounted at /srv/data by docker-compose.prod.yml.
+# plus the tracked HTML/JS. The demo dataset, if any, is mounted at /srv/data.
 # Static web files straight from the build context.
 # og.png is the social card the OG/Twitter tags in launcher.html point at; robots.txt carries
 # the Sitemap line.

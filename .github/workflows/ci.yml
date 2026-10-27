@@ -1,0 +1,25 @@
+# OpenTES3 (v2) CI: tests only. v2 has no deploy or release workflow yet; the v1 ones live on
+# main/ovhcloud and were removed from this branch so no v2 push or tag can reach v1 prod.
+name: ci
+
+on:
+  push:
+    branches: [OpenTES3]
+  pull_request:
+    branches: [OpenTES3]
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm test

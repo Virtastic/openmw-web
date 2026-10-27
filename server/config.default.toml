@@ -639,7 +639,7 @@ maxWorlds = 0
 # Total RAM the gateway may spend on worlds and their peers. 0 DISABLES the memory governor
 # and leaves only the count cap — which is how a 1.5 GB container was allowed to try to run
 # 256 worlds. Set it to the container's limit, measured on the host you actually deploy to.
-# 8192 = the mem_limit in docker-compose.prod.yml. This was 0 -- the governor OFF -- and the
+# 8192 = the mem_limit v1 prod ran with. This was 0 -- the governor OFF -- and the
 # comment above says exactly what that cost: a 1.5 GB container permitted to attempt 256 worlds.
 # Leaving it off is worse now than it was, because each world may run several peers rather than
 # one. Set it to YOUR container's limit if that is not 8g.

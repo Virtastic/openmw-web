@@ -60,7 +60,7 @@ steps in [`MULTIPLAYER-SETUP.md`](MULTIPLAYER-SETUP.md)).
 ```bash
 node dist/server.mjs --data ./devdata --port 8080                                # one world
 node dist/gateway.mjs --worlds /data/worlds --shared /data --port 8080 --base-port 9000
-docker compose -f server/docker-compose.prod.yml up -d                           # or the image
+docker compose up -d                                                             # or the image
 ```
 
 S3 keys go in the environment / an `env_file`, never in `config.toml`.

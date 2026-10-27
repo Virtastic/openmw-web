@@ -291,7 +291,7 @@ mode the container runs the gateway, which flushes its own account store and rel
 signal to every world process (players, cells, records, bans, chat); each flush ends with a
 `wal_checkpoint(TRUNCATE)`, so `tar` sees one `.db` per store rather than a db/-wal/-shm
 trio captured at three different instants. The container is `openmw-web` for the
-self-hosting `docker-compose.yml` (`openmw-mp` on the hosted VPS, `docker-compose.prod.yml`);
+self-hosting `docker-compose.yml`;
 `gamedata/` is your own Morrowind files, so exclude it like the dashboard's export does:
 
 ```sh

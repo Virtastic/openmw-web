@@ -9,10 +9,6 @@
 #   2. A clone of the repo and ./setup.sh (macOS/Linux) or .\setup.ps1 (Windows). Same stack,
 #      plus the updater below, which gives the dashboard's Update button for the server itself.
 #
-# This is NOT how morrowind.virtastic.app is deployed. That uses docker-compose.prod.yml
-# and infra/, which assume a shared edge proxy, prebuilt CI images and a specific VPS —
-# copying them for your own box will not work. This file is the one for you.
-#
 # WHAT RUNS HERE
 #   openmw-web  the server itself, and the admin dashboard at /admin
 #   caddy       HTTPS in front of it (automatic certificates when you have a domain)

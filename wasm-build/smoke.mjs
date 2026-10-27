@@ -20,7 +20,7 @@ import zlib from 'node:zlib';
 // "DataCloneError: ... requires self.crossOriginIsolated", the boot never signals, and this
 // reports FAIL with frameOk:true — which reads exactly like a product regression and is not
 // one. `python3 -m http.server` does NOT send them. See SELF_HOSTING.md for the real
-// deployment headers (infra/nginx.conf, deploy/Caddyfile).
+// deployment headers (deploy/Caddyfile).
 const URL = process.argv[2] || 'http://localhost:8795/index.html?nomw&skipintro=1';
 const SECONDS = Number(process.argv[3] || 45);
 const LABEL = process.argv[4] || 'smoke';
