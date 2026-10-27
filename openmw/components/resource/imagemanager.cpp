@@ -8,6 +8,7 @@
 
 #include <cstdlib>
 
+#include <atomic>
 #include <cassert>
 #include <osgDB/Registry>
 
@@ -81,6 +82,21 @@ namespace
 namespace Resource
 {
 
+    namespace
+    {
+        std::atomic<unsigned> sTransientLoadFailures{ 0 };
+    }
+
+    unsigned transientLoadFailures()
+    {
+        return sTransientLoadFailures.load(std::memory_order_relaxed);
+    }
+
+    void noteTransientLoadFailure()
+    {
+        sTransientLoadFailures.fetch_add(1, std::memory_order_relaxed);
+    }
+
     ImageManager::ImageManager(const VFS::Manager* vfs, double expiryDelay)
         : ResourceManager(vfs, expiryDelay)
         , mWarningImage(createWarningImage())
@@ -108,6 +124,17 @@ namespace Resource
             return osg::ref_ptr<osg::Image>(static_cast<osg::Image*>(obj.get()));
         else
         {
+            // A missing file stays the warning image for good. One that is there and still failed was
+            // cut off mid-read: hand the warning image back UNCACHED so the next load tries again.
+            // ponytail: a genuinely corrupt file is re-read on every load; cache it if that ever shows in a profile.
+            const auto fail = [&]() -> osg::ref_ptr<osg::Image> {
+                if (mVFS->exists(path))
+                    noteTransientLoadFailure();
+                else
+                    mCache->addEntryToObjectCache(path.value(), mWarningImage);
+                return mWarningImage;
+            };
+
             Files::IStreamPtr stream;
             try
             {
@@ -116,8 +143,7 @@ namespace Resource
             catch (std::exception& e)
             {
                 Log(Debug::Error) << "Failed to open image: " << e.what();
-                mCache->addEntryToObjectCache(path.value(), mWarningImage);
-                return mWarningImage;
+                                return fail();
             }
 
             const std::string ext(Misc::getFileExtension(path.value()));
@@ -138,8 +164,7 @@ namespace Resource
                 if (stream->gcount() != 18)
                 {
                     Log(Debug::Error) << "Error loading " << path << ": couldn't read TGA header";
-                    mCache->addEntryToObjectCache(path.value(), mWarningImage);
-                    return mWarningImage;
+                                        return fail();
                 }
                 int type = header[2];
                 int depth;
@@ -157,8 +182,7 @@ namespace Resource
             {
                 Log(Debug::Error) << "Error loading " << path << ": " << result.message() << " code "
                                   << result.status();
-                mCache->addEntryToObjectCache(path.value(), mWarningImage);
-                return mWarningImage;
+                                return fail();
             }
 
             osg::ref_ptr<osg::Image> image = result.getImage();

@@ -2,6 +2,20 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.17
+
+**No more purple buildings or holes in the ground on self-hosted servers.** When a game file
+took too long to arrive from a busy server, the texture or patch of ground it belonged to was
+replaced with a placeholder, and the game kept reusing that placeholder for every building that
+shared the texture until you walked away and came back. A file that fails to arrive is now
+loaded again the next time it is needed, and only the one object that hit the failure is
+affected.
+
+**Self-hosted servers keep more of their upload for the game.** In the background each player
+downloads the rest of the game files ahead of time. On a self-hosted server that download now
+uses at most a quarter of the connection and slows down further when the server is busy, so
+the files a player is waiting on arrive first.
+
 ## 1.7.16
 
 **Updates no longer kick you out of the game.** Every website update restarted the container

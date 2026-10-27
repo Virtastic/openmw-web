@@ -288,8 +288,12 @@
       // A chunk read from the Cache API moves to the file store and out of the cache.
       const opfsAdopt = (pkey, ckey, start, buf, chunk) => opfsPut(pkey, start, buf, chunk)
         .then((ok) => { if (ok && !cacheDead) store().then((c) => c.delete(ckey)).catch(() => {}); return ok; });
-      async function warm(files, chunk, budget) {
+      // share: the most of the link the warm-up may hold, 0..1. After each chunk it rests for the
+      // fetch time scaled to fit, so a link that slows down (an operator's upload carrying every
+      // player's warm-up and the game reads) is backed off in proportion. Undefined = full speed.
+      async function warm(files, chunk, budget, share) {
         if (warming) return;
+        const rest = (ms) => nap(share > 0 && share < 1 ? Math.max(30, ms * (1 / share - 1)) : 30);
         warming = true;
         let fetched = 0, fetchFails = 0, stop = null;
         // BYTES WE MAY STILL ADD, not bytes the files weigh: a chunk already in the store costs
@@ -306,7 +310,7 @@
                 // The file store is up: an old Cache API copy moves across, else the network.
                 const old = cacheDead ? undefined : await cacheRead(ckey);
                 if (old) { await opfsAdopt(f.pkey, ckey, s, old, chunk); continue; }
-                let nb;
+                let nb; const t0 = Date.now();
                 try { nb = await rangeFetch(f.url, s, Math.min(s + chunk, f.size), ATTEMPTS, BUDGET_MS, true); }
                 catch (err) {
                   if (err && err.yielded) { s -= chunk; continue; } // this chunk again, after the game's read
@@ -318,7 +322,7 @@
                 if (!(await opfsPut(f.pkey, s, nb, chunk))) { stop = 'store: file store full'; break outer; }
                 left -= nb.length;
                 fetched++; postMessage({ warmed: 1 });
-                await nap(30);
+                await rest(Date.now() - t0);
                 continue;
               }
               if (cacheDead) { stop = 'cache slow'; break outer; } // nothing would be stored
@@ -326,7 +330,7 @@
               // STOP ON A FULL STORE. A put that fails is almost always the origin's quota: every
               // later chunk would be downloaded and thrown away (prod 2026-10-15: warm-up stuck at
               // 38 chunks for two hours, every retry a 2 MB download for nothing).
-              let buf;
+              let buf; const t0 = Date.now();
               try { buf = await rangeFetch(f.url, s, Math.min(s + chunk, f.size), ATTEMPTS, BUDGET_MS, true); }
               catch (err) {
                 if (err && err.yielded) { s -= chunk; continue; }
@@ -339,7 +343,7 @@
               catch (err) { stop = 'store: ' + String(err && err.name || err).slice(0, 60); break outer; }
               left -= buf.length;
               fetched++; postMessage({ warmed: 1 });
-              await nap(30);
+              await rest(Date.now() - t0);
             }
           }
         } catch (err) { stop = 'cache api: ' + String(err && err.name || err).slice(0, 60); }
@@ -486,7 +490,7 @@
         if (m.prefetch) { prefetchFiles(m); return; }
         if (m.preload) { preload(m.preload, m.chunk, m.id); return; }
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
-        if (m.warm) { warm(m.warm, m.chunk, m.budget); return; }
+        if (m.warm) { warm(m.warm, m.chunk, m.budget, m.share); return; }
         if (m.mountLocal) { handles.set(m.mountLocal.id, m.mountLocal.handle); return; }
         // A Blob (BSA from the Cache API) reads exactly like a File (slice + arrayBuffer), so it
         // goes straight into the files map and the m.id read path below slices it locally.
@@ -660,7 +664,19 @@
         return p;
       },
       read(stream, buffer, offset, length, position) {
-        return doRead(buffer, offset, length, position);
+        try {
+          return doRead(buffer, offset, length, position);
+        } catch (e) {
+          // ONCE THE GAME RUNS, A READ THAT WILL NOT ARRIVE IS AN I/O ERROR (EIO), not a JS throw
+          // unwinding the engine's frames past every C++ handler. As EIO the engine's own failure path
+          // runs and, for a file that exists, leaves nothing cached (imagemanager.cpp), so a texture cut
+          // off on a busy self-host comes back on the next load instead of staying purple. Before the
+          // first frame it still throws: index.html's boot overlay offers the reload.
+          if (typeof window === 'undefined' || !window.Module || window.Module.__omwRunning === undefined) throw e;
+          ST.readErrors = (ST.readErrors || 0) + 1;
+          try { if (window.__omwLog) window.__omwLog(String(e && e.message || e), 'err'); } catch (x) {}
+          throw new FS.ErrnoError(29 /*EIO*/);
+        }
       },
       write() { throw new FS.ErrnoError(63 /*EROFS*/); },
       mmap() { throw new FS.ErrnoError(52 /*ENOSYS: force read() path*/); },
@@ -815,7 +831,8 @@
     // Fill the persistent chunk cache from every mounted file whose path matches `re`, in the
     // background (see warm() in the worker). Persistable (hosted, same-origin) files only; the
     // order of `first` decides which archive warms first. Skipped on a Save-Data connection.
-    warm(re, first) {
+    // `share` caps how much of the link it holds (worker warm()).
+    warm(re, first, share) {
       if (!S.worker || (navigator.connection && navigator.connection.saveData)) return 0;
       const files = [];
       for (const [path, src] of S.urlSrcs) if (src.pkey && src.size && re.test(path)) files.push({ path, url: src.url, pkey: src.pkey, size: src.size });
@@ -828,7 +845,7 @@
       // archive "did not fit", the warm-up reported done after the small archives (38 chunks),
       // and every new area waited on the network (prod 2026-10-17, c3iqmpok: 173 misses at
       // ~0.7 s each on an 87 fps machine). Every file is queued; a big one warms as far as fits.
-      const send = (budget) => { if (files.length) S.worker.postMessage({ warm: files.map(({ url, pkey, size }) => ({ url, pkey, size })), chunk: CHUNK, budget }); };
+      const send = (budget) => { if (files.length) S.worker.postMessage({ warm: files.map(({ url, pkey, size }) => ({ url, pkey, size })), chunk: CHUNK, budget, share }); };
       if (navigator.storage && navigator.storage.estimate) {
         navigator.storage.estimate().then((est) => {
           const free = Math.max(0, (est.quota || 0) - (est.usage || 0));

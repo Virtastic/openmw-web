@@ -8,6 +8,7 @@
 #include <osgUtil/IncrementalCompileOperation>
 
 #include <components/esm/util.hpp>
+#include <components/resource/imagemanager.hpp>
 #include <components/resource/objectcache.hpp>
 #include <components/resource/scenemanager.hpp>
 
@@ -76,8 +77,10 @@ namespace Terrain
         if (pair.has_value() && templateKey == TemplateKey{ .mCenter = pair->first.mCenter, .mLod = pair->first.mLod })
             templateGeometry = static_cast<const TerrainDrawable*>(pair->second.get());
 
+        const unsigned failures = Resource::transientLoadFailures();
         osg::ref_ptr<osg::Node> node = createChunk(size, center, lod, lodFlags, compile, templateGeometry);
-        mCache->addEntryToObjectCache(key, node.get());
+        if (Resource::transientLoadFailures() == failures) // a texture cut off mid-read: build it again next time
+            mCache->addEntryToObjectCache(key, node.get());
         return node;
     }
 

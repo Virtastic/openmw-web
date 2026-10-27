@@ -44,11 +44,13 @@ namespace Terrain
         if (obj != nullptr)
             return static_cast<osg::Texture2D*>(obj.get());
 
+        const unsigned failures = Resource::transientLoadFailures();
         osg::ref_ptr<osg::Texture2D> texture(new osg::Texture2D(mSceneManager->getImageManager()->getImage(name)));
         texture->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
         texture->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
         mSceneManager->applyFilterSettings(texture);
-        mCache->addEntryToObjectCache(name.value(), texture.get());
+        if (Resource::transientLoadFailures() == failures) // a cut-off read: load it again next time
+            mCache->addEntryToObjectCache(name.value(), texture.get());
         return texture;
     }
 
