@@ -127,6 +127,11 @@ MP_DST="$ROOT/fsroot/resources/vfs/scripts/mp"
 rm -rf "$MP_DST"
 mkdir -p "$MP_DST"
 cp -a "$MP_SRC/." "$MP_DST/"
+# OT3-6: the page-command test hooks (give:, setlevel, quest: ...) answer only in a bake that
+# asks for them. The harness builds (Jenkins build-engine.sh, local full-stack) pass
+# OMW_TEST_HOOKS=1; release and prod leave it unset, and player.lua then drops every command
+# the page itself does not send.
+if [ "${OMW_TEST_HOOKS:-0}" = 1 ]; then echo 'return { testHooks = true }' > "$MP_DST/buildflags.lua"; fi
 cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscripts"
 
 # ICU DATA. The emscripten ICU port links `libicu_stubdata` — ICU's "data supplied elsewhere"

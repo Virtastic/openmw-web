@@ -27,7 +27,8 @@ echo "==> building $TAG ($DEPS_DIR, $BUILDER_IMAGE) from $(cat .source-commit 2>
 # --network=host: CMake FetchContent (recastnavigation) needs egress; the default bridge has none.
 # No build-arg: the Dockerfile hardcodes the wasm64 builder now.
 # CCACHE=1: the compile cache (see the Dockerfile). Dev builds only; deploy-ovh/release omit it.
-DOCKER_BUILDKIT=1 docker build --network=host --build-arg CCACHE=1 -t "$TAG" -f Dockerfile .
+# TEST_HOOKS=1: the harness drives the game through the page-command hooks (OT3-6).
+DOCKER_BUILDKIT=1 docker build --network=host --build-arg CCACHE=1 --build-arg TEST_HOOKS=1 -t "$TAG" -f Dockerfile .
 
 echo "==> built $TAG"
 docker image inspect "$TAG" --format '    size: {{.Size}} bytes  created: {{.Created}}'

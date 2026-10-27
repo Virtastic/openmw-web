@@ -708,7 +708,19 @@ end
 
 -- One command from the page. Everything the overlays and the harness can ask for is a
 -- string matched here; the caller acks each one back to the page (see pollCommands).
+-- OT3-6: a release build answers only what the page itself sends. Everything else here is a
+-- harness hook (give:, setlevel, quest:, killnpc: ...) that anyone with devtools could push, so
+-- it runs only when the bake wrote scripts/mp/buildflags.lua (link-openmw.sh, OMW_TEST_HOOKS=1).
+local TEST_HOOKS = (function()
+    local ok, flags = pcall(require, 'scripts.mp.buildflags')
+    return ok and type(flags) == 'table' and flags.testHooks == true
+end)()
+local PAGE_COMMANDS = { carry = true, vis = true, leaving = true, chatx = true, joinfriend = true,
+    pause = true, profile = true, social = true, uimode = true, where = true }
+
 local function dispatch(cmd)
+    if type(cmd) ~= 'string' then return end
+    if not TEST_HOOKS and not PAGE_COMMANDS[cmd:match('^[^:]*')] then return end
     if type(cmd) == 'string' then
         -- Phase C: 'social:<Op>:<arg>'. The arg is a display NAME for FriendRequest and
         -- BlockAdd (what a player types) and an ACCOUNT KEY for everything else, matching
