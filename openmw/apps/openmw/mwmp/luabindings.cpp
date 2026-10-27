@@ -917,6 +917,21 @@ namespace MWMP
                       "MPSetMapExplored");
               };
 
+        // Every menu window for a character past chargen. Two ways to lose one for good:
+        // chargen's disallowAll (statemanagerimp.cpp:176) is only undone by the census
+        // scripts' Enable*Menu, and toggleVisible (a menu-mode click on a HUD icon, a
+        // double-click on the title bar) PERSISTS "inventory hidden" & co. in settings.cfg,
+        // which IDBFS keeps across every reload. The console that could undo either is off in MP.
+        api["allowAllWindows"] = [luaManager = context.mLuaManager]() {
+            luaManager->addAction(
+                [] {
+                    MWBase::WindowManager* wm = MWBase::Environment::get().getWindowManager();
+                    wm->allow(MWGui::GW_ALL);
+                    wm->unhideAll();
+                },
+                "MPAllowAllWindows");
+        };
+
         // M8 ConsoleCommand (PROTOCOL.md §M8): run MWScript console text on this client.
         // There is NO vanilla Lua binding for that — onConsoleCommand is a *handler* for
         // commands the player types, not an executor — and the only public entry point is

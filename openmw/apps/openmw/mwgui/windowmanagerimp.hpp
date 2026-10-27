@@ -179,6 +179,7 @@ namespace MWGui
         bool isInteractiveMessageBoxActive() const override;
 
         void toggleVisible(GuiWindow wnd) override;
+        void unhideAll() override;
 
         void forceHide(MWGui::GuiWindow wnd) override;
         void unsetForceHide(MWGui::GuiWindow wnd) override;
