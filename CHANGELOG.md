@@ -2,6 +2,27 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.14
+
+**Your health, magicka and fatigue stay where they are.** In a cell the multiplayer server
+wasn't actively running, it kept sending back a frozen copy of your bars from when you
+entered, so mid-fight your health, stamina and stagger kept jumping back to full. Those stale
+reports are now ignored. A second bug saved the default starting character's maximums over
+yours for a few seconds after reconnecting, which is how characters ended up with health 35/35
+or magicka 30/50. Bars now wait until your own character has loaded, and damaged maximums are
+recalculated from your attributes the next time you join.
+
+**The inventory and map windows come back.** A saved window setting could leave them hidden
+for good. They are now switched back on every time you join. If you are still on the first
+quest and lost Caius's package, you get it back.
+
+**"Send home" only shows on your own server's players.** It appeared on the global player
+list too, where it couldn't do anything.
+
+**Slightly smoother with other players nearby,** and the game now reports how long each frame
+takes, so the next round of frame-rate work can tell whether outdoor slowdowns come from the
+processor or the graphics card.
+
 ## 1.7.13
 
 **Frame rate no longer drops the longer you play.** Each time you switched tabs, alt-tabbed or
