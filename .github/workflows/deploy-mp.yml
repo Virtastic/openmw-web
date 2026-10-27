@@ -89,12 +89,17 @@ jobs:
       # and DNS record are one-time box setup (docs/PRODUCTION-BRINGUP.md §6); the vhost
       # itself is pipeline-owned like morrowind.caddy.
       - name: Install upload-host edge vhost
-        run: sudo cp deploy/upload.virtastic.app.caddy /opt/edge/sites/upload.virtastic.app.caddy
+        run: |
+          if ! sudo cmp -s deploy/upload.virtastic.app.caddy /opt/edge/sites/upload.virtastic.app.caddy; then
+            sudo cp deploy/upload.virtastic.app.caddy /opt/edge/sites/upload.virtastic.app.caddy
+            echo "EDGE_CHANGED=1" >> "$GITHUB_ENV"
+          fi
 
       # Validate, then restart the shared edge to apply (admin API disabled -> no `caddy
       # reload`; restart re-reads the Caddyfile, ~3s blip). Validate first to protect the
-      # co-tenant sites.
+      # co-tenant sites. Only when the vhost changed: the restart drops every game socket.
       - name: Apply edge config
+        if: env.EDGE_CHANGED == '1'
         run: |
           docker exec edge-caddy caddy validate --config /etc/caddy/Caddyfile
           docker restart edge-caddy

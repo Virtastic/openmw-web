@@ -2,6 +2,15 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.16
+
+**Updates no longer kick you out of the game.** Every website update restarted the container
+that carries the game connection, so anyone playing at that moment saw "Reconnecting" a few
+times, and a second restart came a few minutes later. The new files are now swapped into the
+running site, and the shared front proxy is only restarted when its own settings change. A
+server update still restarts the multiplayer server, which shows the "server restarting"
+screen as before.
+
 ## 1.7.15
 
 **Fargoth's stash stays in the stump.** The server treated the first look inside a container as

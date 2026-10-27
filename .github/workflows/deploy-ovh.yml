@@ -45,10 +45,14 @@ jobs:
       - name: Build image
         run: DOCKER_BUILDKIT=1 docker build --network=host -t morrowind:ovh -f Dockerfile .
 
+      # Remember whether the compose file changed: only then does the container need recreating.
       - name: Sync compose to /opt/morrowind
         run: |
           sudo mkdir -p /opt/morrowind/data
-          sudo cp docker-compose.prod.yml /opt/morrowind/docker-compose.prod.yml
+          if ! sudo cmp -s docker-compose.prod.yml /opt/morrowind/docker-compose.prod.yml; then
+            echo "COMPOSE_CHANGED=1" >> "$GITHUB_ENV"
+            sudo cp docker-compose.prod.yml /opt/morrowind/docker-compose.prod.yml
+          fi
 
       # Performance asset pack (MOP + Project Atlas). It goes on the READ-ONLY DATA VOLUME
       # (/opt/morrowind/data -> /srv/data), never into the image: it is 114MB and changes far less
@@ -72,17 +76,64 @@ jobs:
           fi
           sudo chmod 0644 /opt/morrowind/data/openmw-web-assets.bsa
 
-      # Drop the vhost into the shared edge's sites dir (imported by /opt/edge/Caddyfile).
+      # Drop the vhost into the shared edge's sites dir (imported by /opt/edge/Caddyfile), only
+      # when it changed: applying it means restarting the edge, which drops every game socket.
       - name: Install edge vhost
-        run: sudo cp deploy/morrowind.caddy /opt/edge/sites/morrowind.caddy
+        run: |
+          if ! sudo cmp -s deploy/morrowind.caddy /opt/edge/sites/morrowind.caddy; then
+            sudo cp deploy/morrowind.caddy /opt/edge/sites/morrowind.caddy
+            echo "EDGE_CHANGED=1" >> "$GITHUB_ENV"
+          fi
 
+      # This container proxies the game WebSocket, so recreating it drops every connected player
+      # (2026-10-27: a 1.7.15 deploy put a live player through two reconnects). Recreate only when
+      # it isn't running or its compose changed. Otherwise copy the new image's /srv into the
+      # running container and swap each file in with a rename (same overlay fs, so atomic), then
+      # reload Caddy if its config changed; stream_close_delay keeps the old sockets open.
+      # ponytail: the running container keeps its old image id (and caddy binary) until the next
+      # compose change; force a recreate with `docker rm -f morrowind` before a deploy if needed.
       - name: Start / update container
-        run: docker compose -f /opt/morrowind/docker-compose.prod.yml up -d
+        run: |
+          set -e
+          COMPOSE=/opt/morrowind/docker-compose.prod.yml
+          if [ -n "${COMPOSE_CHANGED:-}" ] || [ -z "$(docker ps -q -f name='^morrowind$')" ]; then
+            docker compose -f "$COMPOSE" up -d
+            exit 0
+          fi
+          docker rm -f morrowind-next >/dev/null 2>&1 || true
+          docker create --name morrowind-next morrowind:ovh >/dev/null
+          trap 'docker rm -f morrowind-next >/dev/null 2>&1 || true' EXIT
+          docker exec morrowind rm -rf /tmp/next
+          docker exec morrowind mkdir -p /tmp/next/etc
+          docker cp morrowind-next:/srv - | docker cp - morrowind:/tmp/next
+          docker cp morrowind-next:/etc/caddy/Caddyfile - | docker cp - morrowind:/tmp/next/etc
+          docker exec morrowind sh -euc '
+            cd /tmp/next/srv
+            prev=$(cat /srv/engine-version.txt)
+            for d in e/*; do [ -e "/srv/$d" ] || mv "$d" "/srv/$d"; done
+            for f in *; do
+              case "$f" in data|e) ;; *) mv -f "$f" "/srv/$f" ;; esac
+            done
+            # Keep the new engine and the one tabs may still be loading; each is hundreds of MB.
+            cur=$(cat /srv/engine-version.txt)
+            for d in /srv/e/*; do
+              case "${d##*/}" in "$cur"|"$prev") ;; *) rm -rf "$d" ;; esac
+            done
+            if ! cmp -s /tmp/next/etc/Caddyfile /etc/caddy/Caddyfile; then
+              caddy validate --config /tmp/next/etc/Caddyfile --adapter caddyfile
+              cp /tmp/next/etc/Caddyfile /etc/caddy/Caddyfile
+              caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+              echo "caddy config reloaded"
+            fi
+            rm -rf /tmp/next
+          '
+          echo "hot-swapped /srv into the running container (engine $(docker exec morrowind cat /srv/engine-version.txt))"
 
       # Validate, then restart the shared edge to apply (admin API is disabled, so `caddy reload`
-      # can't be used — restart re-reads the Caddyfile; ~3s blip). Validate first to protect the
-      # other sites on this edge.
+      # can't be used — restart re-reads the Caddyfile; ~3s blip, drops every socket, so only
+      # when the vhost changed). Validate first to protect the other sites on this edge.
       - name: Apply edge config
+        if: env.EDGE_CHANGED == '1'
         run: |
           docker exec edge-caddy caddy validate --config /etc/caddy/Caddyfile
           docker restart edge-caddy

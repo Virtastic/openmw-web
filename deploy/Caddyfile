@@ -139,6 +139,10 @@
 		# gateway derives an http:// return URL for a site that only works in a secure
 		# context, quietly downgrading every sign-in redirect.
 		header_up X-Forwarded-Proto {http.request.header.X-Forwarded-Proto}
+		# A config reload closes proxied WebSockets immediately by default, which drops every
+		# player mid-session. deploy-ovh reloads this file in place instead of recreating the
+		# container, so let the old game sockets live on (up to a day) and end on their own.
+		stream_close_delay 24h
 	}
 
 	# file_server handles Range natively (on the raw file) and, with `precompressed br`, serves
