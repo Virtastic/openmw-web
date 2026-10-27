@@ -151,11 +151,11 @@ acceptByNameAndSize = true
 accessKeyId = ""
 secretAccessKey = ""
 # Storage locker: a player uploads their own Morrowind data once, streams it back on any
-# device. S3-compatible (AWS, Cloudflare R2, Backblaze, MinIO). Credentials come from the
+# device. S3-compatible (OVH Object Storage, AWS, Backblaze, MinIO). Credentials come from the
 # env (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY) so they stay out of config files. An empty
 # endpoint falls back to a folder on THIS server (<dataDir>/locker-blobs) instead.
-endpoint = ""                     # e.g. https://<accountid>.r2.cloudflarestorage.com
-region = "auto"                   # R2 uses "auto"; AWS uses the bucket region
+endpoint = ""                     # e.g. https://s3.gra.io.cloud.ovh.net
+region = "auto"                   # the bucket region (e.g. "gra"); "auto" where the provider allows
 bucket = ""
 maxBytesPerAccount = 6442450944   # 6 GiB — Morrowind GOTY + a few mods
 # Only used by the filesystem fallback: the origin a BROWSER reaches this server on, which
@@ -241,14 +241,6 @@ loginPerMinPerIp = 5              # auth attempts (Register+Login) per IP per mi
 # H2: a new account's first hours. It cannot hand items to anyone (no drops, no container
 # puts in the shared world) and chats at most one line per 5 s. 0 = no probation.
 probationHours = 24
-# Trust CF-Connecting-IP as the client's address, when it arrives from a private (proxy) peer.
-# OFF by default. Turn it on ONLY where Cloudflare genuinely terminates in front of this server
-# AND the edge deletes any client-supplied copy (see the header_up lines in deploy/Caddyfile).
-# Wrong in either direction is silent: on with a leaky edge lets any client name its own
-# address and reset its own rate limit, evade an IP ban and evade maxConnsPerIp; off behind
-# Cloudflare makes every player share the edge's address, which collapses every per-IP limit
-# into one global bucket. The mode is logged at boot as net.client_ip_mode.
-trustCloudflareIp = false
 # HARNESS ONLY. The browser scenarios drive things a real client never sends -- a relayed
 # CombatHit under a simulator, a same-cell snap over 1024 u, a +100 skill, a level step of 4 --
 # and the anti-cheat refusals (#361 #362 #369) are right to drop them. testhost.ts sets this

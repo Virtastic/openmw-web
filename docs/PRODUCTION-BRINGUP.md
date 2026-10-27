@@ -1,5 +1,9 @@
 # Bringing multiplayer up on the OVH box
 
+> **v1 only.** This runbook describes the v1 virtastic.app box behind Cloudflare. v2 (OpenTES3)
+> is self-deployed with no Cloudflare: `[limits] trustCloudflareIp` no longer exists and the
+> R2/Origin-CA/DNS-01 steps below do not apply.
+>
 > **This is the runbook for the hosted openmw-web.com deployment**, kept for the operators of
 > that box. If you are self-hosting, none of this applies to you: `./setup.sh` and the admin
 > dashboard's wizard do the equivalent work in the browser — see

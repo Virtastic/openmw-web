@@ -239,7 +239,7 @@ example.com {
 }
 ```
 
-nginx and static hosts (Netlify, Cloudflare Pages) work the same way - set those three
+nginx and static hosts (e.g. Netlify) work the same way - set those three
 headers in the host's config. Static hosts cannot run the multiplayer server.
 
 ## Browser support

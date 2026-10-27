@@ -83,9 +83,10 @@ export const isLoopback = (addr: string): boolean => LOOPBACK.has(addr);
 // internet that reaches the origin directly has a public peer address, and every address header
 // it sends is ignored.
 //
-// This is what makes the headers safe to read at all. Trusting cf-connecting-ip from any peer
-// (which is what this used to do) let a client pick its own address: evading IP bans and
-// maxConnsPerIp, and attributing its failed logins to a victim's address to lock THEM out.
+// This is what makes the headers safe to read at all. Trusting a vendor header such as
+// cf-connecting-ip from any peer (which is what this used to do) let a client pick its own
+// address: evading IP bans and maxConnsPerIp, and attributing its failed logins to a victim's
+// address to lock THEM out. v2 is self-deployed with no CDN in front, so no such header is read.
 function proxyIsTrusted(peer: string): boolean {
   return isPrivateAddress(peer);
 }
@@ -139,21 +140,6 @@ export function addressAllowed(addr: string, allow: readonly string[]): boolean 
   });
 }
 
-// Set once at boot from [limits] trustCloudflareIp. A module-level switch rather than a
-// threaded parameter because clientIp is called from a dozen places that have no config in
-// hand, and the answer is a property of the DEPLOYMENT, not of the request.
-let trustCloudflareIp = false;
-
-/** Declare that Cloudflare terminates in front of us and the edge strips client copies of
- *  CF-Connecting-IP. Called once at boot; never per request. */
-export function setTrustCloudflareIp(trust: boolean): void {
-  trustCloudflareIp = trust;
-  warnedCloudflare = false;
-}
-
-// One-shot, because this fires on a request path.
-let warnedCloudflare = false;
-
 function header(req: IncomingMessage, name: string): string | undefined {
   const v = req.headers[name];
   const first = Array.isArray(v) ? v[0] : v;
@@ -183,29 +169,6 @@ export function clientIp(req: IncomingMessage): string {
     if (stamped) return stamped;
   }
   if (!proxyIsTrusted(peer)) return peer;
-  // Cloudflare's header, and OFF unless a deployment says Cloudflare is really in front. It
-  // only means anything when the edge also deletes any copy the client sent — "the peer is
-  // private" proves the header survived the hop, never that the hop wrote it. Verified by
-  // probing the gateway directly from inside the docker network, past the edge: with this
-  // ungated, a forged CF-Connecting-IP bought a fresh login budget while the control stayed
-  // refused. Where Cloudflare is NOT in front, this header is pure attack surface, so the
-  // default is to ignore it.
-  if (trustCloudflareIp) {
-    const cf = header(req, 'cf-connecting-ip');
-    if (cf) return cf;
-  } else if (!warnedCloudflare && header(req, 'cf-connecting-ip') !== undefined) {
-    // THE DANGEROUS DIRECTION, MADE VISIBLE. Off behind Cloudflare is silent: every player
-    // resolves to the edge's address, so per-IP limits quietly become one global bucket and
-    // the sixth person to sign in within a minute is refused — the exact fault this sweep
-    // began by fixing. Cloudflare really being in front is the only way this header arrives
-    // from a trusted proxy, so seeing one here says the setting is probably wrong.
-    warnedCloudflare = true;
-    log('warn', 'net.cloudflare_header_ignored', {
-      note: 'CF-Connecting-IP arrived from a trusted proxy but [limits] trustCloudflareIp is '
-        + 'false, so every client resolves to the proxy and per-IP limits are effectively '
-        + 'global. Set it true if Cloudflare terminates in front of this deployment.',
-    });
-  }
   // LAST entry, not first. A proxy APPENDS the peer it saw, so anything a client put in the
   // header itself stays to the left of the entry our own proxy added. Taking [0] — which
   // data/locker-routes.ts did — reads the client's forgery by preference.

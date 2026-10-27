@@ -29,7 +29,7 @@ So "no SSL" means one of two things:
 
 - **You only play on the machine running the server.** Open `http://localhost:8080` and
   plain HTTP is fine.
-- **Someone else handles HTTPS:** your own proxy, a Cloudflare Tunnel, or a panel's proxy. The
+- **Someone else handles HTTPS:** your own proxy or a panel's proxy. The
   server runs plain HTTP behind it. That's option 3.
 
 A plain `http://192.168.x.x` or `http://your-ip:port` link that other players open **cannot
@@ -135,12 +135,6 @@ labels:
 
 Traefik passes WebSockets and has no body limit by default. If your entrypoint sets
 `respondingTimeouts.readTimeout`, raise it to an hour or more.
-
-### Cloudflare Tunnel
-
-Point the tunnel's public hostname at `http://localhost:8080`. Cloudflare's own limit is
-100 MB per request, which the uploader already stays under. If Cloudflare is also in front as
-a proxy, set `[limits] trustCloudflareIp = true` so players get their real IPs.
 
 ### Check it
 

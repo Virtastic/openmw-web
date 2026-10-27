@@ -196,8 +196,8 @@ export function lockerStorageFrom(
   if (cfg.endpoint !== '') {
     // The operator ASKED for S3 (endpoint in config) but the env keys are absent, so this
     // boot is about to silently fall back to disk. That fallback is not harmless: filesystem
-    // URLs go through the site origin, and a proxy in front of it (Cloudflare's free plan
-    // caps request bodies at 100 MB) can refuse the big uploads at the edge — where nothing
+    // URLs go through the site origin, and a proxy in front of it (v1's CDN capped request
+    // bodies at 100 MB) can refuse the big uploads at the edge — where nothing
     // ever reaches this server's logs. Production ran that way for a month, every player's
     // BSA upload dying with a generic failure while every boot logged one info line. An
     // explicit endpoint with no keys is a broken deployment, so say so at error level, and

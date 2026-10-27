@@ -5,8 +5,8 @@
 // WHY NO SDK. The AWS SDK is tens of megabytes of dependency for three operations we
 // perform (presign PUT, presign GET, delete by prefix), on a server whose whole point is
 // to be cheap to self-host. SigV4 query presigning is ~60 lines of HMAC, it is a stable
-// documented format, and it works against any S3-compatible endpoint — Backblaze B2,
-// Cloudflare R2, MinIO — which matters because the operator's storage bill is the main
+// documented format, and it works against any S3-compatible endpoint — OVH Object Storage,
+// Backblaze B2, MinIO — which matters because the operator's storage bill is the main
 // running cost of the locker.
 //
 // The bytes never pass through this process: presigned URLs put the transfer between the

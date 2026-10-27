@@ -26,7 +26,6 @@ import { OidcService } from '../auth/oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, type AdminSessionStore } from '../auth/identities';
 import type { AdminDeps } from '../net/admin/routes';
 import { IpRateLimiter } from '../net/ratelimit';
-import { setTrustCloudflareIp } from '../net/http';
 import { createAuthRoutes } from '../auth/routes';
 import { Locker, loadVanillaManifest } from '../data/locker';
 import { ensureVanillaManifest } from '../data/vanilla-manifest';
@@ -347,10 +346,6 @@ export async function buildFrontDoor(
   refreshWorlds?: () => Promise<void>,
 ): Promise<FrontDoor> {
   const config = loadConfig(sharedDir, undefined, sharedDir);
-  // The gateway front door loads its own config, so it needs its own call: without this the
-  // flag would apply only inside world processes and every /auth/* request — which is where
-  // the login limiter actually lives — would keep the old behaviour.
-  setTrustCloudflareIp(config.limits.trustCloudflareIp);
   const accounts = new AccountStore(sharedDir);
   const bans = new BanStore(sharedDir);
   const identities = new IdentityStore(sharedDir);

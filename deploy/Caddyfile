@@ -46,15 +46,14 @@
 	rewrite @door /launcher.html
 
 	# Caching: the engine binaries are content-built and effectively immutable; the HTML is the only
-	# thing that should re-fetch. (Cloudflare's Cache Rule mirrors this at the edge.)
+	# thing that should re-fetch.
 	# NOT the gateway's own scripts (/admin/static/play.js, providers.js): they keep their name
-	# across releases, so "immutable" let Cloudflare serve the sign-in page a year-old play.js
-	# (2026-10-13: #124's change deployed, CF answered HIT with the previous file).
+	# across releases, so "immutable" let a cache serve the sign-in page a year-old play.js.
 	@immutable {
 		path *.wasm *.data *.js *.br *.bsa *.esm *.tar
 		not path /admin/*
 		# Hosted game data caches itself (mwdata-routes.ts: retail immutable, mods not). Stamped
-		# here it also made the gateway's 404 -- "not serving" -- immutable at Cloudflare.
+		# here it also made the gateway's 404 -- "not serving" -- immutable in caches.
 		not path /mwdata/*
 	}
 	header @immutable Cache-Control "public, max-age=31536000, immutable"
@@ -113,24 +112,16 @@
 		# STRIP CLIENT-SUPPLIED ADDRESS HEADERS. The gateway trusts these because its peer is
 		# this proxy, on a private network — but "the peer is private" only means the header
 		# survived the hop, not that the hop authored it. Caddy forwards request headers
-		# untouched, so without these three lines any client could send its own
-		# CF-Connecting-IP and be believed: reset its login rate limit at will, walk past an IP
-		# ban and maxConnsPerIp, and pin its failed sign-ins on somebody else's address.
-		# Verified against the live dev deployment before this existed — a forged header got a
+		# untouched, so without these lines any client could send its own address header
+		# and be believed: reset its login rate limit at will, walk past an IP ban and
+		# maxConnsPerIp, and pin its failed sign-ins on somebody else's address.
+		# Verified against the live dev deployment before this existed -- a forged header got a
 		# fresh login budget on demand.
 		#
 		# X-Forwarded-For is NOT stripped: Caddy APPENDS the peer it saw, so a client's own
 		# entry stays to the left of the one added here and the server reads from the right.
-		# ...EXCEPT CF-Connecting-IP, when Cloudflare is the front door. Stripping it here left
-		# the gateway reading X-Forwarded-For's LAST entry -- the edge container's docker
-		# address -- for every player: one login budget for the whole server (the sixth sign-in
-		# in a minute refused), maxConnsPerIp counting everyone as one household, an /ipban
-		# banning the world. Cloudflare rewrites this header on every request it proxies, and
-		# the shared edge only reaches this container from Cloudflare, so the header that
-		# arrives here is Cloudflare's word. The gateway still ignores it unless
-		# [limits] trustCloudflareIp = true (config.toml), and warns when it sees the header
-		# while that is off -- which is the signal the operator needs. A forged one only gets
-		# in past the edge, which is the edge's origin-guard problem, not this hop's.
+		# v2 is self-deployed with no CDN in front, so CDN headers are stripped too.
+		header_up -CF-Connecting-IP
 		header_up -X-Omw-Client-IP
 		header_up -True-Client-IP
 		# Preserve the ORIGINAL scheme from the public edge. Caddy defaults X-Forwarded-Proto

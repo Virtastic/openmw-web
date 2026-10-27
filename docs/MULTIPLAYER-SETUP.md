@@ -78,20 +78,19 @@ falls back to localhost, which works only when the player is on this machine.
 The trade is bandwidth and disk: every player's library and savegames sit on this box and
 stream out of it. A bucket is still the better answer above a handful of players.
 
-### S3-compatible bucket (Cloudflare R2 recommended — no egress fees)
+### S3-compatible bucket (OVH Object Storage, or any S3 API)
 
-Any S3 API works (AWS S3, Cloudflare R2, Backblaze B2, MinIO). **R2 is the best fit** — no
-per-GB egress charge, which matters because players stream their data every session.
+Any S3 API works (OVH Object Storage, AWS S3, Backblaze B2, MinIO). Pick one with cheap or
+included egress, because players stream their data every session.
 
-**Cloudflare R2:**
+**OVH Object Storage:**
 
-1. Cloudflare dashboard → **R2 → Create bucket** (e.g. `omw-lockers`). Note your **Account
-   ID** (top of the R2 page).
-2. **R2 → Manage R2 API Tokens → Create API Token**:
-   - Permissions: **Object Read & Write**
-   - Bucket: the one you made
-   - Create → copy the **Access Key ID** and **Secret Access Key** (shown once).
-3. Your endpoint is `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`, region `auto`.
+1. OVHcloud Control Panel → Public Cloud → **Object Storage → Create container** (S3 API,
+   e.g. `omw-lockers`, region `GRA`).
+2. **Object Storage → Users → Create user**, give it read/write on the container, and copy
+   the **Access Key** and **Secret Key** (shown once).
+3. Your endpoint is `https://s3.<region>.io.cloud.ovh.net` (e.g. `s3.gra.io.cloud.ovh.net`),
+   region `gra`.
 4. **CORS** (so the browser can PUT/GET directly). In the bucket → Settings → CORS policy:
    ```json
    [{
@@ -156,31 +155,10 @@ clientSecret = "…"
 redirectUri  = "http://127.0.0.1:8080/auth/google/callback"
 
 [locker]
-endpoint = "https://<ACCOUNT_ID>.r2.cloudflarestorage.com"
-region   = "auto"
+endpoint = "https://s3.gra.io.cloud.ovh.net"
+region   = "gra"
 bucket   = "omw-lockers"
 ```
-
-### If you are behind Cloudflare
-
-```toml
-[limits]
-trustCloudflareIp = true
-```
-
-Only set this when Cloudflare really does terminate in front of the server **and** your edge
-deletes any client-supplied `CF-Connecting-IP` (the shipped `deploy/Caddyfile` and
-`deploy/openmw-mp.caddy` both do). It is wrong in both directions and both are quiet:
-
-- **On, with an edge that does not strip it**, any client can name its own address. It resets
-  its own login rate limit, walks past an IP ban and past the per-address connection cap, and
-  can pin its failed sign-ins on somebody else.
-- **Off, while behind Cloudflare**, every player resolves to the Cloudflare edge address. Per-IP
-  limits then apply to the whole player base at once, so `loginPerMinPerIp = 5` means the sixth
-  person to sign in in any given minute is refused.
-
-The server logs which mode it chose at boot (`net.client_ip_mode`), and warns once
-(`net.cloudflare_header_ignored`) if the header shows up while the setting is off.
 
 S3 keys go in the **environment**, not the config file:
 
@@ -229,6 +207,6 @@ For a two-player local test, use two browser profiles (each is one account).
 
 - **HTTPS is required in production** for both hosts — OAuth redirect URIs and the locker's
   cross-origin fetches need it, and the SSO ticket is a credential.
-- Rotate the R2 token if it ever leaks; the game keys are per-session and short-lived.
+- Rotate the bucket keys if they ever leak; the game keys are per-session and short-lived.
 - `docs/LEGAL.md` covers the DMCA-agent registration and the storage-locker invariants that
   must not be relaxed. The one code-independent launch action is registering the agent.

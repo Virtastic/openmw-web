@@ -1721,7 +1721,7 @@ try {
  window.__omwSkipIntroFlag = /[?&]skipintro=1/.test(location.search);
  // --- Content-versioned engine path. The build stamps __ENGINE_VERSION__ with a hash of openmw.wasm
  // and moves openmw.{js,wasm,data} into e/<hash>/, so every build's engine files live at a UNIQUE
- // path. Cloudflare therefore can NEVER serve a mismatched mix of two builds' files (the cause of the
+ // path. A cache therefore can NEVER serve a mismatched mix of two builds' files (the cause of the
  // "null function" crash). Unstamped (local dev / a raw git checkout) → falls back to flat root paths.
  var __ENGINE_VER = "__ENGINE_VERSION__";
  var __ENGINE_DIR = (__ENGINE_VER.charAt(0) === "_") ? "" : ("e/" + __ENGINE_VER + "/");
@@ -4144,7 +4144,7 @@ try {
              // folding `m` in would throw away every player's cached base game once for nothing.
              // ?v=2: a fixed key, not the mtime -- still cached for good. Before 2026-10-14 the edge
              // stamped every /mwdata/*.esm|bsa answer immutable, so the 404 a server not (yet)
-             // serving gave was cached by Cloudflare for a year; prod turned "serve" on and every
+             // serving gave was cached at the edge for a year; prod turned "serve" on and every
              // player got that 404. A new key is the way past a cache we cannot purge.
              try { StreamFS.mount('/mwdata/' + f.p, 'mwdata/' + encodeURI(f.p) + '?v=2', f.s); }
              catch(e){ append('[mw] mount failed '+f.p+': '+e, 'err'); }

@@ -51,8 +51,7 @@ redirectUri  = "https://example.com/auth/google/callback"
 ```
 
 Two silent footguns, both logged at boot: `requireSso` unset leaves password login open
-beside SSO; behind Cloudflare, set `[limits] trustCloudflareIp = true` or every player shares
-one rate-limit bucket. Storage is optional - with no S3 configured, lockers and saves land on
+beside SSO. Storage is optional - with no S3 configured, lockers and saves land on
 the server's disk (set `[locker] publicBase` to the origin players reach it on; provider-side
 steps in [`MULTIPLAYER-SETUP.md`](MULTIPLAYER-SETUP.md)).
 
@@ -78,7 +77,7 @@ ticket to a different hostname. Forward to the gateway:
 ```
 
 [`../deploy/Caddyfile`](../deploy/Caddyfile) is a working reference. Non-negotiables it
-encodes: **strip `CF-Connecting-IP`, `X-Omw-Client-IP` and `True-Client-IP` from client
+encodes: **strip `X-Omw-Client-IP`, `True-Client-IP` and any CDN client-IP header from client
 requests** (a forged one grants a fresh login budget and walks past IP bans), preserve
 `X-Forwarded-Proto`, keep the COOP/COEP/CORP isolation headers on the game page, and never
 expose `/admin`, `/metrics`, `/healthz` or `/status` to the internet.

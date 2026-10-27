@@ -11,7 +11,7 @@ Copy-paste answers for the install questions that keep coming up. Each one point
 >
 > - **Only playing on that machine?** Use `docker-compose.simple.yml` and open
 >   `http://localhost:8080`. No certificates involved.
-> - **Already have nginx, Traefik, Caddy or a Cloudflare Tunnel?** Use
+> - **Already have nginx, Traefik or Caddy?** Use
 >   `docker-compose.simple.yml`, choose "Internal or behind your own proxy" in the wizard, and
 >   let your proxy handle HTTPS. There's a recipe for each one here:
 >   https://github.com/Virtastic/openmw-web/blob/main/INSTALLING.md#3-behind-your-own-proxy

@@ -82,7 +82,7 @@ FROM caddy:2-alpine AS runtime
 # plus the tracked HTML/JS. The demo dataset is mounted at /srv/data by docker-compose.prod.yml.
 # Static web files straight from the build context.
 # og.png is the social card the OG/Twitter tags in launcher.html point at; robots.txt carries
-# the Sitemap line (Cloudflare prepends its managed AI-crawler block to whatever we serve).
+# the Sitemap line.
 COPY play/index.html play/launcher.html play/join.html play/streamfs.js /srv/
 COPY play/og.png play/robots.txt play/sitemap.xml /srv/
 # Built engine artifacts from the builder stage (raw + .br).
@@ -93,7 +93,7 @@ COPY --from=builder /build/play/openmw.data    /build/play/openmw.data.br    /sr
 COPY --from=builder /build/play/openmw.js.symbols /srv/
 
 # Content-version the engine: move openmw.{js,wasm,data}(+.br) into /srv/e/<hash>/ and stamp that hash
-# into /srv/index.html, so Cloudflare can never serve a mismatched mix of two builds (the null-function
+# into /srv/index.html, so no cache can ever serve a mismatched mix of two builds (the null-function
 # crash). Alpine busybox has sh/sed/sha256sum. index.html stays no-cache and points at the current dir.
 COPY wasm-build/version-engine.sh /tmp/version-engine.sh
 RUN PLAY=/srv sh /tmp/version-engine.sh && rm /tmp/version-engine.sh \

@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // WebSocket layer: subprotocol enforcement, permessage-deflate, protocol-level ping
-// keepalive (2 missed pongs -> drop), client IP extraction (Cloudflare-aware).
+// keepalive (2 missed pongs -> drop), client IP extraction (net/http.ts clientIp).
 
 import type { Server, IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';

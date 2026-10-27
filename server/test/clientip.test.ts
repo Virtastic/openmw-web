@@ -9,7 +9,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { IncomingMessage } from 'node:http';
 import { clientIp, CLIENT_IP_HEADER } from '../src/net/ws';
-import { setTrustCloudflareIp } from '../src/net/http';
 
 const req = (remoteAddress: string, headers: Record<string, string> = {}): IncomingMessage =>
   ({ headers, socket: { remoteAddress } } as unknown as IncomingMessage);
@@ -40,21 +39,11 @@ test('a REMOTE client cannot forge its own address', () => {
   assert.equal(clientIp(req('198.51.100.4', { [CLIENT_IP_HEADER]: '203.0.113.9' })), '198.51.100.4');
 });
 
-// OFF BY DEFAULT. Probing the gateway directly from inside the docker network — past the
-// edge's header strip — showed a forged CF-Connecting-IP buying a fresh login budget while the
-// control stayed refused. Where Cloudflare is not in front, nothing legitimately sets this
-// header, so believing it is pure attack surface.
-test('cf-connecting-ip is ignored unless the deployment opts in', () => {
+// NEVER READ. v2 is self-deployed with no CDN in front, so nothing legitimate sets
+// CF-Connecting-IP; believing it from any peer would let a client pick its own address.
+test('cf-connecting-ip is never believed, even from a private proxy', () => {
   assert.equal(clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7' })), '172.18.0.2');
-  try {
-    setTrustCloudflareIp(true);
-    assert.equal(clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7' })), '203.0.113.7');
-    // Even opted in, it is only believed from a proxy — never from the open internet.
-    assert.equal(clientIp(req('198.51.100.4', { 'cf-connecting-ip': '203.0.113.7' })), '198.51.100.4');
-  } finally {
-    setTrustCloudflareIp(false);
-  }
-  assert.equal(clientIp(req('198.51.100.4')), '198.51.100.4');
+  assert.equal(clientIp(req('198.51.100.4', { 'cf-connecting-ip': '203.0.113.7' })), '198.51.100.4');
 });
 
 // THIS USED TO PASS THE FORGERY THROUGH. cf-connecting-ip was read from any peer whatsoever, so
@@ -93,16 +82,12 @@ test('every private-range proxy is trusted, and nothing else is', () => {
   }
 });
 
-// The misconfiguration that is silent and dangerous: off while Cloudflare IS in front. Every
-// client then resolves to the edge, per-IP limits become one global bucket, and the sixth
-// person to sign in within a minute is refused — the fault this whole sweep began by fixing.
-// Seeing the header arrive from a trusted proxy is the tell, so it must not pass unremarked.
+// A stray CDN header from a trusted proxy must not stop the X-Forwarded-For lookup.
 test('an ignored cf-connecting-ip from a trusted proxy is still resolved by other means', () => {
   // Falls through to X-Forwarded-For rather than silently keying everyone on the proxy.
   assert.equal(
     clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '198.51.100.9' })),
     '198.51.100.9');
-  // With nothing else to go on, the proxy address IS the answer — that is the collapse the
-  // boot log and the runtime warning exist to make visible.
+  // With nothing else to go on, the proxy address IS the answer.
   assert.equal(clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7' })), '172.18.0.2');
 });

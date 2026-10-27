@@ -499,7 +499,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
   // WORLD TRAFFIC ON ONE PORT.
   //
   // Every world is its own process on its own port (basePort + n). Publishing 32 ports is
-  // unworkable in production: Cloudflare only proxies a fixed set, and the edge reaches this
+  // unworkable in production: the edge reaches this
   // container over the docker network with NO published host ports at all (deploy/
   // openmw-mp.caddy: `reverse_proxy openmw-mp:8080`). So worlds were simply unreachable
   // outside local dev — the multi-world architecture had never actually worked in production.
@@ -591,8 +591,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       // but STAMP the real client address. After this splice the world sees a loopback socket,
       // so without it every client behind the gateway shares one address: maxConnsPerIp
       // becomes a whole-world cap (three sockets from one attacker locks everyone out) and IP
-      // bans stop matching anyone. cf-connecting-ip only exists on Cloudflare; this works for
-      // any front end.
+      // bans stop matching anyone. This works for any front end.
       //
       // A client-supplied copy is DROPPED first, or the header would be a trivial way to forge
       // an address and evade both the cap and a ban. The world only trusts it from loopback.

@@ -225,11 +225,6 @@ export interface Config {
     /** Non-adjacent exterior cell changes allowed per minute (Recall, Intervention, travel).
      *  0 disables the check. See connection.ts handleCellChange. */
     farTravelPerMin: number;
-    /** Trust CF-Connecting-IP from a private (proxy) peer. Only meaningful when Cloudflare is
-     *  genuinely in front AND the edge deletes any client-supplied copy — see net/http.ts. Off
-     *  by default: a header nobody sets is pure attack surface, and believing it lets a client
-     *  reset its own login limit, evade an IP ban and evade maxConnsPerIp. */
-    trustCloudflareIp: boolean;
     /** HARNESS ONLY (testhost.ts sets it; never a dashboard field): relaxes the anti-cheat
      *  refusals the browser scenarios drive on purpose -- a human CombatHit under a holder, a
      *  same-cell snap over 1024 u, a +100 skill or a level step of 4. Caps stay. */
@@ -673,7 +668,6 @@ function validate(t: Tree): Config {
       maxConnsPerIp: reqNum(t, 'limits', 'maxConnsPerIp'),
       // Optional: configs written before teleport-hopping was bounded must keep working.
       farTravelPerMin: optNum(t, 'limits', 'farTravelPerMin', 6),
-      trustCloudflareIp: optBool(t, 'limits', 'trustCloudflareIp', false),
       harness: optBool(t, 'limits', 'harness', false),
       maxMsgBytes: reqNum(t, 'limits', 'maxMsgBytes'),
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
