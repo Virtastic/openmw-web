@@ -2,6 +2,17 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.13
+
+**Frame rate no longer drops the longer you play.** Each time you switched tabs, alt-tabbed or
+locked the screen, the game started running one extra full frame for every frame you saw, so
+after a few switches it ran at half speed or worse. It now runs exactly one game frame per
+screen refresh, however often you switch away.
+
+**The map shows the land again.** The minimap and the explored areas of the world map showed
+flat grey, blue or black squares, because the map was drawn under the weather fog. It is now
+drawn without fog. Areas you explored before this update fill in the next time you visit them.
+
 ## 1.7.12
 
 **Your hits land after you respawn.** When you died and the server sent you back to town, the
