@@ -166,6 +166,17 @@ const GOLD = 'gold_001';
 // as the last resort the newest placed objects (2,000 drops with item state are ~48k nodes
 // on their own; a cell nobody can enter is worse than a cell missing its latest litter). An
 // entry is dropped whole; the log line says how many of each.
+// AN EMPTY FIRST OPEN NOTHING HAS TOUCHED SINCE is not a canonical "empty", it is "nobody had
+// put anything here yet". Fargoth's stump is empty in Morrowind.esm; lookoutScript AddItems the
+// gold and the pick on the walking client only, and the server never hears of a script add. So
+// anyone who looked in the stump first made [] canonical, and that [] was forced back over the
+// script's items on the next cell entry and the next open (prod 1.7.14: the hiding place emptied
+// as the player walked up). Such a row is not sent and the next opener re-seeds it. A corpse is
+// excluded: its [] can be the unique no-drop strip (actorDeath), which must stand.
+export function isUnseededContainer(c: CellDoc['containers'][string], dead: boolean): boolean {
+  return c.stateSeq === 1 && c.items.length === 0 && c.gold === undefined && !dead;
+}
+
 export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], withMemberVars: boolean): Record<string, JsLike> {
   const locks: Record<string, JsLike> = {};
   for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
@@ -177,7 +188,9 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
     locks,
     doors: { ...doc.doors },
     containers: Object.fromEntries(
-      Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
+      Object.entries(doc.containers)
+        .filter(([key, c]) => !isUnseededContainer(c, deaths.includes(key)))
+        .map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
     ),
     disabled: disabledKeys(doc),
     enabled: enabledKeys(doc),
@@ -1553,9 +1566,10 @@ export class WorldState {
     if (!got) return;
     const { doc, ref, cellKey } = got;
     let cont = doc.containers[ref.key];
-    if (!cont) {
+    if (!cont || isUnseededContainer(cont, doc.actorDeaths?.[ref.key] !== undefined)) {
       // First opener's contents are the leveled-loot roll and become canonical; an
-      // absent list captures an empty container. Later opens never overwrite.
+      // absent list captures an empty container. Later opens never overwrite -- except an
+      // untouched empty row (isUnseededContainer), which a non-empty open re-seeds.
       const contents = body.get('contents') === undefined ? [] : parseItems(body.get('contents'));
       if (contents === undefined) {
         this.invalid(player, 'ContainerOpen');
@@ -1581,18 +1595,22 @@ export class WorldState {
           gold = undefined;
         }
       }
-      // origin: a copy, not an alias — `items` is mutated in place by every take/put.
-      cont = { items, stateSeq: 1, origin: items.map((i) => ({ ...i })) };
-      // A merchant's purse becomes canonical on the same first-opener rule as the stock, and
-      // goldOrigin is captured for the same reason `origin` is: a restock has to have
-      // something to restore to, and only the first opener ever sees the untouched figure.
-      if (gold !== undefined && gold >= 0) {
-        cont.gold = Math.floor(gold);
-        cont.goldOrigin = cont.gold;
-        cont.goldRestockAt = absGameHours(this.cells.worldM7().time) + GOLD_RESTOCK_HOURS;
+      // An unseeded row opened empty again stays as it is. A re-seed climbs past stateSeq 1,
+      // so from then on the row is canonical like any other.
+      if (!cont || items.length > 0 || gold !== undefined) {
+        // origin: a copy, not an alias — `items` is mutated in place by every take/put.
+        cont = { items, stateSeq: (cont?.stateSeq ?? 0) + 1, origin: items.map((i) => ({ ...i })) };
+        // A merchant's purse becomes canonical on the same first-opener rule as the stock, and
+        // goldOrigin is captured for the same reason `origin` is: a restock has to have
+        // something to restore to, and only the first opener ever sees the untouched figure.
+        if (gold !== undefined && gold >= 0) {
+          cont.gold = Math.floor(gold);
+          cont.goldOrigin = cont.gold;
+          cont.goldRestockAt = absGameHours(this.cells.worldM7().time) + GOLD_RESTOCK_HOURS;
+        }
+        doc.containers[ref.key] = cont;
+        this.cells.markDirty(cellKey);
       }
-      doc.containers[ref.key] = cont;
-      this.cells.markDirty(cellKey);
     }
     // THE 24h RESTOCK, checked on open because that is when anyone can observe it. Without
     // this a merchant drained on day one stays drained for the life of the world: the engine

@@ -501,6 +501,33 @@ test('a first open of 70 stacks becomes canonical', async (t) => {
   assert.equal(st.items.length, 70, 'the 70-stack container is canonical');
 });
 
+// 1.7.15: Fargoth's stump. Opened empty before lookoutScript AddItems the gold and pick on the
+// walking client only; that untouched [] must neither ride the cell state (it wiped the script's
+// items on entry) nor win the next open (it wiped them again).
+test('an untouched empty first open is re-seeded by the next open and not sent on entry', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Stump');
+  a.sendCellChange('0,0', 0, 0, 0);
+  await a.waitEvent('PlayerCellChange');
+  a.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0', contents: [] });
+  assert.deepEqual(((await a.waitEvent('ContainerState')).value as { items: unknown }).items, []);
+  a.inbox.events.length = 0;
+  a.sendEvent('ResyncRequest', { cellKey: '0,0' });
+  const state = (await a.waitEvent('WorldCellState')).value as { containers: Record<string, unknown> };
+  assert.equal(state.containers['c:77:0'], undefined, 'an unseeded [] is not pushed over the cell');
+  const stash = [{ id: 'gold_001', n: 300 }, { id: 'pick_journeyman_01', n: 1 }];
+  a.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0', contents: stash });
+  const st = (await a.waitEvent('ContainerState')).value as { items: unknown; stateSeq: number };
+  assert.deepEqual(st.items, stash);
+  assert.equal(st.stateSeq, 2);
+  // Seeded now: a later differing open is ignored again.
+  a.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0', contents: [] });
+  assert.deepEqual(((await a.waitEvent('ContainerState')).value as { items: unknown }).items, stash);
+});
+
 // Backlog 345: the trim drops loose litter before the net actors the holder still streams.
 test('a trimmed cell state keeps its actors and sheds loose placed objects first', () => {
   const doc = emptyCellDoc();
