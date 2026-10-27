@@ -63,7 +63,7 @@ sweep running on a head you already know is broken (stop it and fix instead).
 ## Process
 
 feature branch → PR to protected `main` → `gh pr merge --rebase --delete-branch` → fast-forward
-`dev`, `ovhcloud`, `multiplayer912026` to `main`. **Merging to `main` alone deploys nothing**:
+`dev` and `ovhcloud` to `main`. **Merging to `main` alone deploys nothing**:
 `deploy-ovh` / `deploy-mp` trigger on push to `ovhcloud`, so prod ships only when `ovhcloud` is
 fast-forwarded. Before pushing `ovhcloud`, tag the running prod image on the box for rollback
 (`docker tag openmw-mp:ovh openmw-mp:prev`) — the deploy overwrites `:ovh` and keeps no previous.

@@ -16,7 +16,7 @@ with a friend. Every item points at the backlog row that explains it.
 2. On the VPS, before pushing: `docker tag morrowind:ovh morrowind:prev && docker tag openmw-mp:ovh openmw-mp:prev`
    (rollback = `sed -i s/:ovh/:prev/` in the two compose files + `up -d`, minutes not 70). (#376)
 3. Fast-forward **`ovhcloud`** to `main` — that is the deploy trigger; `main` alone deploys
-   nothing. Then `dev` and `multiplayer912026`. (#376)
+   nothing. Then `dev`. (#376)
 4. Both Actions runs serialise on one runner (~35 min each, undefined order). The hello is
    **proto 3** now (#375): a client on the old engine gets `BAD_PROTO` until deploy-ovh lands,
    a new client on the old server the same. Wait for both before inviting anyone.
