@@ -679,7 +679,7 @@ do
   check('player.lua raises mpCombatCast on the use edge in the spell stance',
     pl:find("core.sendGlobalEvent('mpCombatCast', { spellId = spell.id })", 1, true) ~= nil)
   check('combat.lua sends CombatCast with spellId, casterId and kind',
-    cb:find("mp.sendEvent('CombatCast', { spellId = data.spellId, casterId = id, kind = 'spell' })", 1, true) ~= nil
+    cb:find("mp.sendEvent('CombatCast', { spellId = worldmp.toNet(data.spellId), casterId = id, kind = 'spell' })", 1, true) ~= nil
     and g:find('eventHandlers.mpCombatCast = combat.onCast', 1, true) ~= nil)
   -- Backlog 197-202, 205, 211: movement feel on a real link.
   check('player.lua reconciles against where it stood at lastInputSeq, not where it is now (197)',
@@ -5077,6 +5077,25 @@ do
   check('past stage 1 (handed to Caius) nothing is granted', #g == 0, #g .. ' granted')
   a, g = join(nil, false, false)
   check('nothing runs before chargen is reported (mid-chargen, restore pending)', a == 0 and #g == 0)
+end
+-- ============================== player.lua: release builds answer only the page's commands (OT3-6)
+print('player.lua -- the omw.queue test hooks are off unless the bake wrote buildflags.lua')
+do
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local d = p:find('local function dispatch(cmd)', 1, true)
+  local g = p:find("if not TEST_HOOKS and not PAGE_COMMANDS[cmd:match('^[^:]*')] then return end", 1, true)
+  local h = p:find("social:", d or 1, true)
+  check('dispatch() drops a non-page command before any handler when TEST_HOOKS is off',
+    d ~= nil and g ~= nil and h ~= nil and d < g and g < h)
+  check('TEST_HOOKS reads scripts.mp.buildflags', p:find("pcall(require, 'scripts.mp.buildflags')", 1, true) ~= nil)
+  local page = p:match('local PAGE_COMMANDS = (%b{})') or ''
+  for _, c in ipairs({ 'carry', 'vis', 'leaving', 'chatx', 'joinfriend', 'pause', 'profile', 'social', 'uimode', 'where' }) do
+    check('page command ' .. c .. ' still runs in release', page:find(c .. ' = true', 1, true) ~= nil)
+  end
+  check('give stays a test hook', not page:find('give', 1, true))
+  local link = io.open('./wasm-build/link-openmw.sh'):read('*a')
+  check('link-openmw.sh writes buildflags.lua only under OMW_TEST_HOOKS=1',
+    link:find('OMW_TEST_HOOKS:-0}" = 1', 1, true) ~= nil)
 end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
