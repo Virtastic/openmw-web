@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { PlayerStore } from '../src/persist/playerstore';
+import { PlayerStore, repairBases } from '../src/persist/playerstore';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
@@ -43,6 +43,45 @@ test('playerstore round-trip and atomicity', async () => {
     { cellKey: '3,-2', x: 1, y: 2, z: 3 });
   assert.deepEqual(readPlayerDoc(dataDir, 'drelas')?.['spells'], ['fire_bite'], 'the row is readable outside the store');
   await store2.close();
+});
+
+// 1.7.13 saved bars above their max (prod "Control": magicka 50/30). Active spells are not
+// saved, so nothing explains it on the next join: the load caps current at base.
+test('playerstore caps a saved bar that sits above its base', async () => {
+  const dataDir = tmpDataDir();
+  const store = new PlayerStore(dataDir);
+  store.update('control', (doc) => {
+    doc.stats = { dynamic: { hp: { c: 35, b: 57 }, mp: { c: 50, b: 30 }, ft: { c: 200, b: 200 } } };
+  });
+  await store.close();
+  const store2 = new PlayerStore(dataDir);
+  const doc = await store2.get('control');
+  assert.deepEqual(doc?.stats?.dynamic, { hp: { c: 35, b: 57 }, mp: { c: 30, b: 30 }, ft: { c: 200, b: 200 } });
+  await store2.close();
+});
+
+// Prod "Control" after a reconnect: the boot template's maximums were saved over an Orc's
+// (health 35/35, magicka 30/50). The next join derives them back from the attributes.
+test('playerstore repairs saved maximums the attributes contradict', async () => {
+  const dataDir = tmpDataDir();
+  const store = new PlayerStore(dataDir);
+  store.update('control', (doc) => {
+    doc.appearance = { race: 'orc', head: 'h', hair: 'h', isMale: true, birthsign: 'charioteer' } as typeof doc.appearance;
+    doc.stats = {
+      level: 1,
+      attributes: { strength: 55, endurance: 60, willpower: 50, intelligence: 30, agility: 35, speed: 55, personality: 30, luck: 40 },
+      dynamic: { hp: { c: 35, b: 35 }, mp: { c: 30, b: 50 }, ft: { c: 200, b: 200 } },
+    };
+  });
+  await store.close();
+  const store2 = new PlayerStore(dataDir);
+  const doc = await store2.get('control');
+  assert.deepEqual(doc?.stats?.dynamic, { hp: { c: 35, b: 57 }, mp: { c: 30, b: 30 }, ft: { c: 200, b: 200 } });
+  await store2.close();
+  // A real racial multiplier is left alone: a Breton Atronach is 3.5x.
+  const d = { stats: { level: 3, attributes: { intelligence: 50 }, dynamic: { hp: { c: 80, b: 80 }, mp: { c: 175, b: 175 }, ft: { c: 1, b: 1 } } } };
+  repairBases(d as never);
+  assert.deepEqual(d.stats.dynamic, { hp: { c: 80, b: 80 }, mp: { c: 175, b: 175 }, ft: { c: 1, b: 1 } });
 });
 
 // Backlog 186 / commit 0833ff36: playerstore.ts flushAll() ends in sqlite.ts checkpoint()

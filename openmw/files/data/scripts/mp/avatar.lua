@@ -612,6 +612,10 @@ return {
                         -- body holds NOW, so a bite or a report in between is not undone (s165).
                         if d.g then stat.current = math.max(0, math.min(stat.base + (stat.modifier or 0), stat.current + d.g)) -- base + modifier: a Fortify raises the cap; capping at base cut a fortified bar on every spend (prod scan 2026-10-23)
                         elseif d.c then stat.current = d.c end
+                        -- A base that DROPS (chargen, a record edit) leaves current where it was;
+                        -- the next bar report then hands the owner 50/30 magicka (prod 1.7.13).
+                        local cap = stat.base + (stat.modifier or 0)
+                        if stat.current > cap then stat.current = cap end
                     end
                 end
             end)

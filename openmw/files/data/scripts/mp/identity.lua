@@ -598,7 +598,16 @@ function identity.tick(now)
         nextAt.dynamic = now + INTERVALS.dynamic
         local dyn = snapDynamic()
         mp.set('hp', tostring(dyn.hp.c)) -- mirror unconditionally (diff may be seeded)
-        if peerBarsAt and now - peerBarsAt < PEER_RULES_S and not dead then
+        if not baselineReady then
+            -- THE BOOT TEMPLATE'S BARS ARE NOBODY'S. Until the rejoin record lands (or chargen
+            -- ends) this engine is the raw template, and its maximums went out as the
+            -- character's: prod "Control", an Orc due 57 health, was saved at 35/35 and
+            -- magicka 30/50 by the seconds between Joined and MP_ApplyRecord. Progression has
+            -- waited behind this gate since backlog 404; the bars now do too.
+            for _, t in pairs(tracked) do t.delta = 0 end
+            fall.owed = 0
+            fall.kd = false
+        elseif peerBarsAt and now - peerBarsAt < PEER_RULES_S and not dead then
             -- THE PEER RULES OUR BARS: send only what we changed, on top of what the peer
             -- last said -- never a bar we merely echo from its report. An echoed report the
             -- peer has since overtaken (a bite landed, a spend applied) would be taken as a

@@ -23,6 +23,9 @@ async function world(t: { after(fn: () => unknown): void }) {
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  // The peer HOLDS the cell, as on a live world: bars are only taken from a simulated avatar.
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant');
   t.after(() => peer.close());
   const a = await TestClient.connect(server.port);
   t.after(() => a.close());
@@ -539,6 +542,9 @@ test('the heal behind a refused rest does not reach the avatar', async (t) => {
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  // The peer HOLDS the cell, as on a live world: bars are only taken from a simulated avatar.
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant');
   t.after(() => peer.close());
   const a = await TestClient.connect(server.port);
   t.after(() => a.close());
@@ -573,6 +579,9 @@ test('a base raise behind a refused rest lands the base without the heal', async
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  // The peer HOLDS the cell, as on a live world: bars are only taken from a simulated avatar.
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant');
   t.after(() => peer.close());
   const a = await TestClient.connect(server.port);
   t.after(() => a.close());
@@ -677,6 +686,9 @@ test("#106: a stuttering harness client still gets the peer's bars; a real one d
     });
     t.after(() => server.close());
     const peer = await TestClient.simPeer(server.port, PEER_PASS);
+    // The peer HOLDS the cell, as on a live world: bars are only taken from a simulated avatar.
+    peer.sendCellChange('0,0', 0, 0, 0);
+    await peer.waitEvent('ActorAuthorityGrant');
     t.after(() => peer.close());
     const a = await TestClient.connect(server.port);
     t.after(() => a.close());
@@ -711,6 +723,9 @@ for (const clientAuthority of [true, false]) {
     });
     t.after(() => server.close());
     const peer = await TestClient.simPeer(server.port, PEER_PASS);
+    // The peer HOLDS the cell, as on a live world: bars are only taken from a simulated avatar.
+    peer.sendCellChange('0,0', 0, 0, 0);
+    await peer.waitEvent('ActorAuthorityGrant');
     t.after(() => peer.close());
     const a = await TestClient.connect(server.port);
     t.after(() => a.close());
@@ -744,3 +759,37 @@ for (const clientAuthority of [true, false]) {
     else assert.equal(kd, undefined, 'under the replay model the avatar falls, and is knocked down, itself');
   });
 }
+
+// 1.7.14 (prod, census office): a cell the peer does not hold is fought on the CLIENT, and
+// the peer's frozen avatar there kept reporting full bars -- every 3 s SelfStats put the
+// owner back to full mid-fight. Unheld cell: no SelfStats, and the client's own bars rule.
+test("a peer report for an avatar in a cell the peer does not hold never reaches the owner", async (t) => {
+  const { server, peer, a } = await world(t);
+  const CELL = 'seyda neen, census and excise office'; // chargen room: never anchored
+  a.sendCellChange(CELL, 0, 0, 0);
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Watcher5');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange(CELL, 0, 0, 0);
+
+  let seq = 0;
+  a.sendInput({ move: 1 }, ++seq);
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', {
+    entries: [{ id: a.playerId, ...bars(100) }],
+  }), 100);
+  t.after(() => clearInterval(reporter));
+
+  const restored = await Promise.race([
+    a.waitEvent('SelfStats').then(() => true),
+    new Promise<false>((r) => setTimeout(() => r(false), 800)),
+  ]);
+  assert.equal(restored, false, 'an unsimulated avatar must not overwrite the owner\'s bars');
+  a.sendEvent('PlayerStatsDynamic', bars(30)); // the NPC's hits, taken on the client
+  const seen = await b.waitEvent('PlayerStatsDynamic',
+    (v) => (v as { id?: number; hp?: { c?: number } })?.id === a.playerId
+      && (v as { hp?: { c?: number } }).hp?.c === 30);
+  assert.ok(seen, 'the client simulates this cell, so its bars rule');
+});

@@ -77,6 +77,8 @@ export interface StateCtx {
   // [limits] clientAuthority (the WoW model): the avatar is placed on the owner's poses and never
   // falls itself, so the owner's engine reports its fall damage (hp.fall) and it is taken here.
   clientAuthority?: boolean;
+  // Who simulates a cell (core/authority.ts). Absent = every report is taken (unit ctxs).
+  holderOf?(cellKey: string): number | undefined;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -776,6 +778,18 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
           lastInputAgoMs: p.lastInputAt === undefined ? -1 : now - p.lastInputAt,
           note: 'peer bar report ignored: player not driving the input tier' });
       }
+      continue;
+    }
+    // ONLY A SIMULATED AVATAR HAS BARS WORTH SENDING. A cell the peer does not hold (the
+    // chargen rooms are never held, even after chargen; a cell between anchors; a peer that
+    // just restarted) is simulated by the CLIENT: its NPCs hit the client's body, and the
+    // peer's avatar there stands frozen at whatever bars it last had. Its report still went
+    // out every 3 s and SelfStats put the owner back to full -- health, fatigue and the
+    // stagger with it -- mid-fight (prod 1.7.12, the census office). Dropped, and the
+    // freshness mark with it, so the client's own claims rule at once (handleStatsDynamic).
+    // A death there is the same frozen body, so it is not taken either.
+    if (ctx.holderOf && (p.cellKey === undefined || ctx.holderOf(p.cellKey) !== sender.id)) {
+      p.peerStatsAt = undefined;
       continue;
     }
     p.statsDropLogged = false;

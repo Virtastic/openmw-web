@@ -91,6 +91,10 @@ identity.tick(1.0)
 check('nothing persistent is broadcast before the baseline is known',
   #acquiredEvents(env.calls) == 0,
   'the template would be stored over the real character, permanently')
+-- ...the bars too (prod 1.7.13 "Control": an Orc due 57 health was saved at the template's 35).
+local dynBefore = 0
+for _, c in ipairs(env.calls.events) do if c.name == 'PlayerStatsDynamic' then dynBefore = dynBefore + 1 end end
+check('no bars are broadcast before the baseline is known', dynBefore == 0, dynBefore .. ' PlayerStatsDynamic sent')
 
 identity.markBaselineReady()   -- chargen finished (or the restore landed)
 identity.tick(0)   -- first pass SEEDS the baseline
@@ -4102,6 +4106,35 @@ do
     pp:find('if not weapon and attack.successful and attack.damage and attack.damage.fatigue then lastPunchSoundAt = lastSwingAt end', 1, true) ~= nil)
   check('...and the fatigue drop does not voice it again',
     pp:find('if core.getRealTime() - lastPunchSoundAt > SWING_FEEL_WINDOW_S then', 1, true) ~= nil)
+end
+
+-- ====================================== a lowered base caps the avatar's bar
+print('avatar.lua -- a base that drops pulls current down with it (prod 1.7.13: magicka 50/30)')
+do
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  local a = select(2, av:find('mpAvatarStats = function(stats)', 1, true))
+  local b = a and av:find('\n        end,\n', a, true)
+  local bars = {}
+  local function bar(k) bars[k] = bars[k] or { base = 0, current = 0, modifier = 0 }; return function() return bars[k] end end
+  local env = setmetatable({
+    self = {}, print = function() end,
+    types = { NPC = { objectIsInstance = function() return false end }, Actor = { stats = {
+      level = function() return {} end, attributes = {},
+      dynamic = { health = bar('hp'), magicka = bar('mp'), fatigue = bar('ft') },
+    } } },
+  }, { __index = _G })
+  local chunk = a and b and loadstring('return function(stats)' .. av:sub(a + 1, b) .. ' end')
+  check('mpAvatarStats is where this test expects it', chunk ~= nil)
+  if chunk then
+    setfenv(chunk, env)
+    local apply = chunk()
+    apply({ dynamic = { mp = { c = 50, b = 50 } } })
+    apply({ dynamic = { mp = { b = 30 } } })
+    check('a base-only restore that lowers magicka to 30 leaves it 30/30, not 50/30', bars.mp.current == 30 and bars.mp.base == 30)
+    bars.mp.modifier = 20
+    apply({ dynamic = { mp = { c = 45 } } })
+    check('...while a Fortify still lifts the cap (45 of 30+20 stays)', bars.mp.current == 45)
+  end
 end
 
 -- ====================================== the avatar winds up as long as its owner held the button

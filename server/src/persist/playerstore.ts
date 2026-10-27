@@ -151,6 +151,35 @@ function mostRecentPosition(
  * processes, and a second store's cache and sweep could write a stale copy back. json_extract
  * keeps inventories and journals in SQLite rather than parsing every doc whole.
  */
+// THE MAXIMUMS FOLLOW FROM THE ATTRIBUTES, so a saved base that does not was written by
+// something other than the character: before 1.7.14 the client sent its BOOT TEMPLATE's bars
+// in the seconds before the rejoin record landed (identity.lua, dynamic was not behind
+// baselineReady), and prod "Control", an Orc with Str 55 / End 60, came back 35/35 health
+// and 30/50 magicka. Repaired from what the engine itself derives:
+//   fatigue = Str + Wil + Agi + End (creaturestats.cpp setAttribute)
+//   health  = floor((Str + End) / 2) at level 1 (npcstats.cpp updateHealth; levels add to it)
+//   magicka = Int x (1 + race/birthsign Fortify Maximum Magicka), in 0.5 steps up to 5x
+const MAGICKA_BONUS: Record<string, number> = { breton: 0.5, 'high elf': 1.5, fay: 0.5, elfborn: 1.5, wombburned: 2 };
+export function repairBases(doc: PlayerDoc): void {
+  const dyn = doc.stats?.dynamic, a = doc.stats?.attributes;
+  if (!dyn || !a) return;
+  const at = (id: string) => typeof a[id] === 'number' ? Math.max(0, a[id] - (a[`${id}_damage`] ?? 0)) : undefined;
+  const str = at('strength'), end = at('endurance'), wil = at('willpower'), agi = at('agility');
+  if (dyn.ft && str !== undefined && end !== undefined && wil !== undefined && agi !== undefined) dyn.ft.b = str + wil + agi + end;
+  // ponytail: health is only exact at level 1; past it the gains depend on Endurance at each level-up.
+  const sb = a.strength, eb = a.endurance;
+  if (dyn.hp && doc.stats?.level === 1 && typeof sb === 'number' && typeof eb === 'number') dyn.hp.b = Math.floor((sb + eb) / 2);
+  const int = at('intelligence');
+  if (dyn.mp && int !== undefined && int > 0) {
+    const m = dyn.mp.b / int;
+    const onStep = m >= 1 - 1 / int && m <= 5 + 1 / int && Math.abs(m * 2 - Math.round(m * 2)) * int <= 2;
+    if (!onStep) {
+      const bonus = (MAGICKA_BONUS[doc.appearance?.race?.toLowerCase() ?? ''] ?? 0) + (MAGICKA_BONUS[doc.appearance?.birthsign?.toLowerCase() ?? ''] ?? 0);
+      dyn.mp.b = Math.floor(int * (1 + bonus));
+    }
+  }
+}
+
 export function readCharacterCards(dataDir: string, keys: string[]):
   Map<string, { name?: string; level?: number; cell?: string }> {
   const out = new Map<string, { name?: string; level?: number; cell?: string }>();
@@ -279,6 +308,12 @@ export class PlayerStore {
       for (const [k, v] of Object.entries(loaded.equipment)) eq[Number(k)] = v;
       loaded.equipment = eq;
     }
+    // A bar above its max is a 1.7.13 leftover (a base-only restore left current where it
+    // was: prod "Control" saved magicka 50/30). Active spells are not saved, so no Fortify
+    // survives a relog to explain it; cap it here, the one door every reader comes through.
+    const dyn = loaded.stats?.dynamic;
+    if (dyn) repairBases(loaded);
+    if (dyn) for (const d of [dyn.hp, dyn.mp, dyn.ft]) if (d && d.c > d.b) d.c = d.b;
     this.materializePosition(loaded);
     this.cache.set(key, loaded);
     return loaded;
