@@ -2,6 +2,20 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.15
+
+**Fargoth's stash stays in the stump.** The server treated the first look inside a container as
+its permanent contents. The stump starts empty and Fargoth's script only fills it during his
+walk, so if anyone had looked in it before then, the server kept it empty for good and wiped
+the gold and lockpick the moment you walked up. A container nobody has changed yet is no longer
+treated as empty, and the first open that finds items sets its real contents. Affected worlds
+are repaired automatically.
+
+**Steadier camera.** Chrome on Windows sometimes reports a single mouse jump of a few hundred
+pixels, which flicked the view while walking. The game now asks the browser for raw mouse
+input, as desktop OpenMW does, and ignores a lone jump that is far out of line with your
+movement. If you relied on Windows mouse acceleration, sensitivity will feel a little different.
+
 ## 1.7.14
 
 **Your health, magicka and fatigue stay where they are.** In a cell the multiplayer server
