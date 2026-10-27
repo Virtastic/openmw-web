@@ -961,6 +961,9 @@ namespace Resource
             return osg::ref_ptr<const osg::Node>(static_cast<osg::Node*>(obj.get()));
         else
         {
+            // A texture cut off mid-read, or this file itself, must not leave a cached template: every
+            // instance would share the purple (or the error marker) until the cache expired.
+            const unsigned failures = transientLoadFailures();
             osg::ref_ptr<osg::Node> loaded;
             try
             {
@@ -970,6 +973,8 @@ namespace Resource
             {
                 Log(Debug::Error) << "Failed to load '" << path << "': " << e.what() << ", using marker_error instead";
                 loaded = cloneErrorMarker();
+                if (mVFS->exists(path))
+                    noteTransientLoadFailure();
             }
 
             // set filtering settings
@@ -1001,7 +1006,8 @@ namespace Resource
             else
                 loaded->getBound();
 
-            mCache->addEntryToObjectCache(path.value(), loaded);
+            if (transientLoadFailures() == failures)
+                mCache->addEntryToObjectCache(path.value(), loaded);
             return loaded;
         }
     }

@@ -839,7 +839,7 @@ try {
      var mouse = window.__omwMouse; // the pointer-lock filter's counters (see mouseFilter)
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
        + ' pumps=' + (window.__fps || 0) + ' frameMs=' + (window.__frameMs || '-') + ' tier=' + ((window.__omwTier && window.__omwTier.tier) || '-') + ' heapMb=' + heapMb + ' jsMb=' + jsMb + ' taps=' + taps
-       + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + (sfs.cacheSlow ? ' sfsCacheSlow=1' : '') + (sfs.store ? ' sfsStore=' + sfs.store : '') + (sfs.pfFiles ? ' sfsPf=' + sfs.pfFiles + '/' + (sfs.pfFetched || 0) : '') + ' sfsSlow=' + sfsD.slow + (sfsD.slow ? ' sfsSlowPf=' + sfsD.pf + '/' + sfsD.nopf : '') + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
+       + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + (sfs.cacheSlow ? ' sfsCacheSlow=1' : '') + (sfs.store ? ' sfsStore=' + sfs.store : '') + (sfs.pfFiles ? ' sfsPf=' + sfs.pfFiles + '/' + (sfs.pfFetched || 0) : '') + (sfs.readErrors ? ' sfsReadErr=' + sfs.readErrors : '') + ' sfsSlow=' + sfsD.slow + (sfsD.slow ? ' sfsSlowPf=' + sfsD.pf + '/' + sfsD.nopf : '') + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
        + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
        + (mouse ? ' mBig=' + mouse.big + ' mMax=' + mouse.max + ' mDrop=' + mouse.drop + ' mFree=' + mouse.free + ' mRaw=' + mouse.raw : '')
@@ -1022,8 +1022,13 @@ try {
      // AT RELEASE, NOT 20 S LATER: the warm-up already stands aside while the game reads (1.5 s of
      // quiet first, worker warm()), and those 20 s were the first steps in town with nothing warmed
      // (prod 2026-10-23: 26 of 50 hitch windows waited 300 ms+ on streamed files, Morrowind.bsa first).
+     // A QUARTER OF THE LINK ON A SELF-HOSTED SERVER. Prod serves from a datacentre; a self-host is
+     // often one home upload shared by every player's warm-up AND the game reads they are waiting
+     // on. Full-speed warm-ups starved those reads until they failed: purple buildings and holes in
+     // the terrain on two players' servers (2026-10-27), back only after walking away and returning.
      if (!warmQueued) { warmQueued = true; setTimeout(function(){
-       try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(WARM_RE, WARM_FIRST); } catch (e) {}
+       var share = /(^|\.)virtastic\.app$/.test(location.hostname) ? 1 : 0.25;
+       try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(WARM_RE, WARM_FIRST, share); } catch (e) {}
      }, 2000); }
      el.classList.remove('indet', 'creep'); fill.style.setProperty('--p', 1); el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);

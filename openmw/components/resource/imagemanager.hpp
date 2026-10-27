@@ -17,6 +17,14 @@ namespace osgDB
 namespace Resource
 {
 
+    /// Loads that failed on a file that IS there -- a read cut off mid-stream (a streamed archive on a
+    /// busy self-host), not a missing file. Their warning image is never cached, and anything built
+    /// while one happened (a mesh template, a terrain chunk) compares this count before and after and
+    /// is not cached either, so the next load reads the file again instead of every user of it
+    /// sharing the purple until the cache expires.
+    unsigned transientLoadFailures();
+    void noteTransientLoadFailure();
+
     /// @brief Handles loading/caching of Images.
     /// @note May be used from any thread.
     class ImageManager : public ResourceManager
