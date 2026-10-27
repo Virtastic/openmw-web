@@ -11,6 +11,7 @@
     "test": "tsc --noEmit && node --import tsx --test --test-concurrency=2 test/*.test.ts",
     "start": "node dist/server.mjs",
     "lser-dump": "tsx src/proto/lser-dump.ts",
+    "docs:admin": "tsx test/admin-commands-doc.ts",
     "soak": "tsx bots/soak.ts"
   },
   "dependencies": {

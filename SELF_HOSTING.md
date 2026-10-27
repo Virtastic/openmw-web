@@ -201,7 +201,8 @@ the wizard and it walks you through the rest. Three things to know:
    through it in about five minutes (plus optional S3 storage).
 
 Running without Docker, wiring your own reverse proxy, capacity planning, moderation ranks
-and the ops details live in [`docs/ADVANCED.md`](docs/ADVANCED.md).
+and the ops details live in [`docs/ADVANCED.md`](docs/ADVANCED.md). Every admin command
+(kick, ban, teleport, give, ...) is listed in [`docs/ADMIN-COMMANDS.md`](docs/ADMIN-COMMANDS.md).
 
 ## Static hosting without the dashboard
 
