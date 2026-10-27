@@ -2288,8 +2288,10 @@ print('s177 a near-tier puppet reads interp:speed once a frame, not twice (#175:
 do
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   local code = pp:gsub('%-%-[^\n]*', '') -- strip comments, so mentioning the call in prose does not count
-  check('onUpdate reads tgtV once and both call sites reuse it',
-    (select(2, code:gsub('interp:speed%(now%)', ''))) == 1, 'expected exactly one interp:speed(now) call in the code')
+  -- 1.7.15: speed is derived from the one velocity read, which reuses the frame's target sample.
+  check('onUpdate reads the target velocity once and derives tgtV from it',
+    (select(2, code:gsub('interp:speed%(', ''))) == 0 and (select(2, code:gsub('interp:velocity%(now, target%)', ''))) == 1
+      and (select(2, code:gsub('interp:velocity%(', ''))) == 1, 'expected one interp:velocity(now, target) and no interp:speed')
 end
 
 print('s22 a body the engine holds dead above zero hp is said out loud (#178)')
