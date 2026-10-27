@@ -17,6 +17,7 @@ import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/e
 import { Authority, type ActorSnapshot } from './authority';
 import { CellStore, cellMapFull, emptyCellDoc, type CellDoc, type ContainerItems } from '../persist/cellstore';
 import { log } from '../log';
+import { serverWhisper } from './chat';
 import { metrics } from '../metrics';
 
 const MAX_RECORD_ID = 64;
@@ -352,8 +353,19 @@ export class WorldState {
   }
 
   // Shared world only: `noDrop` is already "this world enforces public-economy rules".
+  // H2: a brand-new account is contained too, until its probation ends -- a throwaway account
+  // made to mule items to another is exactly what probation exists to slow down.
   private contained(player: Player): boolean {
-    return this.noDrop && this.quarantined?.(player.accountKey) === true;
+    return this.noDrop && (this.quarantined?.(player.accountKey) === true || this.onProbation(player));
+  }
+
+  private onProbation(player: Player): boolean {
+    if ((player.probationUntil ?? 0) <= Date.now()) return false;
+    if (!player.probationTold) {
+      player.probationTold = true;
+      serverWhisper(player, 'New accounts cannot drop items or leave them in containers for their first day.');
+    }
+    return true;
   }
 
   /** Set by the server: a cell gained an authority holder. See the grant callback below. */

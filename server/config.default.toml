@@ -236,6 +236,9 @@ maxMsgBytes = 262144              # ws maxPayload; larger frames drop the socket
 # just doesn't punish players with big load orders or slow connections.
 helloTimeoutMs = 45000
 loginPerMinPerIp = 5              # auth attempts (Register+Login) per IP per minute
+# H2: a new account's first hours. It cannot hand items to anyone (no drops, no container
+# puts in the shared world) and chats at most one line per 5 s. 0 = no probation.
+probationHours = 24
 # Trust CF-Connecting-IP as the client's address, when it arrives from a private (proxy) peer.
 # OFF by default. Turn it on ONLY where Cloudflare genuinely terminates in front of this server
 # AND the edge deletes any client-supplied copy (see the header_up lines in deploy/Caddyfile).

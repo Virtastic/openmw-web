@@ -181,7 +181,7 @@ export interface Config {
   // dashboardToken: bearer for the web admin dashboard (/admin). Empty = the whole
   // dashboard is off, which is the right default for a self-hoster who only wants the
   // in-game panel.
-  // allowFrom: client addresses / IPv4 CIDRs that may reach /admin on the gateway (H6). Empty = all.
+  // allowFrom: client addresses / IPv4 CIDRs that may reach /admin (gateway and single-world server, H6). Empty = all.
   admin: { owners: string[]; allowConsole: boolean; dashboardToken: string; allowFrom: string[] };
   /** What the setup wizard recorded. Bookkeeping, not tuning &mdash; see config.default.toml. */
   setup: {
@@ -237,6 +237,8 @@ export interface Config {
     maxMsgBytes: number;
     helloTimeoutMs: number;
     loginPerMinPerIp: number;
+    // H2: a new account's first N hours: no drops or container puts in the shared world, slower chat. 0 = off.
+    probationHours: number;
     maxHitDamage: number;
     // M9 interest management + LOD. Tunable, not constants: a crowded public world and a
     // 4-player co-op session want very different answers and neither should need a rebuild.
@@ -676,6 +678,7 @@ function validate(t: Tree): Config {
       maxMsgBytes: reqNum(t, 'limits', 'maxMsgBytes'),
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
       loginPerMinPerIp: reqNum(t, 'limits', 'loginPerMinPerIp'),
+      probationHours: optNum(t, 'limits', 'probationHours', 24),
       maxHitDamage: reqNum(t, 'limits', 'maxHitDamage'),
       interestRadius: reqNum(t, 'limits', 'interestRadius'),
       interestHysteresis: reqNum(t, 'limits', 'interestHysteresis'),
@@ -852,8 +855,12 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
     // browser harness must be able to set on them travels in the environment it already
     // controls. Deliberately env-only and single-purpose: production sets neither.
     if (process.env.OMW_ALLOW_HARNESS_AUTH === '1') {
-      tree = deepMerge(tree, { login: { allowHarnessAuth: true } } as Tree);
+      // The harness makes a fresh account per scenario; H2 probation would refuse its drops.
+      tree = deepMerge(tree, { login: { allowHarnessAuth: true }, limits: { probationHours: 0 } } as Tree);
     }
+    // Same for the server test suite (test/helpers.ts sets it): its fresh accounts stand in
+    // for established players.
+    if (process.env.OMW_NO_PROBATION === '1') tree = deepMerge(tree, { limits: { probationHours: 0 } } as Tree);
     try {
       cfg = validate(tree);
     } catch (err) {

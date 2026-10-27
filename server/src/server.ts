@@ -47,7 +47,7 @@ import { MoveBroadcaster, interestFromLimits } from './core/movement';
 import { configureAuthority, setOnSilentPeer, noteAnchorsChanged } from './core/authority';
 import { Connection, type ServerCtx } from './net/connection';
 import { attachWss } from './net/ws';
-import { createHttpServer, setTrustCloudflareIp, type HttpRoute } from './net/http';
+import { createHttpServer, gateAdmin, setTrustCloudflareIp, type HttpRoute } from './net/http';
 import { OidcService } from './auth/oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex } from './auth/identities';
 import { createAuthRoutes } from './auth/routes';
@@ -1326,7 +1326,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // attacker should not get a second, separate allowance by using the HTTP door.
     limiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
   }, chainRoutes(
-    adminRoutes,
+    gateAdmin(adminRoutes, () => config.admin.allowFrom),
     // Before the locker: blob URLs carry their capability in the path, not a Bearer header.
     blobRoutes(lockerStorage instanceof FsStorage ? lockerStorage : undefined),
     // "This server hands out the files" — the wizard's other delivery answer. Reads the

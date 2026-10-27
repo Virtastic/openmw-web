@@ -20,6 +20,10 @@ import { MSG_PLAYER_INPUT, MSG_PLAYER_STATE_BATCH, MSG_AVATAR_MOVE_BATCH, packIn
 // failures still surface via the assertions; this only bounds a genuine hang.
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+// H2 probation would refuse every fresh test account's drops and slow its chat; the tests
+// model established players. test/probation.test.ts clears this to exercise probation itself.
+process.env.OMW_NO_PROBATION = '1';
+
 export function tmpDataDir(): string {
   return mkdtempSync(join(tmpdir(), 'openmw-mp-test-'));
 }

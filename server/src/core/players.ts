@@ -44,6 +44,9 @@ export interface Player {
   rank: number;
   peer: Peer;
   ip: string; // M8: needed by /ipban; never leaves the server except into ban/log lines
+  // H2: ms epoch; until then the account is new: no handing items to others, slower chat.
+  probationUntil?: number;
+  probationTold?: boolean; // the drop/put refusal was explained once this session
   inWorld: boolean;
   // When this session entered the world (ms): a presence row another world wrote LATER means
   // the character was opened there and this session is the stale one (server.ts presence).

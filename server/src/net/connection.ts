@@ -272,6 +272,7 @@ export class Connection implements Peer {
   // burst emptied msgBucket and kicked the player with terminal RATE. Own bucket, shed.
   private readonly inputBucket = new TokenBucket(60, 120);
   private readonly chatBucket = new TokenBucket(CHAT_PER_SEC, CHAT_BURST);
+  private readonly probationChatBucket = new TokenBucket(0.2, 3); // H2: one line per 5 s
   private chatWarned = false; // told once per flood, not once per dropped line
   private readonly openedAt = Date.now(); // join-latency origin (== the conn.open log line)
   private closeCounted = false; // exactly one omwmp_disconnects_total sample per session
@@ -1022,12 +1023,15 @@ export class Connection implements Peer {
       metrics.protocolErrors.inc({ kind: 'unknown_event' });
       return;
     }
-    if (!this.chatBucket.take(1)) {
+    const onProbation = (this.player.probationUntil ?? 0) > Date.now();
+    if (!this.chatBucket.take(1) || (onProbation && !this.probationChatBucket.take(1))) {
       // TELL them. A line that silently vanishes reads as broken chat and gets retyped,
       // which is the one thing that makes a flood worse.
       if (!this.chatWarned) {
         this.chatWarned = true;
-        serverWhisper(this.player, 'You are sending messages too quickly.');
+        serverWhisper(this.player, onProbation
+          ? 'New accounts can send one message every 5 seconds for their first day.'
+          : 'You are sending messages too quickly.');
         log('warn', 'chat.rate_limited', { ip: this.ip, player: this.player.name });
         metrics.rateLimited.inc({ budget: 'chat' });
       }
@@ -2122,6 +2126,10 @@ export class Connection implements Peer {
     // which refuses SessionReady until one exists, and this fallback becomes unreachable.
     // ponytail: config guarantee, not a second name-resolution path.
     this.player = this.ctx.roster.addAuthed(account.username ?? account.name, accountKey, account.rank, this, this.ip);
+    const created = Date.parse(account.createdAt);
+    if (!this.isSystem && account.rank === 0 && Number.isFinite(created)) {
+      this.player.probationUntil = created + this.ctx.config.limits.probationHours * 3_600_000;
+    }
     // Character slots: every persistence path keys on charId from here on. System peers
     // keep the accountKey default (no character; marked ephemeral below).
     if (char) {

@@ -277,6 +277,19 @@ export function sendText(res: ServerResponse, code: number, text: string): void 
   res.end(text);
 }
 
+/** H6 for the single-world server: /admin and /admin/* from outside `allow` answer 404, as
+ *  if there were no dashboard; everything else `route` claims (/, /play) passes. Empty = all. */
+export function gateAdmin(route: HttpRoute, allow: () => readonly string[]): HttpRoute {
+  return (req, res, url) => {
+    const p = url.pathname;
+    if ((p === '/admin' || p.startsWith('/admin/')) && allow().length
+        && !addressAllowed(clientIp(req), allow())) {
+      sendJson(res, 404, { error: 'not found' }); return true;
+    }
+    return route(req, res, url);
+  };
+}
+
 export function sendJson(res: ServerResponse, code: number, value: unknown): void {
   res.writeHead(code, {
     'content-type': 'application/json',
