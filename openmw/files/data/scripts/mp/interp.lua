@@ -163,10 +163,11 @@ end
 
 -- Ground velocity (u/s, x and y) of the rendered path at `now`, same window as speed(). 0,0 with
 -- fewer than two samples. puppet.lua uses its direction to tell "ahead of a walking target" from
--- "behind it".
-function Interp:velocity(now)
+-- "behind it". `b`: this frame's target(now), when the caller has it -- the same sample.
+function Interp:velocity(now, b)
     if #self.buf < 2 then return 0, 0 end
-    local a, b = sample(self, now - self.cur - SPEED_WINDOW), sample(self, now - self.cur)
+    local a = sample(self, now - self.cur - SPEED_WINDOW)
+    b = b or sample(self, now - self.cur)
     if not (a and b) then return 0, 0 end
     return (b.x - a.x) / SPEED_WINDOW, (b.y - a.y) / SPEED_WINDOW
 end

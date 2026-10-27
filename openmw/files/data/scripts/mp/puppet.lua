@@ -597,7 +597,10 @@ local function onUpdate(dt)
     -- a stop-start every ~170 ms at a walk, 14 u behind on average, and a visible stutter (s172
     -- #172: a friend 75 u behind at p50 while the wire was 27). Standing targets keep the
     -- hysteresis, so the overshoot-and-spin it cured stays cured.
-    local tgtV = interp:speed(now)
+    -- ONE velocity read a frame, off the target already sampled above: speed and velocity
+    -- each re-sampled the same two points (5 buffer scans + 5 tables a frame per puppet, 2 now).
+    local vx, vy = interp:velocity(now, target)
+    local tgtV = math.sqrt(vx * vx + vy * vy)
     if steering and dist2d <= STEER_STOP and tgtV < 20 then steering = false end
     if not steering and (dist2d >= STEER_START or (tgtV >= 20 and dist2d > STEER_STOP)) then steering = true end
 
@@ -669,7 +672,6 @@ local function onUpdate(dt)
     -- 180s as they walk" (prod 2026-10-14, positions 1-3 u off the whole time). Keep facing the
     -- direction of travel and drop to half pace until the target catches up. Within FAR_GAP
     -- only: further out the far-gap snap owns it.
-    local vx, vy = interp:velocity(now)
     -- FACE WHAT THE SERVER FACES; MOVE WHERE IT MOVES. A body only goes forward along its own
     -- heading, so following a target used to mean TURNING toward where it was going: walking NPCs
     -- spun round or snapped their heads side to side (prod 2026-10-15), and a creature backing off
