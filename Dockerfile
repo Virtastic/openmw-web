@@ -26,7 +26,7 @@ WORKDIR /build
 # which is the failure the "no build-wasm cache mount" note below is about. Default 0: the prod
 # and release builds stay the clean compile they have always been.
 ARG CCACHE=0
-# OT3-6/OT3-13: 1 bakes the harness test hooks in (link-openmw.sh). Dev bakes only; release
+# OT3-6/OT3-13: 1 bakes the harness test hooks in (configure-openmw.sh, link-openmw.sh). Dev bakes only; release
 # and prod leave it 0.
 ARG TEST_HOOKS=0
 RUN if [ "$CCACHE" = 1 ]; then apt-get update && apt-get install -y --no-install-recommends ccache && rm -rf /var/lib/apt/lists/*; fi
@@ -67,7 +67,7 @@ RUN --mount=type=cache,target=/ccache,id=omw-wasm64-ccache \
     # omits it and the link would silently bake an EMPTY demo (green build, broken ?nomw). Fail loud
     # instead — the build context must carry the rsynced gamedata.
  && { test -n "$(ls -A fsroot/gamedata 2>/dev/null)" || { echo 'FATAL: fsroot/gamedata is missing/empty — the ?nomw demo would bake empty. Ensure it is rsynced into the build context.' >&2; exit 1; }; } \
- && bash configure-openmw.sh $CCL \
+ && OMW_TEST_HOOKS="$TEST_HOOKS" bash configure-openmw.sh $CCL \
  && BUILD_DIR=build-wasm64 \
  && ninja -C "$BUILD_DIR" -j "${BUILD_JOBS:-8}" components openmw-lib \
  && { [ "$CCACHE" != 1 ] || ccache -s; } \

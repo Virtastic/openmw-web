@@ -83,7 +83,8 @@ emcmake cmake -S "$ROOT/openmw" -B "$ROOT/$BUILD_DIR" -G Ninja \
   `# the MAIN-THREAD canvas -- proven by stack trace: _eglCreateContext -> Browser.createContext` \
   `# -> getContext on the transferred canvas, which throws once it belongs to the worker.` \
   `# Off by default so the shipping build keeps SDL's context exactly as it is.` \
-  -DCMAKE_CXX_FLAGS="${OMW_PROXY:+-DOPENMW_PROXY_GL} -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION $ARCH_FLAG -fwasm-exceptions -msimd128 -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
+  `# OT3-13 (OMW_TEST_HOOKS=1): compile the omw_debug_* QA exports in. Release bakes leave it unset.` \
+  -DCMAKE_CXX_FLAGS="${OMW_PROXY:+-DOPENMW_PROXY_GL} $([ "${OMW_TEST_HOOKS:-0}" = 1 ] && echo -DOMW_TEST_HOOKS) -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION $ARCH_FLAG -fwasm-exceptions -msimd128 -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
   -DCMAKE_C_FLAGS="-pthread -msimd128 $ARCH_FLAG" \
   -DBoost_INCLUDE_DIR="$BOOST" -DBoost_NO_BOOST_CMAKE=OFF \
   -DBoost_USE_STATIC_RUNTIME=ON -DBoost_USE_STATIC_LIBS=ON \

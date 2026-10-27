@@ -5096,6 +5096,9 @@ do
   local link = io.open('./wasm-build/link-openmw.sh'):read('*a')
   check('link-openmw.sh writes buildflags.lua only under OMW_TEST_HOOKS=1',
     link:find('OMW_TEST_HOOKS:-0}" = 1', 1, true) ~= nil)
+  local eng = io.open('./openmw/apps/openmw/engine.cpp'):read('*a')
+  local gate, first = eng:find('#ifdef OMW_TEST_HOOKS', 1, true), eng:find('EMSCRIPTEN_KEEPALIVE void omw_debug_', 1, true)
+  check('engine.cpp compiles the omw_debug_* exports only under OMW_TEST_HOOKS (OT3-13)', gate ~= nil and first ~= nil and gate < first)
 end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
