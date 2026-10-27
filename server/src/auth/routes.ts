@@ -28,7 +28,7 @@ import { OidcError, OidcService, isProviderId, type ProviderId } from './oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, accountForVerifiedEmail, resolveSsoAccount } from './identities';
 import { log } from '../log';
 import { metrics } from '../metrics';
-import { checkInvite } from './invite';
+import { allowSignup, checkInvite } from './invite';
 import { setMwdataCookie } from '../data/locker-routes';
 
 const STATE_COOKIE = 'omwmp_oauth';
@@ -235,6 +235,11 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     if (!known) {
       if (!config.login.allowRegistration)
         return fail(req, res, 'registration_disabled', 'this server does not accept new accounts', ip);
+      // Google and Discord tell us whether the address is verified (oidc.ts keeps it only
+      // then), so an unverified throwaway is refused there. Microsoft id_tokens carry no
+      // email_verified claim at all and custom IdPs vary, so those are not gated.
+      if ((provider === 'google' || provider === 'discord') && !identity.email)
+        return fail(req, res, 'email_unverified', 'a new account needs a verified email at the provider', ip);
       // Budgeted per IP, per identity and server-wide (auth/invite.ts): a wrong passphrase
       // used to cost nothing beyond the general 5-a-minute auth budget.
       const invite = checkInvite(config.login.inviteCode, pending.invite,
@@ -244,6 +249,9 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       if (invite === 'wrong')
         return fail(req, res, 'invite_required', pending.invite?.trim()
           ? `wrong invite code (${pending.invite.trim().length} chars)` : 'no invite code', ip);
+      // Last, so a wrong invite or a refused email does not spend the budget.
+      if (!allowSignup(ip))
+        return fail(req, res, 'signup_limited', 'too many new accounts from this address', ip);
     }
     let resolved;
     try {

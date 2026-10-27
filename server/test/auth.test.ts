@@ -186,6 +186,7 @@ async function boot(
   override: DeepPartial<Config> = {},
   dataDir = tmpDataDir(),
 ): Promise<Harness> {
+  resetInviteBudgets(); // the signup budget is per process; each harness starts with a full one
   // An SSO (multiplayer) server refuses to boot without game data (server.ts). These tests
   // exercise auth, not content, so stub the files detectGameData looks for — presence is all
   // it checks. This keeps the production invariant ("no server without files") intact.
@@ -935,4 +936,22 @@ test('the providers answer carries the invite help link, https only', async (t) 
   const bad = await boot(t, { login: { allowRegistration: true, inviteCode: 'opensesame', inviteHelpUrl: 'javascript:alert(1)' } });
   const b = (await (await fetch(`${bad.base}/auth/providers`)).json()) as { inviteHelpUrl: string };
   assert.equal(b.inviteHelpUrl, '', 'a non-https help link is dropped');
+});
+
+test('H2: new SSO accounts need a verified email (Google/Discord) and are budgeted per IP', async (t) => {
+  await t.test('Google with no verified address creates nothing; with one it does', async (tt) => {
+    const h = await boot(tt);
+    const bare = await ssoLogin(h, { sub: 'g-unverified' }, 'google', h.idp2);
+    assert.equal(bare.error, 'email_unverified', bare.location);
+    assert.deepEqual(await accountNames(h.dataDir), []);
+    const ok = await ssoLogin(h, { sub: 'g-verified', nameHint: 'Verified', email: 'v@example.com' }, 'google', h.idp2);
+    assert.ok(ok.ticket, ok.location);
+  });
+
+  await t.test('ten new accounts from one address, then the eleventh is refused', async (tt) => {
+    const h = await boot(tt, { limits: { loginPerMinPerIp: 1000 } });
+    for (let i = 0; i < 10; i++) assert.ok((await ssoLogin(h, { sub: `farm-${i}`, nameHint: `Farm${i}` })).ticket);
+    assert.equal((await ssoLogin(h, { sub: 'farm-10', nameHint: 'Farm10' })).error, 'signup_limited');
+    assert.ok((await ssoLogin(h, { sub: 'farm-0' })).ticket, 'an existing account still signs in');
+  });
 });

@@ -407,7 +407,13 @@ export class LockerSessionStore {
   // memory only, gone on restart. Given a shared dir the rows outlive the process.
   private readonly db?: DatabaseSync;
 
-  constructor(private readonly ttlMs = 24 * 60 * 60 * 1000, sharedDir?: string) {
+  // isBanned: read on every resolve (BanStore reads through bans.db), so a ban from any
+  // process ends this account's Bearer access on its next request, not when the token expires.
+  constructor(
+    private readonly ttlMs = 24 * 60 * 60 * 1000,
+    sharedDir?: string,
+    private readonly isBanned?: (accountKey: string) => boolean,
+  ) {
     if (sharedDir) {
       try {
         this.db = openDb(join(sharedDir, 'locker-sessions.db'), LOCKER_SESSION_MIGRATIONS);
@@ -451,6 +457,7 @@ export class LockerSessionStore {
       } catch { /* unreadable row: treat as no session */ }
     }
     if (!e || e.expiresAt <= Date.now()) { if (e) this.forget(token); return undefined; }
+    if (this.isBanned?.(e.accountKey)) { this.revokeAccount(e.accountKey); return undefined; }
     // WHO IS PLAYING, in the one deployment where nobody joins a world.
     //
     // The dashboard counts players from the WS roster, which is right for multiplayer and

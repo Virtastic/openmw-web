@@ -24,6 +24,14 @@ let perKey = new IpRateLimiter(5 / 60, 5); // 5 tries, then one every 12 minutes
 // Server-wide ceiling, 20 an hour. The cost: somebody burning it holds up NEW players for up
 // to an hour (returning players never reach this gate). Logged, so the operator sees it.
 let serverWide = new TokenBucket(20 / 3600, 20);
+// NEW ACCOUNTS per address: ten (a household or a LAN party), then one every twenty minutes.
+// A ban is only worth something if minting the next account costs more than a click.
+let signups = new IpRateLimiter(3 / 60, 10);
+
+/** False when this address has created its budget of accounts; spends one when true. */
+export function allowSignup(ip: string): boolean {
+  return signups.allow(ip);
+}
 
 // A TYPED CODE IS READ, NOT COPIED. Prod's code mixes case with 0/O and 1/l/I, and the compare was
 // exact: invited players typed it from Discord (a phone capitalises the first letter) and were
@@ -54,4 +62,5 @@ export function checkInvite(expected: string, given: string | undefined, keys: s
 export function resetInviteBudgets(): void {
   perKey = new IpRateLimiter(5 / 60, 5);
   serverWide = new TokenBucket(20 / 3600, 20);
+  signups = new IpRateLimiter(3 / 60, 10);
 }

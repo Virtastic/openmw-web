@@ -360,7 +360,7 @@ export async function buildFrontDoor(
   // Minted AND resolved here, but PERSISTED: these are signed-in browser sessions, and a bare
   // in-memory store signed every player out on each deploy (the cloud/demo boot then dead-ends
   // at "No locker session"). The rows live beside the login tickets in the shared dir.
-  const lockerSessions = new LockerSessionStore(24 * 60 * 60 * 1000, sharedDir);
+  const lockerSessions = new LockerSessionStore(24 * 60 * 60 * 1000, sharedDir, (k) => !!bans.isAccountBanned(k));
   // CRM capture belongs HERE, not only in a world. Onboarding runs in the launcher, before
   // the player has entered any world, so the capture that lived solely on the WebSocket
   // ProfileSetup path never fired for the flow real players actually take: the key was

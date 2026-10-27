@@ -696,7 +696,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   // Persisted for the same reason as the gateway's: a restart must not sign a playing
   // player out (see LockerSessionStore).
-  const lockerSessions = new LockerSessionStore(24 * 60 * 60 * 1000, sharedDir);
+  const lockerSessions = new LockerSessionStore(24 * 60 * 60 * 1000, sharedDir, (k) => !!bans.isAccountBanned(k));
   const adminSessions = new AdminSessionStore();
   // Claiming the first administrator account needs proof of access to this machine. Armed
   // only while nobody holds the dashboard owner role; see setup-token.ts for why account

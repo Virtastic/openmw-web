@@ -327,6 +327,8 @@
       invite_required: 'This server is invite-only, and that sign-in had no working invite code. '
         + 'Enter the code above and sign in again.',
       invite_locked: 'Too many attempts with a wrong invite code. Wait a while before trying again.',
+      email_unverified: 'New accounts need a verified email address at that provider. Verify it there, then sign in again.',
+      signup_limited: 'Too many new accounts from your network. Wait a while before trying again.',
       banned: 'This account is banned from this server.',
       link_conflict: 'That sign-in is already linked to a different account. Sign in with the account it belongs to, or use another provider.',
       provider_disabled: 'That sign-in provider is switched off on this server. Pick another.',

@@ -53,3 +53,26 @@ test('launcher mints the boot ticket inside bootGame, right before navigating', 
   assert.ok(mint > boot.indexOf("'/worlds'"), 'minted after the world is opened, right before the boot');
   assert.equal(html.split("'/auth/ticket'").length - 1, 1, 'one mint site: bootGame, which every boot path uses');
 });
+
+test('H2: a ban ends the locker session at once: no locker access, no fresh ticket', async (t) => {
+  const accounts = new AccountStore(tmpDataDir());
+  await accounts.createSso('Mallory');
+  const banned = new Set<string>();
+  const sessions = new LockerSessionStore(undefined, undefined, (k) => banned.has(k));
+  const tickets = new LoginTicketStore();
+  const route = ticketRoutes(accounts, sessions, tickets);
+  const server: Server = createServer((req, res) => {
+    void Promise.resolve(route(req, res, new URL(req.url ?? '/', 'http://x'))).then((c: boolean) => { if (!c) { res.writeHead(404); res.end(); } });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => { server.close(); void accounts.close(); });
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+
+  const token = sessions.mint('mallory');
+  const post = () => fetch(`${base}/auth/ticket`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+  assert.equal((await post()).status, 200);
+  banned.add('mallory');
+  assert.equal((await post()).status, 401, 'the ticket route refuses the banned session');
+  banned.delete('mallory');
+  assert.equal(sessions.resolve(token), undefined, 'and the session is revoked, not just hidden');
+});
