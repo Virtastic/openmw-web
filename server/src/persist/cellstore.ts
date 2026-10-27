@@ -43,6 +43,7 @@ export interface PlacedObject {
   rotZ: number;
   count: number;
   byId: number; // transient playerId of the spawner; informational in restored state
+  byAccount?: string; // the spawner's account: who may delete or lock it later (H3); absent = server/legacy
   // The dropped item's own state (wear, charge, soul), so a pickup is not a pristine copy.
   state?: { condition?: number; charge?: number; soul?: string };
   actor?: boolean; // a runtime-spawned net actor the holder streams (kept last by the cell-state trim)

@@ -73,7 +73,7 @@ test('world objects and containers end to end', async (t) => {
     a.sendEvent('ObjectLock', { ref, cellKey: far, lockLevel: 90 });
     a.sendEvent('ObjectDelete', { ref, cellKey: far });
     // Fence on a cell we ARE in: once this round-trips, the far ops have been processed too.
-    a.sendEvent('ObjectLock', { ref: { __refnum: { index: 901, contentFile: 0 } }, cellKey: '0,0', lockLevel: 10 });
+    a.sendEvent('ObjectLock', { ref: { __refnum: { index: 901, contentFile: 0 } }, cellKey: '0,0' }); // an unlock: H3 lets humans lock only their own drops
     await a.waitEvent('ObjectLock');
 
     // THE DOC is the evidence, not the inbox: the relay is already cell-scoped, so nobody
@@ -95,7 +95,7 @@ test('world objects and containers end to end', async (t) => {
     a.sendEvent('ObjectMove', { ref: { __refnum: { index: 123, contentFile: 0 } }, cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0.5 });
     const mv = await a.waitEvent('ObjectMove');
     assert.deepEqual(mv.value, { ref: { __refnum: { index: 123, contentFile: 0 } }, cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0.5, byId: aId });
-    a.sendEvent('ObjectLock', { ref: { __refnum: { index: 200, contentFile: 0 } }, cellKey: '0,0', lockLevel: 50 });
+    a.sendEvent('ObjectLock', { net: barrelNetId, cellKey: '0,0', lockLevel: 50 }); // her own drop
     assert.equal(((await a.waitEvent('ObjectLock')).value as { lockLevel: number }).lockLevel, 50);
     a.sendEvent('ObjectLock', { ref: { __refnum: { index: 201, contentFile: 0 } }, cellKey: '0,0' }); // nil = unlocked
     assert.equal(((await a.waitEvent('ObjectLock')).value as { lockLevel?: number }).lockLevel, undefined);
@@ -108,7 +108,7 @@ test('world objects and containers end to end', async (t) => {
       moved: Record<string, unknown>; locks: Record<string, unknown>; doors: Record<string, boolean>;
     };
     assert.deepEqual(state.moved['c:123:0'], { x: 1, y: 2, z: 3, rotZ: 0.5 });
-    assert.deepEqual(state.locks['c:200:0'], { lockLevel: 50 });
+    assert.deepEqual(state.locks[`n:${barrelNetId}`], { lockLevel: 50 });
     assert.deepEqual(state.locks['c:201:0'], []); // empty table = unlocked (lToJs renders {} as [])
     assert.equal(state.doors['c:500:2'], true);
   });
@@ -201,6 +201,30 @@ test('world objects and containers end to end', async (t) => {
     assert.equal(final.stateSeq, 3 + successes); // 3 mutations before this subtest
     c.close();
     await c.closed;
+  });
+
+  // H3: a human deletes or locks only what it dropped. World content leaves through a take and
+  // is relocked by the peer; another player's drop is theirs.
+  await t.test("a human cannot delete or relock world content or another player's drop", async () => {
+    const content = { __refnum: { index: 202, contentFile: 0 } };
+    b.sendEvent('ObjectDelete', { ref: content, cellKey: '0,0' });
+    b.sendEvent('ObjectLock', { ref: content, cellKey: '0,0', lockLevel: 100 });
+    b.sendEvent('ObjectDelete', { net: barrelNetId, cellKey: '0,0' });
+    b.sendEvent('ObjectLock', { net: barrelNetId, cellKey: '0,0', lockLevel: 100 });
+    // Fence: an unlock is still anyone's (a lockpick); once it relays, the four above are done.
+    b.sendEvent('ObjectLock', { ref: { __refnum: { index: 203, contentFile: 0 } }, cellKey: '0,0' });
+    await a.waitEvent('ObjectLock', (v) => (v as { ref?: { __refnum?: { index: number } } }).ref?.__refnum?.index === 203);
+    a.inbox.events.length = 0;
+    a.sendEvent('ResyncRequest', { cellKey: '0,0' });
+    const state = (await a.waitEvent('WorldCellState')).value as {
+      placed: { netId: number; byAccount?: string }[]; deleted: string[]; locks: Record<string, unknown>;
+    };
+    assert.ok(!state.deleted.includes('c:202:0'), 'a human tombstoned world content');
+    assert.equal(state.locks['c:202:0'], undefined, 'a human relocked world content');
+    const barrel = state.placed.find((p) => p.netId === barrelNetId);
+    assert.ok(barrel, "another player deleted Alice's drop");
+    assert.equal(barrel.byAccount, undefined, 'the owner leaked to clients');
+    assert.deepEqual(state.locks[`n:${barrelNetId}`], { lockLevel: 50 }, "another player relocked Alice's drop");
   });
 
   await t.test('tombstones: delete of placed removes entry, idempotent re-delete', async () => {

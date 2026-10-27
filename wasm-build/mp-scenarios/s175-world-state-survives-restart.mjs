@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // s175: THE WORLD PROCESS RESTARTS AND THE WORLD IS STILL THE WORLD.
 //
-// A host and a guest (friends, Party) change the host's world: a door opened and then locked,
+// A host and a guest (friends, Party) change the host's world: a door unlocked and opened,
 // a chest filled, an item dropped and picked up by the other player, eight hours rested away,
 // and the weather changed by whichever of them holds the region. Both clients must agree on
 // every one of those -- WEATHER included, which nothing in the suite had ever compared across
@@ -79,16 +79,14 @@ export default async function run(ctx) {
     await grantLockerSession(G, GW_PORT, guest.account);
     ctx.log("ok: host and guest share the host's world");
 
-    // ---- 1. a door opened, then locked (the host's hand, the guest's eyes).
+    // ---- 1. a door unlocked, then opened (the host's hand, the guest's eyes). Seyda Neen's door
+    // is locked in the content, so the unlock is the edit that has to survive. No relock: a
+    // player may not relock world content (H3), only the peer does.
     for (const c of [H, G]) await c.waitFor('window.omw.state.doorOpen !== undefined', STEP, `${c.name}: door mirror live`);
-    if (await H.eval('window.omw.state.doorLocked') === 'true') {
-      await H.cmd('door:unlock');
-      await G.waitFor('window.omw.state.doorLocked === "false"', STEP, 'the guest sees the door unlocked');
-    }
+    await H.cmd('door:unlock');
+    await G.waitFor('window.omw.state.doorLocked === "false"', STEP, 'the guest sees the door unlocked');
     if (await H.eval('window.omw.state.doorOpen') !== 'true') await H.cmd('door:toggle');
     await G.waitFor('window.omw.state.doorOpen === "true"', STEP, 'the guest sees the door open');
-    await H.cmd('door:lock:50');
-    await G.waitFor('window.omw.state.doorLocked === "true"', STEP, 'the guest sees the door locked');
 
     // ---- 2. a chest filled (s31's path: the item's WIRE name is what the chest holds).
     const itemH = await ownItem(H);

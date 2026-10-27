@@ -182,7 +182,7 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
   for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
   const body: Record<string, JsLike> = {
     cellKey,
-    placed: Object.values(doc.placed).map((p) => ({ ...p })),
+    placed: Object.values(doc.placed).map(({ byAccount: _owner, ...p }) => p), // the owner stays server-side
     deleted: [...doc.deleted],
     moved: { ...doc.moved },
     locks,
@@ -1266,13 +1266,14 @@ export class WorldState {
       if (ch !== undefined && ch >= 0 && ch <= 1e6) state.charge = ch;
       if (soul) state.soul = soul;
     }
-    const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id, ...(actor ? { actor: true } : {}), ...(Object.keys(state).length ? { state } : {}) };
+    const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id, ...(player.system ? {} : { byAccount: player.accountKey }), ...(actor ? { actor: true } : {}), ...(Object.keys(state).length ? { state } : {}) };
     doc.placed[netRefKey(netId)] = placed;
     this.cells.markDirty(cellKey);
     // Ack first: the requester is in the cell-scoped broadcast set, and per-connection
     // WS FIFO guarantees it maps tempId->netId before its own ObjectPlace arrives.
     player.peer.sendEvent('ObjectSpawnAck', { tempId, netId });
-    this.relayCell(cellKey, 'ObjectPlace', placed);
+    const { byAccount: _owner, ...wire } = placed;
+    this.relayCell(cellKey, 'ObjectPlace', wire);
     log('info', 'world.spawn', { netId, recordId, cellKey, by: player.name });
   }
 
@@ -1385,6 +1386,7 @@ export class WorldState {
     const got = await this.docAndRef(player, body, 'ObjectDelete');
     if (!got) return;
     const { doc, ref, cellKey } = got;
+    if (!this.mayAlter(player, doc, ref, cellKey, 'ObjectDelete')) return;
     // A deleted spawned object drops its placed entry AND leaves a tombstone; all
     // per-object state dies with it. Idempotent: re-deletes change nothing.
     delete doc.placed[ref.key];
@@ -1448,6 +1450,22 @@ export class WorldState {
     this.relayCell(cellKey, 'ObjectDelete', { ...objRefToJs(ref), cellKey, byId: player.id });
   }
 
+  // H3: A HUMAN DELETES OR LOCKS ONLY WHAT IT DROPPED. Both used to accept any object in
+  // sight, persisted: a delete tombstoned world content forever, a lock sealed any door at any
+  // level. A content ref leaves through take() (reach-checked, first asker wins) and is
+  // relocked by the sim peer, which runs the cell's scripts. A net ref already gone from
+  // placed stays an idempotent no-op -- it carries no tombstone and nothing left to grief.
+  private mayAlter(player: Player, doc: CellDoc, ref: ObjRef, cellKey: string, name: string): boolean {
+    if (player.system) return true;
+    const placed = doc.placed[ref.key];
+    if (ref.kind === 'net' && (!placed || placed.byAccount === player.accountKey)) return true;
+    log('warn', 'object.not_owner', { from: player.name, name, cellKey, key: ref.key });
+    // An honest client's cell poll still reports the relocks its own scripts make, so only a
+    // delete (which no shipped client sends for content) is a moderation signal.
+    if (name === 'ObjectDelete') this.moderationNote?.(player.accountKey, 'not_owner');
+    return false;
+  }
+
   private async move(player: Player, body: LTable): Promise<void> {
     const got = await this.docAndRef(player, body, 'ObjectMove');
     if (!got) return;
@@ -1490,6 +1508,8 @@ export class WorldState {
       this.invalid(player, 'ObjectLock');
       return;
     }
+    // An unlock is a lockpick, a key or an Open spell, and the reach gate already ran.
+    if (lockLevel !== null && !this.mayAlter(player, doc, ref, cellKey, 'ObjectLock')) return;
     if (cellMapFull(doc.locks, ref.key, cellKey, 'locks', player.name)) return;
     doc.locks[ref.key] = lockLevel;
     this.cells.markDirty(cellKey);
