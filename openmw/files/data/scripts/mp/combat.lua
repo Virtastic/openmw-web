@@ -171,7 +171,9 @@ end
 function combat.onCast(data)
     local id = deps.ownIdFn()
     if not id or not data.spellId then return end
-    mp.sendEvent('CombatCast', { spellId = data.spellId, casterId = id, kind = 'spell' })
+    -- NET id, like the hit's: the server pairs every spell hit with its cast (OT3-8), and a
+    -- spellmaker spell has a different local id on every engine.
+    mp.sendEvent('CombatCast', { spellId = worldmp.toNet(data.spellId), casterId = id, kind = 'spell' })
 end
 
 -- --------------------------------------------------------------- inbound
@@ -304,6 +306,17 @@ combat.handlers.MP_CombatSpellHit = function(data)
         else
             for i = 1, #effects do indexes[i] = i - 1 end
         end
+        -- A cast its sender calls beneficial crossed the PvP veto on that word alone. The record
+        -- decides, not the word: its harmful effects do not land (OT3-8).
+        if data.beneficial == true then
+            local kept = {}
+            for _, i in ipairs(indexes) do
+                local e = effects[i + 1]
+                local okH, harmful = pcall(function() return core.magic.effects.records[e.id].harmful end)
+                if okH and harmful == false then kept[#kept + 1] = i end
+            end
+            indexes = kept
+        end
         if #indexes == 0 then return end
         types.Actor.activeSpells(victim):add({
             id = spellId,
@@ -321,7 +334,7 @@ end
 combat.handlers.MP_CombatCast = function(data)
     local caster = data.casterId and deps.puppetObjOf(data.casterId)
     if caster and caster:isValid() then
-        pcall(function() caster:sendEvent('MP_CastFx', { spellId = data.spellId }) end)
+        pcall(function() caster:sendEvent('MP_CastFx', { spellId = worldmp.toLocal(data.spellId) }) end)
     end
 end
 

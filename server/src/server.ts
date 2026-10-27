@@ -628,8 +628,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       const doc = playerStore.getCached(caster.charId);
       // Case-blind: engine record ids are, and a spell the client names "Fireball" is the doc's "fireball".
       const want = id.toLowerCase();
-      return doc?.spells?.some((s) => s.toLowerCase() === want) === true
-        || doc?.inventory?.some((i) => i.id.toLowerCase() === want) === true;
+      if (doc?.spells?.some((s) => s.toLowerCase() === want)) return 'spell';
+      return doc?.inventory?.some((i) => i.id.toLowerCase() === want) === true ? 'item' : false;
     },
   });
 

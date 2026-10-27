@@ -48,7 +48,8 @@ export interface CombatCtx {
   // Does this player's doc know the cast's source: a spell in their spellbook, or an item
   // (a scroll, a cast-when-used ring) in their inventory? A modified client used to land any
   // retail spell on anyone in a neighbouring cell with no magicka at all (backlog 252).
-  knowsSource(caster: Player, id: string): boolean;
+  // Which of the two it is matters: a spell must also have been cast (OT3-8).
+  knowsSource(caster: Player, id: string): 'spell' | 'item' | false;
 }
 
 function finite(v: LValue | undefined): number | undefined {
@@ -107,6 +108,12 @@ function checkedMagnitude(v: LValue | undefined, cap: number): number | undefine
 // kill with more messages. Morrowind's fastest weapons swing a few times a second and spells
 // are slower still, so this is far above any real attack sequence and only bites automation.
 // ponytail: per-attacker, not per-victim — a focus-fire party is legitimate.
+// OT3-8: a spell hit lands only after its caster sent a CombatCast of that spell this long
+// ago at most (a bolt's flight; a slow-moving area spell). Items (scrolls, rings) send no
+// cast and are gated by the inventory check alone.
+// ponytail: the cast is the client's word too (no magicka seen spent); a peer-confirmed cast
+// replaces it when the peer reports the caster's magicka.
+const CAST_WINDOW_MS = 10_000;
 const HITS_PER_SEC = 8;
 const HITS_BURST = 20;
 
@@ -415,10 +422,20 @@ export class Combat {
     // The caster must be able to cast it: the spell is in their doc, or the item (a scroll, a
     // cast-when-used ring) is in their inventory. The sim peer forwards the WORLD's casts at
     // avatars (an NPC's spell on a puppet) and has no doc to check against.
-    if (player.system !== true && !this.ctx.knowsSource(player, spellId)) {
+    const source = player.system === true ? 'item' : this.ctx.knowsSource(player, spellId);
+    if (!source) {
       this.drop(player, 'CombatSpellHit', 'spell not known to the caster', { spellId });
       return;
     }
+    const castAt = player.casts?.get(spellId.toLowerCase());
+    if (source === 'spell' && (castAt === undefined || Date.now() - castAt > CAST_WINDOW_MS)) {
+      this.drop(player, 'CombatSpellHit', 'spell hit with no cast', { spellId });
+      return;
+    }
+    // What the client says about magnitude and Harmful is NOT what lands: the owner (a peer,
+    // or with no holder the victim's own client) applies the RECORD by id and indexes, re-rolls
+    // the record's range, and drops harmful effects from a cast called beneficial
+    // (combat.lua MP_CombatSpellHit). The cap above only bounds what crosses the wire.
     const owner = this.resolveOwner(player, target, 'CombatSpellHit', beneficial);
     if (!owner) return;
     owner.peer.sendEvent('CombatSpellHit', { ...(lToJs(body) as Record<string, JsLike>), attackerId: player.id, beneficial });
@@ -448,7 +465,15 @@ export class Combat {
       this.drop(player, 'CombatCast', 'invalid target');
       return;
     }
-    if (!player.system) player.lastCastAt = Date.now(); // #361: a Recall/Intervention leaves this trace
+    if (!player.system) {
+      const now = Date.now();
+      player.lastCastAt = now; // #361: a Recall/Intervention leaves this trace
+      player.casts ??= new Map();
+      if (player.casts.size >= 32) {
+        for (const [id, at] of player.casts) if (now - at > CAST_WINDOW_MS) player.casts.delete(id);
+      }
+      player.casts.set(spellId.toLowerCase(), now);
+    }
     this.relayCosmetic(player, 'CombatCast', body);
   }
 
