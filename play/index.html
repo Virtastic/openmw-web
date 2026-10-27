@@ -836,11 +836,13 @@ try {
      // with low fps = GPU/compositor-bound. tier: the settings tier this client booted with.
      var heapMb = window.Module && Module.wasmMemory ? Math.round(Module.wasmMemory.buffer.byteLength / 1048576) : '-';
      var jsMb = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : '-';
+     var mouse = window.__omwMouse; // the pointer-lock filter's counters (see mouseFilter)
      var line = '[telemetry] fps=' + (frames / secs).toFixed(1) + ' worstFrameMs=' + Math.round(worstGap)
        + ' pumps=' + (window.__fps || 0) + ' frameMs=' + (window.__frameMs || '-') + ' tier=' + ((window.__omwTier && window.__omwTier.tier) || '-') + ' heapMb=' + heapMb + ' jsMb=' + jsMb + ' taps=' + taps
        + (document.hidden || wasHidden ? ' hidden=1' : '') + (sfsD ? ' sfsMiss=' + sfsD.m + ' sfsStallMs=' + sfsD.ms + ' sfsWarm=' + (sfs.warmed || 0) + (sfs.warmErr ? ' sfsWarmErr=' + String(sfs.warmErr).replace(/\s+/g, '_') : '') + (sfs.warmDone ? ' sfsWarmDone=1' : '') + (sfs.cacheSlow ? ' sfsCacheSlow=1' : '') + (sfs.store ? ' sfsStore=' + sfs.store : '') + (sfs.pfFiles ? ' sfsPf=' + sfs.pfFiles + '/' + (sfs.pfFetched || 0) : '') + ' sfsSlow=' + sfsD.slow + (sfsD.slow ? ' sfsSlowPf=' + sfsD.pf + '/' + sfsD.nopf : '') + (slowTop ? ' sfsSlowTop=' + slowTop : '') + (sfs.roomMb !== undefined ? ' sfsRoomMb=' + sfs.roomMb : '') + ' sfsEvict=' + (sfs.evictions || 0) + ' sfsLru=' + (sfs.cached || 0) + '/' + (sfs.lruMax || 0) : '')
        + ' div p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + q(0.999) + ' n=' + div.length
        + ' snaps=' + snaps + ' actorBatches/s=' + rate('a') + ' moves/s=' + rate('m')
+       + (mouse ? ' mBig=' + mouse.big + ' mMax=' + mouse.max + ' mDrop=' + mouse.drop + ' mFree=' + mouse.free + ' mRaw=' + mouse.raw : '')
        + (window.__omwMPSettling ? ' settling=1' : '') + (s.chargenDone !== '1' ? ' chargen=1' : '')
        + ' cell=' + (s.cell || '?') + ' holder=' + (s.authorityHolder || '?') + ' actors=' + (s.actorCount || '?')
        + ' puppeted=' + (s.puppetedActors || '?')
@@ -865,6 +867,7 @@ try {
      }
      frames = 0; worstGap = 0; div = []; snaps = 0; wsRx = {}; npcGap = []; npcPath = []; npcWorst = { d2: -1 }; npcLocalFar = 0; npcFacingN = 0; npcFacingBad = 0; npcFacingWhy = [];
      npcNoPose = 0; npcNoPoseRec = {}; wasHidden = false;
+     if (mouse) { mouse.big = 0; mouse.max = 0; mouse.drop = 0; mouse.free = 0; }
      fetch('/clientlog', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' },
        body: JSON.stringify({ session: session, lines: [line] }) }).catch(function(){});
    }, 5000);
@@ -5222,11 +5225,57 @@ try {
   // Instead deny the capability itself while an overlay is up — the engine may handle the
   // click, it just cannot steal the cursor. Resolves rather than rejects: the caller may
   // attach .then(), and an unhandled rejection every click is its own bug.
+  //
+  // RAW MOUSE (1.7.15, "the camera flicks to random spots, even while walking"). Every lock is
+  // asked for with unadjustedMovement: Chrome on Windows with OS pointer acceleration delivers
+  // the odd movementX/Y of a few hundred px under an ordinary lock, which SDL turns straight into
+  // yaw. Raw input is also what native OpenMW reads (SDL relative mode). A browser or OS that
+  // cannot do it rejects with NotSupportedError, and the plain lock is taken instead.
+  var mouseStats = window.__omwMouse = { big: 0, max: 0, drop: 0, free: 0, raw: '-' };
   var _requestPointerLock = Element.prototype.requestPointerLock;
-  Element.prototype.requestPointerLock = function(){
+  Element.prototype.requestPointerLock = function(opts){
     if (window.__omwUiHold) return Promise.resolve();
-    return _requestPointerLock.apply(this, arguments);
+    var el = this;
+    function plain(){ mouseStats.raw = '0'; return _requestPointerLock.call(el); }
+    var p;
+    try { p = _requestPointerLock.call(el, Object.assign({}, opts, { unadjustedMovement: true })); }
+    catch (e) { return plain(); }
+    if (!p || typeof p.then !== 'function') return p; // a browser without the promise form
+    return p.then(function(){ mouseStats.raw = '1'; },
+      function(err){ if (err && err.name === 'NotSupportedError') return plain(); throw err; });
   };
+  // OUTLIER FILTER + the numbers that prove it. The engine's spike guard (mousemanager.cpp) only
+  // clamps past 1000 px and fired 0 times on prod in 24 h, so a flick is smaller than that. A
+  // single locked mousemove far out of line with the motion of the last 100 ms (>= 200 px and
+  // more than 8x the largest of them) is not a hand moving: it is withheld from SDL, which
+  // listens on the canvas, by stopping it at window capture. Never two in a row -- a second big
+  // one is real motion (a fast flick from rest at low fps), so it passes. Telemetry carries
+  // mBig/mMax/mDrop (locked events >= 200 px, the largest, the withheld) and mFree: mousemoves
+  // that turned the camera with NO lock held (SDL then turns by cursor-position deltas, which
+  // jump whenever the cursor leaves the canvas and comes back elsewhere).
+  // -- mouse filter begin
+  var mouseHist = [], mouseDropped = false;
+  function mouseFilter(e){
+    if (document.pointerLockElement !== canvasEl) {
+      if (e.target === canvasEl && !window.__omwUiHold && ((window.omw && window.omw.state) || {}).uiMode === 'none') mouseStats.free++;
+      return true;
+    }
+    var d = Math.max(Math.abs(e.movementX || 0), Math.abs(e.movementY || 0)), now = e.timeStamp, recent = 0;
+    while (mouseHist.length && now - mouseHist[0].t > 100) mouseHist.shift();
+    for (var i = 0; i < mouseHist.length; i++) if (mouseHist[i].d > recent) recent = mouseHist[i].d;
+    if (d > mouseStats.max) mouseStats.max = d;
+    if (d >= 200) mouseStats.big++;
+    if (d >= 200 && d > 8 * recent && !mouseDropped) {
+      mouseDropped = true; mouseStats.drop++;
+      e.stopImmediatePropagation();
+      return false; // and kept out of the history: a spike must not vouch for the next one
+    }
+    mouseDropped = false;
+    mouseHist.push({ t: now, d: d });
+    return true;
+  }
+  // -- mouse filter end
+  window.addEventListener('mousemove', mouseFilter, true);
   // Focus shield. SDL's mouse handlers sit on document/window and call preventDefault() on
   // mousedown — and moving focus to a clicked field is a DEFAULT ACTION, so that silently
   // suppresses it. Symptom: activeElement stays BODY, the field never takes the caret, and
