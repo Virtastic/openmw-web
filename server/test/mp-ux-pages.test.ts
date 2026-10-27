@@ -37,3 +37,9 @@ test('#89: a friend playing solo is listed as such, with no join button', opts, 
   // The join-as hint is joinable rows only.
   assert.ok(launcher.includes('if (ready[0] && !solo) {'));
 });
+
+test('send home shows only on a guest in your own world, not on the server-wide list', opts, () => {
+  // The Players list is every player on the server; rows from other worlds carry no id.
+  assert.ok(index.includes("if (amHost && p.id != null) acts.push(['send home'"), 'send home is not gated to local guests');
+  assert.ok(!/if \(amHost\) acts\.push\(\['send home'/.test(index), 'an ungated send home is back');
+});

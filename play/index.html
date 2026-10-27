@@ -5632,8 +5632,10 @@ try {
         // Everything that targets a PERSON goes by name for the same reason.
         acts.push(['mute', function(){ cmd('social:MuteAdd:'+p.name); }]);
         // THE HOST'S KICK. Sends that one guest home, keeps the friendship and the open
-        // door -- the ordinary lobby control, next to the harsher block.
-        if (amHost) acts.push(['send home', function(){ cmd('social:WorldKick:'+p.name); setStatus('Sent home.'); }]);
+        // door -- the ordinary lobby control, next to the harsher block. Only on a guest IN
+        // YOUR WORLD: this list is the whole server's (broadcastServerRoster), and only rows
+        // from your own world carry an id. Elsewhere the server refuses it (no_such_player).
+        if (amHost && p.id != null) acts.push(['send home', function(){ cmd('social:WorldKick:'+p.name); setStatus('Sent home.'); }]);
         acts.push(['block', function(){ cmd('social:BlockAdd:'+p.name); }]);
         // REPORT, one click from the row. The typed /report is gone; this is the only way,
         // and it files the same report with the same chat context attached.
