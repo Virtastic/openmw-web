@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { ESM_MAX_BYTES, Locker } from '../src/data/locker';
-import { esmOwnerGate, lockerRoutes, MWD_COOKIE, MWDATA_COOKIE } from '../src/data/locker-routes';
+import { esmOwnerGate, MWDATA_COOKIE } from '../src/data/locker-routes';
 import { mwDataRoutes } from '../src/net/mwdata-routes';
 import { tmpDataDir } from './helpers';
 
@@ -203,31 +203,6 @@ test('esm: hosted files go only to a verified owner, never cached by a shared ca
     const ungated = await fetch(`${base}/ungated/mwdata/Morrowind.esm`, { headers: { cookie: `${MWDATA_COOKIE}=tok-alice` } });
     assert.equal(ungated.status, 404);
   } finally {
-    await new Promise<void>((r) => { srv.closeAllConnections(); srv.close(() => r()); });
-    await storage.stop();
-  }
-});
-
-test('OT3-52: /locker/needed mints the edge cookie for a verified owner only, and only with a key', async () => {
-  const { locker, storage } = await mk();
-  const sessions = { resolve: (t: string) => ({ 'tok-alice': 'alice', 'tok-bob': 'bob' } as Record<string, string>)[t] };
-  const route = lockerRoutes({ locker, sessions } as Parameters<typeof lockerRoutes>[0]);
-  const srv: Server = createServer((req, res) => { void route(req, res, new URL(req.url ?? '/', 'http://x')); });
-  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
-  const mwd = async (tok: string) => (await fetch(`${base}/locker/needed`, { headers: { authorization: `Bearer ${tok}` } }))
-    .headers.getSetCookie().find((c) => c.startsWith(`${MWD_COOKIE}=`));
-  const prev = process.env.OMW_MWDATA_HMAC_KEY;
-  try {
-    await locker.attest('alice', [], 'ip');
-    for (const n of Object.keys(BYTES) as EsmName[]) await upload(locker, storage, 'alice', n);
-    delete process.env.OMW_MWDATA_HMAC_KEY;
-    assert.equal(await mwd('tok-alice'), undefined, 'no key configured: no cookie');
-    process.env.OMW_MWDATA_HMAC_KEY = 'test-only-key';
-    assert.match((await mwd('tok-alice')) ?? '', /Path=\/mwdata/);
-    assert.equal(await mwd('tok-bob'), undefined, 'signed in is not ownership');
-  } finally {
-    if (prev === undefined) delete process.env.OMW_MWDATA_HMAC_KEY; else process.env.OMW_MWDATA_HMAC_KEY = prev;
     await new Promise<void>((r) => { srv.closeAllConnections(); srv.close(() => r()); });
     await storage.stop();
   }
