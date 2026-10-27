@@ -482,6 +482,25 @@ function handleTalkedTo(ctx: StateCtx, player: Player, body: LTable): boolean {
   return true;
 }
 
+// OT3-16: the skill books this character has read, so a relog does not teach them again.
+const MAX_USED_BOOKS = 2048;
+function handleBooksRead(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const list = body.get('list');
+  if (!(list instanceof Map) || list.size === 0 || list.size > 512) return false;
+  const ids: string[] = [];
+  for (const [, v] of list) {
+    const id = recordId(v);
+    if (!id) return false;
+    ids.push(id);
+  }
+  ctx.store.update(player.charId, (doc) => {
+    const set = new Set(doc.usedBooks ?? []);
+    for (const id of ids) set.add(id);
+    doc.usedBooks = [...set].slice(-MAX_USED_BOOKS);
+  });
+  return true;
+}
+
 function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   const level = finite(body.get('level'));
   if (level === undefined || !Number.isInteger(level) || level < 1 || level > 255) return false;
@@ -1185,6 +1204,7 @@ const HANDLERS: Record<string, (ctx: StateCtx, player: Player, body: LTable) => 
   PlayerLevel: handleLevel,
   PlayerMark: handleMark,
   PlayerTalkedTo: handleTalkedTo,
+  PlayerBooksRead: handleBooksRead,
   PlayerSpellbook: handleSpellbook,
   PlayerInventory: handleInventory,
   PlayerItemAcquired: handleItemAcquired,

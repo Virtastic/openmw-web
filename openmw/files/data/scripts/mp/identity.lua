@@ -503,6 +503,7 @@ end
 -- Read off the actors around us (a conversation happens within reach), sent as it is learned,
 -- persisted on the doc, and put back on every NPC we meet again after a relog.
 local talkedTo = {} -- obj.id -> true (own doc's set; the record seeds it)
+local usedBooks = {} -- book record id -> true, already on the server's doc
 local function talkedToTick()
     if not (mp.talkedTo and mp.setTalkedTo) then return end
     local fresh = {}
@@ -697,6 +698,17 @@ function identity.tick(now)
             if mfp ~= last.mark then
                 last.mark = mfp
                 mp.sendEvent('PlayerMark', prog.mark)
+            end
+        end
+        -- Skill books read (OT3-16): only fresh ids go out; the server keeps the union.
+        if mp.usedIds then
+            local ok, ids = pcall(mp.usedIds)
+            if ok and type(ids) == 'table' then
+                local fresh = {}
+                for _, id in ipairs(ids) do
+                    if not usedBooks[id] then usedBooks[id] = true; fresh[#fresh + 1] = id end
+                end
+                if #fresh > 0 then mp.sendEvent('PlayerBooksRead', { list = fresh }) end
             end
         end
         -- Spellbook add/remove diff on the same 1 s cadence.
@@ -992,6 +1004,12 @@ local function applyPhase2(record)
         -- The Mark spot (backlog 155). Its own pcall: an older engine has no setMark.
         if record.mark and mp.setMark and type(record.mark.cell) == 'string' and record.mark.cell ~= '' then
             pcall(mp.setMark, record.mark.cell, record.mark.x or 0, record.mark.y or 0, record.mark.z or 0)
+        end
+        -- Skill books already read (OT3-16): flagged again so a re-read teaches nothing.
+        if type(record.usedBooks) == 'table' and mp.markUsed then
+            for _, id in ipairs(record.usedBooks) do
+                if type(id) == 'string' and pcall(mp.markUsed, id) then usedBooks[id] = true end
+            end
         end
         if record.equipment then
             -- Server doc shape: flat slot->recordId map (persist/playerstore.ts). Items are

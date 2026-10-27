@@ -41,6 +41,18 @@ test('PlayerTalkedTo lands the NPCs spoken to on the character doc, deduplicated
   assert.deepEqual([...(doc?.talkedTo ?? [])].sort(), ['c:11:0', 'c:12:0', 'c:13:0'], 'the talked-to set did not land once each');
 });
 
+test('PlayerBooksRead lands the skill books read on the doc, deduplicated; a non-id is refused (OT3-16)', async (t) => {
+  const { server, dataDir } = await boot(t);
+  const { c, charId } = await player(t, server.port, 'Reader');
+  c.sendEvent('PlayerBooksRead', { list: ['bookskill_alchemy1', 'bookskill_block2'] });
+  c.sendEvent('PlayerBooksRead', { list: ['bookskill_block2', 'bookskill_axe3'] });
+  c.sendEvent('PlayerBooksRead', { list: [42] });
+  await c.waitEvent('StateRefused', (v) => (v as { kind?: string }).kind === 'PlayerBooksRead');
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId) as { usedBooks?: string[] } | undefined;
+  assert.deepEqual([...(doc?.usedBooks ?? [])].sort(), ['bookskill_alchemy1', 'bookskill_axe3', 'bookskill_block2']);
+});
+
 test('BlockRemove lifts a block: a friend request refused as blocked goes through after it', async (t) => {
   const { server } = await boot(t);
   const { c: a } = await player(t, server.port, 'Alice');

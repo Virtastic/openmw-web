@@ -327,6 +327,20 @@ namespace MWMP
             pos.pos[2] = z;
             stats.setMarkedPosition(ESM::RefId::deserializeText(cell), pos);
         };
+        // The skill books this character has read (OT3-16). NpcStats only, so every relog let
+        // each book raise its skill again. usedIds hands out the set; markUsed puts one back.
+        api["usedIds"] = [](sol::this_state state) {
+            sol::table out(state, sol::create);
+            const MWWorld::Ptr player = MWMechanics::getPlayer();
+            int i = 1;
+            for (const ESM::RefId& id : player.getClass().getNpcStats(player).getUsedIds())
+                out[i++] = id.serializeText();
+            return out;
+        };
+        api["markUsed"] = [](std::string_view id) {
+            const MWWorld::Ptr player = MWMechanics::getPlayer();
+            player.getClass().getNpcStats(player).flagAsUsed(ESM::RefId::deserializeText(id));
+        };
         // Backlog 312: the shield sound of a block the avatar made on the peer since the last
         // call ('' = none). Drained with the avatar's stats report (global.lua avatarStatsTick).
         api["takeBlock"] = [](const sol::object& obj) -> std::string {

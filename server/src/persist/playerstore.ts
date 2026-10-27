@@ -121,6 +121,8 @@ export interface PlayerDoc {
   topics?: string[];
   // Backlog 230: content-ref keys of the NPCs this character has talked to (TalkedToPc).
   talkedTo?: string[];
+  // OT3-16: skill books read (NpcStats used ids), flagged again at join so none teaches twice.
+  usedBooks?: string[];
   factions?: Record<string, { rank: number; reputation?: number; expelled?: boolean }>;
   bounty?: number;
 }
