@@ -32,7 +32,7 @@ import { Locker, loadVanillaManifest } from '../data/locker';
 import { ensureVanillaManifest } from '../data/vanilla-manifest';
 import { lockerPublicBase, lockerStorageFrom, blobRoutes, FsStorage } from '../data/fsstorage';
 import { saveRoutes, eraseSaves } from '../data/save-routes';
-import { lockerRoutes } from '../data/locker-routes';
+import { lockerRoutes, esmOwnerGate } from '../data/locker-routes';
 import type { HttpRoute } from '../net/http';
 import { log } from '../log';
 
@@ -276,6 +276,8 @@ export interface FrontDoor {
   /** Mint a locker session for an account. BROWSER HARNESS ONLY -- main.ts wires it only
    *  when harness auth is already enabled, so production never has a caller. */
   mintSession(accountKey: string): string;
+  /** deliveryModel "esm": may this request read /mwdata/* (a verified owner)? */
+  mwdataGate(req: IncomingMessage): Promise<boolean>;
   /** Flush anything queued for outbound integrations before the process exits. */
   close(): Promise<void>;
   /** Derived private-world id for one of this account's characters; undefined = no such
@@ -388,6 +390,8 @@ export async function buildFrontDoor(
   await ensureVanillaManifest(sharedDir, gameDataDir(sharedDir));
   locker.configureAccepted(await loadVanillaManifest(sharedDir), [], {
     acceptByNameAndSize: config.locker.acceptByNameAndSize,
+    esmOnly: () => config.setup.deliveryModel === 'esm',
+    esmHashes: config.locker.esmHashes,
   });
 
   const providers = ['google', 'discord', 'microsoft'].filter(
@@ -479,6 +483,8 @@ export async function buildFrontDoor(
     // in main.ts only when the operator has already opted into harness auth, so in production
     // the route below simply does not exist rather than existing and checking a flag.
     mintSession: (accountKey: string) => lockerSessions.mint(accountKey),
+    /** deliveryModel "esm": who may read /mwdata/* (verified owners only). */
+    mwdataGate: esmOwnerGate(locker, lockerSessions),
     // The private-world id, derived HERE from the character rather than trusted from the
     // launcher. A stale tab computed it from a character list that no longer matched reality,
     // so worlds got minted for characters that did not exist and the player's real character

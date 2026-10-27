@@ -139,6 +139,8 @@ export interface Config {
     endpoint: string; region: string; bucket: string; maxBytesPerAccount: number;
     acceptByNameAndSize: boolean; publicBase: string; maxSaveBytesPerAccount: number;
     accessKeyId: string; secretAccessKey: string;
+    /** deliveryModel "esm": extra accepted ESM hashes, "<Name>.esm:<sha256>". */
+    esmHashes: string[];
   };
   rules: {
     respawnCellKey: string;
@@ -592,6 +594,7 @@ function validate(t: Tree): Config {
       // supplies them. See s3FromEnv.
       accessKeyId: optStr(t, 'locker', 'accessKeyId', ''),
       secretAccessKey: optStr(t, 'locker', 'secretAccessKey', ''),
+      esmHashes: optStrArray(t, 'locker', 'esmHashes', []),
     },
     rules: {
       respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),

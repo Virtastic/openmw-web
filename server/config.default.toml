@@ -166,6 +166,11 @@ publicBase = ""                   # e.g. https://mp.example.com
 # Server-side savegames, a separate budget from the game-data library above: a full library
 # must never be the reason a player cannot save. 512 MiB is many .omwsave slots.
 maxSaveBytesPerAccount = 536870912
+# [setup] deliveryModel = "esm" only. A player proves ownership by uploading Morrowind.esm,
+# Tribunal.esm and Bloodmoon.esm; each must hash-match EXACTLY. Accepted by default: the
+# server's own copies (vanilla-manifest.json). Add other genuine releases here, e.g.
+# esmHashes = ["Morrowind.esm:<64 hex sha256>", "Tribunal.esm:<64 hex sha256>"]
+esmHashes = []
 
 [economy]
 # Public-realm rule: unique/named NPCs respawn there (the world is stateless), so their
@@ -429,6 +434,9 @@ deploymentMode = ""
 # own copy to a per-account locker here — is no longer offered anywhere in the dashboard
 # (per-player cloud copies are the game launcher's own feature), but a config that already
 # says "verify" is still honoured at runtime.
+# "esm" (set by hand; the wizard does not offer it): each player uploads ONLY the three
+# ESMs, verified by hash ([locker] esmHashes); the server then streams everything else to
+# that account. Hosted files are never served to an account without verified ownership.
 deliveryModel = ""
 # "local" or "s3": where uploaded files live.
 storage = ""

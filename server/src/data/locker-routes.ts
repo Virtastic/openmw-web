@@ -19,7 +19,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Locker, LockerFile } from './locker';
-import { clientIp, isSecureRequest } from '../net/http';
+import { clientIp, isSecureRequest, readCookie, setCookie } from '../net/http';
 import { log } from '../log';
 
 export interface LockerSessions {
@@ -39,6 +39,26 @@ export interface LockerRouteDeps {
   /** Does THIS server hand the game out itself ([setup] deliveryModel = "serve")? When it
    *  does, a player has nothing to upload and must not be asked to. */
   servesGameData?: () => boolean;
+}
+
+// deliveryModel "esm" streams the server's own copy through /mwdata/*. Those reads come from
+// the engine's StreamFS worker as plain same-origin Range fetches that cannot carry a Bearer
+// header, so sign-in also drops the locker token into this HttpOnly cookie (auth/routes.ts).
+export const MWDATA_COOKIE = 'omw_mw';
+
+export function setMwdataCookie(req: IncomingMessage, res: ServerResponse, token: string): void {
+  if (token) setCookie(res, MWDATA_COOKIE, token, { maxAgeSec: 24 * 60 * 60, path: '/', secure: isSecureRequest(req) });
+}
+
+/** May this request read the hosted game? A live locker session (Bearer or the cookie) whose
+ *  account has verified ownership of all three ESMs. */
+export function esmOwnerGate(locker: Locker, sessions: LockerSessions) {
+  return async (req: IncomingMessage): Promise<boolean> => {
+    const auth = req.headers.authorization ?? '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : readCookie(req, MWDATA_COOKIE);
+    const accountKey = token ? sessions.resolve(token) : undefined;
+    return accountKey !== undefined && await locker.ownsGame(accountKey);
+  };
 }
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -163,8 +183,15 @@ export function lockerRoutes(deps: LockerRouteDeps) {
         // `content` is unrelated and still sent: it is what the world LOADS, and a client whose
         // content does not match is refused at the door whoever supplied the bytes.
         const serves = deps.servesGameData?.() === true;
+        // esm: the checklist is the three ESMs; `hosted` tells the page to boot the server's
+        // data once `owned` (verified, not merely uploaded) is true.
+        const esm = deps.locker.esmMode;
+        // Re-issued here too, so a page restored from a saved token (F5, a new tab) still
+        // gets the cookie the hosted-file reads need.
+        if (esm) setMwdataCookie(req, res, token);
         json(res, 200, {
           files: serves ? [] : deps.locker.requiredManifest(),
+          ...(esm ? { hosted: true, owned: await deps.locker.ownsGame(accountKey) } : {}),
           // What the world runs. A client missing any of these cannot join it, so the
           // launcher refuses to start rather than letting them find out three screens later.
           content: deps.requiredContent?.() ?? [],

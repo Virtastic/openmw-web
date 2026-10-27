@@ -94,6 +94,8 @@ export interface LockerFile {
   name: string;
   size: number;
   sha256: string;
+  /** deliveryModel "esm": the server hashed the bytes that landed and they matched. */
+  verified?: boolean;
 }
 
 /** One row of the upload wizard's checklist. */
@@ -119,6 +121,12 @@ export interface LockerNeed {
 // this to match. Mods stay required: a plugin the world loads changes the simulation, which
 // is not the same kind of thing as content Bethesda sold separately.
 const EXPANSION = /^(tribunal|bloodmoon)\.(esm|bsa)$/i;
+
+// deliveryModel "esm": proof of ownership is these three plugins, nothing else. The server
+// hosts the rest, so a player uploads ~95 MB once instead of the whole Data Files folder.
+const ESM_NAMES = ['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm'];
+// GOTY Morrowind.esm is ~80 MB; anything far past that is not one of these files.
+export const ESM_MAX_BYTES = 128 * 2 ** 20;
 
 export type UploadRefusal =
   | 'no-attestation'
@@ -221,6 +229,11 @@ export class Locker {
   private knownSizes = new Map<string, number[]>();
   private acceptByNameAndSize = true;
   private sizeTolerance = 0.05; // ±5% covers minor per-distribution differences
+  // deliveryModel "esm" (read live, so a settings change needs no restart): only the three
+  // ESMs are asked for, and each must match one of these EXACT hashes — never name+size,
+  // because a verified ESM unlocks the server's hosted copy of everything else.
+  private esmOnly: () => boolean = () => false;
+  private esmAccepted = new Map<string, Set<string>>(); // nameLower -> accepted sha256s
 
   constructor(private readonly settings: LockerSettings) {
     this.db = openDb(join(settings.dataDir, 'locker.db'), LOCKER_MIGRATIONS);
@@ -240,7 +253,7 @@ export class Locker {
   configureAccepted(
     vanilla: VanillaManifest,
     modHashes: Iterable<string> = [],
-    opts: { acceptByNameAndSize?: boolean } = {},
+    opts: { acceptByNameAndSize?: boolean; esmOnly?: () => boolean; esmHashes?: readonly string[] } = {},
   ): void {
     this.vanilla = vanilla;
     this.accepted = new Set([
@@ -255,11 +268,26 @@ export class Locker {
       this.knownSizes.set(k, sizes);
     }
     if (opts.acceptByNameAndSize !== undefined) this.acceptByNameAndSize = opts.acceptByNameAndSize;
+    if (opts.esmOnly) this.esmOnly = opts.esmOnly;
+    // Default: the hashes of the server's OWN copies (the vanilla manifest is generated from
+    // its game-data folder), plus "<Name>.esm:<sha256>" extras for other genuine releases.
+    this.esmAccepted = new Map(ESM_NAMES.map((n) => [n.toLowerCase(), new Set<string>()]));
+    const extra = (opts.esmHashes ?? []).map((e) => {
+      const m = /^([^:]+):([0-9a-f]{64})$/i.exec(e.trim());
+      if (!m) log('error', 'locker.bad_esm_hash', { entry: e });
+      return m ? { name: m[1]!, sha256: m[2]! } : undefined;
+    });
+    for (const f of [...vanilla.files, ...extra]) {
+      if (f) this.esmAccepted.get(f.name.toLowerCase())?.add(f.sha256.toLowerCase());
+    }
     log('info', 'locker.accepted_configured', {
       vanilla: vanilla.files.length, hashes: this.accepted.size, names: this.knownSizes.size,
       byNameAndSize: this.acceptByNameAndSize,
     });
   }
+
+  /** deliveryModel "esm": the player uploads only the three ESMs; the server hosts the rest. */
+  get esmMode(): boolean { return this.esmOnly(); }
 
   /** The configured backend, for callers that must reach it directly (CORS registration). */
   get storage(): LockerSettings['storage'] { return this.settings.storage; }
@@ -346,6 +374,14 @@ export class Locker {
   // server deploy from two different workflows: for the minutes between them an older cached
   // index.html reads this list, and it must keep seeing the strict answer it understands.
   requiredManifest(): LockerNeed[] {
+    if (this.esmOnly()) {
+      // All three are required, solo or not: the hosted world loads all three.
+      return ESM_NAMES.map((name) => ({
+        name,
+        size: this.vanilla.files.find((f) => f.name.toLowerCase() === name.toLowerCase())?.size ?? 0,
+        required: true,
+      }));
+    }
     const byName = new Map<string, { name: string; size: number }>();
     for (const f of this.vanilla.files) {
       if (f.name.includes('/')) continue; // media is summarised as folder rows below
@@ -430,7 +466,16 @@ export class Locker {
   ): Promise<{ ok: true; url: string; key: string } | { ok: false; reason: UploadRefusal }> {
     if (!this.settings.storage) return { ok: false, reason: 'not-recognized' };
     if (!(await this.attestationOf(accountKey))) return { ok: false, reason: 'no-attestation' };
-    if (file.name === MEDIA_PACK) {
+    if (this.esmOnly()) {
+      const name = ESM_NAMES.find((n) => n.toLowerCase() === file.name.toLowerCase());
+      if (!name) return { ok: false, reason: 'not-recognized' };
+      if (file.size > ESM_MAX_BYTES) return { ok: false, reason: 'too-large' };
+      if (!this.esmAccepted.get(name.toLowerCase())?.has(String(file.sha256).toLowerCase())) {
+        log('warn', 'locker.refused_esm', { account: accountKey, name: file.name, size: file.size, sha256: file.sha256 });
+        return { ok: false, reason: 'not-recognized' };
+      }
+      file = { ...file, name };
+    } else if (file.name === MEDIA_PACK) {
       // The pack's own hash cannot be in the vanilla manifest (it is built client-side), so
       // its gates are: the manifest must actually list media, and the size must be plausible
       // for that media. The REAL check is verifyMediaPack after upload — every packed file is
@@ -471,6 +516,7 @@ export class Locker {
   ): Promise<{ ok: true } | { ok: false; reason: UploadRefusal }> {
     const key = `gamedata/${accountKey}/${file.name}`;
     const storage = this.settings.storage;
+    if (this.esmOnly()) return this.recordEsm(accountKey, file);
     if (storage) {
       let head: Buffer;
       try {
@@ -501,6 +547,55 @@ export class Locker {
         log('error', 'locker.media_verify_crashed', { account: accountKey, error: String(err) }));
     }
     return { ok: true };
+  }
+
+  // deliveryModel "esm": hash the WHOLE object that landed, server-side. The client's claimed
+  // hash only bought a presigned PUT; this read is what it cannot forge. A match records
+  // verified ownership; either way the bytes are then deleted — the server hosts its own copy,
+  // so keeping ~95 MB per player would be pure cost.
+  private async recordEsm(
+    accountKey: string, file: LockerFile,
+  ): Promise<{ ok: true } | { ok: false; reason: UploadRefusal }> {
+    const storage = this.settings.storage;
+    const name = ESM_NAMES.find((n) => n.toLowerCase() === file.name.toLowerCase());
+    if (!storage || !name) return { ok: false, reason: 'not-recognized' };
+    const key = `gamedata/${accountKey}/${name}`; // the canonical name authorizeUpload signed
+    let sha256 = '';
+    let size = 0;
+    try {
+      const r = await fetch(await storage.presignGet(key));
+      if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+      const h = createHash('sha256');
+      for await (const chunk of r.body) {
+        size += chunk.byteLength;
+        if (size > ESM_MAX_BYTES) break;
+        h.update(chunk);
+      }
+      sha256 = h.digest('hex');
+    } catch (err) {
+      log('error', 'locker.esm_read_failed', { account: accountKey, name, error: String(err) });
+    }
+    try { await storage.delete(key); } catch { /* already gone is fine */ }
+    const accepted = this.esmAccepted.get(name.toLowerCase());
+    if (size > ESM_MAX_BYTES) return { ok: false, reason: 'too-large' };
+    if (!sha256 || !accepted?.has(sha256)) {
+      log('warn', 'locker.rejected_esm_content', { account: accountKey, name, size, sha256 });
+      return { ok: false, reason: 'not-recognized' };
+    }
+    const files = (await this.filesOf(accountKey)).filter((f) => f.name.toLowerCase() !== name.toLowerCase());
+    files.push({ name, size, sha256, verified: true });
+    this.putFiles(accountKey, files);
+    log('info', 'locker.esm_verified', { account: accountKey, name });
+    return { ok: true };
+  }
+
+  // Verified ownership of all three ESMs, against the CURRENT accepted set (an operator who
+  // drops a hash revokes it). This, not a sign-in alone, is what unlocks the hosted files.
+  async ownsGame(accountKey: string): Promise<boolean> {
+    const files = await this.filesOf(accountKey);
+    return ESM_NAMES.every((n) => files.some((f) => f.verified === true
+      && f.name.toLowerCase() === n.toLowerCase()
+      && this.esmAccepted.get(n.toLowerCase())?.has(f.sha256.toLowerCase())));
   }
 
   // Stream the uploaded media.tar back from storage and prove every entry is a file the

@@ -3585,11 +3585,16 @@ try {
            // silent game with no way to add them. Anything the server lists as needed and the
            // account does not have re-opens the wizard, which now takes a single folder pick.
            var have = (files||[]).map(function(f){ return f.name.toLowerCase(); });
-           var needed, neededFailed = null;
+           var needed, neededFailed = null, hosted = false;
            try {
              var nres = await api('/locker/needed');
              if (!nres.ok) throw new Error('HTTP '+nres.status);
-             needed = ((await nres.json()).files)||[];
+             var nj = await nres.json();
+             needed = nj.files||[];
+             // [setup] deliveryModel = "esm": the server hosts the game and the locker only
+             // proves ownership. Uploaded-but-unverified does not count, so ask again.
+             hosted = !!nj.hosted;
+             if (hosted && !nj.owned) { files = []; have = []; }
            }
            catch(e){
              // Silent failure here used to mean "no prompt, ever" — the account would keep
@@ -3662,6 +3667,20 @@ try {
              }
            } else {
              append('[locker] library complete ('+have.length+' items).');
+           }
+           if (hosted) {
+             // Ownership verified: reboot onto the server's hosted copy (mwdata=1). After the
+             // reload __mpLocker is false, so this function does not run again.
+             var hf = String(window.__omwBootFrag || location.hash || '').replace(/^#/, '').split('&')
+               .filter(function(kv){ return kv && !/^(mpticket|mpclosed|mpclosedby|mperror|mwdata|mplocker)=/.test(kv); });
+             hf.push('mplocker=' + encodeURIComponent(TOKEN), 'mwdata=1');
+             hf = hf.join('&');
+             try { if (sessionStorage.getItem('omwmp:bootfrag') !== null) sessionStorage.setItem('omwmp:bootfrag', hf); } catch(e){}
+             append('[locker] Morrowind ownership verified, loading the game from the server.');
+             window.__omwAllowLeave = true;
+             history.replaceState(null, '', location.pathname + location.search + '#' + hf);
+             location.reload();
+             return;
            }
            // Content files (.esm/.esp) are read HEAVILY at load and during play — the engine
            // walks the whole ESM into its record store. Streaming those over the network makes

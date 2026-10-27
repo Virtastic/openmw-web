@@ -64,7 +64,7 @@ type SaveStorageLike = {
 };
 import { presentMods, readModDoc, resolveMods } from './core/mods';
 import { saveRoutes, eraseSaves } from './data/save-routes';
-import { lockerRoutes } from './data/locker-routes';
+import { lockerRoutes, esmOwnerGate } from './data/locker-routes';
 import { LockerSessionStore, AdminSessionStore } from './auth/identities';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
@@ -688,6 +688,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   await ensureVanillaManifest(sharedDir, gameDataDir(sharedDir));
   locker.configureAccepted(await loadVanillaManifest(sharedDir), [], {
     acceptByNameAndSize: config.locker.acceptByNameAndSize,
+    esmOnly: () => config.setup.deliveryModel === 'esm',
+    esmHashes: config.locker.esmHashes,
   });
   // Persisted for the same reason as the gateway's: a restart must not sign a playing
   // player out (see LockerSessionStore).
@@ -1334,6 +1336,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // should reach the next player to load the page, not the next restart.
       modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
       allowStockSwap: () => config.content.allowStockSwap,
+      mayServe: esmOwnerGate(locker, lockerSessions),
     }),
     saveRoutes({
       storage: lockerStorage, sessions: lockerSessions, dataDir: sharedDir,

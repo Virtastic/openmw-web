@@ -262,6 +262,7 @@ const directory = await startDirectory({
     deliveryModel: () => config.setup.deliveryModel,
     modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
     allowStockSwap: () => config.content.allowStockSwap,
+    mayServe: frontDoor.mwdataGate,
   }),
   // The player app (./play mounted at /client), served here so Caddy is optional (#203).
   ...(existsSync(defaultClientDir()) ? { client: clientRoutes({

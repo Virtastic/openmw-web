@@ -73,6 +73,9 @@ export interface MwDataDeps {
   modDoc?(): ModDoc;
   /** `[content] allowStockSwap`. Read per request. Absent = off. */
   allowStockSwap?(): boolean;
+  /** deliveryModel 'esm': may THIS request have the files (a signed-in account that proved it
+   *  owns the game)? Absent = never, so 'esm' fails closed. */
+  mayServe?(req: IncomingMessage): boolean | Promise<boolean>;
 }
 
 export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
@@ -94,7 +97,13 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
 
     // Not serving? Then this path does not exist, and says so the same way for both routes:
     // a 403 would confirm there is a library here to be had.
-    if (deps.deliveryModel() !== 'serve') { res.writeHead(404); res.end('not found'); return true; }
+    // 'esm': the same files, but only to an account with verified ownership — and never
+    // cacheable by a shared cache (an edge that kept one would hand it to anybody).
+    const gated = deps.deliveryModel() === 'esm';
+    if (!(deps.deliveryModel() === 'serve' || (gated && deps.mayServe && await deps.mayServe(req)))) {
+      res.writeHead(404, { 'cache-control': 'no-store' }); res.end('not found'); return true;
+    }
+    const noCache = gated ? 'private, no-cache' : 'no-cache';
 
     if (isManifest) {
       // BOTH directories. Creating gamedata/mods bumps gamedata's mtime once, when the folder
@@ -109,7 +118,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
         cache = { at: mtime, body: JSON.stringify(files) };
         log('info', 'mwdata.manifest_built', { files: files.length });
       }
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': noCache });
       res.end(req.method === 'HEAD' ? undefined : cache.body);
       return true;
     }
@@ -141,7 +150,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
       const key = `${allowSwap ? 1 : 0}|${modsAt}|${disabled.join(',')}|${doc.mods.map((m) => (m.replaces ?? []).join('+')).join(',')}|${doc.mods.map((m) => `${m.slug}:${m.enabled ? 1 : 0}`
         + `:${m.plugins.filter((p) => p.enabled).map((p) => p.file).join(',')}`).join('|')}`;
       if (modCache && modCache.at === key) {
-        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': noCache });
         res.end(req.method === 'HEAD' ? undefined : modCache.body);
         return true;
       }
@@ -175,7 +184,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
       const body = JSON.stringify({ v: 2, mods, content: stack.content, groundcover: stack.groundcover, archives: stack.archives, disabled,
         swaps: stack.swaps });
       modCache = { at: key, body };
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': noCache });
       res.end(req.method === 'HEAD' ? undefined : body);
       return true;
     }
@@ -219,7 +228,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     const head: Record<string, string> = {
       'accept-ranges': 'bytes',
       'content-type': 'application/octet-stream',
-      'cache-control': isModFile ? 'no-cache' : 'public, max-age=31536000, immutable',
+      'cache-control': isModFile ? noCache : `${gated ? 'private' : 'public'}, max-age=31536000, immutable`,
       etag,
     };
     if (req.headers['if-none-match'] === etag) { res.writeHead(304, head); res.end(); return true; }

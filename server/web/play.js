@@ -59,6 +59,9 @@
   // operator's own library is published and nobody uploads anything, 'verify' means each
   // player brings their own copy through their locker.
   let hostedData = false;
+  // 'esm': hosted like 'serve', but only for players who proved they own the game by uploading
+  // its three master files. Not hostedData: the locker wizard is the proof, so it must run.
+  let esm = false;
   try {
     // no-store, like the dashboard's api(): a browser that once cached a 308 for this URL
     // (a proxy's redirect loop) replayed it forever, the read failed, and the page fell back
@@ -67,12 +70,15 @@
     if (s.serverName) { $('#name').textContent = s.serverName; document.title = s.serverName; }
     singlePlayer = s.setup?.deploymentMode !== 'multiplayer';
     hostedData = s.setup?.deliveryModel === 'serve';
+    esm = s.setup?.deliveryModel === 'esm';
   } catch { /* keep the default heading, and the safer mode */ }
+  $('#esmSteps').hidden = !esm;
+  $('#esmLegal').hidden = !esm;
   // The launcher's words for the two modes, and its cloud glyph for the single-player one.
   $('#title').textContent = singlePlayer ? 'Sign in to play anywhere' : 'Sign in to play together';
   // Locker servers: players bring the game. Said BEFORE sign-in, or the first they hear of it is
   // the upload wizard after a world was already started for them (prod 2026-10-13, never_joined).
-  $('#bring').hidden = hostedData;
+  $('#bring').hidden = hostedData || esm;
   const CLOUD_GLYPH = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">'
     + '<path d="M14 34h20a7 7 0 0 0 .6-13.97A10 10 0 0 0 15.2 18.4 6.6 6.6 0 0 0 14 34z"/>'
     + '<path d="M24 22v10M20 28l4 4 4-4"/></svg>';
