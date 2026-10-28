@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { IncomingMessage } from 'node:http';
 import { clientIp, CLIENT_IP_HEADER } from '../src/net/ws';
-import { isSecureRequest } from '../src/net/http';
+import { corsOrigin, isSecureRequest } from '../src/net/http';
 
 const req = (remoteAddress: string, headers: Record<string, string> = {}): IncomingMessage =>
   ({ headers, socket: { remoteAddress } } as unknown as IncomingMessage);
@@ -99,4 +99,19 @@ test('X-Forwarded-Proto counts only from a trusted proxy', () => {
   assert.equal(isSecureRequest(req('172.18.0.2', { 'x-forwarded-proto': 'https' })), true);
   assert.equal(isSecureRequest(req('198.51.100.4', { 'x-forwarded-proto': 'https' })), false);
   assert.equal(isSecureRequest(req('198.51.100.4', { 'x-forwarded-proto': 'http' })), false);
+});
+
+// OT3-42: the authed APIs answer CORS only for their own origin (and a loopback dev page).
+test('a foreign Origin gets no Access-Control-Allow-Origin', () => {
+  const acao = (origin: string, peer = '198.51.100.4'): unknown => {
+    const set: Record<string, unknown> = {};
+    corsOrigin(req(peer, { origin, host: 'game.example' }), { setHeader: (k: string, v: unknown) => { set[k] = v; } } as never);
+    return set['access-control-allow-origin'];
+  };
+  assert.equal(acao('https://evil.example'), undefined);
+  assert.equal(acao('http://game.example'), 'http://game.example');
+  assert.equal(acao('https://game.example'), undefined, 'scheme must match too');
+  assert.equal(acao('https://game.example', '172.18.0.2'), undefined, 'no XFP: the proxy hop is http');
+  assert.equal(acao('http://localhost:8910'), 'http://localhost:8910');
+  assert.equal(acao('null'), undefined);
 });

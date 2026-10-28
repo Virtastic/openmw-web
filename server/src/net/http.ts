@@ -269,11 +269,30 @@ export async function readJsonBody(req: IncomingMessage, limit: number): Promise
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
 }
 
+// OT3-42: CORS for the authed APIs (locker, front door, /auth/password, the directory). Only
+// the origin the request arrived on -- the page and the gateway are one origin in every
+// deployment -- or a loopback page (local dev serves play/ on its own port) is allowed; any
+// other Origin gets no Access-Control-Allow-Origin at all.
+const corsDecided = new WeakSet<ServerResponse>();
+export function corsOrigin(req: IncomingMessage, res: ServerResponse): void {
+  corsDecided.add(res);
+  res.setHeader('vary', 'Origin');
+  const origin = header(req, 'origin');
+  if (!origin) return;
+  let host = '';
+  try { host = new URL(origin).hostname; } catch { return; }
+  const self = `${isSecureRequest(req) ? 'https' : 'http'}://${header(req, 'host') ?? ''}`;
+  if (origin === self || host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
+    res.setHeader('access-control-allow-origin', origin);
+  }
+}
+
 export function sendJson(res: ServerResponse, code: number, value: unknown): void {
   res.writeHead(code, {
     'content-type': 'application/json',
     'cache-control': 'no-store',
-    'access-control-allow-origin': '*',
+    // A route that ran corsOrigin already decided; '*' here would undo a refusal.
+    ...(corsDecided.has(res) ? {} : { 'access-control-allow-origin': '*' }),
   });
   res.end(JSON.stringify(value));
 }

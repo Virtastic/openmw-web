@@ -22,7 +22,7 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { rm, mkdir, rename, stat } from 'node:fs/promises';
 import { join, resolve, sep, dirname } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { HttpRoute } from '../net/http';
+import { corsOrigin, type HttpRoute } from '../net/http';
 import { log } from '../log';
 
 const EXPIRY_SEC = 3600; // long enough for a multi-hundred-MB PUT
@@ -205,7 +205,7 @@ export function blobRoutes(storage: FsStorage | undefined): HttpRoute {
   return async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
     if (!url.pathname.startsWith('/locker/blob/')) return false;
     if (!storage) { res.writeHead(503); res.end(); return true; }
-    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    corsOrigin(req, res);
     res.setHeader('access-control-allow-methods', 'GET, PUT, OPTIONS');
     res.setHeader('access-control-allow-headers', 'content-type');
     // Content-Range must be EXPOSED or the browser hides it from the fetch response and

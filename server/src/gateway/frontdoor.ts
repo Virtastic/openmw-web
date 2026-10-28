@@ -33,7 +33,7 @@ import { ensureVanillaManifest } from '../data/vanilla-manifest';
 import { lockerPublicBase, lockerStorageFrom, blobRoutes, FsStorage } from '../data/fsstorage';
 import { eraseSaves } from '../data/save-routes';
 import { lockerRoutes, esmOwnerGate } from '../data/locker-routes';
-import { json as sendJson, readJsonBody, type HttpRoute } from '../net/http';
+import { corsOrigin, json as sendJson, readJsonBody, type HttpRoute } from '../net/http';
 import { log } from '../log';
 
 
@@ -43,7 +43,7 @@ import { log } from '../log';
 function profileRoutes(accounts: AccountStore, lockerSessions: LockerSessionStore): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/profile') return false;
-    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    corsOrigin(req, res);
     res.setHeader('access-control-allow-headers', 'authorization, content-type');
     res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
@@ -114,7 +114,7 @@ export function characterRoutes(
 ): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/characters') return false;
-    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    corsOrigin(req, res);
     res.setHeader('access-control-allow-headers', 'authorization, content-type');
     res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
@@ -227,7 +227,7 @@ export function ticketRoutes(
 ): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/ticket') return false;
-    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    corsOrigin(req, res);
     res.setHeader('access-control-allow-headers', 'authorization, content-type');
     res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }

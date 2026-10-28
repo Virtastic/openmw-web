@@ -24,7 +24,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { log } from '../log';
 import { renderMetrics } from '../metrics';
 import { WORLD_ID, type WorldSupervisor, type WorldInfo } from './worlds';
-import { addressAllowed, clientLogRoute, json, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../net/http';
+import { addressAllowed, corsOrigin, clientLogRoute, json, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../net/http';
 import { IpRateLimiter } from '../net/ratelimit';
 import { VERIFY_PATH } from '../net/admin/setup-check';
 
@@ -176,7 +176,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     // The game page is a DIFFERENT origin than this gateway, so every endpoint here is a
     // cross-origin API. Set CORS on all responses and answer the preflight — without this the
     // browser's POST /worlds (create-or-join) is blocked and shows only "Failed to fetch".
-    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    corsOrigin(req, res);
     // DELETE: character deletion (/auth/characters). The directory answers ALL preflights on
     // this port, so a method missing here is blocked by the browser before the front-door
     // route ever sees it — which read as "could not reach the server" on the delete button.

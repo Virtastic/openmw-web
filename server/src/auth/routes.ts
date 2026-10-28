@@ -23,7 +23,7 @@ import type { Config } from '../config';
 import type { AccountStore } from '../core/accounts';
 import type { BanStore } from '../persist/banstore';
 import type { IpRateLimiter } from '../net/ratelimit';
-import { clientIp, isLoopback, isSecureRequest, readCookie, readJsonBody, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
+import { clientIp, corsOrigin, isLoopback, isSecureRequest, readCookie, readJsonBody, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
 import { OidcError, OidcService, isProviderId, type ProviderId } from './oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, resolveSsoAccount } from './identities';
 import { log } from '../log';
@@ -320,7 +320,7 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     // the account, then the ban. verifyLogin burns argon2 work on a missing account too (see
     // accounts.ts), so this cannot be used to learn which names exist by timing it.
     if (seg.length === 2 && seg[1] === 'password') {
-      res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+      corsOrigin(req, res);
       res.setHeader('access-control-allow-headers', 'content-type');
       res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
@@ -393,8 +393,8 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
 
     if (seg.length === 2 && seg[1] === 'providers') {
       // Public and cheap, like /status: a client cannot render login buttons without it.
-      // CORS-open: the launcher is served from a different origin than the game server.
-      res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+      // CORS-open: public, read-only, no credentials (OT3-42 leaves it open).
+      res.setHeader('access-control-allow-origin', '*');
       sendJson(res, 200, {
         providers: oidc.enabledProviders(),
         allowPasswordLogin: config.auth.allowPasswordLogin,

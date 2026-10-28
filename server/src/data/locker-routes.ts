@@ -18,7 +18,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Locker, LockerFile } from './locker';
-import { clientIp, isSecureRequest, json, readCookie, readJsonBody, setCookie } from '../net/http';
+import { clientIp, corsOrigin, isSecureRequest, json, readCookie, readJsonBody, setCookie } from '../net/http';
 import { log } from '../log';
 
 interface LockerSessions {
@@ -75,7 +75,7 @@ export function lockerRoutes(deps: LockerRouteDeps) {
     if (!url.pathname.startsWith('/locker/')) return false;
     // The game page is served from a different origin than the server, so the locker is a
     // cross-origin API: allow it, and allow the Authorization header the token rides in.
-    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    corsOrigin(req, res);
     res.setHeader('access-control-allow-headers', 'authorization, content-type');
     res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
