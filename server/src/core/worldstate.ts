@@ -389,9 +389,11 @@ export class WorldState {
 
   /** Set by the server: a cell gained an authority holder. See the grant callback below. */
   onHolderGained?: (cellKey: string) => void;
-  // Who holds the conversation lock on an NPC (quests.ts). Wired by server.ts; the second
-  // actor fact a non-holder may state hangs off it (see actorEvent, ActorDisposition).
-  dialogueHolder?: (refKey: string) => number | undefined;
+  // Is this player (one of) those talking to an NPC (quests.ts)? Wired by server.ts; the
+  // actor facts a non-holder may state hang off it (see actorEvent, ActorDisposition).
+  talkingTo?: (refKey: string, playerId: number) => boolean;
+  // OT3-155: a conversation's disposition is the talker's own (quests.ts notePersonalDisposition).
+  personalDisposition?: (player: Player, ref: ObjRef, cellKey: string, disposition: number) => void;
   // The cells simPeerPass has the peer holding right now (anchors and the ring around each
   // player). Set by server.ts; absent (tests, no peer) = none.
   peerHolds?: (cellKey: string) => boolean;
@@ -801,11 +803,11 @@ export class WorldState {
     // #363: RECRUITING IS A CONVERSATION, like travel: the player who holds (or just held,
     // 5 s) this NPC's dialogue lock may say it follows them. A claim already theirs may be
     // updated or dismissed without one (a scripted escort ends by script, not by talking).
-    if (follow !== undefined && this.dialogueHolder?.(ref.key) !== player.id && this.followedBy.get(ref.key)?.follow !== player.id) {
+    if (follow !== undefined && !this.talkingTo?.(ref.key, player.id) && this.followedBy.get(ref.key)?.follow !== player.id) {
       // Named so a red like s123 says WHICH conversation was missing: the claim's key against
       // who the server thinks is (or just was) talking to it.
       log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follow claim without the conversation',
-        key: ref.key, holder: this.dialogueHolder?.(ref.key) ?? null, follow });
+        key: ref.key, follow });
       this.moderationNote?.(player.accountKey, 'follow_claim');
       return;
     }
@@ -921,7 +923,7 @@ export class WorldState {
         // never meets those conditions. The claim is held to the same bounds as a dialogue
         // result (a human near the cell, a destination within two cells) and, without the
         // conversation, a rate: a script walks an NPC a few legs a minute, a loop does not.
-        if (this.dialogueHolder?.(ref.key) !== player.id
+        if (!this.talkingTo?.(ref.key, player.id)
           && !this.claimWithinRate(player, name, cellKey, 'travel_claim', MAX_TRAVEL_CLAIMS_PER_MIN, this.travelClaimsBy)) return;
         // Bounded by the actor's cell (backlog 84): AITravel walks, it does not teleport, and a
         // dialogue result sends an NPC across the street, not across the map. Within two cells
@@ -947,7 +949,7 @@ export class WorldState {
         // that decided to fight is an AI-off puppet. No conversation to hold a lock on; the
         // claim still names only the claimant as the target, so it can hurt nobody else.
         const crime = body.get('crime') === true;
-        if (player.system || (!crime && this.dialogueHolder?.(ref.key) !== player.id) || !cellsVisible(player.cellKey, cellKey)) {
+        if (player.system || (!crime && !this.talkingTo?.(ref.key, player.id)) || !cellsVisible(player.cellKey, cellKey)) {
           log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'combat claim without the conversation' });
           return;
         }
@@ -962,10 +964,12 @@ export class WorldState {
     }
     if (name === 'ActorDisposition' && this.authority.holderOf(str(body.get('cellKey'), MAX_CELL_KEY) ?? '') !== player.id) {
       // PERSUASION HAPPENS IN A DIALOGUE, on the talking player's client -- never the holder
-      // on a peer-simulated world -- so under the holder-only rule a bribe or a taunt changed
-      // an NPC's mind on one screen and nowhere else. The one player who may say how the NPC
-      // now feels is the one the server let talk to it: the dialogue-lock holder, while the
-      // lock stands (the client sends this before releasing). Bounded to that, and to [0,100].
+      // on a peer-simulated world. Only a player the server let talk to it may say how the NPC
+      // now feels (the client sends this before releasing), bounded to [0,100].
+      // OT3-155: and it feels that way about THEM. The disposition is kept on the talker's
+      // character and replayed to them on entering the cell; it is not relayed, so one
+      // player's bribe is not everyone's. The Fight/Flee/Alarm a taunt wrote (`ai`) is shared
+      // state -- the guard fights in everyone's world -- and still relays, without it.
       const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
       const ref = parseObjRef(body);
       const disposition = finite(body.get('disposition'));
@@ -979,11 +983,15 @@ export class WorldState {
         this.invalid(player, name);
         return;
       }
-      if (player.system || this.dialogueHolder?.(ref.key) !== player.id || !cellsVisible(player.cellKey, cellKey)) {
+      if (player.system || !this.talkingTo?.(ref.key, player.id) || !cellsVisible(player.cellKey, cellKey)) {
         log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'disposition without the conversation' });
         return;
       }
-      this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
+      this.personalDisposition?.(player, ref, cellKey, disposition);
+      if (ai !== undefined) {
+        const { disposition: _mine, ...shared } = lToJs(body) as Record<string, JsLike>;
+        this.relayCellExcept(cellKey, player.id, name, shared);
+      }
       return;
     }
     const checked = this.authCheck(player, body, name);

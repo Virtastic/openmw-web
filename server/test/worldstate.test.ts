@@ -721,7 +721,7 @@ const NPC = { __refnum: { index: 300, contentFile: 0 } };
 // #229: Fight/Flee/Alarm ride ActorDisposition as `ai`. From the talking client (the
 // dialogue-lock holder) each value is bounded to [0,100] -- out of bounds is refused whole
 // (worldstate.ts `aiOk` beside the disposition bound); from the cell holder it relays verbatim.
-test('ActorDisposition ai: bounded from the dialogue holder, relayed from the cell holder', async (t) => {
+test('ActorDisposition ai: bounded from a talker, relayed without their disposition (OT3-155)', async (t) => {
   const { bob, peer, epoch, human } = await heldCell(t);
   const { c: alice } = await human('Alice');
   alice.sendEvent('DialogueLock', { ref: NPC, cellKey: '0,0', want: true });
@@ -729,8 +729,8 @@ test('ActorDisposition ai: bounded from the dialogue holder, relayed from the ce
 
   bob.inbox.events.length = 0;
   alice.sendEvent('ActorDisposition', { ref: NPC, cellKey: '0,0', epoch: 0, disposition: 60, ai: { fight: 30, flee: 0, alarm: 100 } });
-  const got = (await bob.waitEvent('ActorDisposition')).value as { disposition: number; ai: Record<string, number> };
-  assert.equal(got.disposition, 60);
+  const got = (await bob.waitEvent('ActorDisposition')).value as { disposition?: number; ai: Record<string, number> };
+  assert.equal(got.disposition, undefined, "alice's standing with the NPC is hers");
   assert.deepEqual(got.ai, { fight: 30, flee: 0, alarm: 100 }, 'the taunt reaches the other screen');
 
   bob.inbox.events.length = 0;

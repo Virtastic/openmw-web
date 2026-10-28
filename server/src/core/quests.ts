@@ -10,7 +10,7 @@
 // Individual mode stores per-player and never relays.
 
 import { lToJs, tbl, finite, str, type LTable, type LValue, type JsLike } from '../proto/lser';
-import { objRefToJs, parseObjRef, type ObjRef } from '../proto/ref';
+import { objRefToJs, parseObjRef, parseRefKey, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
 
@@ -129,8 +129,9 @@ function index(v: LValue | undefined): number | undefined {
 }
 
 export class Quests {
-  // refKey -> the player currently holding the conversation, plus where it started.
-  private dialogueLocks = new Map<string, { playerId: number; cellKey: string; ref?: ObjRef }>();
+  // refKey -> everyone talking to that NPC right now (OT3-155: a conversation is not a lock;
+  // twenty new players all talk to Fargoth at once), each with the cell it started in.
+  private dialogueLocks = new Map<string, Map<number, { cellKey: string; ref: ObjRef }>>();
 
   constructor(private readonly ctx: QuestCtx) {}
 
@@ -141,7 +142,7 @@ export class Quests {
   // A bounty DROP stands only within this long of the player's own dialogue (crime()).
   private static readonly GUEST_WRITE_GRACE_MS = 10_000;
   holdsDialogue(playerId: number): boolean {
-    for (const held of this.dialogueLocks.values()) if (held.playerId === playerId) return true;
+    for (const talkers of this.dialogueLocks.values()) if (talkers.has(playerId)) return true;
     return false;
   }
   // Relays exclude the sender: it already applied the change locally, and clients seed
@@ -731,7 +732,9 @@ export class Quests {
 
   // --------------------------------------------------------- dialogue locks
 
-  // One player may converse with a given NPC at a time; the loser learns who holds it.
+  // OT3-155: any number of players may converse with one NPC at once. Each conversation runs
+  // on its talker's own client against their own character, so nothing is contended; the
+  // grant still gates the actor facts a talker may state (worldstate.ts) and parks the NPC.
   private dialogueLock(player: Player, body: LTable): void {
     const ref = parseObjRef(body);
     const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
@@ -742,25 +745,20 @@ export class Quests {
       this.drop(player, 'DialogueLock', 'invalid shape');
       return;
     }
-    const held = this.dialogueLocks.get(ref.key);
+    const talkers = this.dialogueLocks.get(ref.key);
     // #361/#366 (403): lastDialogueAt is stamped only on a GRANTED lock or a real release --
     // a refused request (far cell, held by someone else) is not a conversation and must not
     // buy the same-cell jump or bounty-drop passes.
     if (!want) {
-      if (held?.playerId === player.id) {
+      if (talkers?.has(player.id)) {
         if (!player.system) player.lastDialogueAt = Date.now();
-        this.dialogueLocks.delete(ref.key);
-        this.holdForDialogue(ref, held.cellKey, false);
+        this.endTalk(ref.key, player.id);
         // A dialogue's consequences land AFTER the window closes -- a taunted NPC or a guard
         // whose arrest was resisted starts combat on "Goodbye" -- and the client's report of
         // that state polls at 1 Hz. Keep "who was just talking to it" for a moment.
-        this.recentlyHeld.set(ref.key, { playerId: player.id, at: Date.now() });
+        this.recentlyHeld.set(recentKey(ref.key, player.id), { at: Date.now() });
       }
       player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: false });
-      return;
-    }
-    if (held && held.playerId !== player.id && this.ctx.roster.get(held.playerId)?.inWorld) {
-      player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: false, holderId: held.playerId });
       return;
     }
     // #367: you talk to what you can see, and to one NPC at a time -- a new request ends the
@@ -771,7 +769,10 @@ export class Quests {
       return;
     }
     if (!player.system) { this.releaseDialogueLocks(player.id); player.lastDialogueAt = Date.now(); }
-    this.dialogueLocks.set(ref.key, { playerId: player.id, cellKey, ref });
+    let map = this.dialogueLocks.get(ref.key);
+    if (!map) this.dialogueLocks.set(ref.key, (map = new Map()));
+    map.set(player.id, { cellKey, ref });
+    // Parked while anyone talks; it turns to face the latest talker.
     this.holdForDialogue(ref, cellKey, true, player.id);
     player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: true });
   }
@@ -795,32 +796,73 @@ export class Quests {
   // Release every lock held by a player (disconnect), or only those bound to a cell they
   // just left (cell change) — walking away ends the conversation.
   releaseDialogueLocks(playerId: number, onlyCellKey?: string): void {
-    for (const [key, held] of [...this.dialogueLocks]) {
-      if (held.playerId !== playerId) continue;
-      if (onlyCellKey !== undefined && held.cellKey !== onlyCellKey) continue;
-      this.dialogueLocks.delete(key);
-      if (held.ref) this.holdForDialogue(held.ref, held.cellKey, false);
+    for (const [key, talkers] of [...this.dialogueLocks]) {
+      const mine = talkers.get(playerId);
+      if (!mine) continue;
+      if (onlyCellKey !== undefined && mine.cellKey !== onlyCellKey) continue;
+      this.endTalk(key, playerId);
     }
   }
 
-  private readonly recentlyHeld = new Map<string, { playerId: number; at: number; ttl?: number }>();
+  // One talker leaves; the NPC is let go when the last one does.
+  private endTalk(refKey: string, playerId: number): void {
+    const talkers = this.dialogueLocks.get(refKey);
+    const mine = talkers?.get(playerId);
+    if (!talkers || !mine) return;
+    talkers.delete(playerId);
+    if (talkers.size) return;
+    this.dialogueLocks.delete(refKey);
+    this.holdForDialogue(mine.ref, mine.cellKey, false);
+  }
+
+  // recentKey(refKey, playerId) -> when that player stopped talking to it (or was forced to).
+  private readonly recentlyHeld = new Map<string, { at: number; ttl?: number }>();
   private static readonly RECENT_LOCK_MS = 5_000;
   private static readonly FORCED_DIALOGUE_MS = 120_000;
   // #44: an arrest dialogue is forced onto the wanted player's screen by the peer (no lock is
   // requested, backlog 343), yet "the guard now fights me" needs the holder gate to pass.
   // The peer names the guard and the player; the player counts as its holder for a while.
   noteForcedDialogue(refKey: string, playerId: number): void {
-    this.recentlyHeld.set(refKey, { playerId, at: Date.now(), ttl: Quests.FORCED_DIALOGUE_MS });
+    this.recentlyHeld.set(recentKey(refKey, playerId), { at: Date.now(), ttl: Quests.FORCED_DIALOGUE_MS });
   }
-  dialogueHolder(refKey: string): number | undefined {
-    const live = this.dialogueLocks.get(refKey)?.playerId;
-    if (live !== undefined) return live;
-    const recent = this.recentlyHeld.get(refKey);
-    if (recent && Date.now() - recent.at <= (recent.ttl ?? Quests.RECENT_LOCK_MS)) return recent.playerId;
-    if (recent) this.recentlyHeld.delete(refKey);
-    return undefined;
+  /** Is (or was, a moment ago) this player talking to this NPC? */
+  isDialogueHolder(refKey: string, playerId: number): boolean {
+    if (this.dialogueLocks.get(refKey)?.has(playerId)) return true;
+    const k = recentKey(refKey, playerId);
+    const recent = this.recentlyHeld.get(k);
+    if (recent && Date.now() - recent.at <= (recent.ttl ?? Quests.RECENT_LOCK_MS)) return true;
+    if (recent) this.recentlyHeld.delete(k);
+    return false;
+  }
+
+  // ------------------------------------------------- personal disposition (OT3-155)
+
+  /** A conversation changed how an NPC feels about THIS character. Kept on their doc, keyed
+   *  by the content ref; runtime (net-id) actors do not outlive the session, so not kept. */
+  notePersonalDisposition(player: Player, ref: ObjRef, cellKey: string, disposition: number): void {
+    if (ref.kind !== 'ref' || player.system) return;
+    this.ctx.players.update(player.charId, (doc) => {
+      const all = (doc.dispositions ??= {});
+      delete all[ref.key]; // re-inserted last: the cap drops the least recently changed
+      all[ref.key] = { cellKey, d: disposition };
+      const keys = Object.keys(all);
+      for (const k of keys.slice(0, Math.max(0, keys.length - MAX_DISPOSITIONS))) delete all[k];
+    });
+  }
+
+  /** On entering a cell: reapply this character's own standing with the NPCs there. */
+  sendPersonalDispositions(player: Player, cellKey: string): void {
+    const all = this.ctx.players.getCached(player.charId)?.dispositions;
+    if (!all) return;
+    for (const [key, e] of Object.entries(all)) {
+      const ref = e.cellKey === cellKey ? parseRefKey(key) : null;
+      if (ref) player.peer.sendEvent('ActorDisposition', { ...objRefToJs(ref), cellKey, epoch: 0, disposition: e.d });
+    }
   }
 }
+
+const MAX_DISPOSITIONS = 500;
+const recentKey = (refKey: string, playerId: number): string => `${refKey}#${playerId}`;
 
 function refBody(ref: ObjRef): JsLike {
   return ref.kind === 'ref' ? { __refnum: { index: ref.index, contentFile: ref.contentFile } } : ref.netId;

@@ -225,22 +225,29 @@ test('dialogue lock', async (t) => {
   const { server } = await boot(t);
   const { a, b, aId } = await twoInCell(server);
 
-  await t.test('first requester is granted, second is denied with the holder id', async () => {
+  // OT3-155: a conversation is not a lock. Both talk to the same NPC at once.
+  await t.test('two players talk to the same NPC at once', async () => {
     a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
     assert.deepEqual((await a.waitEvent('DialogueLockResult')).value, { ref: NPC_REF, granted: true });
     b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
-    assert.deepEqual((await b.waitEvent('DialogueLockResult')).value, { ref: NPC_REF, granted: false, holderId: aId });
-    // A different NPC is independent.
+    assert.deepEqual((await b.waitEvent('DialogueLockResult')).value, { ref: NPC_REF, granted: true });
+    // Bob moves on to another NPC (one conversation each); Alice still holds hers.
     b.sendEvent('DialogueLock', { ref: NPC2_REF, cellKey: '0,0', want: true });
     assert.deepEqual((await b.waitEvent('DialogueLockResult')).value, { ref: NPC2_REF, granted: true });
   });
 
-  // PERSUASION: the one talking may say how the NPC now feels; anyone else may not.
-  await t.test('the lock holder may relay the disposition it changed; a bystander may not', async () => {
+  // PERSUASION: the one talking may say how the NPC now feels -- about them; anyone else may not.
+  await t.test("a talker's disposition is their own: kept, not relayed; a bystander's is dropped", async () => {
     b.inbox.events.length = 0;
     a.sendEvent('ActorDisposition', { ref: NPC_REF, cellKey: '0,0', epoch: 0, disposition: 75 });
-    const got = await b.waitEvent('ActorDisposition');
-    assert.equal((got.value as { disposition?: number }).disposition, 75, 'the bribe reaches the other screen');
+    a.sendEvent('ChatSend', { text: 'bribefence' });
+    await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'bribefence');
+    assert.equal(b.inbox.events.filter((e) => e.name === 'ActorDisposition').length, 0, "alice's bribe is not bob's");
+    // The Fight/Flee/Alarm a taunt wrote is shared: it relays, without the disposition.
+    a.sendEvent('ActorDisposition', { ref: NPC_REF, cellKey: '0,0', epoch: 0, disposition: 10, ai: { fight: 90 } });
+    const shared = (await b.waitEvent('ActorDisposition')).value as { disposition?: number; ai?: { fight?: number } };
+    assert.equal(shared.ai?.fight, 90);
+    assert.equal(shared.disposition, undefined);
     a.inbox.events.length = 0;
     b.sendEvent('ActorDisposition', { ref: NPC_REF, cellKey: '0,0', epoch: 0, disposition: 5 }); // not talking to them
     b.sendEvent('ChatSend', { text: 'dispfence' });
@@ -283,7 +290,7 @@ test('dialogue lock', async (t) => {
     await a.waitEvent('DialogueLockResult');
   });
 
-  await t.test('explicit release frees the NPC', async () => {
+  await t.test('explicit release, then talking again', async () => {
     a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: false });
     await a.waitEvent('DialogueLockResult');
     b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
@@ -291,25 +298,25 @@ test('dialogue lock', async (t) => {
   });
 
   await t.test('leaving the cell releases locks taken there', async () => {
-    b.sendCellChange('5,5', 0, 0, 0); // Bob holds NPC_REF + NPC2_REF in 0,0
+    b.sendCellChange('5,5', 0, 0, 0);
     await b.waitEvent('PlayerCellChange');
     a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
     assert.deepEqual((await a.waitEvent('DialogueLockResult')).value, { ref: NPC_REF, granted: true });
   });
 
-  // Backlog 33: the holder died mid-conversation. Their client tears the window down, so
-  // the NPC must not stay refused to everyone else until the corpse changes cell.
-  await t.test('the holder dying releases the lock', async () => {
-    b.sendCellChange('0,0', 0, 0, 0); // Alice holds NPC_REF in 0,0 from the subtest above
+  // OT3-155: Alice's bribe of 75 above comes back to HER on entering the cell, and only her.
+  await t.test('a personal disposition is replayed to its character on entering the cell', async () => {
+    a.sendCellChange('5,5', 0, 0, 0);
+    await a.waitEvent('PlayerCellChange');
+    a.inbox.events.length = 0;
+    a.sendCellChange('0,0', 0, 0, 0);
+    const mine = await a.waitEvent('ActorDisposition', (v) => (v as { disposition?: number }).disposition === 10);
+    assert.deepEqual((mine.value as { ref?: unknown }).ref, NPC_REF);
+    b.inbox.events.length = 0;
+    b.sendCellChange('0,0', 0, 0, 0);
     await b.waitEvent('PlayerCellChange');
-    b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
-    assert.equal(((await b.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, false, 'precondition: Alice holds it');
-    a.sendEvent('PlayerDeath', {});
-    await a.waitEvent('PlayerResurrect');
-    b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
-    assert.deepEqual((await b.waitEvent('DialogueLockResult')).value, { ref: NPC_REF, granted: true }, 'a corpse kept the NPC');
-    b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: false });
-    await b.waitEvent('DialogueLockResult');
+    await fence(b, b);
+    assert.equal(b.inbox.events.filter((e) => e.name === 'ActorDisposition').length, 0);
     b.sendCellChange('5,5', 0, 0, 0);
     await b.waitEvent('PlayerCellChange');
   });
@@ -411,9 +418,9 @@ test('the journal sync carries the entries in the order they were earned, with t
   a.sendEvent('JournalEntry', { questId: 'a1_2_antabolisinformant', index: 10 });
   // Two months on: past the vanilla epoch (dayspassed clamps to 1 before 16 Last Seed).
   const joinClock = (await a.waitEvent('WorldTime')).value as { month: number };
-  a.sendEvent('WorldTimeRequest', { advanceHours: 30 * 24, reason: 'rest' });
+  a.sendEvent('WorldTimeRequest', { advanceHours: 30 * 24, reason: 'script' }); // OT3-108: a rest is personal
   await a.waitEvent('WorldTime', (v) => (v as { month: number }).month !== joinClock.month);
-  a.sendEvent('WorldTimeRequest', { advanceHours: 30 * 24, reason: 'rest' });
+  a.sendEvent('WorldTimeRequest', { advanceHours: 30 * 24, reason: 'script' }); // OT3-108: a rest is personal
   const clock = (await a.waitEvent('WorldTime', (v) => (v as { month: number }).month === joinClock.month + 2)).value as { day: number; month: number; year: number };
   a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 50 });
   a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 50 }); // repeat: one line

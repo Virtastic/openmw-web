@@ -141,6 +141,9 @@ export interface PlayerDoc {
   // Backlog 51: dialogue topics learned, re-added at join (a topic is journal knowledge and
   // follows the journal's doc). Capped; never unlearned.
   topics?: string[];
+  // OT3-155: how NPCs feel about THIS character after a conversation (bribe, admire, taunt),
+  // by content-ref key, with the cell to replay it in. Capped (quests.ts MAX_DISPOSITIONS).
+  dispositions?: Record<string, { cellKey: string; d: number }>;
   // Backlog 230: content-ref keys of the NPCs this character has talked to (TalkedToPc).
   talkedTo?: string[];
   // OT3-16: skill books read (NpcStats used ids), flagged again at join so none teaches twice.

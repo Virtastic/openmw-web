@@ -536,7 +536,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     noteAnomaly: (accountKey, kind) => moderation.noteAnomaly(accountKey, kind), // #366
     partyMembers: (acct) => social.partyMembers(acct), // OT3-90; social is built below, called later
   });
-  world.dialogueHolder = (refKey) => quests.dialogueHolder(refKey);
+  world.talkingTo = (refKey, playerId) => quests.isDialogueHolder(refKey, playerId);
+  world.personalDisposition = (player, ref, cellKey, d) => quests.notePersonalDisposition(player, ref, cellKey, d);
 
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
   // clears presence timers that would otherwise keep the process alive on shutdown.

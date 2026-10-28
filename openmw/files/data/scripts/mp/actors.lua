@@ -716,10 +716,14 @@ end
 -- (local scripts may only modify themselves), which is the context this handler runs in.
 actors.handlers.MP_ActorDisposition = function(data)
     local obj = actorOf(data)
-    if not obj or type(data.disposition) ~= 'number' then return end
+    if not obj then return end
     local ownPlayer = world.players[1]
     if not (ownPlayer and ownPlayer:isValid()) then return end
-    pcall(function() types.NPC.setBaseDisposition(obj, ownPlayer, data.disposition) end)
+    -- OT3-155: absent when another player's conversation changed only the shared Fight/Flee/
+    -- Alarm; how the NPC feels about US is ours (replayed by the server on entering the cell).
+    if type(data.disposition) == 'number' then
+        pcall(function() types.NPC.setBaseDisposition(obj, ownPlayer, data.disposition) end)
+    end
     -- FIGHT/FLEE/ALARM ON THE ACTOR. Stat setters are Self-gated (mwlua/stats.cpp), unlike
     -- setBaseDisposition: written from here they threw inside the pcall and no AI setting
     -- ever reached another client. companion.lua (on every NPC and creature) writes them.

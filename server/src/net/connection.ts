@@ -1435,6 +1435,7 @@ export class Connection implements Peer {
       rebase: oldCell !== undefined && oldCell !== cellKey };
     player.cellKey = cellKey;
     if (oldCell !== cellKey) this.ctx.social.onCellChange(player, oldCell, cellKey); // OT3-73 party finder
+    if (oldCell !== cellKey && !this.isSystem) this.ctx.quests.sendPersonalDispositions(player, cellKey); // OT3-155
     const prev = player.pose;
     player.pose = {
       x, y, z,

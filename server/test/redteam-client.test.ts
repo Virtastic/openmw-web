@@ -392,16 +392,6 @@ test('#403 a REFUSED DialogueLock buys neither the same-cell jump nor the bounty
   await fence(a, b);
   assert.equal(b.inbox.events.filter((e) => e.name === 'PlayerCellChange' && (e.value as { id?: number }).id === a.playerId).length, 0,
     'a refused lock bought the same-cell jump');
-  // A lock held by someone else is refused the same way.
-  b.sendEvent('DialogueLock', { ref: NPC2_REF, cellKey: '0,0', want: true });
-  assert.equal(((await b.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, true);
-  a.sendEvent('DialogueLock', { ref: NPC2_REF, cellKey: '0,0', want: true });
-  assert.equal(((await a.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, false);
-  b.inbox.events.length = 0;
-  a.sendCellChange('0,0', 0, 3000, 0);
-  await fence(a, b);
-  assert.equal(b.inbox.events.filter((e) => e.name === 'PlayerCellChange' && (e.value as { id?: number }).id === a.playerId).length, 0,
-    "somebody else's lock bought the same-cell jump");
 });
 
 test('#44 an arrest forced by the peer lets the arrested player claim that guard now fights them', async (t) => {
