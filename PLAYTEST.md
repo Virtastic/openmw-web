@@ -82,7 +82,7 @@ Reload gets the latest build (server sends no-cache). Toggle the dev log with th
       this playtest is done), sign in, pick the Multiplayer tile and a character. The MOTD chat
       line appears in-game shortly after load. (URL logins like `?mp=…&name=…&pass=…` are refused
       on hosted servers, which are SSO-only, and a bare `npm run dev` with no game data and no sim
-      peer refuses players. Use the test app server or a `setup.sh` install.)
+      peer refuses players. Use the test app server or the compose stack.)
 - [ ] T (or Enter) opens the chat overlay with the cursor already in the input. Type, Enter
       sends, Tab switches World/Whisper. A second player (another account, in another browser
       profile or machine) sees it.
@@ -679,7 +679,7 @@ runs once, and half of what follows is about the first run.
 
 ### The wizard, once, in order
 
-- [ ] `./setup.sh` opens the dashboard; the first screen asks for an administrator account
+- [ ] `docker compose up -d`, then /admin: the first screen asks for an administrator account
 - [ ] From this machine it does **not** ask for a setup key (it should only ask from off-network)
 - [ ] Every step's Continue is disabled until answered, and says why in the greyed-out hint
 - [ ] Back walks the steps in reverse without losing typed answers
@@ -709,9 +709,9 @@ be no way back in from the browser.
       https address showing the restart screen, instead of waiting forever on the http page
       whose listener the save just removed; *Internal* on port 80 stays put
 
-**The engine warning.** In a fresh clone (no `play/openmw.wasm`), `./setup.sh` must warn that
-the engine is missing and name the Releases zip and the `play/` folder. After unzipping the
-release into `play/`, the game page must serve without any restart.
+**The engine warning.** In a fresh clone (no `play/openmw.wasm`), the game page must say the
+engine is missing and name the `play/` folder. After the engine build lands in `play/`, the
+game page must serve without any restart.
 
 **Game data.** Drag the folder *above* `Data Files` (the one called Morrowind), which is what
 people actually reach for. Every file should be accepted, not "skipped, that is normal".

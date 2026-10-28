@@ -95,7 +95,7 @@ RUN --mount=type=cache,target=/ccache,id=omw-native-ccache \
 # the build tree instead, which is unambiguous.
 
 # Runtime image: the binary, its resources, and the shared libs it links. No game data —
-# that is bring-your-own at the mount, exactly as documented in SELF_HOSTING.md.
+# that is bring-your-own at the mount, supplied by whoever runs the world.
 FROM ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \

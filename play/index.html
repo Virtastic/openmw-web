@@ -4533,8 +4533,8 @@ try {
     s.onerror = function(){ if (typeof fatalOverlay === 'function') fatalOverlay('Engine failed to load',
       __ENGINE_DIR === ''
         ? 'The game engine is not installed on this server, so the game cannot start. If you run this server: '
-          + 'run ./setup.sh (Windows: .\\setup.ps1) in its folder, or unzip the openmw-web release zip into its '
-          + '"play" folder, then reload. Otherwise, let whoever runs it know.'
+          + 'put the engine build (openmw.js, openmw.wasm, openmw.data) into its "play" folder, then reload. '
+          + 'Otherwise, let whoever runs it know.'
         : 'Could not load the game engine (' + __ENGINE_DIR + 'openmw.js). Reload to try again.'); };
     document.body.appendChild(s);
   })();

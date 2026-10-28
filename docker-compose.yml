@@ -1,19 +1,12 @@
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 #
-# SELF-HOSTING STACK. Two ways in, same result:
-#
-#   1. Just this file: save it in an empty folder, run `docker compose up -d` there, and open
-#      http://<this machine>/admin. The setup wizard walks you through the rest, including
-#      installing the player app into ./play. Nothing else to download.
-#   2. A clone of the repo and ./setup.sh (macOS/Linux) or .\setup.ps1 (Windows). Same stack,
-#      plus the updater below, which gives the dashboard's Update button for the server itself.
+# THE v2 STACK (OpenTES3): the one hosted world, which we deploy ourselves. v2 is hosted-only
+# (CL12): no setup scripts, no self-update agent. Run `docker compose up -d` in the checkout.
 #
 # WHAT RUNS HERE
 #   openmw-web  the server itself, and the admin dashboard at /admin
-#   caddy       HTTPS in front of it (automatic certificates when you have a domain)
-#
-#   updater     only with setup.sh (it needs the git checkout): see the service below
+#   caddy       HTTPS in front of it
 #
 # Players install nothing: they open your server's address in a browser. The player app they
 # get is ./play, which the wizard (or the dashboard's Updates page) downloads from the release.
@@ -25,9 +18,8 @@ services:
     # what lets multiplayer players in. That compile takes ~25 minutes and a lot of memory,
     # so nobody who self-hosts does it - the release did it once.
     #
-    # OPENMW_WEB_TAG pins the release: setup.sh / setup.ps1 and the dashboard's Update button
-    # write it into .env next to this file, matching the git tag they checked out (so the
-    # compose file and the Caddy config match the image). ROLLBACK = set it to the previous
+    # OPENMW_WEB_TAG pins the release in .env next to this file, matching the checked-out
+    # tag (so the compose file and the Caddy config match the image).
     # tag in .env, then `docker compose pull && docker compose up -d`.
     #
     # DEVELOPERS: to run your own build instead, put a docker-compose.override.yml next to
@@ -63,11 +55,8 @@ services:
     # and a world gets 20 s before it is killed outright. Docker's default 10 s would SIGKILL
     # the whole container mid-flush on every `compose down` and every update.
     stop_grace_period: 30s
-    # ${REPO_DIR:-.} ON EVERY BIND SOURCE: setup.sh/setup.ps1 write the checkout's absolute
-    # host path into .env as REPO_DIR. Relative sources break the moment compose runs
-    # anywhere but the host shell - the updater container below runs compose too, and a
-    # relative "./data" would be resolved against ITS filesystem and handed to the host
-    # daemon, where it does not exist. The "." fallback keeps a bare clone working by hand.
+    # ${REPO_DIR:-.} ON EVERY BIND SOURCE: set REPO_DIR in .env when compose runs anywhere
+    # but the checkout itself; the "." fallback is the checkout.
     volumes:
       # Everything that must survive: accounts, characters, world state, the settings the
       # dashboard writes, and logs.
@@ -145,37 +134,6 @@ services:
     # No SERVER_DOMAIN/TLS_MODE variables any more: the domain is an answer in the setup
     # wizard, stored with every other answer, and rendered into the config above. Asking a
     # non-technical operator to edit a dotfile next to this one was where setup used to stop.
-
-  updater:
-    # THE UPDATE BUTTON'S OTHER HALF. The dashboard can update the game client itself, but
-    # not its own container - a process cannot rebuild the image it is running from. So
-    # this small agent waits for the owner to click Update in the dashboard, then checks
-    # out the newest release tag, pulls its image and restarts openmw-web. Nothing is automatic:
-    # it acts only on that click.
-    #
-    # IT HOLDS THE DOCKER SOCKET, which is root on the host - so it is built to be
-    # unreachable and incurious: no ports, not behind the proxy, and its only input is
-    # whether a flag file exists in ./data. The file's content is never executed; the tag
-    # to run is computed from git itself. The web-facing container never sees the socket.
-    #
-    # ONLY WITH A CHECKOUT, so it is behind a profile: it builds from ./deploy and runs git
-    # in /repo, neither of which exists in a folder that holds only this file. setup.sh and
-    # setup.ps1 switch it on (COMPOSE_PROFILES=updater in .env).
-    profiles: [updater]
-    build:
-      context: ./deploy
-      dockerfile: Dockerfile.updater
-    image: openmw-web-updater:local
-    container_name: openmw-web-updater
-    restart: unless-stopped
-    volumes:
-      - ${REPO_DIR:-.}:/repo
-      - /var/run/docker.sock:/var/run/docker.sock
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
 
 volumes:
   caddy-data:

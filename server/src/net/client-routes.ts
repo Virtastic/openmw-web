@@ -3,7 +3,7 @@
 // The player app (./play, mounted at /client), served by this server itself.
 //
 // Only Caddy used to serve it, so a self-host that published the server's own port and no
-// Caddy — docker-compose.simple.yml, or anyone with their own proxy — had a sign-in page that
+// Caddy (anyone with their own proxy) had a sign-in page that
 // said "the player app has not been added" over a folder that held it (issue #203). Caddy is
 // now a plain TLS front that proxies everything here, so these rules exist once.
 //

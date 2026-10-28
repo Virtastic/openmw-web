@@ -8,7 +8,7 @@ NPCs (mandatory since 1.1.0; the server refuses to boot without a peer binary an
 game data). The **gateway** (`dist/gateway.mjs`) fronts many world processes:
 private/party worlds booted on demand, all reachable through a single port.
 It ships **no game data** — operators supply their own (see
-[`../SELF_HOSTING.md`](../SELF_HOSTING.md)).
+[`../README.md`](../README.md#running-the-world-v2)).
 
 ## Dev quickstart
 

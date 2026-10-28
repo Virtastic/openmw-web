@@ -3,7 +3,7 @@
 # Advanced hosting
 
 Everything here is for operators going beyond the Docker quick start in
-[`../SELF_HOSTING.md`](../SELF_HOSTING.md): running without Docker, wiring your own proxy,
+[`../README.md`](../README.md#running-the-world-v2): running without Docker, wiring your own proxy,
 tuning a public gateway. Most people never need this page. Stuck, or something not covered?
 Ask in [Discord](https://discord.gg/PzFfDkbSue).
 
@@ -52,8 +52,7 @@ redirectUri  = "https://example.com/auth/google/callback"
 
 Two silent footguns, both logged at boot: `requireSso` unset leaves password login open
 beside SSO. Storage is optional - with no S3 configured, lockers and saves land on
-the server's disk (set `[locker] publicBase` to the origin players reach it on; provider-side
-steps in [`MULTIPLAYER-SETUP.md`](MULTIPLAYER-SETUP.md)).
+the server's disk (set `[locker] publicBase` to the origin players reach it on).
 
 **5. Run.**
 

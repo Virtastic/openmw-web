@@ -62,7 +62,7 @@ if [ -n "$RUN_AS" ] && [ "$(id -u)" = "0" ]; then
     # that directory.
     #
     # $DATA/caddy likewise: it is the caddy service's bind source, so when Docker creates it
-    # (compose run by hand, without setup.sh) it is root's, and the server's Caddyfile write
+    # (a plain `docker compose up`) it is root's, and the server's Caddyfile write
     # fails EACCES while Caddy crash-loops on the missing file. Created here first, so the
     # usual start order (openmw-web before caddy) never lets Docker make it.
     #
@@ -122,7 +122,7 @@ case "$MODE" in
     # dir holding accounts and config that every world reads) and --base-port (the range it
     # allocates world ports from). It has no --data at all, and passing one makes it exit on
     # an unknown option — which is exactly what the first version of this script did.
-    # SERVER_PORT is the port a Pterodactyl panel allocates (pterodactyl/): there the
+    # SERVER_PORT is the port a hosting panel allocates (the Pterodactyl egg is gone with CL12): there the
     # container must listen on the allocated port itself, and the panel sets nothing else.
     echo "{\"event\":\"entrypoint.mode\",\"mode\":\"gateway\"}"
     exec node --max-old-space-size="$HEAP" dist/gateway.mjs \

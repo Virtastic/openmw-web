@@ -189,7 +189,7 @@ export class S3Storage {
         log('info', 'locker.cors_origin_added', { origin, total: origins.length + 1 });
       } else {
         // Most likely the credentials carry Object Read & Write but not PutBucketCors, which
-        // is exactly what docs/MULTIPLAYER-SETUP.md tells operators to create. Say what to do.
+        // is the usual key scope for a locker bucket. Say what to do.
         log('error', 'locker.cors_add_failed', {
           origin, status: put.status,
           fix: 'grant PutBucketCors to the S3 credentials, or add this origin to the bucket '

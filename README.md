@@ -37,37 +37,13 @@ logs and accounts. Multiplayer (added in 1.1.0) is there too, behind an experime
   <img src="docs/dashboard-mods.jpg" alt="The admin dashboard's mod manager: the Morrowind Optimization Patch installed as six orderable parts alongside Weapon Sheathing, each with a toggle, drag handle, and badges showing which files it replaces or has overridden" width="850">
 </p>
 
-## Quick start: your own server
+## Running the world (v2)
 
-You need [Docker](https://docs.docker.com/get-started/get-docker/) and your own copy of
-Morrowind. Then run the commands below. If you'd rather use your own proxy, a panel like
-Pterodactyl, or skip the script, see [`INSTALLING.md`](INSTALLING.md) for every option.
-
-```bash
-git clone https://github.com/Virtastic/openmw-web.git
-cd openmw-web
-./setup.sh        # Windows: .\setup.ps1
-```
-
-Nothing compiles: the script checks out the newest release and pulls its prebuilt server
-image, `ghcr.io/virtastic/openmw-web-server:<tag>` (multiplayer-capable, published by every
-release). `./setup.sh --update` or the dashboard's Update button pulls the next one; to roll
-back, set `OPENMW_WEB_TAG` in `.env` to the previous tag and `docker compose pull && docker
-compose up -d`.
-
-**No clone, no script?** Save [`docker-compose.yml`](docker-compose.yml) in an empty folder,
-run `docker compose up -d` there, and open **http://localhost/admin**. Same server; only the
-dashboard's Update button for the server itself needs the clone and script.
-
-1. The script also installs the player app: it is too big for git, so it downloads the same
-   release's `openmw-web-*.zip`, checks it against the release's `SHA256SUMS`, and unpacks it
-   into `play/`. Without the script, the wizard's *Player app* step does the same.
-2. Your browser opens **http://localhost/admin**. Create your admin account, answer the
-   wizard.
-3. Drag your Morrowind `Data Files` folder in when it asks. Play at **http://localhost**.
-
-That's it. [`SELF_HOSTING.md`](SELF_HOSTING.md) covers everything else - the dashboard page
-by page, mods, Tamriel Rebuilt, multiplayer, domains and HTTPS. Stuck? Ask in
+v2 is one hosted public world, deployed by us; there is no self-host installer (CL12). The
+stack is [`docker-compose.yml`](docker-compose.yml) plus [`deploy/Caddyfile`](deploy/Caddyfile):
+set `OPENMW_WEB_TAG` in `.env` to the release tag, then `docker compose pull && docker compose
+up -d`. To roll back, set the previous tag and run the same two commands. Hand-run and
+proxy details are in [`docs/ADVANCED.md`](docs/ADVANCED.md). Stuck? Ask in
 [Discord](https://discord.gg/PzFfDkbSue).
 
 ## Playing
@@ -116,9 +92,8 @@ whisper/mute/block, in-game reporting and server-side saves are all there.
 On the hosted service, sign-in is SSO only (Google / Discord / Microsoft - no passwords to
 leak; accounts are keyed on the provider's stable ID, never your email). A server you run
 chooses its own sign-in in the setup
-wizard. Running your own is the [quick start](#quick-start-your-own-server) above, choosing
-**Multiplayer** in the wizard; provider-side steps live in
-[`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md).
+wizard. Provider-side SSO steps (redirect URIs, client ids) are in
+[`docs/ADVANCED.md`](docs/ADVANCED.md).
 
 ## What's in this repo
 
