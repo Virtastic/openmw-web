@@ -434,6 +434,10 @@ export class PlayerStore {
   }
 
   async flushKey(key: string): Promise<void> {
+    await timeFlush('players', async () => this.writeKey(key));
+  }
+
+  private writeKey(key: string): void {
     // Still in character creation: keep the doc in memory and leave the dirty flag set, so the
     // first flush after ChargenComplete writes everything that happened meanwhile.
     if (this.creating.has(key)) return;
@@ -464,9 +468,7 @@ export class PlayerStore {
     }
     try {
       const json = JSON.stringify(doc);
-      await timeFlush('players', async () =>
-        this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)').run(key, json),
-      );
+      this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)').run(key, json);
       this.maybeSnapshot(key, json);
     } catch (err) {
       this.dirty.add(key); // retry on the next flush point
@@ -522,7 +524,14 @@ export class PlayerStore {
   }
 
   async flushAll(): Promise<void> {
-    for (const key of [...this.dirty]) await this.flushKey(key);
+    // OT3-92: one transaction per sweep (see CellStore.flushAll).
+    const keys = [...this.dirty];
+    try {
+      await timeFlush('players', async () => tx(this.db, () => { for (const key of keys) this.writeKey(key); }));
+    } catch (err) {
+      for (const key of keys) this.dirty.add(key); // rolled back: every key is unwritten again
+      log('error', 'players.sweep_failed', { error: String(err) });
+    }
     checkpoint(this.db); // so a backup tarred after SIGUSR1 sees one file, not db+wal+shm
   }
 

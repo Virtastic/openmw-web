@@ -14,6 +14,27 @@ import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 const APPEARANCE = { race: 'dark elf', head: 'b_n_dark elf_m_head_01', hair: 'b_n_dark elf_m_hair_02', isMale: true, class: 'nightblade', name: 'Drelas' };
 const EQUIP_SLOTS = new Map<number, string>([[0, 'iron_helmet'], [16, 'iron_longsword']]);
 
+test('OT3-92: a sweep is one transaction -- fast, and all-or-nothing', async () => {
+  const dataDir = tmpDataDir();
+  const store = new PlayerStore(dataDir);
+  for (let i = 0; i < 1000; i++) store.update(`p${i}`, (doc) => { doc.spells = ['a']; });
+  const t0 = performance.now();
+  await store.flushAll();
+  assert.ok(performance.now() - t0 < 500, 'a 1000-doc sweep stays in one cheap commit');
+  for (let i = 0; i < 1000; i++) store.update(`p${i}`, (doc) => { doc.spells = ['b']; });
+  let n = 0;
+  store.setLivePositionProvider(() => { if (++n === 500) throw new Error('crash'); return undefined; });
+  await store.flushAll(); // dies half way: logged, rolled back
+  const peek = new PlayerStore(dataDir);
+  assert.deepEqual((await peek.get('p0'))?.spells, ['a'], 'the half-done sweep left nothing behind');
+  await peek.close();
+  store.setLivePositionProvider(() => undefined);
+  await store.close(); // the rolled-back keys were still dirty, so this writes them
+  const after = new PlayerStore(dataDir);
+  assert.deepEqual((await after.get('p0'))?.spells, ['b']);
+  await after.close();
+});
+
 test('playerstore round-trip and atomicity', async () => {
   const dataDir = tmpDataDir();
   const store = new PlayerStore(dataDir);

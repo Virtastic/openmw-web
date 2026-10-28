@@ -509,15 +509,15 @@ export class CellStore {
   // write. Doing this properly needs every mutation path serialised (or an LRU that keys off
   // live references) and is not worth trading a data-loss race for a slow leak.
   async flushKey(cellKey: string): Promise<void> {
+    await timeFlush('cells', async () => this.writeKey(cellKey));
+  }
+
+  private writeKey(cellKey: string): void {
     if (!this.dirty.delete(cellKey)) return;
     const doc = this.cache.get(cellKey);
     if (!doc) return;
     try {
-      await timeFlush('cells', async () =>
-        this.db
-          .prepare('INSERT OR REPLACE INTO cells (cellKey, doc) VALUES (?, ?)')
-          .run(cellKey, JSON.stringify(doc)),
-      );
+      this.db.prepare('INSERT OR REPLACE INTO cells (cellKey, doc) VALUES (?, ?)').run(cellKey, JSON.stringify(doc));
     } catch (err) {
       this.dirty.add(cellKey);
       log('error', 'world.cell_flush_failed', { cellKey, error: String(err) });
@@ -525,7 +525,15 @@ export class CellStore {
   }
 
   async flushAll(): Promise<void> {
-    for (const key of [...this.dirty]) await this.flushKey(key);
+    // OT3-92: one transaction per sweep -- one fsync instead of one per cell, and a crash
+    // mid-sweep leaves the previous sweep's rows whole.
+    const keys = [...this.dirty];
+    try {
+      await timeFlush('cells', async () => tx(this.db, () => { for (const key of keys) this.writeKey(key); }));
+    } catch (err) {
+      for (const key of keys) this.dirty.add(key); // rolled back: every key is unwritten again
+      log('error', 'cells.sweep_failed', { error: String(err) });
+    }
     await this.globalWrite; // kills / shared quest state must be on disk too
     checkpoint(this.db);
   }
