@@ -19,6 +19,11 @@ do
     end })
   end
 end
+-- global.lua's text checks span the modules split out of it (OT3-238).
+local function globalSrc()
+  local MP = './openmw/files/data/scripts/mp/'
+  return io.open(MP .. 'global.lua'):read('*a') .. '\n' .. io.open(MP .. 'avatars.lua'):read('*a')
+end
 local pass, fail = 0, 0
 -- Every openmw.mp binding exists in browser and peer alike (DC5): the scripts call them
 -- unguarded, so a hand-rolled mp mock answers any binding it does not name with a no-op.
@@ -474,15 +479,15 @@ end
 -- Magicka did; mirroring the effect as well landed it twice.
 print('global.lua -- restore/damage H/M effects are not mirrored (the bars carry them)')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local bc = g:match('local BAR_CARRIED_EFFECT = (%b{})')
   check('global.lua BAR_CARRIED_EFFECT drops restorehealth, restoremagicka and damagemagicka only',
     bc ~= nil and bc:find('restorehealth = true', 1, true) ~= nil and bc:find('restoremagicka = true', 1, true) ~= nil
     and bc:find('damagemagicka = true', 1, true) ~= nil and bc:find('fatigue', 1, true) == nil
     and bc:find('damagehealth', 1, true) == nil, tostring(bc))
   check('applied on both mirrors: MP_AvatarActiveSpells (peer) and MP_SelfActiveSpells (owner)',
-    g:find('if localId then effects = withoutBarCarried(localId, effects) end', 1, true) ~= nil
-    and g:find('local effects = localId and withoutBarCarried(localId, sp.effects or {}) or {}', 1, true) ~= nil)
+    g:find('if localId then effects = av.withoutBarCarried(localId, effects) end', 1, true) ~= nil
+    and g:find('local effects = localId and av.withoutBarCarried(localId, sp.effects or {}) or {}', 1, true) ~= nil)
   -- The helper itself, run: the record's restore index goes, the rest stay.
   local src = g:match('(local function magicRecordOf.-\nend)') .. '\n'
     .. g:match('(local BAR_CARRIED_EFFECT = .-local function withoutBarCarried.-\nend)')
@@ -510,7 +515,7 @@ end
 -- server/src against every handler in scripts/mp.
 print('client -- server events that must not be dropped on the floor')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local s = io.open('./openmw/files/data/scripts/mp/social.lua'):read('*a')
   -- WorldTimeRefused: m7.ts refuses a Rest under [rules] timeSkip and says so on purpose --
   -- "a Rest that silently does nothing gets pressed again and then reported as a bug".
@@ -520,7 +525,7 @@ do
   -- Backlog 359: the same record from the same owner never stacks on the avatar (eight adds
   -- of one Fortify Health custom spell were eight times the effect); distinct records still do.
   check('global.lua MP_AvatarActiveSpells stacks only distinct records per owner',
-    g:find('local stack = (ownerActive[data.id][localId] or 0) <= 1', 1, true) ~= nil
+    g:find('local stack = (av.ownerActive[data.id][localId] or 0) <= 1', 1, true) ~= nil
       and g:find('caster = p.obj, stackable = stack,', 1, true) ~= nil
       and g:find('caster = p.obj, stackable = true,', 1, true) == nil,
     'a repeated active-effect add stacks again')
@@ -1076,7 +1081,7 @@ print('quests.lua -- forced greetings take the lock, a dead partner closes the w
 do
   local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
   local pl = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
   check('player.lua reports a Dialogue window that opened without an activation (mpDialogueForced)',
     pl:find("data.newMode == 'Dialogue' and not talking(data.oldMode) and data.arg", 1, true) ~= nil
@@ -1252,7 +1257,7 @@ end
 
 print('global.lua -- applyItemStates splits a stack to fit an entry; the peer report round-trips')
 do
-  local f = io.open('./openmw/files/data/scripts/mp/global.lua')
+  local f = { read = function() return globalSrc() end, close = function() end }
   local src = f:read('*a'):gsub('\r\n', '\n'); f:close()
   local applyChunk = src:match('(local function applyItemStates%(.-\nend\n)')
   local snapChunk = src:match('(local function snapAvatarItemStates%(.-\nend\n)')
@@ -1416,7 +1421,7 @@ end
 print('actors.lua / global.lua -- scale: one actor scan per tick, chunked batches, a detach without the script is a no-op')
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   -- Backlog 267: the holder bucketed nothing and rescanned every active actor once per held
   -- cell per tick, with a fresh pcall closure per actor per read.
   check('actors.tick buckets activeActors by cell ONCE and hands each held cell its list',
@@ -1442,7 +1447,7 @@ print('information layer -- journal dates, map memory, menus, levels (backlog 25
 do
   local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
   local w = io.open('./openmw/files/data/scripts/mp/world.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
   -- 257: the dated log is replayed in order, through the stamping binding when it exists.
   check('JournalSync replays journalLog with ipairs before the quest map',
@@ -1497,7 +1502,7 @@ end
 print('melee depth -- armour/block progression rides the avatar, the stagger keeps the tap, the bar drop plays the blow (307, 309, 310)')
 do
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   local cl = io.open('./openmw/files/data-mw/scripts/omw/combat/local.lua'):read('*a')
@@ -1553,9 +1558,9 @@ do
     and pp:find('if recent and lastSwingPos and I.Combat and I.Combat.spawnBloodEffect then', 1, true) ~= nil)
   -- #325: the peer rules follow the LAST SimReady, not the join-time flag.
   check('global.lua peer rules read the last SimReady (325)',
-    g:find('if lastSimReady ~= nil then simulated = lastSimReady end', 1, true) ~= nil
-    and g:find('lastSimReady = (data and data.ready) == true', 1, true) ~= nil
-    and g:find('lastSimReady = nil', 1, true) ~= nil)
+    g:find('if M.lastSimReady ~= nil then simulated = M.lastSimReady end', 1, true) ~= nil
+    and g:find('av.lastSimReady = (data and data.ready) == true', 1, true) ~= nil
+    and g:find('av.lastSimReady = nil', 1, true) ~= nil)
   -- #328: a degraded puppet keeps its script and cancels every swing.
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
   check('puppet.lua stays attached in degraded mode with the hit intercept armed (328)',
@@ -1579,7 +1584,7 @@ end
 
 print('global.lua -- a stored cell that no longer exists falls back to the Welcome respawn (backlog 317)')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   check('restoreTick checks the stored cell exists before the teleport, and falls back to flags.respawn',
     g:find('if record.position and not cellExists(record.position.cellKey) then', 1, true) ~= nil
     and g:find('local fb = net.flags and net.flags.respawn', 1, true) ~= nil
@@ -1598,7 +1603,7 @@ do
   local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
   local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
   local w = io.open('./openmw/files/data/scripts/mp/world.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
@@ -1622,7 +1627,7 @@ do
     and av:find("core.sendGlobalEvent('mpAvatarLanded', { obj = self.object, top = fallTop, z = z })", 1, true) ~= nil
     and av:find('\n            fallProbe()\n', 1, true) ~= nil)
   check('global.lua no longer calls isOnGround on a GObject and prints from mpAvatarLanded (341)',
-    not g:find('pcall(types.Actor.isOnGround, p.obj)', 1, true) and g:find('mpAvatarLanded = avatarLanded', 1, true) ~= nil
+    not g:find('pcall(types.Actor.isOnGround, p.obj)', 1, true) and g:find('mpAvatarLanded = av.avatarLanded', 1, true) ~= nil
     and g:find("'[mp] avatar #%d landed from z=%d at z=%d (fell %d) hp=%s'", 1, true) ~= nil)
   -- 342: a player puppet is marked as such in the registry.
   check('puppet.lua marks a remote-player puppet with mp.setPlayerPuppet (342)',
@@ -1640,7 +1645,7 @@ end
 print('leftovers -- holder loss detaches everything, the holder\'s corpse is the loot, followers ride the retry, revive/effects/AI settings travel, the bark and the block (227, 229, 293-297, 312)')
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
   local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
@@ -1736,7 +1741,7 @@ end
 
 print('UX rows -- social OK lines reach the feed, the late host hears who went home, a guest\'s Rest is refused before the bed lies (29, 32, 262)')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local s = io.open('./openmw/files/data/scripts/mp/social.lua'):read('*a')
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a'):gsub('\r\n', '\n')
   local srv = io.open('./server/src/server.ts'):read('*a')
@@ -1776,7 +1781,7 @@ do
   local n = io.open('./openmw/files/data/scripts/mp/net.lua'):read('*a')
   local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   -- #31: a half-open socket never fires onClose; the client hangs up itself when nothing
   -- has arrived for 75 s, and onClose (state == Joined) redials.
   check('net.lua stamps lastRecvAt on open and on every frame, and hangs up after 75 s of silence while Joined',
@@ -1856,7 +1861,7 @@ print('creature swings, peer-run scripts, topics/talked-to persisted, AI done, a
 do
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
   local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
   local ws = io.open('./server/src/core/worldstate.ts'):read('*a')
@@ -1937,7 +1942,7 @@ end
 
 print('#413 script notes are metered, not drained in one burst')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   check('scriptNotesTick queues notes and sends at most NOTE_SENDS_PER_SEC a second',
     g:find('local NOTE_SENDS_PER_SEC = 20', 1, true) ~= nil
     and g:find('for _, n in ipairs(notes) do pendingNotes[#pendingNotes + 1] = n end', 1, true) ~= nil
@@ -2070,13 +2075,13 @@ do
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
   check('a standing segment is skipped while the queue is beyond SEGS_LAG_S',
     av:find("while #segs > 1 and backlog > SEGS_LAG_S and (segs[1].d.move or 0) == 0 and (segs[1].d.side or 0) == 0 do", 1, true) ~= nil)
-  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local gl = globalSrc()
   check('the avatar stream gate sits under the 50 ms peer frame', gl:find('local AVATAR_STREAM_EVERY = 0.04', 1, true) ~= nil)
 end
 
 print('s177 a crowd costs no per-actor scan and no per-pose page call')
 do
-  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local gl = globalSrc()
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   check('isMpPuppetFn is a lookup by body id, not a scan of every puppet',
     gl:find('local p = puppets[puppetBodies[obj.id] or false]', 1, true) ~= nil
@@ -2341,7 +2346,7 @@ end
 
 print('s22 a body the engine holds dead above zero hp is said out loud (#178)')
 do
-  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local gl = globalSrc()
   local pl = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
   check('the peer says an avatar whose isDead disagrees with its bar', gl:find('dead-latch mismatch: isDead=%s', 1, true) ~= nil)
   check('the owner says it is dead-latched while the peer reports hp', pl:find('self is dead-latched while the peer reports hp', 1, true) ~= nil)
@@ -2359,7 +2364,7 @@ end
 
 print('s131 a friend death is counted from the bars, not sampled off the puppet (#179, #181)')
 do
-  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local gl = globalSrc()
   check('global.lua counts a puppet death in MP_PlayerStatsDynamic and mirrors puppetDeaths',
     gl:find("puppetDeaths[key] = (puppetDeaths[key] or 0) + 1", 1, true) ~= nil
     and gl:find("local key = kit.idKey(data.id)", 1, true) ~= nil
@@ -2549,7 +2554,7 @@ end
 
 print('#480 a puppet stops following after a far teleport: only the tracked body answers, and it stands in a loaded cell')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
   check('puppet.lua names the asking body on every mpSnapRequest',
     pp:find('{ id = playerId, actorKey = actorKey, obj = self.object, x = target.x', 1, true) ~= nil)
@@ -2569,7 +2574,7 @@ end
 
 print('avatar bookkeeping: a despawned body leaves the registry and the scene, a rebuilt one gets the effects back')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
   check('a refused remove() disables the body at once (no solid ghost while the retry waits)',
     io.open('./openmw/files/data/scripts/mp/retry.lua'):read('*a'):find('pcall(function() obj.enabled = false end)', 1, true) ~= nil)
@@ -2685,7 +2690,7 @@ do
   check('...once per cooldown: a second gap inside it is the snap\'s', again == false)
   ok, sent = run({ refused = true })
   check('...never against a refused move (the WoW model\'s correction): the server meant it', not ok and #sent == 0)
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   check('global.lua marks every self-state entry as a refusal under clientAuthority',
     g:find('e.refused = (net.flags and net.flags.clientAuthority) == true', 1, true) ~= nil)
   check('the reconciliation tries the catch-up before the snap',
@@ -2695,7 +2700,7 @@ end
 print('#482 snapto lands on the ground: a hard-coded z under the terrain no longer drops the body into the sea')
 do
   local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   -- The snapto handler, cut from the source and run against a recording core.
   local s = p:find("local snX, snY, snZ = cmd:match('^snapto:", 1, true)
   local _, e = p:find("onGround = true })\n        end", s, true)
@@ -2716,7 +2721,7 @@ end
 
 print('#484 the sim peer ignores PlayerLeaveView: every player is in its view, the avatar stays')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   -- The handler, cut from the source and run twice: as the peer and as a client.
   local s = g:find('MP_PlayerLeaveView = function(data)', 1, true)
   local _, e = g:find('lastPose[data.id] = nil\n    end,', s, true)
@@ -2741,7 +2746,7 @@ end
 -- and moved at a different speed from its owner for the whole duration.
 print('active effects carry their ROLLED magnitude both ways')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
   local cpp = io.open('./openmw/apps/openmw/mwlua/magicbindings.cpp'):read('*a')
   check('identity.lua sends the owner roll with each effect (-1 = none)',
@@ -2753,7 +2758,7 @@ do
     g:find("out[i] = { key = e.key, id = worldmp.toNet(e.id), effects = e.effects, mags = e.mags }", 1, true) ~= nil)
   check('the peer reports the avatar roll back to the owner',
     g:find("{ id = worldmp.toNet(sp.id), effects = idx, mags = mags }", 1, true) ~= nil)
-  local _, n = g:gsub('magnitudes = rolledMagnitudes%(sp%),', '')
+  local _, n = g:gsub('magnitudes = av%.rolledMagnitudes%(sp%),', '')
   check('both appliers (avatar and self) pass the roll to activeSpells:add', n == 2)
   check('the engine pins a passed roll as min == max, capped at the record max',
     cpp:find('effect.mMinMagnitude = effect.mMaxMagnitude = std::clamp(*m, 0.f, std::max(0.f, cap));', 1, true) ~= nil)
@@ -3160,7 +3165,7 @@ print('s172 an NPC\'s spell cast reaches other screens (reported from the actor,
 do
   local cp = io.open('./openmw/files/data/scripts/mp/companion.lua'):read('*a')
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
-  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local gl = globalSrc()
   check('companion.lua reads the cast on the actor and reports it on change',
     cp:find("isPlaying(self, 'spellcast')", 1, true) ~= nil and cp:find("sendGlobalEvent('mpActorCasting'", 1, true) ~= nil)
   check('actors.lua no longer requires openmw.animation in the global script (it threw every time)',
@@ -3403,7 +3408,7 @@ do
       if src:find("require('scripts.mp.reconcile')", 1, true) then offenders[#offenders + 1] = name end
     end
   end
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   check('reconcile.lua is required only in the global context, and the global onUpdate ends the frame',
     #offenders == 0 and g:find('reconcile.nextFrame()', 1, true) ~= nil, table.concat(offenders, ', '))
   -- The call sites the behavioural cases below stand for: revert any of them and this fails.
@@ -3912,13 +3917,13 @@ end
 
 print('friend sync: the peer streams the avatar\'s body to friends and keeps a quick click')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   check('a body entry (bit 7) precedes the seq-matched one, so an older server keeps today\'s pose',
     g:find('flags = e.flags + POSE_OBSERVER_BIT', 1, true) ~= nil
     and g:find('entries[#entries + 1] = e\n', 1, true) ~= nil
     and g:find('POSE_OBSERVER_BIT', 1, true) < g:find('entries[#entries + 1] = e\n', 1, true))
   check('a use press is latched until a stream entry carries it',
-    g:find('if avatarUsing[data.id] then usePending[data.id] = true end', 1, true) ~= nil
+    g:find('if av.avatarUsing[data.id] then av.usePending[data.id] = true end', 1, true) ~= nil
     and g:find('((avatarUsing[id] or usePending[id]) and 8 or 0)', 1, true) ~= nil
     and g:find('if ok then jumpPending[id] = nil; usePending[id] = nil end', 1, true) ~= nil)
 end
@@ -4007,7 +4012,7 @@ end
 -- ====================================== global.lua: a switch's queued intent survives the reload
 print('global.lua -- Party clicked while visiting is applied on arrival home (carry)')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local ma = g:find('local kit = {}', 1, true)
   local mb = ma and select(2, g:find('\nend\n', ma, true))
   local ha = g:find('    mpCarry = function(data)', 1, true)
@@ -4046,7 +4051,7 @@ end
 -- ====================================== the WoW model on the peer: avatars stand where their owner is
 print('global.lua -- the peer places an avatar on its owner\'s pose (clientAuthority)')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local a = g:find('function kit.placeAvatar(', 1, true)
   local b = a and select(2, g:find('\nend\n', a, true))
   local mk = a and b and loadstring('local remoteCell, isChargenCell, util, inviteCellArg = ...\nlocal kit = {}\n'
@@ -4280,7 +4285,7 @@ end
 -- ====================================== the bug scan's fixes (2026-10-23)
 print('scan fixes -- placement keeps the aim, fatigue follows the engine rules, puppets carry no mwscript')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   check('placement passes no rotation (a yaw-only transform zeroed the pitch)',
     g:find("obj:teleport(inviteCellArg(key), tgt, { onGround = false })", 1, true) ~= nil
     and not g:find('rotation = util.transform.rotateZ(e.yaw or 0), onGround = false', 1, true))
@@ -4444,7 +4449,7 @@ do
   check('character.cpp records a fall knockdown for the avatar', ch:find('MWMP::recordFallKnockdown();', 1, true) ~= nil)
   local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
   check('mp.takeFallKnockdown and mp.setKnockedDown are bound', lb:find('api["takeFallKnockdown"]', 1, true) ~= nil and lb:find('api["setKnockedDown"]', 1, true) ~= nil)
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   check('the peer lays the avatar down on kd', g:find('if data.kd == true then pcall(mp.setKnockedDown, p.obj) end', 1, true) ~= nil)
 end
 
@@ -4453,7 +4458,7 @@ print('dummy-player fixes -- the peer\'s getPlayer() is nobody; rules reach the 
 do
   local function src(p) return io.open(p):read('*a') end
   local ENG = './openmw/apps/openmw/'
-  local g = src('./openmw/files/data/scripts/mp/global.lua')
+  local g = globalSrc()
   local ax = src(ENG .. 'mwscript/aiextensions.cpp')
   check('scripted StartCombat Player on a puppet is noted (scriptcombat)',
     ax:find('"scriptcombat"', 1, true) ~= nil and ax:find('MWMP::isPuppet(actor.getCellRef().getRefNum())', 1, true) ~= nil)
@@ -4593,7 +4598,7 @@ do
     ac:find('if (body.getClass().isNpc() && body.getClass().getNpcStats(body).isWerewolf())', 1, true) ~= nil)
 
   -- 12. the peer never names itself as a combat target
-  g = src('./openmw/files/data/scripts/mp/global.lua')
+  g = globalSrc()
   do
     local a = g:find('playerIdOf = function(obj)', 1, true)
     local guard = a and g:find('if not (mp.isSystem()) then', a, true)
@@ -4964,7 +4969,7 @@ end
 
 print('1.7.1 rebuildPuppet respawns at the queued teleport or the last pose, not the lagging body')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local a = g:find('local function rebuildPuppet(id)', 1, true)
   local q = a and g:find('local queued = retry.pendingTeleport(p.obj)', a, true)
   local pick = a and g:find('local pos = (queued and queued.pos) or lastPose[id] or p.obj.position', a, true)
@@ -4974,7 +4979,7 @@ end
 
 print('1.7.1 a numeric id keys the same on Lua 5.4 and LuaJIT ("p:2", never "p:2.0")')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local body = g:match('(function kit%.idKey%(id%).-\nend)')
   local kit = {}
   local okL = body and pcall(assert((loadstring or load)('local kit = ...\n' .. body)), kit)
@@ -5071,7 +5076,7 @@ end
 
 print('1.7.1 silent failures are said: a refused drop that cannot go back, an avatar detach that throws')
 do
-  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local g = globalSrc()
   local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
   check('the put-back moveInto of a refused drop logs its failure',
     ob:find("local okM, errM = pcall(function() obj:moveInto(types.Actor.inventory(player)) end)", 1, true) ~= nil
