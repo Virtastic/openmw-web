@@ -199,6 +199,13 @@ export interface ServerCtx {
 // that three consecutive windows is still under a second of sustained impossibility.
 const MOVE_WINDOW_MS = 200;
 
+// OT3-174: the interiors a dead character may come back in. Tribunal temples, the High Fane,
+// the Imperial chapels and shrines; NOT a bare "Shrine" (most are Daedric ruins full of
+// cultists), except Maar Gan's Tribunal one.
+const SHRINE_CELL = /\b(temple|chapels?|high fane|imperial shrine)\b|^maar gan, shrine$/i;
+const EXTERIOR_CELL = /^-?\d+,-?\d+$/;
+const MAX_SHRINES = 64;
+
 export class Connection implements Peer {
   state: SessionState = 'CONNECTED';
   player?: Player;
@@ -215,6 +222,19 @@ export class Connection implements Peer {
   // Declared at Hello; carried onto the Player so cell-authority election can require it.
   private simulatesActors = false;
   private isSystem = false;
+
+  // OT3-174: where a dead character can come back. Leaving the outdoors remembers where (an
+  // interior has no world coordinates); arriving in a temple or chapel records it as visited.
+  private noteShrine(player: Player, oldCell: string | undefined, cellKey: string,
+    prev: { x: number; y: number } | undefined, x: number, y: number, z: number): void {
+    if (oldCell !== undefined && EXTERIOR_CELL.test(oldCell) && prev) player.lastOutside = { x: prev.x, y: prev.y };
+    if (this.isSystem || player.bot || !SHRINE_CELL.test(cellKey)) return;
+    const out = player.lastOutside;
+    const at = { cellKey, x, y, z, ...(out ? { ex: out.x, ey: out.y } : {}) };
+    this.ctx.players.update(player.charId, (doc) => {
+      doc.shrines = [...(doc.shrines ?? []).filter((s) => s.cellKey !== cellKey), at].slice(-MAX_SHRINES);
+    });
+  }
   private engineHeld = false;
   // Set by resolveCharacter when this connection's character is genuinely still in
   // Morrowind's opening sequence, so authenticate() can withhold persistence until it
@@ -1437,6 +1457,7 @@ export class Connection implements Peer {
     if (oldCell !== cellKey) this.ctx.social.onCellChange(player, oldCell, cellKey); // OT3-73 party finder
     if (oldCell !== cellKey && !this.isSystem) this.ctx.quests.sendPersonalDispositions(player, cellKey); // OT3-155
     const prev = player.pose;
+    if (oldCell !== cellKey) this.noteShrine(player, oldCell, cellKey, prev, x, y, z);
     player.pose = {
       x, y, z,
       yaw: prev?.yaw ?? 0,

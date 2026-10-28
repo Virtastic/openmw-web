@@ -65,6 +65,9 @@ export class HookBus {
   playerDeath(player: PluginPlayer): void {
     this.run('onPlayerDeath', (p) => void p.onPlayerDeath?.(this.api, player));
   }
+  playerRevive(healer: PluginPlayer, victimId: number): boolean {
+    return this.run('onPlayerRevive', (p) => p.onPlayerRevive?.(this.api, healer, victimId)) === true;
+  }
   // M6 policy queries. No plugin loaded -> share everything, never allow regression.
   shareFamily(family: ShareFamily): boolean {
     return this.run('onShareFamily', (p) => p.onShareFamily?.(this.api, family)) !== false;

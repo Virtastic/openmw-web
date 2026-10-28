@@ -45,6 +45,12 @@ export interface PluginApi {
   /** Where a player currently is, or undefined if they have not reported a pose yet. Needed by
    *  any rule that has to put somebody NEXT TO somebody else — summons, travel. */
   posOfPlayer?(playerId: number): { cellKey: string; x: number; y: number; z: number } | undefined;
+  /** OT3-174: ids of this player's party members in the world, themselves excluded. */
+  partyOnline?(playerId: number): number[];
+  /** OT3-174: the temples/shrines this character has visited, and the last outdoor spot they left. */
+  shrinesOf?(playerId: number): { shrines: { cellKey: string; x: number; y: number; z: number; ex?: number; ey?: number }[]; outside?: { x: number; y: number } };
+  /** OT3-174: the character's base health, when their stats are known. */
+  maxHealthOf?(playerId: number): number | undefined;
 }
 
 export interface Plugin {
@@ -56,6 +62,8 @@ export interface Plugin {
   onPlayerDisconnect?(api: PluginApi, player: PluginPlayer): void;
   // M2: fired when a PlayerDeath event arrives (respawn/death-penalty seeds).
   onPlayerDeath?(api: PluginApi, player: PluginPlayer): void;
+  // OT3-174: a heal (Restore Health) landed on another player; true = it revived them.
+  onPlayerRevive?(api: PluginApi, healer: PluginPlayer, victimId: number): boolean | void;
   // M6: sharing policy per quest family. Return true to share (relay + one global copy),
   // false for individual mode (stored per-player, never relayed). The `sharing` builtin
   // answers from [sharing]; replace it for party/faction-scoped rules.

@@ -20,6 +20,10 @@ Corrections, each checked against the validator or handler named:
 - `JournalSync` carries `{quests, borrowed, journalLog}`; `CrimeUpdate` is raise-only under
   shared crime, echoed back on a refused drop, and relayed with `byId`/`shared`.
 - `CombatHit`/`CombatSpellHit` reach the owner with `attackerId`; `CombatCast` with `fromId`.
+- Downed (OT3-174): a player who dies with a party member online is not respawned for 30 s.
+  A beneficial `CombatSpellHit` carrying `restorehealth` from a party member in that window is
+  consumed as a revive (not relayed): `PlayerResurrect {cellKey,x,y,z, standUp:true, hp}` at
+  a quarter of base health. Otherwise the respawn lands at the nearest visited temple/shrine.
 - `StoryLicense {actors: recordId[], players: {[playerId]: recordId[]}}` server -> world peer
   every 2 s (OT3-164): the story actors, and which of them each in-world human may hurt
   (a kill quest started by them or an online party member). The peer vetoes the rest.

@@ -152,6 +152,10 @@ export interface PlayerDoc {
   bounty?: number;
   // OT3-51: this character's GetDeadCount, per base recordId (worldstate.ts ActorDeath).
   kills?: Record<string, number>;
+  // OT3-174: temples and shrines this character has entered, where they arrived, and the
+  // outdoor spot they walked in from (ex/ey; absent when they came from another interior
+  // before ever being outside). Respawn picks the nearest. Most recent last, capped.
+  shrines?: { cellKey: string; x: number; y: number; z: number; ex?: number; ey?: number }[];
 }
 
 type LivePosition = { cellKey: string; x: number; y: number; z: number };

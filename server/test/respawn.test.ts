@@ -92,3 +92,65 @@ test('no configured point, below zero indoors: where you fell, untouched', () =>
   respawn.onPlayerDeath!(api, DEAD);
   assert.deepEqual(events[0]!.body, { ...deep, restoreHp: true });
 });
+
+// OT3-174: party revive and the nearest visited shrine.
+function partyApi(over: {
+  shrines?: { cellKey: string; x: number; y: number; z: number; ex?: number; ey?: number }[];
+  outside?: { x: number; y: number };
+  fell?: { cellKey: string; x: number; y: number; z: number };
+  party?: number[];
+}) {
+  const f = fakeApi({ respawnCellKey: '', positions: over.fell ? { 1: over.fell } : {} });
+  Object.assign(f.api, {
+    partyOnline: (id: number) => (id === 1 ? over.party ?? [] : []),
+    shrinesOf: () => ({ shrines: over.shrines ?? [], outside: over.outside }),
+    maxHealthOf: () => 80,
+  });
+  return f;
+}
+const BALMORA = { cellKey: 'Balmora, Temple', x: 1, y: 2, z: 3, ex: -20000, ey: -12000 };
+const ALDRUHN = { cellKey: 'Ald-ruhn, Temple', x: 4, y: 5, z: 6, ex: -16000, ey: 52000 };
+
+test('unrevived, alone: back at the nearest visited shrine', () => {
+  const { api, events } = partyApi({ shrines: [BALMORA, ALDRUHN], fell: { cellKey: '-2,6', x: -15000, y: 50000, z: 100 } });
+  respawn.onPlayerDeath!(api, DEAD);
+  const res = events.find((e) => e.name === 'PlayerResurrect');
+  assert.deepEqual(res!.body, { cellKey: 'Ald-ruhn, Temple', x: 4, y: 5, z: 6, restoreHp: true });
+});
+
+test('dying indoors measures from the last outdoor spot they left', () => {
+  const { api, events } = partyApi({
+    shrines: [ALDRUHN, BALMORA], outside: { x: -21000, y: -11000 },
+    fell: { cellKey: 'Balmora, Caius Cosades\' House', x: 0, y: 0, z: 0 },
+  });
+  respawn.onPlayerDeath!(api, DEAD);
+  assert.equal((events.find((e) => e.name === 'PlayerResurrect')!.body as { cellKey: string }).cellKey, 'Balmora, Temple');
+});
+
+test('downed with a party: a party heal stands them up in place; a stranger\'s does not', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fell = { cellKey: '-2,6', x: -15000, y: 50000, z: 100 };
+  const { api, events, chats } = partyApi({ shrines: [BALMORA], fell, party: [2] });
+  respawn.onPlayerDeath!(api, DEAD);
+  respawn.onPlayerDeath!(api, DEAD); // the client's 5 s resend
+  assert.equal(events.filter((e) => e.name === 'PlayerResurrect').length, 0, 'no respawn while downed');
+  assert.ok(chats.some((c) => c.target === 2 && /Faller is down/.test(c.text)), 'the party is told');
+  assert.notEqual(respawn.onPlayerRevive!(api, { id: 9, name: 'Stranger', rank: 0 }, 1), true);
+  assert.equal(respawn.onPlayerRevive!(api, { id: 2, name: 'Friend', rank: 0 }, 1), true);
+  assert.deepEqual(events.find((e) => e.name === 'PlayerResurrect')!.body, { ...fell, standUp: true, hp: 20 });
+  t.mock.timers.tick(30_000);
+  assert.equal(events.filter((e) => e.name === 'PlayerResurrect').length, 1, 'the timer was cancelled');
+});
+
+test('downed and never revived: the shrine after the window, with all items', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { api, events } = partyApi({ shrines: [BALMORA], fell: { cellKey: '-3,-2', x: -20500, y: -12500, z: 0 }, party: [2] });
+  respawn.onPlayerDeath!(api, DEAD);
+  t.mock.timers.tick(29_999);
+  assert.equal(events.length, 0);
+  t.mock.timers.tick(1);
+  const res = events.find((e) => e.name === 'PlayerResurrect')!.body as Record<string, unknown>;
+  assert.equal(res.cellKey, 'Balmora, Temple');
+  assert.equal(res.restoreHp, true); // nothing about inventory crosses: items stay where they are
+  assert.equal(respawn.onPlayerRevive!(api, { id: 2, name: 'Friend', rank: 0 }, 1), undefined, 'too late to revive');
+});

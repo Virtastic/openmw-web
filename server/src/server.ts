@@ -293,6 +293,23 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     players: () => roster.inWorld().map((p) => ({ id: p.id, name: p.name, rank: p.rank })),
     cellOfPlayer: (playerId) => roster.get(playerId)?.cellKey,
     levelOfPlayer: (playerId) => { const p = roster.get(playerId); return p ? levelOf(p) : 1; },
+    partyOnline: (playerId) => {
+      const p = roster.get(playerId);
+      if (!p) return [];
+      return (socialStore.partyOf(p.accountKey)?.members ?? [])
+        .filter((a) => a !== p.accountKey)
+        .map((a) => roster.activeForAccount(a))
+        .filter((m): m is Player => m !== undefined && m.inWorld)
+        .map((m) => m.id);
+    },
+    shrinesOf: (playerId) => {
+      const p = roster.get(playerId);
+      return { shrines: (p && playerStore.getCached(p.charId)?.shrines) || [], outside: p?.lastOutside };
+    },
+    maxHealthOf: (playerId) => {
+      const p = roster.get(playerId);
+      return p ? playerStore.getCached(p.charId)?.stats?.dynamic?.hp.b : undefined;
+    },
     posOfPlayer: (playerId) => {
       const p = roster.get(playerId);
       if (!p || p.cellKey === undefined || !p.pose) return undefined;
@@ -504,6 +521,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     epochOf: (cellKey) => world.epochOf(cellKey),
     allowPlayerHit: (attacker, victimId, name) =>
       hooks.playerHit({ id: attacker.id, name: attacker.name, rank: attacker.rank }, victimId, name),
+    revive: (healer, victimId) =>
+      hooks.playerRevive({ id: healer.id, name: healer.name, rank: healer.rank }, victimId),
     spellBounds: (id) => {
       const known = contentTable.spellBounds(id);
       if (known) return known;

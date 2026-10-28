@@ -141,6 +141,7 @@ export interface Player {
   // #35: the last player whose harmful hit/spell was relayed at this player (PvP kill
   // attribution in server.ts onPlayerDeath, when fresh).
   lastHitBy?: { id: number; name: string; at: number };
+  lastOutside?: { x: number; y: number }; // OT3-174: the last exterior spot they left, for "nearest shrine"
   // When the level last stepped up: one step per window (playerstate.ts handleLevel).
   levelStepAt?: number;
   // When each bar's MAXIMUM last stepped (a level-up); one step per window per stat.

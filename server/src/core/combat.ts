@@ -66,6 +66,9 @@ interface CombatCtx {
   // OT3-9: the spell record's largest magnitude and duration (content table, or a custom
   // record's own). undefined = unknown record (an item's enchantment): maxHitDamage bounds it.
   spellBounds?(id: string): { mag: number; dur: number } | undefined;
+  // OT3-174: a Restore Health landed on a player. The respawn plugin decides whether it is
+  // a party revive; a living target just gets the heal as before.
+  revive?(healer: Player, victimId: number): boolean;
 }
 
 function coord(v: LValue | undefined): number | undefined {
@@ -406,6 +409,7 @@ export class Combat {
     // one Restore riding a Fire Damage does not make the cast a heal (backlog 249), so an
     // entry that calls itself harmful vetoes the whole-cast claim.
     let beneficial = body.get('beneficial') === true;
+    let heals = false;
     const never = target.kind === 'player' ? EFFECTS_NEVER_ON_PLAYERS : EFFECTS_NEVER_ON_ACTORS;
     for (const [, entry] of effects) {
       const e = tbl(entry);
@@ -421,6 +425,7 @@ export class Combat {
         return;
       }
       if (e!.get('beneficial') === false) beneficial = false;
+      if (effectKey(id) === 'restorehealth') heals = true;
     }
     // WHICH effects of the record hit (backlog 250): optional, small non-negative ints.
     const indexes = body.get('indexes');
@@ -452,6 +457,8 @@ export class Combat {
     // (combat.lua MP_CombatSpellHit). The cap above only bounds what crosses the wire.
     const owner = this.resolveOwner(player, target, 'CombatSpellHit', beneficial);
     if (!owner) return;
+    // A heal on a downed party member stands them up; a corpse has nothing to apply it to.
+    if (target.kind === 'player' && beneficial && heals && this.ctx.revive?.(player, target.playerId)) return;
     owner.peer.sendEvent('CombatSpellHit', { ...(lToJs(body) as Record<string, JsLike>), attackerId: player.id, beneficial });
   }
 
