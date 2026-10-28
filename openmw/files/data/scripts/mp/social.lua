@@ -44,6 +44,8 @@ local muted = {} -- {acct, name}: who I have muted, so the panel can offer unmut
 local requests = {} -- acct -> name (incoming friend requests)
 local invites = {} -- acct -> {name=} (world invites: come stand next to me)
 local invitesSaid = {} -- acct -> true once toasted; forgotten when the invite leaves the snapshot
+local party = { id = 0, leader = '', members = {} } -- OT3-106: the server's PartyState, verbatim
+local partyInvites = {} -- acct -> name (pending party invites)
 local requestsSaid = {} -- same, for friend requests (the snapshot is their only cross-world path)
 local presence = 'friends'
 -- Availability (Online/Offline) — a SEPARATE axis from presence (which is "who sees my
@@ -105,9 +107,16 @@ local SOCIAL_FAIL = {
     private           = 'They are not accepting invitations.',
     revoked           = 'A moderator has removed your mentor status.',
     too_low           = 'Mentors must be level 10 or higher.',
+    not_leader        = 'Only the party leader can do that.',
+    party_full        = 'The party is full (6).',
+    in_party          = 'They are already in a party.',
+    not_in_party      = 'Not in your party.',
 }
 
-local SOCIAL_FAIL_BY_OP = {}
+local SOCIAL_FAIL_BY_OP = {
+    PartyAccept = { in_party = 'Leave your current party first.' },
+    PartyLeave = { not_in_party = 'You are not in a party.' },
+}
 
 local SOCIAL_OK = {
     InviteSend    = 'Invitation sent.',
@@ -121,6 +130,12 @@ local SOCIAL_OK = {
     MuteRemove    = 'Unmuted.',
     ReportPlayer  = 'Report sent to the moderators.',
     MentorOptIn   = 'Mentor setting saved.',
+    PartyInvite   = 'Party invitation sent.',
+    PartyAccept   = 'You joined the party.',
+    PartyDecline  = 'Party invitation declined.',
+    PartyLeave    = 'You left the party.',
+    PartyKick     = 'Removed from the party.',
+    PartyLead     = 'Party lead passed.',
 }
 
 local SOCIAL_SILENT = {}
@@ -169,6 +184,10 @@ local function mirror()
     for acct, inv in pairs(invites) do invs[#invs + 1] = { acct = acct, name = inv.name } end
     mp.set('friendRequests', json.encode(reqs))
     mp.set('invites', json.encode(invs))
+    local pinv = {}
+    for acct, name in pairs(partyInvites) do pinv[#pinv + 1] = { acct = acct, name = name } end
+    mp.set('partyInvites', json.encode(pinv))
+    mp.set('party', json.encode(party))
 end
 
 -- Raise the openSocial signal the HTML overlay polls. (isOpen/toggle semantics are gone with
@@ -367,6 +386,20 @@ return {
             end
             notice(status)
         end,
+        -- OT3-106: the whole party view, pushed on every change and on join.
+        MP_PartyState = function(data)
+            party = { id = data.id or 0, leader = data.leader or '', youLead = data.youLead == true,
+                members = data.members or {} }
+            if party.id ~= 0 then partyInvites = {} end -- in a party: other invites are moot
+            mirror()
+        end,
+        MP_PartyInviteReceived = function(data)
+            if data.fromAcct and not partyInvites[data.fromAcct] then
+                partyInvites[data.fromAcct] = data.fromName or data.fromAcct
+                notice(tostring(partyInvites[data.fromAcct]) .. ' invited you to their party (O)')
+                mirror()
+            end
+        end,
         MP_SocialNotice = function(data)
             status = 'Something changed: ' .. tostring(data.kind or 'notice')
             notice(status)
@@ -388,6 +421,8 @@ return {
             end
             -- OK and refused alike reach the feed (#32): "Invitation sent." lived only in the
             -- panel's status line, so a player who closed the panel never saw whether it went.
+            -- A declined card goes (the server echoes the inviter's acct as the detail).
+            if data.op == 'PartyDecline' and data.ok == true then partyInvites[tostring(data.detail)] = nil end
             if not SOCIAL_SILENT[data.op] then notice(status) end
             mp.set('socialResult', json.encode({ op = data.op, ok = data.ok, detail = data.detail }))
             mirror()

@@ -64,7 +64,14 @@ type SocialFailure =
   | 'not_friends'
   | 'private'
   | 'revoked'
-  | 'too_low';
+  | 'too_low'
+  | 'not_leader'
+  | 'party_full'
+  | 'in_party'
+  | 'not_in_party';
+
+/** OT3-106: party size cap. */
+export const PARTY_MAX = 6;
 
 /** How long a presence row stays believable without a refresh. Comfortably longer than the
  *  heartbeat, so a hiccup does not blink everyone offline, and short enough that a world which
@@ -299,11 +306,15 @@ export class Social {
       this.offlineTimers.delete(acct);
       this.sendFriendList(player);
       this.drainInvites(player);
+      this.pushParty(acct);
       return; // no PresenceUpdate at all — they were never shown offline
     }
     this.sendFriendList(player);
     // Anything sent to them while they were in another world (or offline) arrives now.
     this.drainInvites(player);
+    // The party is persisted, so a reconnect lands straight back in it; the rest of the
+    // party is re-pushed too so they see this member come online.
+    this.pushParty(acct);
     this.notifyFriends(acct, true);
   }
 
@@ -325,6 +336,7 @@ export class Social {
       // Re-check: the account may have come back on a different connection.
       if (this.onlinePlayer(acct)) return;
       this.notifyFriends(acct, false);
+      this.pushParty(acct);
     }, this.tuning.presenceGraceMs);
     timer.unref?.();
     this.offlineTimers.set(acct, timer);
@@ -440,6 +452,10 @@ export class Social {
       if (this.d.store.blockedEitherWay(player.accountKey, inv.from)) continue;
       this.deliverInvite(player.accountKey, inv.from,
         this.d.displayName(inv.from) ?? inv.from);
+    }
+    for (const from of this.d.store.partyInvitesFor(player.accountKey, this.d.now())) {
+      if (this.d.store.blockedEitherWay(player.accountKey, from)) continue;
+      player.peer.sendEvent('PartyInviteReceived', { fromAcct: from, fromName: this.d.displayName(from) ?? from });
     }
   }
 
@@ -721,6 +737,27 @@ export class Social {
         this.reply(player, 'MuteRemove', true, 'ok');
         this.sendFriendList(player);
         return true;
+      case 'PartyInvite':
+      case 'PartyAccept':
+      case 'PartyDecline':
+      case 'PartyKick':
+      case 'PartyLead':
+      case 'PartyLeave': {
+        // By name from the Players tab, by acct from party/invite rows; targetAcct takes either.
+        const who = this.targetAcct(body) ?? str('acct');
+        let r: SocialFailure | 'ok';
+        switch (name) {
+          case 'PartyInvite': r = this.partyInvite(player, who); break;
+          case 'PartyAccept': r = this.partyAccept(player, who); break;
+          case 'PartyDecline': this.d.store.removePartyInvite(who, player.accountKey); r = 'ok'; break;
+          case 'PartyKick': r = this.partyKick(player, who); break;
+          case 'PartyLead': r = this.partyLead(player, who); break;
+          default: r = this.partyLeave(player.accountKey);
+        }
+        // A decline echoes the inviter so the client can drop that card.
+        this.reply(player, name, r === 'ok', name === 'PartyDecline' ? who : r);
+        return true;
+      }
       case 'InviteAccept': {
         const from = str('acct');
         const r = this.acceptInvite(player, from);
@@ -752,5 +789,111 @@ export class Social {
     if (!host || !host.cellKey || !host.pose) return { ok: false, reason: 'not_online' };
     this.d.store.removeInvite(fromAcct, player.accountKey);
     return { ok: true, cellKey: host.cellKey, x: host.pose.x, y: host.pose.y, z: host.pose.z };
+  }
+
+  // ------------------------------------------------------------------- parties (OT3-106)
+  // Server-wide and persisted (socialstore party tables): membership outlives a disconnect.
+  // Only the leader invites, kicks or passes lead; anyone may be invited (the party finder
+  // pairs strangers), but blocks and private presence still refuse.
+
+  partyInvite(player: Player, targetAcct: AccountKey): SocialFailure | 'ok' {
+    const from = player.accountKey;
+    if (!targetAcct) return 'no_such_player';
+    if (targetAcct === from) return 'self';
+    if (this.d.store.blockedEitherWay(from, targetAcct)) return 'blocked';
+    if (this.presenceMode(targetAcct) === 'private') return 'private';
+    if (!this.isAvailable(targetAcct)) return 'not_online';
+    const party = this.d.store.partyOf(from);
+    if (party && party.leader !== from) return 'not_leader';
+    if (party && party.members.length >= PARTY_MAX) return 'party_full';
+    if (this.d.store.partyOf(targetAcct)) return 'in_party';
+    this.d.store.addPartyInvite(from, targetAcct, this.d.now(), this.tuning.inviteTtlMs);
+    this.onlinePlayer(targetAcct)?.peer.sendEvent('PartyInviteReceived', { fromAcct: from, fromName: player.name });
+    return 'ok';
+  }
+
+  partyAccept(player: Player, fromAcct: AccountKey): SocialFailure | 'ok' {
+    const me = player.accountKey;
+    const now = this.d.now();
+    if (!this.d.store.hasPartyInvite(fromAcct, me, now)) return 'no_request';
+    if (this.d.store.blockedEitherWay(me, fromAcct)) return 'blocked';
+    if (this.d.store.partyOf(me)) return 'in_party';
+    const party = this.d.store.partyOf(fromAcct);
+    // The inviter's party filled up while the invite was pending.
+    if (party && party.members.length >= PARTY_MAX) return 'party_full';
+    const id = party?.id ?? this.d.store.createParty(fromAcct, now);
+    this.d.store.addPartyMember(id, me, now);
+    this.d.store.removePartyInvite(fromAcct, me);
+    this.pushParty(me);
+    return 'ok';
+  }
+
+  partyLeave(acct: AccountKey): SocialFailure | 'ok' {
+    const party = this.d.store.partyOf(acct);
+    if (!party) return 'not_in_party';
+    this.d.store.removePartyMember(acct);
+    const rest = party.members.filter((m) => m !== acct);
+    if (rest.length < 2) {
+      this.d.store.disbandParty(party.id); // a party of one is no party
+    } else if (party.leader === acct) {
+      this.d.store.setPartyLeader(party.id, rest[0]!); // next by join order
+    }
+    this.sendPartyState(acct);
+    for (const m of rest) this.sendPartyState(m);
+    return 'ok';
+  }
+
+  partyKick(player: Player, targetAcct: AccountKey): SocialFailure | 'ok' {
+    const party = this.d.store.partyOf(player.accountKey);
+    if (!party) return 'not_in_party';
+    if (party.leader !== player.accountKey) return 'not_leader';
+    if (targetAcct === player.accountKey) return 'self';
+    if (!party.members.includes(targetAcct)) return 'not_in_party';
+    return this.partyLeave(targetAcct);
+  }
+
+  partyLead(player: Player, targetAcct: AccountKey): SocialFailure | 'ok' {
+    const party = this.d.store.partyOf(player.accountKey);
+    if (!party) return 'not_in_party';
+    if (party.leader !== player.accountKey) return 'not_leader';
+    if (!party.members.includes(targetAcct)) return 'not_in_party';
+    this.d.store.setPartyLeader(party.id, targetAcct);
+    this.pushParty(targetAcct);
+    return 'ok';
+  }
+
+  /** Party accounts for `acct`, itself included; empty when unpartied (for OT3-90 kill credit). */
+  partyMembers(acct: AccountKey): AccountKey[] {
+    return this.d.store.partyOf(acct)?.members ?? [];
+  }
+
+  // Re-send the party view to every member of acct's party (or just acct when unpartied).
+  private pushParty(acct: AccountKey): void {
+    const members = this.d.store.partyOf(acct)?.members ?? [acct];
+    for (const m of members) this.sendPartyState(m);
+  }
+
+  private sendPartyState(acct: AccountKey): void {
+    const p = this.onlinePlayer(acct);
+    if (!p) return;
+    const party = this.d.store.partyOf(acct);
+    if (!party) {
+      p.peer.sendEvent('PartyState', { id: 0, leader: '', members: [] });
+      return;
+    }
+    p.peer.sendEvent('PartyState', {
+      id: party.id,
+      leader: party.leader,
+      youLead: party.leader === acct, // the client does not know its own account key
+      members: party.members.map((m) => {
+        const local = this.onlinePlayer(m);
+        return {
+          acct: m,
+          name: this.d.displayName(m) ?? m,
+          online: this.presenceOf(m).online,
+          ...(local ? { playerId: local.id } : {}),
+        };
+      }),
+    });
   }
 }

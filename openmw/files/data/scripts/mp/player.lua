@@ -721,7 +721,8 @@ local function dispatch(cmd)
             -- being a real key the moment someone's handle differs from their login name. The
             -- server resolves names against its roster and the shared account index.
             local byName = (sop == 'FriendRequest' or sop == 'BlockAdd' or sop == 'FriendAccept'
-                or sop == 'MuteAdd' or sop == 'ReportPlayer' or sop == 'WorldKick')
+                or sop == 'MuteAdd' or sop == 'ReportPlayer' or sop == 'WorldKick'
+                or sop == 'PartyInvite')
             -- The arg does NOT always belong in name/acct. PresenceMode reads `mode` and
             -- SetAvailability reads `state` on the server, so routing their argument into
             -- `acct` meant the server saw an empty value and refused with no_such_player --

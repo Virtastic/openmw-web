@@ -1296,6 +1296,8 @@ local eventHandlers = {
     end,
     MP_FriendRequestReceived = function(data) toPlayer('MP_FriendRequestReceived', data) end,
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
+    MP_PartyState = function(data) toPlayer('MP_PartyState', data) end,
+    MP_PartyInviteReceived = function(data) toPlayer('MP_PartyInviteReceived', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
 
@@ -2469,6 +2471,11 @@ local eventHandlers = {
             ReportPlayer = true,
             -- Availability (Online/Offline). One world (OT3-58): no world ops.
             SetAvailability = true,
+            -- OT3-67 sent MentorOptIn but never listed it here, so it was dropped silently.
+            MentorOptIn = true,
+            -- OT3-106 parties.
+            PartyInvite = true, PartyAccept = true, PartyDecline = true,
+            PartyLeave = true, PartyKick = true, PartyLead = true,
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end

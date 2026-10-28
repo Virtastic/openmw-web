@@ -191,6 +191,27 @@ export class SocialStore {
         account TEXT PRIMARY KEY,
         state   TEXT NOT NULL
       );
+      -- OT3-106: real parties, server-wide like friendships (members may be in different
+      -- worlds, or offline: membership survives a reconnect). One party per account.
+      CREATE TABLE IF NOT EXISTS party (
+        id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        leader TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS party_member (
+        account TEXT PRIMARY KEY,
+        party   INTEGER NOT NULL,
+        joined  INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS party_member_party ON party_member(party);
+      -- Party invites get their own table: the world-invite PK is (from, to), so sharing it
+      -- would let a party invite overwrite a pending world invite between the same two people.
+      CREATE TABLE IF NOT EXISTS party_invite (
+        fromAcct TEXT NOT NULL,
+        toAcct   TEXT NOT NULL,
+        sent     INTEGER NOT NULL,
+        expires  INTEGER NOT NULL,
+        PRIMARY KEY (fromAcct, toAcct)
+      );
     `);
 
     // COLUMNS ADDED TO AN EXISTING TABLE. `CREATE TABLE IF NOT EXISTS` above is a no-op on a
@@ -508,6 +529,65 @@ export class SocialStore {
     this.write('INSERT OR REPLACE INTO mentor (account, state) VALUES (?, ?)').run(account, state);
   }
 
+  // ------------------------------------------------------------------- parties (OT3-106)
+
+  partyOf(account: AccountKey): { id: number; leader: AccountKey; members: AccountKey[] } | undefined {
+    const row = this.db.prepare(
+      'SELECT p.id AS id, p.leader AS leader FROM party_member m JOIN party p ON p.id = m.party WHERE m.account = ?',
+    ).get(account) as { id: number; leader: string } | undefined;
+    if (!row) return undefined;
+    const members = (this.db
+      .prepare('SELECT account FROM party_member WHERE party = ? ORDER BY joined, rowid')
+      .all(row.id) as { account: string }[]).map((r) => r.account);
+    return { id: row.id, leader: row.leader, members };
+  }
+
+  createParty(leader: AccountKey, now: number): number {
+    const r = this.write('INSERT INTO party (leader) VALUES (?)').run(leader) as { lastInsertRowid?: number | bigint } | undefined;
+    const id = Number(r?.lastInsertRowid ?? 0);
+    this.addPartyMember(id, leader, now);
+    return id;
+  }
+
+  addPartyMember(party: number, account: AccountKey, now: number): void {
+    this.write('INSERT OR REPLACE INTO party_member (account, party, joined) VALUES (?, ?, ?)')
+      .run(account, party, now);
+  }
+
+  removePartyMember(account: AccountKey): void {
+    this.write('DELETE FROM party_member WHERE account = ?').run(account);
+  }
+
+  setPartyLeader(party: number, leader: AccountKey): void {
+    this.write('UPDATE party SET leader = ? WHERE id = ?').run(leader, party);
+  }
+
+  disbandParty(party: number): void {
+    this.write('DELETE FROM party_member WHERE party = ?').run(party);
+    this.write('DELETE FROM party WHERE id = ?').run(party);
+  }
+
+  addPartyInvite(from: AccountKey, to: AccountKey, now: number, ttlMs: number): void {
+    this.write('INSERT OR REPLACE INTO party_invite (fromAcct, toAcct, sent, expires) VALUES (?, ?, ?, ?)')
+      .run(from, to, now, now + ttlMs);
+  }
+
+  partyInvitesFor(to: AccountKey, now: number): AccountKey[] {
+    return (this.db
+      .prepare('SELECT fromAcct FROM party_invite WHERE toAcct = ? AND expires > ? ORDER BY sent')
+      .all(to, now) as { fromAcct: string }[]).map((r) => r.fromAcct);
+  }
+
+  hasPartyInvite(from: AccountKey, to: AccountKey, now: number): boolean {
+    return this.db
+      .prepare('SELECT 1 FROM party_invite WHERE fromAcct = ? AND toAcct = ? AND expires > ?')
+      .get(from, to, now) !== undefined;
+  }
+
+  removePartyInvite(from: AccountKey, to: AccountKey): void {
+    this.write('DELETE FROM party_invite WHERE fromAcct = ? AND toAcct = ?').run(from, to);
+  }
+
   // --------------------------------------------------------------------- mutes
 
   static readonly SERVER_MUTER = '@server';
@@ -542,6 +622,7 @@ export class SocialStore {
     // Invites expire on the same sweep. Left out, a dead invite sits in the mailbox and is
     // re-delivered on every join — expiry-on-read hides it, but it never goes away.
     this.write('DELETE FROM invite WHERE expires <= ?').run(now);
+    this.write('DELETE FROM party_invite WHERE expires <= ?').run(now);
     return before - (count('friend_request') + count('invite'));
   }
 }

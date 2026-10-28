@@ -4573,6 +4573,10 @@ window.omw = (function(){
     not_online: 'They are offline.',
     private: 'They are not accepting invitations.',
     not_friends: 'You are not friends with them.',
+    not_leader: 'Only the party leader can do that.',
+    party_full: 'The party is full (6).',
+    in_party: 'They are already in a party.',
+    not_in_party: 'Not in your party.',
     in_chargen: 'Finish creating your character first.',
   };
   var SUCCESS = { InviteSend: 'Invitation sent.' };
@@ -4617,11 +4621,19 @@ window.omw = (function(){
     // report. Measured before the fix: the input element was replaced 5 times in 2 seconds.
     // The status line is LOCAL state, but this render DRAWS it, so it belongs in the signature.
     var sig = [sTab, sStatusText, m.friends, m.players, m.friendRequests,
-      m.invites, m.availability, m.presenceMode, m.blocked, m.muted].join(' ')
+      m.invites, m.availability, m.presenceMode, m.blocked, m.muted, m.party, m.partyInvites].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
     var friends = pj(m.friends)||[], players = pj(m.players)||[];
     var reqs = pj(m.friendRequests)||[], invites = pj(m.invites)||[];
+    // OT3-106: the server's PartyState verbatim, and pending party invites.
+    var party = pj(m.party) || {id: 0, members: []}, partyInvites = pj(m.partyInvites)||[];
+    var partyMembers = Array.isArray(party.members) ? party.members : []; // an empty Lua table encodes as {}
+    var inParty = {}; partyMembers.forEach(function(pm){ inParty[String(pm.name).toLowerCase()] = true; });
+    var canInvite = !party.id || (party.youLead && partyMembers.length < 6);
+    function partyInviteAct(name){
+      return ['party invite', function(){ cmd('social:PartyInvite:'+name); setStatus('Inviting '+name+' to your party…'); }];
+    }
     var avail = m.availability || 'online', presence = m.presenceMode || 'friends';
     // header availability segmented
     // NO Online/Offline toggle. It was redundant and, worse, compound: `where:offline` set
@@ -4677,6 +4689,25 @@ window.omw = (function(){
         var b = el('button','btn pri','accept');
         b.onclick = function(){ b.disabled = true; cmd('social:InviteAccept:'+iv.acct); };
         c.appendChild(b); sec.appendChild(c); });
+      partyInvites.forEach(function(iv){ var c = el('div','card');
+        c.appendChild(el('div','who','<div class="nm">'+esc(iv.name)+'</div><div class="st">invited you to their party</div>'));
+        [['join', function(){ cmd('social:PartyAccept:'+iv.acct); }, true],
+         ['decline', function(){ cmd('social:PartyDecline:'+iv.acct); }]].forEach(function(a){
+          var b = el('button','btn'+(a[2]?' pri':''),a[0]); b.onclick = function(){ b.disabled = true; a[1](); }; c.appendChild(b); });
+        sec.appendChild(c); });
+      if (party.id){
+        sec.appendChild(el('h3',null,'Party <span class="n">'+partyMembers.length+'/6</span>'));
+        partyMembers.forEach(function(pm){
+          var acts = [], isLead = pm.acct === party.leader;
+          if (party.youLead && !isLead){
+            acts.push(['make leader', function(){ cmd('social:PartyLead:'+pm.acct); }]);
+            acts.push(['kick', function(){ cmd('social:PartyKick:'+pm.acct); }]);
+          }
+          sec.appendChild(personRow(pm.name, (isLead ? 'Leader · ' : '') + (pm.online ? 'Online' : 'Offline'), pm.online, acts));
+        });
+        var lv = el('button','btn','Leave party'); lv.onclick = function(){ lv.disabled = true; cmd('social:PartyLeave:'); };
+        sec.appendChild(lv);
+      }
       sec.appendChild(el('h3',null,'Friends'));
       if (!friends.length) sec.appendChild(el('div','empty','No friends yet. Add someone below, or from Players.'));
       friends.forEach(function(f){
@@ -4685,6 +4716,7 @@ window.omw = (function(){
           // "come to me": the same InviteSend the O-key hub sends (backlog 105). One world
           // (OT3-58): everyone can invite, there is no host.
           acts.push(['invite', function(){ cmd('social:InviteSend:'+f.acct); setStatus('Inviting '+f.name+'…'); }]);
+          if (canInvite && !inParty[String(f.name).toLowerCase()]) acts.push(partyInviteAct(f.name));
           if (f.playerId != null) acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.acct; openChat(); renderChans(); }]);
         }
         acts.push(['remove', function(){ cmd('social:FriendRemove:'+f.acct); }]);
@@ -4732,6 +4764,7 @@ window.omw = (function(){
           cmd('social:FriendAccept:'+p.name); setStatus('Friend request accepted.'); }, true]);
         else if (!p.reqOut) acts.push(['add friend', function(){
           cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true]);
+        if (canInvite && !inParty[String(p.name).toLowerCase()]) acts.push(partyInviteAct(p.name));
         // Everything that targets a PERSON goes by name for the same reason.
         acts.push(['mute', function(){ cmd('social:MuteAdd:'+p.name); }]);
         acts.push(['block', function(){ cmd('social:BlockAdd:'+p.name); }]);
@@ -5228,12 +5261,13 @@ window.omw = (function(){
     }
     // A request or invite that arrived through the 10 s snapshot (the sender is in another
     // world) is named in the panel's status line, not just added to a closed panel (275).
-    var pend = (m.friendRequests || '') + '|' + (m.invites || '');
+    var pend = (m.friendRequests || '') + '|' + (m.invites || '') + '|' + (m.partyInvites || '');
     if (pend !== seenPending) {
       seenPending = pend;
       var now = {};
       (pj(m.friendRequests)||[]).forEach(function(q){ now['r:'+q.acct] = q.name + ' sent you a friend request.'; });
       (pj(m.invites)||[]).forEach(function(iv){ now['i:'+iv.acct] = iv.name + ' invited you to join them.'; });
+      (pj(m.partyInvites)||[]).forEach(function(iv){ now['p:'+iv.acct] = iv.name + ' invited you to their party.'; });
       if (ready) for (var k in now) if (!(k in seenPendingKeys)) { setStatus(now[k]); if (document.hidden) attentionCue(); }
       seenPendingKeys = now;
     }
