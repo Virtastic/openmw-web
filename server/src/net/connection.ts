@@ -16,6 +16,7 @@ import type { HookBus } from '../plugins/loader';
 import { handleChatSend, serverWhisper, type ChatContext } from '../core/chat';
 import type { Social } from '../core/social';
 import type { Trades } from '../core/trade';
+import type { PvpConsent } from '../core/pvp-consent';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { socketRttMs } from './ws';
@@ -166,6 +167,7 @@ export interface ServerCtx {
   quests: Quests;
   social: Social;
   trades?: Trades; // OT3-177
+  pvpConsent?: PvpConsent; // OT3-163
   m7: WorldM7;
   // M8 ops.
   admin: Admin;
@@ -562,6 +564,7 @@ export class Connection implements Peer {
       // never see a flicker.
       this.ctx.social.onLeave(this.player);
       this.ctx.trades?.end(this.player, 'left');
+      this.ctx.pvpConsent?.end(this.player);
       this.ctx.roster.remove(this.player);
       // M6: drop every conversation this player held (same teardown as authority).
       this.ctx.quests.releaseDialogueLocks(this.player.id);
@@ -854,6 +857,7 @@ export class Connection implements Peer {
     // cannot ask for them. The in-game admin window that sent this is gone with it.
     if (this.ctx.m7.handleEvent(this.player, name, value)) return; // M7 family
     if (this.ctx.trades?.handleEvent(this.player, name, value)) return; // OT3-177
+    if (this.ctx.pvpConsent?.handleEvent(this.player, name, value)) return; // OT3-163
     if (this.ctx.social.handleEvent(this.player, name, value)) return; // Phase C family
     if (this.ctx.quests.handleEvent(this.player, name, value)) return; // M6 family
     if (this.ctx.combat.handleEvent(this.player, name, value)) return; // M5 family

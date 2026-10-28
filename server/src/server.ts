@@ -33,6 +33,8 @@ import { Quests } from './core/quests';
 import { Social } from './core/social';
 import { SocialStore } from './core/socialstore';
 import { Trades, TradeLedger } from './core/trade';
+import { PvpConsent } from './core/pvp-consent';
+import { serverWhisper } from './core/chat';
 import { Binding } from './core/binding';
 import { AdminAudit } from './core/admin-audit';
 import type { JsLike } from './proto/lser';
@@ -300,9 +302,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   m7.clock.setTimeScale(config.time.scale); // config is operator truth for the scale
 
+  const pvpConsent = new PvpConsent({ // OT3-163
+    findByName: (name) => roster.findByName(name),
+    byId: (id) => roster.get(id),
+    tell: serverWhisper,
+    now: () => Date.now(),
+  });
   const api: PluginApi = {
     config,
     log,
+    pvpConsent: (a, v) => pvpConsent.consent(a, v),
+    diedInDuel: (id) => pvpConsent.diedInDuel(id),
     players: () => roster.inWorld().map((p) => ({ id: p.id, name: p.name, rank: p.rank })),
     cellOfPlayer: (playerId) => roster.get(playerId)?.cellKey,
     levelOfPlayer: (playerId) => { const p = roster.get(playerId); return p ? levelOf(p) : 1; },
@@ -738,6 +748,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     quests,
     social,
     trades,
+    pvpConsent,
     m7,
     admin,
     bans,

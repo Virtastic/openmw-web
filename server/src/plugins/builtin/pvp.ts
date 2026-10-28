@@ -3,6 +3,9 @@
 // M5 PvP gate. Owns the decision so operators can swap this plugin for faction/team/
 // duel rules without touching the relay. Only PLAYER-targeted hits reach this hook —
 // actor targets are never gated.
+// OT3-163: consent first. rules.pvp is the operator's master switch; under it a hit needs an
+// accepted duel or both in the Arena (explicit, so no zone/sprout rule applies), or both
+// players flagged (then every zone rule below still applies). Never open-world by default.
 
 import type { Plugin } from '../api';
 
@@ -16,12 +19,18 @@ const SPROUT_LEVEL = 5; // below this a character neither takes nor deals player
 
 export const pvp: Plugin = {
   name: 'pvp',
+  onPlayerDeath(api, player) {
+    api.diedInDuel?.(player.id); // ends the duel and names the winner
+  },
   onPlayerHit(api, attacker, victimId, name) {
     const block = (why: string): false => {
       api.log('info', 'pvp.blocked', { attacker: attacker.name, victimId, event: name, why });
       return false;
     };
     if (!api.config.rules.pvp) return block('disabled');
+    const consent = api.pvpConsent?.(attacker.id, victimId);
+    if (consent === 'duel' || consent === 'arena') return true;
+    if (consent !== 'flag') return block('no consent');
     if (inSeydaNeen(api.cellOfPlayer?.(victimId)) || inSeydaNeen(api.cellOfPlayer?.(attacker.id)))
       return block('seyda neen');
     // Both ways: a protected character who could still hit others would grief with impunity.

@@ -4831,7 +4831,8 @@ window.omw = (function(){
       // it costs nothing and cannot disagree with the server about anyone else.
       var me = selfDisplay;
       if (me) {
-        var meRow = personRow(me, 'You', true, []);
+        // OT3-163: the War Mode switch; the server says whether it took (temples/town buildings, 5 min cooldown).
+        var meRow = personRow(me, 'You', true, [['PvP flag', function(){ cmd('social:PvpFlag:toggle'); setStatus('PvP flag change asked; see chat.'); }]]);
         meRow.classList.add('self');
         sec.appendChild(meRow);
       }
@@ -4861,6 +4862,8 @@ window.omw = (function(){
           cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true]);
         if (canInvite && !inParty[String(p.name).toLowerCase()]) acts.push(partyInviteAct(p.name));
         acts.push(['trade', function(){ cmd('social:TradeRequest:'+p.name); setStatus('Asked '+p.name+' to trade (same cell only).'); }]);
+        // OT3-163: one button both challenges and accepts (a challenge back starts the duel).
+        acts.push(['duel', function(){ cmd('social:DuelRequest:'+p.name); setStatus('Duel challenge sent to '+p.name+' (same cell only).'); }]);
         // Everything that targets a PERSON goes by name for the same reason.
         acts.push(['mute', function(){ cmd('social:MuteAdd:'+p.name); }]);
         acts.push(['block', function(){ cmd('social:BlockAdd:'+p.name); }]);

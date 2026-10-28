@@ -100,7 +100,8 @@ function respawnNow(api: PluginApi, player: PluginPlayer) {
     return;
   }
 
-  const weak = weakened(api, player);
+  // OT3-163: a duel or Arena death was agreed to; it neither weakens nor counts.
+  const weak = !api.diedInDuel?.(player.id) && weakened(api, player);
   api.sendEvent(player.id, 'PlayerResurrect', { ...dest, restoreHp: true, ...(weak ? { weakened: true } : {}) });
   if (weak) api.chat(player.id, { channel: 'server', text: 'You died again so soon: you return weakened (half health, magicka and fatigue).' });
   api.log('info', 'respawn.sent', {

@@ -2540,6 +2540,8 @@ local eventHandlers = {
             -- OT3-177 trade.
             TradeRequest = true, TradeAccept = true, TradeOffer = true,
             TradeConfirm = true, TradeCancel = true,
+            -- OT3-163 consent PvP.
+            DuelRequest = true, PvpFlag = true,
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end

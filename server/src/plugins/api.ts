@@ -45,6 +45,10 @@ export interface PluginApi {
   /** Where a player currently is, or undefined if they have not reported a pose yet. Needed by
    *  any rule that has to put somebody NEXT TO somebody else — summons, travel. */
   posOfPlayer?(playerId: number): { cellKey: string; x: number; y: number; z: number } | undefined;
+  /** OT3-163: why these two may fight (an accepted duel, both flagged, both in the Arena), or undefined. */
+  pvpConsent?(attackerId: number, victimId: number): 'duel' | 'flag' | 'arena' | undefined;
+  /** OT3-163: this death was a consented fight (ends the duel). Idempotent. */
+  diedInDuel?(playerId: number): boolean;
   /** OT3-174: ids of this player's party members in the world, themselves excluded. */
   partyOnline?(playerId: number): number[];
   /** OT3-174: the temples/shrines this character has visited, and the last outdoor spot they left. */

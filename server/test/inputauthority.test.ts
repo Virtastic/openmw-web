@@ -242,6 +242,10 @@ test('a PvP hit on a driving victim routes to the peer; an idle victim keeps it'
   const vicId = wv['playerId'] as number;
   await vic.waitEvent('PlayerList');
   vic.sendCellChange('0,0', 0, 0, 0);
+  await vic.waitEvent('PlayerCellChange', (v) => (v as { id?: number }).id === vicId);
+  atk.sendEvent('DuelRequest', { name: 'Victim' }); // OT3-163: player hits need consent
+  vic.sendEvent('DuelRequest', { name: 'Attacker' });
+  await vic.waitEvent('ChatMessage', (v) => /begins/.test((v as { text?: string }).text ?? ''));
 
   const hit = {
     target: { playerId: vicId },

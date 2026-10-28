@@ -90,6 +90,7 @@ async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
   // No grant, and no Info: 40,40 is far outside the peer's footprint, so that cell simply has
   // no holder. The point of `far` is that it is out of range, which is unchanged.
   await learn(atk, vic, far); // #362: the routing tests cast
+  await duel(atk, vic);
 
   return { server, peer, atk, vic, far, atkId, vicId, epoch, welcome };
 }
@@ -112,6 +113,12 @@ async function fence(from: TestClient, ...watchers: TestClient[]) {
 // demanding health dropped EVERY unarmed swing in the game. It fails silently and total:
 // puppet.lua's onHitIntercept has already cancelled the local damage chain by then, so the
 // player swings through the target and nothing happens at all -- no damage, no miss, no sound.
+// OT3-163: player hits need consent; a duel is the one that holds in any cell.
+async function duel(atk: TestClient, vic: TestClient): Promise<void> {
+  atk.sendEvent('DuelRequest', { name: 'Victim' });
+  vic.sendEvent('DuelRequest', { name: 'Attacker' });
+  await vic.waitEvent('ChatMessage', (v) => /duel between .* begins/.test((v as { text?: string }).text ?? ''));
+}
 // Reported from live play as "I cannot attack anything", with the server logging
 // combat.dropped/"damage.health missing or over cap" once per swing.
 test('a fatigue-only hit (hand-to-hand) is relayed, not dropped', async (t) => {
@@ -185,6 +192,7 @@ test('combat routing with pvp enabled', async (t) => {
       assert.equal(deaths.length, 2);
       assert.equal(deaths.at(-1)?.['killedBy'], undefined, 'an 11 s old hit is not the killer');
     } finally { off(); }
+    await duel(atk, vic); // the death ended it
   });
 
   await t.test('actor target reaches the authority holder only', async () => {

@@ -27,6 +27,7 @@ function api(opts: {
       },
     } as unknown as Config,
     log: () => {},
+    pvpConsent: () => 'flag', // OT3-163: these rows test the zone rules under a mutual flag
     cellOfPlayer: (id: number) => (id === 1 && opts.attackerCell !== undefined ? opts.attackerCell : opts.cell),
     ...(opts.levels ? { levelOfPlayer: (id: number) => opts.levels![id] ?? 1 } : {}),
   } as unknown as PluginApi;
