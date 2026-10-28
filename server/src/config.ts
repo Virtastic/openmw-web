@@ -8,6 +8,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { randomBytes } from 'node:crypto';
+import { log } from './log';
 
 export interface Config {
   server: { name: string; motd: string; maxPlayers: number; password: string };
@@ -97,8 +98,6 @@ export interface Config {
     // by name. Off by default; the harness turns it on for its own servers.
     allowHarnessAuth: boolean;
   };
-  // Onboarding CRM capture (plan 2.1a). Empty apiKey = feature off, completely inert.
-  integrations: { attioApiKey: string; attioBaseUrl: string };
   content: { enforce: 'strict' | 'names' | 'off'; allowStockSwap: boolean };
   sharing: {
     journal: boolean;
@@ -555,10 +554,6 @@ function validate(t: Tree): Config {
       requireProfile: reqBool(t, 'login', 'requireProfile'),
       allowHarnessAuth: reqBool(t, 'login', 'allowHarnessAuth'),
     },
-    integrations: {
-      attioApiKey: reqStr(t, 'integrations', 'attioApiKey'),
-      attioBaseUrl: reqStr(t, 'integrations', 'attioBaseUrl'),
-    },
     content: {
       enforce: reqEnum(t, 'content', 'enforce', ENUM_OPTIONS['content.enforce']),
       allowStockSwap: reqBool(t, 'content', 'allowStockSwap'),
@@ -884,6 +879,9 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
   if (!cfg) throw new Error('config: no candidate layer validated'); // unreachable; keeps TS honest
   cfg.dashboardFallback = fallbackFrom;
   cfg.stated = statedPaths(...operatorTrees);
+  // CL8: the Attio CRM hook is gone. A leftover [integrations] table changes nothing; say so.
+  if (operatorTrees.some((t) => t && isTree(t['integrations'])))
+    log('warn', 'config.ignored_integrations', { fix: 'delete the [integrations] table: the CRM hook was removed' });
   // THE GATEWAY CREDENTIAL GENERATES ITSELF. A world process proves to the gateway that it is
   // part of the platform with a shared secret, and without one a player cannot create a world
   // from inside the game at all. Requiring an operator to invent and paste a string into

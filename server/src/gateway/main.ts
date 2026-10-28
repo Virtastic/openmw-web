@@ -344,7 +344,7 @@ async function shutdown(signal: string, code = 0): Promise<void> {
   // on (the harness's gateway scenarios leaked two peers each that way).
   void directory.close();
   unhookNotifier();
-  await frontDoor.close(); // drain the CRM queue; a redeploy is when signups cluster
+  await frontDoor.close();
   // Drain the account store's write-behind queue, which a world does on its way out and this
   // process did not. Every account MUTATION is write-through, so what was actually at stake
   // is lastSeenAt — up to one 30s timer of "when did I last see this player" — not lost

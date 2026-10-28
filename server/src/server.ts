@@ -9,7 +9,6 @@ import { join, dirname } from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig, assertMultiplayer, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
-import { AttioHook } from './integrations/attio';
 import { ContentTable } from './core/content-table';
 import { QuestRepair } from './core/quest-repair';
 import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
@@ -213,13 +212,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     });
   }
   const playerStore = new PlayerStore(sharedDir, worldId);
-  // Onboarding CRM capture. Env var wins over toml so the key can stay out of config files
-  // in deployments; empty = inert.
-  const attio = new AttioHook({
-    apiKey: process.env.ATTIO_API_KEY ?? config.integrations.attioApiKey,
-    baseUrl: config.integrations.attioBaseUrl,
-    dataDir: sharedDir,
-  });
   const cellStore = new CellStore(opts.dataDir, true);
   // SHARED, not per world (backlog 315): the player doc carries custom-record ids across
   // worlds, so the registry that mints them must be one per deployment.
@@ -836,7 +828,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     tickets,
     track,
     sessions,
-    attio,
     // Phase 4: one-shot scripted encounters replayed for a character who was not there.
     questSpawnsOnEntry: (player, cellKey) => questRepair.onCellEntry(player, cellKey),
     questRepair,
@@ -2149,7 +2140,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       socialStore.close();
       await accounts.close();
       await playerStore.close();
-      await attio.close();
       await cellStore.close();
       await recordStore.close();
       // The disconnects above parked every in-world session: hand them to the next process.

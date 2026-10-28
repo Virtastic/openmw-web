@@ -104,7 +104,8 @@ prove WAL first.
 fallbacks left. `persist/atomicjson.ts` is deleted. Two more stores went with the cleanup:
 login tickets (`tickets.db` — single-use is now enforced by the DELETE on claim rather than by
 whoever unlinks the file first) and the Attio outbox (`attio.db`; purging one account's queued
-upserts is a DELETE on a column instead of a scan-and-parse of every entry).
+upserts is a DELETE on a column instead of a scan-and-parse of every entry). The Attio hook
+itself was removed in v2 (CL8); the gateway deletes a leftover `attio.db` on boot.
 
 The locker ATTESTATION moved too (`locker_attestations`). The earlier argument for keeping it
 a file — "the DMCA evidence trail should stay a `cat`" — did not hold up: the SERVER writes it

@@ -34,12 +34,6 @@ requireProfile = false            # true -> SessionReady is refused until email 
 # not an auth method. The browser harness enables it on the servers it starts itself.
 allowHarnessAuth = false
 
-[integrations]
-# Attio CRM capture: on profile completion the relay asserts a person record (email,
-# username, signup date, consent). Empty apiKey = disabled, nothing is queued or sent.
-attioApiKey = ""
-attioBaseUrl = "https://api.attio.com"
-
 [content]
 # "names"  - M0: name+size+order must match the first player's manifest (session-canonical)
 # "strict" - M1+: adds per-file sha256 (stubbed in M0, behaves like "names")

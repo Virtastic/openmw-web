@@ -8,7 +8,6 @@ import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { Config } from '../config';
 import { validEmail, validAccountName, DEFAULT_CHARACTER_NAME, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
-import type { AttioHook } from '../integrations/attio';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
 import { INPUT_DRIVING_MS, PEER_POSE_FRESH_MS } from '../core/players';
@@ -180,7 +179,6 @@ export interface ServerCtx {
   // exactly as the server restarts is left unable to join, with nothing explaining why.
   track?: (p: Promise<unknown>) => void;
   sessions: SessionIndex;
-  attio: AttioHook; // onboarding CRM capture; inert when no API key is configured
   // World access control (F3): may this account be in THIS world at all? Private = owner
   // only, party = owner + friends of the owner + admins. Checked at auth, after the account
   // is resolved.
@@ -238,7 +236,6 @@ export class Connection implements Peer {
   state: SessionState = 'CONNECTED';
   player?: Player;
   private account?: Account;
-  private authedVia?: string; // which auth rung succeeded; recorded in the CRM upsert
   private outSeq = 0;
   private lastClientSeq = 0;
   private internalErrors = 0; // informational for the event tier
@@ -774,8 +771,7 @@ export class Connection implements Peer {
     this.sendText(characterResult(true, slots()));
   }
 
-  // Onboarding: validate + store email and the unique public handle; queue the CRM upsert
-  // off the hot path. A rename after the fact takes the same op (cooldown applies).
+  // Onboarding: validate + store email and the unique public handle. A rename after the fact takes the same op (cooldown applies).
   private async handleProfileSetup(msg: ProfileSetup): Promise<void> {
     if (!this.account || this.isSystem) return;
     if (!validEmail(msg.email)) {
@@ -791,14 +787,6 @@ export class Connection implements Peer {
     // The public handle IS the display name from now on; a session already in the roster
     // updates live so nametags/chat pick it up on the next frame they render it.
     if (this.player) this.player.name = this.account.username ?? this.player.name;
-    this.ctx.attio.enqueue({
-      email: msg.email,
-      username: this.account.username ?? msg.username,
-      accountKey: this.account.name.toLowerCase(),
-      signupAt: this.account.createdAt,
-      provider: this.authedVia ?? 'password',
-      marketingOptIn: msg.marketingOptIn === true,
-    });
     log('info', 'player.profile_set', {
       account: this.account.name, username: this.account.username ?? msg.username,
     });
@@ -2112,7 +2100,6 @@ export class Connection implements Peer {
     // otherwise resume inside the window and supersede this fresh boot (backlog 408).
     if (char) this.ctx.resume.revokeChar(char.id);
     this.account = account;
-    this.authedVia = op;
     // Onboarding: the unique public handle is the display name everywhere once set; the
     // account name remains the private login identifier.
     // player.name is PEER-VISIBLE (PlayerJoinWorld, nametags, chat) AND is how admin

@@ -1,6 +1,0 @@
-# morrowind.virtastic.app — the OpenMW-Web landing page and engine.
-# The origin's own policy. Everything here is meant to be found, so nothing is disallowed.
-User-agent: *
-Allow: /
-
-Sitemap: https://morrowind.virtastic.app/sitemap.xml

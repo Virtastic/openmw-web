@@ -59,8 +59,7 @@ The ToS must state, in plain language:
    do not own. Violation terminates the account.
 4. No warranty of continued service; the user may **export or delete** their locker at any
    time.
-5. Disclosure that an email address is stored for account and contact purposes, and
-   processed by our CRM (see §5).
+5. Disclosure that an email address is stored for account and contact purposes (see §5).
 
 ## 4. Upload attestation
 
@@ -71,17 +70,18 @@ At **upload time** — not buried in the ToS — an explicit, unchecked checkbox
 The attestation is logged with timestamp, account, and manifest hash. That record is the
 evidence trail; a ToS clause alone is not.
 
-## 5. Privacy and the CRM
+## 5. Privacy
 
 - The **email is contact data**, never an identifier in gameplay. It appears in no wire
   payload and on no peer-visible surface — only in the owner's own profile view. (Enforced
   in code and asserted by a test that scans a peer's entire message inbox.)
-- SSO deliberately requests `openid profile` only and **never an email scope**; accounts key
-  on `(issuer, subject)`. The email is typed by the user, not harvested from a provider.
-- CRM (Attio) processing must be **disclosed in the privacy policy**, with a separate,
-  **unchecked-by-default** marketing-consent checkbox.
-- **Delete-my-data** purges the account, its character docs, the username index, and any
-  queued CRM upserts (`--delete-account` covers all of these today).
+- SSO requests the email scope (Google `openid profile email`, Discord `identify email`) only to
+  refuse unverified throwaway accounts and to prefill the contact address; accounts still key
+  on `(issuer, subject)`, never the email.
+- No email leaves the server: there is no CRM or other third-party data flow (the Attio hook
+  was removed in v2, CL8).
+- **Delete-my-data** purges the account, its character docs and the username index
+  (`--delete-account` covers all of these today).
 
 ## 6. DMCA §512 safe-harbour checklist
 

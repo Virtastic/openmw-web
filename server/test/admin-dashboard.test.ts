@@ -492,7 +492,6 @@ test('every credential-shaped field is masked, including ones added later', asyn
     admin: { dashboardToken: 'shared-secret-value' },
     notifications: { smtpPass: 'the-mail-password', webhookUrl: 'https://hooks.example/T/B/XYZ' },
     metrics: { token: 'metrics-scrape-token' },
-    integrations: { attioApiKey: 'attio-key-value' },
   });
   const token = await makeOwner(call, dataDir);
   const view = await (await call('/settings', { token })).json() as
@@ -501,7 +500,7 @@ test('every credential-shaped field is masked, including ones added later', asyn
   const leaked: string[] = [];
   const plaintext = [
     'the-mail-password', 'https://hooks.example/T/B/XYZ', 'shared-secret-value',
-    'metrics-scrape-token', 'attio-key-value',
+    'metrics-scrape-token',
   ];
   for (const s of view.sections) {
     for (const f of s.fields) {

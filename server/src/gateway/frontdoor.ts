@@ -14,12 +14,13 @@
 // — the ticket grants exactly one auth attempt there, nothing more.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { SocialStore } from '../core/socialstore';
 import { detectGameData, gameDataDir } from '../core/gamedata';
 import { orderedContent } from '../net/admin/api-mods';
 import { loadConfig, assertMultiplayer } from '../config';
 import { AccountStore, validEmail, validAccountName, MAX_CHARACTERS } from '../core/accounts';
-import { AttioHook } from '../integrations/attio';
 import { PlayerStore } from '../persist/playerstore';
 import { BanStore } from '../persist/banstore';
 import { OidcService } from '../auth/oidc';
@@ -48,8 +49,7 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 // The onboarding profile: contact email (kept private, never on the wire) + the unique public
 // handle shown to everyone. Done in the launcher (HTML) right after sign-in, so a fresh player
 // picks a username instead of being shown their real name. Authed by the locker Bearer token.
-function profileRoutes(accounts: AccountStore, lockerSessions: LockerSessionStore,
-  attio: AttioHook): HttpRoute {
+function profileRoutes(accounts: AccountStore, lockerSessions: LockerSessionStore): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/profile') return false;
     res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
@@ -93,16 +93,6 @@ function profileRoutes(accounts: AccountStore, lockerSessions: LockerSessionStor
         return true;
       }
       await accounts.flush(); // persist now, so the world reads the new handle when the player joins
-      // The same capture the in-world path does. marketingOptIn is FALSE because this form
-      // never asks — recording consent nobody gave would be worse than recording none.
-      attio.enqueue({
-        email: account.email ?? email,
-        username: account.username ?? username,
-        accountKey: account.name.toLowerCase(),
-        signupAt: account.createdAt,
-        provider: 'sso',
-        marketingOptIn: false,
-      });
       log('info', 'frontdoor.profile_set', { account: account.name, username: account.username });
       sendJson(res, 200, { ok: true, username: account.username });
       return true;
@@ -357,16 +347,9 @@ export async function buildFrontDoor(
   // in-memory store signed every player out on each deploy (the cloud/demo boot then dead-ends
   // at "No locker session"). The rows live beside the login tickets in the shared dir.
   const lockerSessions = new LockerSessionStore(24 * 60 * 60 * 1000, sharedDir, (k) => !!bans.isAccountBanned(k));
-  // CRM capture belongs HERE, not only in a world. Onboarding runs in the launcher, before
-  // the player has entered any world, so the capture that lived solely on the WebSocket
-  // ProfileSetup path never fired for the flow real players actually take: the key was
-  // configured, the relay worked, and the records were silently never written.
-  // Env wins over toml so the key can stay out of config files; empty = inert.
-  const attio = new AttioHook({
-    apiKey: process.env.ATTIO_API_KEY ?? config.integrations.attioApiKey,
-    baseUrl: config.integrations.attioBaseUrl,
-    dataDir: sharedDir,
-  });
+  // CL8: the Attio CRM hook is gone. Its outbox held queued player emails that nothing will
+  // ever drain now, so delete it instead of keeping PII for no purpose.
+  for (const f of ['attio.db', 'attio.db-wal', 'attio.db-shm']) rmSync(join(sharedDir, f), { force: true });
 
   // The operator's domain, exactly as a world derives it — not loopback. A multiplayer
   // deployment behind a domain was minting blob and savegame URLs no browser could reach.
@@ -434,7 +417,7 @@ export async function buildFrontDoor(
   // Blob routes go BEFORE the locker's: these URLs carry their capability in the path and
   // have no Bearer header, which lockerRoutes would reject.
   const blobs = blobRoutes(storage instanceof FsStorage ? storage : undefined);
-  const profile = profileRoutes(accounts, lockerSessions, attio);
+  const profile = profileRoutes(accounts, lockerSessions);
   // A character's solo world id ends in the last 8 chars of its id (worlds.ts
   // discardForCharacter); a live one with players in it means the character is in play.
   // ponytail: misses a character playing as a GUEST in someone else's world; add a charId
@@ -460,10 +443,7 @@ export async function buildFrontDoor(
     route,
     accounts,
     saveStorage: () => storage as unknown as ReturnType<NonNullable<AdminDeps['saveStorage']>>,
-    /** Drain the CRM queue on shutdown. A record enqueued a moment before SIGTERM would
-     *  otherwise wait for the next boot's timer, and a redeploy is exactly when signups
-     *  cluster. */
-    close: () => { social.close(); return attio.close(); },
+    close: async () => { social.close(); },
     resolveAccount: (auth: string) =>
       lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : ''),
     // Mints a locker session directly, for the browser harness ONLY. Exposed here but wired
