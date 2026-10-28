@@ -16,7 +16,9 @@ export interface ChatContext {
   // context in a test still constructs.
   isMuted?(listenerAcct: string, speakerAcct: string): boolean;
   // World chat tier ('@'): the accountKeys of everyone in this player's world.
-  partyOf?(accountKey: string): string[];
+  worldOf?(accountKey: string): string[];
+  // OT3-110: party chat. The accountKeys of this player's party (empty when unpartied).
+  partyMembers?(accountKey: string): string[];
   // Phase 2.5: is plain 'say' proximity-scoped in THIS world? True for public worlds.
   sayProximity?: boolean;
   // OT3-23: accountKey -> when it last spoke on global. Per server, created on first use.
@@ -62,13 +64,13 @@ function globalRefusal(lastGlobalAt: Map<string, number>, cooldownMs: number, pl
 export type ChatMessageBody = {
   // Phase 2.5 chat tiers:
   //   say     proximity — everyone whose interest bubble you are in (the default)
-  //   party   WORLD chat ('@' tier): everyone in your world. The wire name predates the
-  //           party removal; the semantics are per-world.
+  //   world   WORLD chat ('@' tier): everyone in your world (OT3-110: was 'party' on the wire)
+  //   party   your party (OT3-106), and only them
   //   global  the whole world, rate-limited
   //   server  announcements; never muted, never proximity-filtered
   //   whisper one recipient
   //   novice  new characters + mentors (OT3-67)
-  channel: 'say' | 'party' | 'global' | 'server' | 'whisper' | 'novice';
+  channel: 'say' | 'world' | 'party' | 'global' | 'server' | 'whisper' | 'novice';
   from?: string;
   fromId?: number;
   // Whisper only: on the SENDER's echo copy, the recipient's display name, so the client can
@@ -184,16 +186,16 @@ export function handleChatSend(
   if (!hooks.onChat(player, trimmed)) return; // vetoed lines were never delivered, so never logged
   // Channel resolution: an explicit channel from the selector wins; otherwise the !/@ MMO
   // prefixes, parsed here because they are channel markers, not commands.
-  let channel: 'say' | 'party' | 'global' | 'whisper' | 'novice' = 'say';
+  let channel: 'say' | 'world' | 'party' | 'global' | 'whisper' | 'novice' = 'say';
   let line = trimmed;
-  if (explicitChannel === 'say' || explicitChannel === 'party'
+  if (explicitChannel === 'say' || explicitChannel === 'world' || explicitChannel === 'party'
     || explicitChannel === 'global' || explicitChannel === 'whisper' || explicitChannel === 'novice') {
     channel = explicitChannel;
   } else if (/^!/.test(trimmed)) {
     channel = 'global';
     line = trimmed.slice(1).trim();
   } else if (/^@/.test(trimmed)) {
-    channel = 'party';
+    channel = 'world';
     line = trimmed.slice(1).trim();
   }
   if (line === '') return; // a bare prefix is a typo, not a message
@@ -215,12 +217,18 @@ export function handleChatSend(
     serverWhisper(player, `The Novice channel is for characters below level ${NOVICE_MAX_LEVEL} and mentors.`);
     return;
   }
+  // OT3-110: 'party' means the party now. A client from before the rename sends its world
+  // chat as 'party'; unpartied, it is told so rather than its line reaching a group it is not in.
+  const members = channel === 'world' ? ctx.worldOf?.(player.accountKey) ?? []
+    : channel === 'party' ? ctx.partyMembers?.(player.accountKey) ?? [] : [];
+  if (channel === 'party' && members.length === 0) {
+    serverWhisper(player, 'You are not in a party.');
+    return;
+  }
   recordChat(mod, player, channel, line);
   const msg: ChatMessageBody = { channel, from: player.name, fromId: player.id, text: line };
-  if (channel === 'party') {
-    // WORLD chat: the people in your world are your group (ctx.partyOf returns exactly
-    // them — see server.ts commandCtx). No membership list, no cross-world relay needed.
-    const members = ctx.partyOf?.(player.accountKey) ?? [];
+  if (channel === 'world' || channel === 'party') {
+    // WORLD: the people in your world (server.ts commandCtx). PARTY: its members.
     if (members.length === 0) {
       serverWhisper(player, 'Nobody is here to hear you.');
       return;

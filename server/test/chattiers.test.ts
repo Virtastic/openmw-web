@@ -59,8 +59,7 @@ test("the '@' tier is world chat: everyone in this world hears it, no membership
   const { a, b } = await two(t);
   a.sendEvent('ChatSend', { text: '@regroup at the tower' });
   const heard = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'regroup at the tower');
-  // The wire channel name predates the party removal; the semantics are per-world.
-  assert.equal((heard.value as { channel: string }).channel, 'party', 'delivered on the world channel');
+  assert.equal((heard.value as { channel: string }).channel, 'world', 'delivered on the world channel (OT3-110)');
   a.close();
   b.close();
 });
@@ -153,4 +152,31 @@ test('noviceEligible: below level 5, or a mentor', async () => {
   assert.equal(noviceEligible(5, 'off'), false);
   assert.equal(noviceEligible(30, 'on'), true);
   assert.equal(noviceEligible(30, 'revoked'), false);
+});
+
+// OT3-110: 'party' is the party now; world chat travels as 'world'.
+test("party chat reaches only party members; an unpartied 'party' line is refused, not misrouted", async () => {
+  const { handleChatSend } = await import('../src/core/chat');
+  const got = new Map<string, Array<{ channel: string; text: string }>>();
+  const mk = (acct: string, id: number) => {
+    got.set(acct, []);
+    return { id, name: acct, accountKey: acct, inWorld: true, cellKey: '0,0',
+      peer: { sendEvent: (_n: string, b: { channel: string; text: string }) => void got.get(acct)!.push(b) } } as never;
+  };
+  const a = mk('a', 1), b = mk('b', 2), c = mk('c', 3);
+  const ctx = {
+    roster: { inWorld: () => [a, b, c] } as never,
+    worldOf: () => ['a', 'b', 'c'],
+    partyMembers: (acct: string) => (acct === 'c' ? [] : ['a', 'b']),
+  };
+  const send = (p: never, channel: string, text: string) =>
+    handleChatSend(ctx, { onChat: () => true }, p, new Map([['text', text], ['channel', channel]]) as never);
+  send(a, 'party', 'pst');
+  assert.deepEqual(got.get('b')!.map((m) => m.channel), ['party']);
+  assert.equal(got.get('c')!.length, 0, 'not in the party, not delivered');
+  send(c, 'party', 'old client world line');
+  assert.equal(got.get('a')!.length, 1, 'an unpartied party line reaches nobody');
+  assert.equal(got.get('c')!.at(-1)?.channel, 'server', 'and its sender is told why');
+  send(a, 'world', 'hello all');
+  assert.equal(got.get('c')!.at(-1)?.text, 'hello all');
 });

@@ -355,21 +355,23 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       || socialStore.blockedEitherWay(listener, speaker),
     // The '@' tier is WORLD chat now: the people in your world are your group, no membership
     // list needed. Everyone co-present, yourself included.
-    partyOf: (accountKey) => (roster.activeForAccount(accountKey)
+    worldOf: (accountKey) => (roster.activeForAccount(accountKey)
       ? roster.humansInWorld().filter((p) => !p.bot).map((p) => p.accountKey)
       : []),
+    partyMembers: (accountKey) => socialStore.partyOf(accountKey)?.members ?? [],
     // Opt-in per deployment: a crowded public world wants proximity say, a co-op session
     // very much does not (friends spread across the map must still be able to talk).
     sayProximity: config.rules.sayScope === 'proximity',
     globalCooldownMs: config.limits.globalChatCooldownSec * 1000,
     noviceOk: (p) => noviceEligible(levelOf(p), socialStore.getMentor(p.accountKey)),
     // SCROLLBACK. Only the channels a newcomer may legitimately replay: 'global' and 'server'
-    // are the server-wide conversation, and world chat ('party' on the wire) is the one
-    // world's. History is scoped by channel only (OT3-46).
+    // are the server-wide conversation, and world chat is the one world's. History is scoped
+    // by channel only (OT3-46). Party chat is the party's and is never replayed (OT3-110);
+    // rows stored as 'party' before the rename were world chat and simply age out.
     // 'say' is proximity (replaying a conversation from a cell you were not in is noise),
     // and 'whisper' is nobody else's business.
     history: (player, channel, text) => {
-      if (channel !== 'global' && channel !== 'server' && channel !== 'party') return;
+      if (channel !== 'global' && channel !== 'server' && channel !== 'world') return;
       socialStore.appendChat({
         ts: Date.now(), channel, scope: channel,
         acct: player.accountKey, name: player.name, text,
@@ -699,14 +701,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     questSpawnsOnEntry: (player, cellKey) => questRepair.onCellEntry(player, cellKey),
     questRepair,
     worldId,
-    // Scrollback on arrival: the server-wide conversation, plus this player's own party.
+    // Scrollback on arrival: the server-wide conversation, plus world chat.
     // Ordinary ChatMessage events in the order they were said, so the client needs no new
     // handling — history is the same messages, earlier.
     replayChat: (player): void => {
       const lines = [
         ...socialStore.recentChat('global', CHAT_HISTORY_REPLAY),
         ...socialStore.recentChat('server', CHAT_HISTORY_REPLAY),
-        ...socialStore.recentChat('party', CHAT_HISTORY_REPLAY),
+        ...socialStore.recentChat('world', CHAT_HISTORY_REPLAY),
       ].sort((a, b) => a.ts - b.ts);
       for (const l of lines) {
         // A listener who muted the speaker never received the line live, and must not get it

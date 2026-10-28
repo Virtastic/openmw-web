@@ -3665,7 +3665,7 @@ window.omw = (function(){
 <style>
 #omw-chat, #omw-social{ --panel:#17130e; --panel-2:#211a12; --line:#3a2e1e; --line-soft:rgba(58,46,30,.45);
   --bronze:#8a6838; --bronze-hi:#c69a4e; --gold:#d3a84e; --gold-hi:#e8c86a; --ink:#e9dcc3; --muted:#b9a888;
-  --faint:#8a7a5e; --c-say:#e9dcc3; --c-world:#8fe58f; --c-party:#8fe58f; --c-global:#f0d15a;
+  --faint:#8a7a5e; --c-say:#e9dcc3; --c-world:#8fe58f; --c-party:#ff9f6b; --c-global:#f0d15a;
   --c-whisper:#dd95f4; --c-server:#a89a80; --c-novice:#7fc8f0;
   font:13.5px/1.45 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; }
 #omw-chat *, #omw-chat *::before, #omw-chat *::after{ box-sizing:border-box; }
@@ -3684,7 +3684,7 @@ window.omw = (function(){
 @keyframes omwln{ from{ opacity:0; transform:translateY(3px);} to{ transform:none; } }
 #omw-chat .ln .tag{ font-weight:700; letter-spacing:.02em; }
 #omw-chat .ln .who{ font-weight:600; color:var(--ink); }
-#omw-chat .c-say{ color:var(--c-say); } #omw-chat .c-world{ color:var(--c-world); }
+#omw-chat .c-say{ color:var(--c-say); } #omw-chat .c-world{ color:var(--c-world); } #omw-chat .c-party{ color:var(--c-party); }
 #omw-chat .c-global{ color:var(--c-global); }
 #omw-chat .c-whisper{ color:var(--c-whisper); } #omw-chat .c-novice{ color:var(--c-novice); }
 #omw-chat .c-server{ color:var(--c-server); font-style:italic; }
@@ -3704,6 +3704,7 @@ window.omw = (function(){
 #omw-chat .chan.on{ color:var(--ink); }
 #omw-chat .chan.on[data-c="world"]{ border-color:var(--c-world); color:var(--c-world); }
 #omw-chat .chan.on[data-c="whisper"]{ border-color:var(--c-whisper); color:var(--c-whisper); }
+#omw-chat .chan.on[data-c="party"]{ border-color:var(--c-party); color:var(--c-party); }
 #omw-chat .chan.on[data-c="novice"]{ border-color:var(--c-novice); color:var(--c-novice); }
 #omw-chat .r2{ display:flex; align-items:center; gap:7px; padding:7px 9px 9px; }
 #omw-chat .clab{ font-weight:700; font-size:12px; white-space:nowrap; }
@@ -4437,13 +4438,18 @@ window.omw = (function(){
 
   // ================================ CHAT ================================
   // Player-facing channels are WORLD / WHISPER: everyone in your world, or one friend.
-  // "world" rides the wire as the server's 'party' channel (the '@' tier, which is world
-  // chat now); incoming 'say'/'global' render as [World] too.
+  // "world" is the '@' tier (OT3-110: it rode the wire as 'party' before); incoming
+  // 'say'/'global' render as [World] too. PARTY appears while you are in one (OT3-106).
   // OT3-67: + NOVICE for new characters and mentors; the server says who (mentor/novice mirror).
   var CHANS = ['world','whisper'];
-  function chans(){ return mpState().novice === 'true' ? CHANS.concat(['novice']) : CHANS; }
-  var CLABEL = { world:'[World]', whisper:'[Whisper]', novice:'[Novice]' };
-  var WIRE = { world:'party', whisper:'whisper', novice:'novice' };
+  function chans(){
+    var m = mpState(), cs = CHANS.slice();
+    if ((pj(m.party) || {}).id) cs.splice(1, 0, 'party');
+    if (m.novice === 'true') cs.push('novice');
+    return cs;
+  }
+  var CLABEL = { world:'[World]', party:'[Party]', whisper:'[Whisper]', novice:'[Novice]' };
+  var WIRE = { world:'world', party:'party', whisper:'whisper', novice:'novice' };
   var ready = false; // chargen done? overlays stay hidden until the character exists
   var chChan = 'world', chWhisper = '', chatOpen = false, seenChatSeq = 0, seenOpenChat = 0;
   var feed = document.getElementById('omw-feed'), chatEl = document.getElementById('omw-chat');
@@ -4468,7 +4474,7 @@ window.omw = (function(){
   function lineHtml(m){
     var ch = m.channel || 'say';
     if (ch === 'server') return '<div class="ln c-server">'+esc(m.text)+'</div>';
-    if (ch === 'global' || ch === 'say' || ch === 'party') ch = 'world'; // one world, one channel
+    if (ch === 'global' || ch === 'say') ch = 'world'; // one world, one channel
     var who = (ch === 'whisper')
       ? (m.to ? ('to '+esc(m.to)) : esc(m.from||'?'))
       : esc(m.from||'?');
