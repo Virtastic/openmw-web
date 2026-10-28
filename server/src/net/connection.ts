@@ -574,6 +574,10 @@ export class Connection implements Peer {
       // M4: relinquish authority (no Revoke — socket is gone) before the cell may flush.
       // NOT gated on cellKey: a peer holds cells via ANCHORS, so one that never sent a cell
       // change of its own still has a footprint to release.
+      const wasSimulated = this.player.system === true
+        ? this.ctx.roster.inWorld().filter((p) => p.system !== true
+          && (p.cellKey === undefined || this.ctx.world.holderOf(p.cellKey) === this.player!.id))
+        : [];
       this.ctx.world.authorityReleaseEverything(this.player.id, this.player.cellKey, false);
       // THE PEER LEAVING IS ANNOUNCED (backlog 325). SimReady only ever said true, so a
       // client's peer-rules (no fall damage, no drowning, no local spawns) stayed pinned for
@@ -581,9 +585,7 @@ export class Connection implements Peer {
       // ready:true again through the join path above.
       if (this.player.system === true) {
         const ready = this.ctx.simReady?.() ?? false; // another peer may still be here
-        for (const p of this.ctx.roster.inWorld()) {
-          if (p.system !== true) p.peer.sendEvent('SimReady', { ready });
-        }
+        for (const p of wasSimulated) p.peer.sendEvent('SimReady', { ready }); // only the cells it held
       }
       if (this.player.cellKey) this.ctx.world.onCellVacated(this.player.cellKey);
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
@@ -1308,6 +1310,27 @@ export class Connection implements Peer {
     }
   }
 
+  // PlayerCellChange for every visible occupant, to `player` alone (join, and each arrival).
+  private sendVisibleOccupants(player: Player): void {
+    for (const p of this.ctx.roster.inWorld()) {
+      // Same rule as the live fan-out: never hand a joiner the SIM PEER's position, or their
+      // very first act in the world is to spawn a puppet of the server's simulator.
+      if (p.id === player.id || !cellsVisible(p.cellKey, player.cellKey) || p.system === true) continue;
+      // NEVER FABRICATE A POSITION. This used to fall back to (0,0,0) for a player the server
+      // had no pose for, and on the SIM PEER a PlayerCellChange is not advice -- it TELEPORTS
+      // that player's avatar to the coordinates given. A peer joining to replace a dead one
+      // was therefore handed the origin for everyone and moved their bodies there:
+      // "[mp] avatar #2 follow-teleport to (0,0,0)". The avatar then streams authoritative
+      // poses from the middle of the world, so the owner is dragged off too.
+      //
+      // A player whose pose is genuinely unknown is announced on their next move instead,
+      // which is what happened before this sync existed at all.
+      if (!p.pose) continue;
+      player.peer.sendEvent('PlayerCellChange',
+        { id: p.id, cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z });
+    }
+  }
+
   // PlayerCellChange {cellKey, x, y, z}: update occupancy, refresh (or synthesize) the
   // stored pose at the new position so players who never send PlayerMove (standing still
   // after a teleport) still appear in batches, then relay to ALL in-world players with
@@ -1504,8 +1527,13 @@ export class Connection implements Peer {
       // a puppet of the server's simulator (see MoveBroadcaster.tick). The peer still gets its
       // own echo — that is its confirmation the move landed, and it cannot puppet itself.
       if (player.system === true && p.id !== player.id) continue;
+      // VIEWERS ONLY (OT3-78): the mover, the sim peer, and anyone who can see the old or new
+      // cell. Everyone else learns on arrival (the occupants sync below).
+      if (p.id !== player.id && p.system !== true && !cellsVisible(p.cellKey, cellKey) && !cellsVisible(p.cellKey, oldCell)) continue;
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
     }
+    // ...and the mover is told who is already where they now stand.
+    if (!this.isSystem) this.sendVisibleOccupants(player);
     // M3: entering a cell always yields its delta doc (and its neighbours' -- they are loaded
     // too); the vacated cell may flush.
     this.ctx.world.sendCellStateAround(player, cellKey);
@@ -2219,6 +2247,7 @@ export class Connection implements Peer {
         // Same rule as the join sync below: a fabricated (0,0,0) is a teleport order on the
         // peer, so a resume with no stored pose must not send one.
         if (!pose) continue;
+        if (p.id !== this.player.id && p.system !== true && !cellsVisible(p.cellKey, cellKey)) continue;
         p.peer.sendEvent('PlayerCellChange', { id: this.player.id, cellKey, x: pose.x, y: pose.y, z: pose.z });
       }
       this.ctx.world.sendCellStateAround(this.player, cellKey);
@@ -2229,23 +2258,7 @@ export class Connection implements Peer {
     // invisible indefinitely, and a joiner who never moved was invisible to them. Send the
     // occupancy we already track, in the same PlayerCellChange shape the client handles, so
     // both directions are populated at join instead of on the next twitch.
-    for (const p of this.ctx.roster.inWorld()) {
-      // Same rule as the live fan-out: never hand a joiner the SIM PEER's position, or their
-      // very first act in the world is to spawn a puppet of the server's simulator.
-      if (p.id === this.player.id || !p.cellKey || p.system === true) continue;
-      // NEVER FABRICATE A POSITION. This used to fall back to (0,0,0) for a player the server
-      // had no pose for, and on the SIM PEER a PlayerCellChange is not advice -- it TELEPORTS
-      // that player's avatar to the coordinates given. A peer joining to replace a dead one
-      // was therefore handed the origin for everyone and moved their bodies there:
-      // "[mp] avatar #2 follow-teleport to (0,0,0)". The avatar then streams authoritative
-      // poses from the middle of the world, so the owner is dragged off too.
-      //
-      // A player whose pose is genuinely unknown is announced on their next move instead,
-      // which is what happened before this sync existed at all.
-      if (!p.pose) continue;
-      this.player.peer.sendEvent('PlayerCellChange',
-        { id: p.id, cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z });
-    }
+    this.sendVisibleOccupants(this.player);
     // The peer is in the world: authenticated, content-checked, joined. THIS is ready.
     if (this.isSystem) {
       this.ctx.simPeers?.noteHello?.('world');
@@ -2259,6 +2272,8 @@ export class Connection implements Peer {
       // out the client's ceiling instead, which is the fixed-delay guess all over again.
       for (const p of this.ctx.roster.inWorld()) {
         if (p.system === true) continue; // it is the subject of the announcement
+        // Only those it is about to simulate for: not yet placed, or in a cell nobody holds.
+        if (p.cellKey !== undefined && this.ctx.world.holderOf(p.cellKey) !== undefined) continue;
         p.peer.sendEvent('SimReady', { ready: true });
       }
     } else {
