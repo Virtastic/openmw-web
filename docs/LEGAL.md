@@ -29,6 +29,12 @@ Everything below follows from those two facts.
 
 ## 2. The storage locker
 
+> **v2 (OpenTES3) differs from this section and needs legal review before launch.** v2 streams
+> the server's own copy of the game data (`/mwdata`) to any account whose uploaded
+> `Morrowind.esm`, `Tribunal.esm` and `Bloodmoon.esm` pass the vanilla-manifest gate (CL2, CL5).
+> That is the shared-copy pattern the zero-dedup row below warns against. v2 also ships no demo
+> world. Until it is reviewed, this section describes v1.
+
 Players may upload their own game data so it streams back to them on any device. The legal
 framing is a **private backup locker for files the user already owns**, and the product
 mechanics must match that framing exactly — courts look at behaviour, not labels.
