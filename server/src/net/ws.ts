@@ -8,12 +8,11 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
-// PROTOCOL.md says "omw-mp/2", but "/" is not an RFC 6455 token character: the browser
-// WebSocket constructor (and Node's undici/ws clients) throw SyntaxError before any I/O.
-// The shippable token is "omw-mp.2"; the raw header form "omw-mp/2" is still accepted
-// for non-WHATWG clients. Flagged for a PROTOCOL.md amendment.
+// "omw-mp.2", not the "omw-mp/2" older docs name: "/" is not an RFC 6455 token character and
+// the browser WebSocket constructor throws on it. v2 ships client, peer and server together,
+// so the old raw-header spelling is no longer accepted (CL15): it gets the same refusal as
+// any other unknown subprotocol.
 export const SUBPROTOCOL = 'omw-mp.2';
-export const SUBPROTOCOL_LEGACY = 'omw-mp/2';
 // Keepalive deadline, unchanged in effect: a socket that has not ponged for this long is
 // dead. Expressed as a deadline rather than a missed-pong count because the probe interval
 // below is now independent of it.
@@ -56,7 +55,7 @@ export function attachWss(
     server: httpServer,
     path: '/ws',
     handleProtocols: (protocols) =>
-      protocols.has(SUBPROTOCOL) ? SUBPROTOCOL : protocols.has(SUBPROTOCOL_LEGACY) ? SUBPROTOCOL_LEGACY : false,
+      protocols.has(SUBPROTOCOL) ? SUBPROTOCOL : false,
     maxPayload: maxMsgBytes,
     perMessageDeflate: {
       threshold: 512,
@@ -87,7 +86,7 @@ export function attachWss(
   wss.on('connection', (ws, req) => {
     // handleProtocols only runs when the client offers protocols; a client offering
     // none is accepted by ws with an empty protocol — PROTOCOL.md says reject.
-    if (ws.protocol !== SUBPROTOCOL && ws.protocol !== SUBPROTOCOL_LEGACY) {
+    if (ws.protocol !== SUBPROTOCOL) {
       log('info', 'ws.no_subprotocol_refused', { ip: clientIp(req) });
       metrics.connRefused.inc({ reason: 'no_subprotocol' });
       ws.close(1002, 'subprotocol required');

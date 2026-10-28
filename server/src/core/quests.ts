@@ -714,13 +714,13 @@ export class Quests {
     // which is rarely the one its dummy stands in. A client names it too since 1.7.1 -- an
     // NPC's locals were filed under the cell the PLAYER stood in, so a neighbour-cell NPC's
     // state was stored (and restored) against the wrong cell doc. A client's cell must be
-    // one it can see; an older client that names none still infers its own.
+    // one it can see. CL15: naming it is required -- v2 ships no client that omits it.
     const named = str(body.get('cellKey'), MAX_CELL_KEY);
     if (named !== undefined && player.system !== true && !cellsVisible(player.cellKey, named)) {
       this.drop(player, 'MemberVarUpdate', 'cell out of reach');
       return;
     }
-    const cellKey = named ?? player.cellKey;
+    const cellKey = named;
     // A content ref, or the net id of a runtime actor the holder named (a script-placed NPC
     // runs its own local script like any other).
     if (!ref || !name || value === undefined || !cellKey) {

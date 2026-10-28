@@ -209,9 +209,9 @@ test('global and member variables', async (t) => {
     far.sendCellChange('40,40', 0, 0, 0);
     await far.waitEvent('PlayerCellChange');
 
-    a.sendEvent('MemberVarUpdate', { ref: NPC_REF, name: 'state', value: 3 });
+    a.sendEvent('MemberVarUpdate', { ref: NPC_REF, name: 'state', value: 3, cellKey: '0,0' });
     const got = await b.waitEvent('MemberVarUpdate');
-    assert.deepEqual(got.value, { ref: NPC_REF, name: 'state', value: 3 });
+    assert.deepEqual(got.value, { ref: NPC_REF, name: 'state', value: 3, cellKey: '0,0' });
     await fence(a, far);
     assert.equal(far.inbox.events.filter((e) => e.name === 'MemberVarUpdate').length, 0);
     far.close();
@@ -250,9 +250,9 @@ test('a member var reaches the peer holding the cell while its avatar stands els
   peer.sendCellChange('9,9', 0, 0, 0); // parked far away; Bob keeps 0,0 occupied and held
   await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '9,9');
   peer.inbox.events.length = 0;
-  bob.sendEvent('MemberVarUpdate', { ref: NPC_REF, name: 'talked', value: 1 });
+  bob.sendEvent('MemberVarUpdate', { ref: NPC_REF, name: 'talked', value: 1, cellKey: '0,0' });
   const heard = await peer.waitEvent('MemberVarUpdate', () => true, 3000);
-  assert.deepEqual(heard.value, { ref: NPC_REF, name: 'talked', value: 1 }, 'the simulator of the NPC hears its locals change');
+  assert.deepEqual(heard.value, { ref: NPC_REF, name: 'talked', value: 1, cellKey: '0,0' }, 'the simulator of the NPC hears its locals change');
 });
 
 // #77: in single player the world stops for a conversation. Here the holder keeps simulating,

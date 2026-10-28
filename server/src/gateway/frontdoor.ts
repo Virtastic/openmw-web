@@ -177,10 +177,10 @@ export function characterRoutes(
           createdAt: c.createdAt, lastPlayedAt: c.lastPlayedAt,
           level: doc?.stats?.level ?? 1,
           // A slot needs chargen until creation FINISHED (the completed flag, reported by the
-          // client at CharGenState == -1). doc.appearance grandfathers pre-flag characters.
-          // An abandoned creation therefore boots back INTO chargen (the world wipes its
+          // client at CharGenState == -1). v2 starts on a fresh data dir (CL16), so there are no
+          // pre-flag characters to grandfather on doc.appearance (CL15). An abandoned creation therefore boots back INTO chargen (the world wipes its
           // partial doc at auth), never into a half-made character.
-          needsChargen: c.completed !== true && doc?.appearance === undefined,
+          needsChargen: c.completed !== true,
           // Per-world saved positions, so the launcher can boot the engine STRAIGHT into the
           // cell the character logged out in. Without it the engine spawns at the game's
           // default start and the server teleports afterwards — which means real seconds

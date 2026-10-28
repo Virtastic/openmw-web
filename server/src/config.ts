@@ -157,9 +157,9 @@ export interface Config {
     // sets 'proximity'. '!' prefixes global and '@' party regardless of this.
     sayScope: 'world' | 'proximity';
     // Phase 2.5: who may rest/wait, since it advances the shared clock for everyone.
-    // 'anyone' (M7 behaviour), 'owner' (only the world's owner; 'party' is the legacy
-    // spelling of the same thing), 'off' (time flows continuously).
-    timeSkip: 'anyone' | 'owner' | 'party' | 'off';
+    // 'anyone' (M7 behaviour), 'owner' (only the world's owner), 'off' (time flows
+    // continuously). CL15: the legacy 'party' spelling is gone and refuses boot.
+    timeSkip: 'anyone' | 'owner' | 'off';
     // affected because the rule keys on co-present members beyond the first.
     difficulty: number;
   };
@@ -397,7 +397,7 @@ export const ENUM_OPTIONS = {
   'rules.deathPenalty': ['none'],
   'rules.pvpZone': ['all', 'wilderness', 'none'],
   'rules.sayScope': ['world', 'proximity'],
-  'rules.timeSkip': ['anyone', 'owner', 'party', 'off'],
+  'rules.timeSkip': ['anyone', 'owner', 'off'],
   'engine.enforce': ['warn', 'refuse', 'off'],
   'limits.renderLod': ['full', 'tiered'],
 } as const;

@@ -46,13 +46,6 @@ export function daysPassed(t: { day: number; month: number; year: number }): num
   return Math.max(1, absDays(t) - EPOCH_DAYS + 1);
 }
 
-// Phase 2.5: who may skip time, and by how much.
-//   'anyone'  M7 behaviour — any rest/wait advances the shared clock for everybody
-//   'owner'   only the world's owner may skip (guests must not fast-forward the host's game).
-//             'party' is the legacy spelling and means the same thing.
-//   'off'     nobody; time flows continuously
-export type TimeSkipPolicy = 'anyone' | 'owner' | 'party' | 'off';
-
 export interface ClockCtx {
   state: WorldTimeState; // lives in the CellStore global doc; mutated in place
   save(): void; // schedule the atomic global.json write
