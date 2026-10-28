@@ -256,3 +256,38 @@ test('OT3-30: a remembered peer list refuses a first client that differs, and th
   assert.equal(gate.peerPinned, true);
   assert.equal(gate.check([{ name: 'Morrowind.esm', idx: 0, size: 0 }]).ok, true);
 });
+
+test('OT3-30: a brand-new world turns players away (retryable) until its peer pins the list', async () => {
+  const { startServer } = await import('../src/server');
+  const { TestClient, tmpDataDir, MANIFEST } = await import('./helpers');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const dir = tmpDataDir();
+  const gd = join(dir, 'gamedata');
+  mkdirSync(gd, { recursive: true });
+  for (const f of ['Morrowind.esm', 'Morrowind.bsa']) writeFileSync(join(gd, f), 'x');
+  const server = await startServer({ requireGameData: false, configOverride: { server: { password: PEER_PASS } }, dataDir: dir, port: 0, host: '127.0.0.1' });
+  try {
+    // A peer is expected (no binary in the suite, so set the flag the boot would have set).
+    server.config.simPeer.enabled = true;
+    const early = await TestClient.connect(server.port);
+    early.hello(MANIFEST.filter((e) => e.name !== 'mp.omwscripts'));
+    const refusal = await early.waitJson('SessionDisconnect');
+    assert.equal(refusal['code'], 'SHUTDOWN', 'transient, so the client redials instead of adopting');
+    early.ws.close();
+    server.config.simPeer.enabled = false; // nothing to spawn when the peer's join runs a pass
+
+    const peer = await TestClient.connect(server.port);
+    peer.system = true;
+    peer.serverPassword = PEER_PASS;
+    await peer.joinAsNew('simpeer_world');
+    server.config.simPeer.enabled = true;
+    const ok = await TestClient.connect(server.port);
+    assert.ok((await ok.joinAsNew('after_pin')).playerId > 0, 'once pinned, a matching player joins');
+    server.config.simPeer.enabled = false;
+    peer.ws.close();
+    ok.ws.close();
+  } finally {
+    await server.close();
+  }
+});

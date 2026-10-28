@@ -143,7 +143,7 @@ export interface ServerCtx {
   engine: EngineGate;
   // Phase H: present only when a sim peer is configured. Used to stop retrying a peer that
   // was refused for a reason retrying cannot fix.
-  simPeers?: { disablePermanently(reason: string): void; noteHello?(key: string): void };
+  simPeers?: { disablePermanently(reason: string): void; noteHello?(key: string): void; readonly disabledReason?: string };
   /** Is the world actually being SIMULATED — the peer holding cells, not merely connected?
    *  Clients hold their loading screen on this. */
   simReady?(): boolean;
@@ -1600,6 +1600,16 @@ export class Connection implements Peer {
     if (this.isSystem && this.ctx.gameDataOk && !this.ctx.content.peerPinned) {
       this.ctx.content.setAuthoritative(msg.manifest);
       this.ctx.world.adoptContentList(msg.manifest); // backlog 298: remap cell docs on a list change
+    }
+    // OT3-30: a BRAND-NEW world (no list persisted by an earlier peer) is unpinned until its
+    // own peer says hello, and an unpinned gate is adopt-first -- the first player to arrive,
+    // possibly with a modified client, would define the world's content. A peer is coming
+    // (enabled, not disabled, always started on the first pass), so turn players away with a
+    // TRANSIENT code: the client's first-dial grace redials on SHUTDOWN instead of failing.
+    if (!this.isSystem && this.ctx.gameDataOk && this.ctx.config.simPeer.enabled
+        && !this.ctx.simPeers?.disabledReason && !this.ctx.content.isAuthoritative) {
+      this.disconnect('SHUTDOWN', 'the world is starting; retrying shortly');
+      return;
     }
     const contentCheck = this.ctx.content.check(msg.manifest);
     if (!contentCheck.ok) {
