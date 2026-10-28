@@ -200,17 +200,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     void p.catch(() => undefined).finally(() => inFlight.delete(p));
   };
   const worldOwner = (opts.worldOwner ?? process.env.OMW_WORLD_OWNER ?? '').toLowerCase();
-  // EVERY GATEWAY WORLD HAS AN OWNER. '' used to mean "unowned, therefore public"; that
-  // concept is deleted, not re-homed. A gateway world that somehow boots without one fails
-  // CLOSED — mayJoinWorld below admits nobody but admins — and this line is how the operator
-  // finds out. A standalone stack (no OMW_WORLD_ID) legitimately has no owner: it is the
-  // operator's own deployment and the account system is its door.
-  if (process.env.OMW_WORLD_ID && worldOwner === '') {
-    log('error', 'world.unowned', {
-      world: worldId,
-      note: 'gateway worlds must carry OMW_WORLD_OWNER; this world will admit only admins',
-    });
-  }
+  // NO OWNER = THE PUBLIC WORLD (OT3-28). The gateway runs one world, vvardenfell, and
+  // starts it without an owner; the account system is its door. The owner/mode machinery
+  // below is dead on that path and goes in OT3-31.
   const playerStore = new PlayerStore(sharedDir, worldId);
   const cellStore = new CellStore(opts.dataDir, true);
   // SHARED, not per world (backlog 315): the player doc carries custom-record ids across
@@ -831,14 +823,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Phase 4: one-shot scripted encounters replayed for a character who was not there.
     questSpawnsOnEntry: (player, cellKey) => questRepair.onCellEntry(player, cellKey),
     questRepair,
-    // THE AUTHORIZATION. The friends list is the only door into somebody's world: Solo
-    // (private) admits nobody, Party admits the owner's FRIENDS up to the whole-world cap.
-    // Admins always (moderation must be able to enter anywhere). A standalone stack has no
-    // owner and admits its own accounts; an unowned GATEWAY world fails closed.
+    // THE AUTHORIZATION. No owner = the public world: every signed-in account. Admins always
+    // (moderation must be able to enter anywhere).
     isSentHome: (accountKey: string): boolean => (kickedUntil.get(accountKey) ?? 0) > Date.now(),
     mayJoinWorld: (accountKey: string, rank: number, returning = false): boolean => {
       if (rank >= 1) return true;
-      if (worldOwner === '') return !process.env.OMW_WORLD_ID;
+      if (worldOwner === '') return true;
       if (accountKey === worldOwner) return true;
       if (worldMode !== 'party') return false;
       if ((kickedUntil.get(accountKey) ?? 0) > Date.now()) return false;
@@ -1271,7 +1261,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     playerCount: roster.humansInWorld().length,
     connectedCount: roster.humanCount, // F3: keeps a world alive while a player is loading / at chargen
     // Live, not configured: the supervisor's own count of running engines. One peer carries
-    // the whole world now, so this is normally 0 or 1; the gateway's governor still reads it.
+    // the whole world now, so this is normally 0 or 1.
     peerCount: simPeers.running,
     pvp: config.rules.pvp,
     mode: worldMode === 'party' ? 'party' : 'private',
@@ -1280,6 +1270,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       id: p.id,
       name: p.name,
       cellKey: p.cellKey ?? null,
+      // For the gateway (whose /status read is internal): "is this character in the world".
+      ...(process.env.OMW_WORLD_ID ? { charId: p.charId } : {}),
       ...(playerStore.getCached(p.charId)?.stats?.level !== undefined
         ? { level: playerStore.getCached(p.charId)!.stats!.level }
         : {}),
@@ -1494,9 +1486,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // fixed at the source now (mwmechanics/actorutil nearestSimDistanceSqr — every range check
   // measures from the nearest anchor), and STATUS.md measured the consolidation as free:
   // 8 anchored cells cost no more than 1, because the ESM store and every subsystem are
-  // shared. So the fan-out was paying N processes for something one process already does —
-  // and it broke the gateway's memory governor besides (a world's cost stopped being a
-  // constant, MP-BACKLOG P3).
+  // shared. So the fan-out was paying N processes for something one process already does.
   //
   // Anchors are WORLD POSITIONS — each player's live pose — not grid coordinates. A
   // cell-centre anchor covered its own cell but reached only ~3072 units into a neighbour

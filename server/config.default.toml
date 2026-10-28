@@ -567,7 +567,7 @@ startCell = "Seyda Neen"
 # player is told. A world that exists must simulate all of itself.
 #
 # Each peer measured 487 MB RSS with full retail data and about 20% of a core while busy, so
-# size the HOST for the cells you expect to be occupied at once (see [worlds] memBudgetMb).
+# size the HOST for the cells you expect to be occupied at once.
 # Setting a finite number here is a deliberate risk, and the server logs simpeer.at_cap as an
 # ERROR when it bites, because somebody is playing an unsimulated cell at that moment.
 maxPeers = 0
@@ -586,61 +586,12 @@ idleReapMs = 120000               # reap a peer whose world has had no humans th
 startTimeoutMs = 300000
 restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)
 
-# F3 supervisor sizing. Read by the GATEWAY process (dist/gateway.mjs) only; a single world
-# server ignores this table entirely.
-#
-# Every occupied world is a node process AND its own sim peer, so worlds multiply RAM rather
-# than sharing it. A count cap cannot see that, which is why there is a memory budget: the
-# gateway takes the LOWER of the two ceilings and logs which one bound it (gateway.capacity).
+# Read by the GATEWAY process (dist/gateway.mjs) only; a single world server ignores this table.
+# One public world runs (OT3-28); the count cap is a backstop. Size the host for the peers the
+# occupied cells need (see [simPeer] maxPeers): about 487 MB each.
 [worlds]
-# 0 = derive the count ceiling from [server] maxPlayers (one solo world per seated player).
+# 0 = [server] maxPlayers.
 maxWorlds = 0
-# Total RAM the gateway may spend on worlds and their peers. 0 DISABLES the memory governor
-# and leaves only the count cap — which is how a 1.5 GB container was allowed to try to run
-# 256 worlds. Set it to the container's limit, measured on the host you actually deploy to.
-# 8192 = the mem_limit v1 prod ran with. This was 0 -- the governor OFF -- and the
-# comment above says exactly what that cost: a 1.5 GB container permitted to attempt 256 worlds.
-# Leaving it off is worse now than it was, because each world may run several peers rather than
-# one. Set it to YOUR container's limit if that is not 8g.
-# Refuse NEW worlds while the 1-minute load average is above this. 0 = off (the default): a
-# TR peer cold-starting pins the load for a minute and a friend's world must not be refused
-# for it. Set to about 2x the core count if the box is shared with other services.
-loadCap = 0
-# Keep an empty game this many seconds past the idle reap while its OWNER is online in another
-# game (visiting a friend's party), so going home is a quick join instead of a cold start. Never
-# held against measured memory or CPU pressure. 0 = reap on the idle timer as before.
-ownerAwayKeepSec = 600
-memBudgetMb = 8192
-# MEASURED cost of one occupied world: its node process plus its sim peer.
-#
-# 640 comes from a real measurement, not an estimate: 623 MB total (sim peer 487 MB + world
-# process 136 MB), stable across three samples 20 s apart, on Linux/x86-64 with full retail
-# Morrowind + Tribunal + Bloodmoon and one player anchoring one exterior cell, host load 1.4.
-# Rounded up for headroom. The previous value of 780 was a guess assembled from two figures in
-# comments and was wrong in both halves — the node process is far smaller and the peer larger.
-#
-# Re-measure on YOUR host with YOUR game data: server/scripts/measure-capacity.ts. A peer
-# anchoring several busy cells will cost more than one standing in Seyda Neen.
-worldCostMb = 640
-# MEASURED cost of each ADDITIONAL sim peer a world runs, beyond the first.
-#
-# 487 is the peer half of the measurement above (sim peer 487 MB + world process 136 MB), so
-# this is the same sample, not a second guess.
-#
-# THIS EXISTS BECAUSE worldCostMb STOPPED BEING A WHOLE ANSWER. It was measured when a world
-# ran exactly one peer, so a world was a fixed 640 MB and the governor could turn a budget into
-# a world count once at boot. A world now runs ONE PEER PER OCCUPIED CELL: four players in four
-# cells is four engines, about 2100 MB, and a governor still pricing that world at 640 permits
-# roughly three times the RAM the box has. That is the exact OOM this governor was written to
-# prevent, reintroduced underneath it by a change one layer down.
-#
-# The ceiling therefore MOVES as players spread out, which is correct -- that is when the host
-# actually fills. Set to 0 to price every world at worldCostMb regardless of how many peers it
-# runs; that is the old arithmetic, and it is only safe if your worlds never exceed one peer.
-peerCostMb = 487
-# Held back for the gateway process itself before worlds are budgeted. Measured at 118 MB with
-# one world supervised; 256 leaves room for the directory, the SSO front door and the locker.
-gatewayReserveMb = 256
 
 # F3 — the world directory this world's players can browse from the in-game Social menu.
 # Empty means no gateway: the Worlds tab says so and everything else works normally, which

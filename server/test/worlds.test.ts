@@ -32,7 +32,6 @@ function harness(over: Partial<WorldSettings> = {}, deps: Partial<WorldDeps> = {
     nodeBin: '/fake/node',
     basePort: 40000,
     maxWorlds: 3,
-    idleReapMs: 60_000,
     startTimeoutMs: 60_000,
     restartBackoffMs: 15_000,
     sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
@@ -55,7 +54,6 @@ function harness(over: Partial<WorldSettings> = {}, deps: Partial<WorldDeps> = {
   const sup = new WorldSupervisor({
     settings,
     now: () => clock,
-    sample: (pids) => { box.pids = pids; return { rssMb: box.rssMb, load1: box.load1 }; },
     spawner: (id, args) => {
       const child = new FakeChild();
       spawned.push({ id, args, child });
@@ -75,8 +73,8 @@ function harness(over: Partial<WorldSettings> = {}, deps: Partial<WorldDeps> = {
 
 test('worlds: each world gets its own data dir and port', () => {
   const { sup, spawned } = harness();
-  sup.ensure('alpha', 'private');
-  sup.ensure('beta', 'private');
+  sup.ensure('alpha');
+  sup.ensure('beta');
   assert.equal(spawned.length, 2);
   const ports = spawned.map((s) => s.args[s.args.indexOf('--port') + 1]);
   assert.notEqual(ports[0], ports[1], 'two worlds must never share a port');
@@ -87,39 +85,24 @@ test('worlds: each world gets its own data dir and port', () => {
 
 test('worlds: ensure is idempotent — joining twice does not fork a second process', () => {
   const { sup, spawned } = harness();
-  sup.ensure('party42', 'party');
-  sup.ensure('party42', 'party');
+  sup.ensure('party42');
+  sup.ensure('party42');
   assert.equal(spawned.length, 1);
   assert.equal(sup.running, 1);
 });
 
 test('worlds: the cap is enforced and refusal is explicit, not a crash', () => {
   const { sup, spawned } = harness({ maxWorlds: 2 });
-  assert.ok(sup.ensure('a', 'private'));
-  assert.ok(sup.ensure('b', 'private'));
-  const third = sup.ensure('c', 'private');
+  assert.ok(sup.ensure('a'));
+  assert.ok(sup.ensure('b'));
+  const third = sup.ensure('c');
   assert.equal(third, null, 'over the cap must return null so the caller can tell the player');
   assert.equal(spawned.length, 2);
 });
 
-test('worlds: a JOINED-then-abandoned private world is reaped; a never-joined one survives the startup grace', async () => {
-  const { sup, advance, counts } = harness();
-  const s1 = sup.ensure('sess1', 'private')!;
-  // Someone joins (connectedCount>0) then leaves — the idle reaper applies after they go.
-  counts.set(s1.port, 1); await sup.poll();                 // everConnected
-  counts.set(s1.port, 0); await sup.poll();                 // they left -> idle clock starts now
-  advance(61_000); await sup.poll(); await tick();          // idle window elapsed -> reaped
-  assert.equal(sup.get('sess1'), undefined, 'a joined-then-abandoned private session is reaped after the idle window');
-  // A brand-new world nobody has REACHED yet is NOT reaped inside the idle window: a first-play
-  // client may still be downloading its data (minutes) before it connects. The startup grace holds.
-  sup.ensure('sess2', 'private');
-  advance(61_000); await sup.poll(); await tick();
-  assert.ok(sup.get('sess2'), 'a never-joined world survives the startup grace (client may still be loading toward it)');
-});
-
 test('worlds: a populated private world is never reaped', async () => {
   const { sup, spawned, counts, advance } = harness();
-  sup.ensure('sess1', 'private');
+  sup.ensure('sess1');
   const port = Number(spawned[0]!.args[spawned[0]!.args.indexOf('--port') + 1]);
   counts.set(port, 3); // three players inside
   await sup.poll();
@@ -129,36 +112,19 @@ test('worlds: a populated private world is never reaped', async () => {
   assert.ok(sup.get('sess1'), 'a world with players in it must not be reaped');
 });
 
-test('worlds: players leaving starts the idle clock, returning cancels it', async () => {
-  const { sup, spawned, counts, advance } = harness();
-  sup.ensure('sess1', 'private');
-  const port = Number(spawned[0]!.args[spawned[0]!.args.indexOf('--port') + 1]);
-  counts.set(port, 2);
-  await sup.poll();
-  counts.set(port, 0);       // everyone left
-  await sup.poll();          // idle clock starts
-  advance(50_000);
-  counts.set(port, 1);       // someone came back before the deadline
-  await sup.poll();
-  advance(30_000);           // past the ORIGINAL deadline
-  await sup.poll();
-  await tick();
-  assert.ok(sup.get('sess1'), 'the reap must be cancelled by the returning player, not merely delayed');
-});
-
 test('worlds: a world that stops answering /status is reported down, not silently healthy', async () => {
   const { sup } = harness();
   const dead = new WorldSupervisor({
     settings: {
       worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')), serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080,
-      basePort: 41000, maxWorlds: 2, idleReapMs: 60_000, startTimeoutMs: 1000,
+      basePort: 41000, maxWorlds: 2, startTimeoutMs: 1000,
       restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     fetchStatus: async () => null, // wedged / not up
   });
-  dead.ensure('sick', 'private');
+  dead.ensure('sick');
   await dead.poll();
   const info = dead.get('sick');
   assert.ok(info, 'a wedged world is still LISTED (an operator must see it)');
@@ -169,12 +135,12 @@ test('worlds: a world that stops answering /status is reported down, not silentl
 
 test('worlds: a crash backs off instead of hot-looping', () => {
   const { sup, spawned, advance } = harness();
-  sup.ensure('crashy', 'private');
+  sup.ensure('crashy');
   spawned[0]!.child.emit('exit', 1, null);
   assert.equal(sup.running, 0);
-  assert.equal(sup.ensure('crashy', 'private'), null, 'immediate restart is refused');
+  assert.equal(sup.ensure('crashy'), null, 'immediate restart is refused');
   advance(15_001);
-  assert.ok(sup.ensure('crashy', 'private'), 'but it comes back after the backoff');
+  assert.ok(sup.ensure('crashy'), 'but it comes back after the backoff');
 });
 
 // A world that ran and then exited 0 (SIGTERM handled: players got SHUTDOWN, stores flushed)
@@ -182,14 +148,14 @@ test('worlds: a crash backs off instead of hot-looping', () => {
 // (dev box, 2026-09-23: 30 s of world.backoff after a deploy restart).
 test('worlds: a clean exit after startup revives at once; a clean exit ON startup still backs off', () => {
   const { sup, spawned, advance } = harness();
-  sup.ensure('w', 'private');
+  sup.ensure('w');
   advance(60_000);
   spawned[0]!.child.emit('exit', 0, null);
-  assert.ok(sup.ensure('w', 'private'), 'a clean shutdown is not a crash: the next dial revives it');
+  assert.ok(sup.ensure('w'), 'a clean shutdown is not a crash: the next dial revives it');
 
-  sup.ensure('quick', 'private');
+  sup.ensure('quick');
   spawned[spawned.length - 1]!.child.emit('exit', 0, null); // exited 0 within the startup window
-  assert.equal(sup.ensure('quick', 'private'), null, 'an instant exit is still the spin the backoff guards');
+  assert.equal(sup.ensure('quick'), null, 'an instant exit is still the spin the backoff guards');
 });
 
 // An operator's stop must be a stop. The owner's client is still connected and redials within
@@ -197,35 +163,35 @@ test('worlds: a clean exit after startup revives at once; a clean exit ON startu
 // game was back 400 ms after it was stopped. The hold is the same instrument as crash backoff.
 test('worlds: an operator stop holds against revival, then the world may come back', async () => {
   const { sup, spawned, advance } = harness();
-  sup.ensure('w', 'private', 'alice');
+  sup.ensure('w');
   sup.stop('w', true);
   await tick();
   spawned[0]!.child.emit('exit', 0, 'SIGTERM');
   await tick();
-  assert.equal(sup.ensure('w', 'private', 'alice'), null, 'revived on the next dial: the stop lasted no time at all');
+  assert.equal(sup.ensure('w'), null, 'revived on the next dial: the stop lasted no time at all');
   advance(4 * 60_000);
-  assert.equal(sup.ensure('w', 'private', 'alice'), null, 'still held four minutes in');
+  assert.equal(sup.ensure('w'), null, 'still held four minutes in');
   advance(2 * 60_000);
-  assert.ok(sup.ensure('w', 'private', 'alice'), 'a game stopped by mistake comes back on its own after the hold');
+  assert.ok(sup.ensure('w'), 'a game stopped by mistake comes back on its own after the hold');
 });
 
 test('worlds: a stale exit cannot evict the world that replaced it, and frees no live port', async () => {
   const { sup, spawned, advance } = harness();
-  sup.ensure('w', 'private');
+  sup.ensure('w');
   const first = spawned[0]!.child;
   sup.stop('w', true);
   await tick();
   advance(20_000);
-  assert.equal(sup.ensure('w', 'private'), null, 'an operator stop holds against revival');
+  assert.equal(sup.ensure('w'), null, 'an operator stop holds against revival');
   advance(5 * 60_000);
-  sup.ensure('w', 'private');
+  sup.ensure('w');
   assert.equal(spawned.length, 2);
   first.emit('exit', 0, 'SIGTERM'); // the OLD process's exit arrives late
   await tick();
   assert.equal(sup.running, 1, "a dead world's exit must not delete its successor");
   // And the successor's port must still be reserved, or the next world would collide with it.
   const p2 = Number(spawned[1]!.args[spawned[1]!.args.indexOf('--port') + 1]);
-  sup.ensure('other', 'private');
+  sup.ensure('other');
   const p3 = Number(spawned[2]!.args[spawned[2]!.args.indexOf('--port') + 1]);
   assert.notEqual(p3, p2, 'the live successor keeps its port reserved');
 });
@@ -278,9 +244,9 @@ test('shared: one account works across worlds; per-world state stays separate', 
 
 test('rolling restart: worlds come back one at a time, emptiest first', async () => {
   const { sup, spawned, counts } = harness({ maxWorlds: 5, startTimeoutMs: 5_000 });
-  sup.ensure('third', 'private');
-  sup.ensure('busy', 'private');
-  sup.ensure('quiet', 'private');
+  sup.ensure('third');
+  sup.ensure('busy');
+  sup.ensure('quiet');
   await sup.poll();
   const portOf = (id: string): number => {
     const s = spawned.find((x) => x.id === id)!;
@@ -308,10 +274,10 @@ test('rolling restart: a player redialling the instant the old world exits is th
   // started a fresh process under the same id, and the rollout waited for the id to vanish for
   // the full timeout, then reported it stuck.
   const { sup, spawned } = harness({ maxWorlds: 5, startTimeoutMs: 5_000 });
-  sup.ensure('host', 'private');
+  sup.ensure('host');
   await sup.poll();
   const first = spawned.find((s) => s.id === 'host')!.child;
-  first.once('exit', () => setImmediate(() => sup.ensure('host', 'private'))); // the redial
+  first.once('exit', () => setImmediate(() => sup.ensure('host'))); // the redial
   const spawnsBefore = spawned.length;
   const t0 = Date.now();
   const r = await sup.rollingRestart({ readyTimeoutMs: 3_000 });
@@ -330,7 +296,7 @@ test('rolling restart: a world that will not come back HALTS the rollout', async
   const sup = new WorldSupervisor({
     settings: {
       worldsDir, serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080, basePort: 43000, maxWorlds: 5,
-      idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100,
+      startTimeoutMs: 1_000, restartBackoffMs: 100,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     now: () => clock,
@@ -346,8 +312,8 @@ test('rolling restart: a world that will not come back HALTS the rollout', async
       return { playerCount: 0, connectedCount: 0, maxPlayers: 32, name: 'w' };
     },
   });
-  sup.ensure('broken', 'private');
-  sup.ensure('healthy', 'private');
+  sup.ensure('broken');
+  sup.ensure('healthy');
   await sup.poll();
   dead.add('broken');
 
@@ -365,189 +331,18 @@ test('rolling restart: a world that will not come back HALTS the rollout', async
 // every world process runs its own SimPeerSupervisor — so a 1.5 GB container would spawn
 // worlds until the OOM killer took it, with every per-world cap reading as satisfied.
 
-test('capacity: the memory budget binds when it is tighter than the count cap', () => {
-  // 2048 usable after the 256 MB reserve, at 780 MB per world -> 2 worlds, not 10.
-  const { sup } = harness({
-    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 780, gatewayReserveMb: 256,
-  });
-  const cap = sup.capacity();
-  assert.equal(cap.cap, 2);
-  assert.equal(cap.reason, 'memory');
-
-  assert.ok(sup.ensure('a', 'private', 'ann'), 'first world fits');
-  assert.ok(sup.ensure('b', 'private', 'bob'), 'second world fits');
-  assert.equal(sup.ensure('c', 'private', 'cid'), null, 'third is refused by the memory budget');
-  assert.equal(sup.running, 2);
-});
-
-test('capacity: the count cap still binds when it is the tighter of the two', () => {
-  const { sup } = harness({
-    maxWorlds: 1, memBudgetMb: 100_000, worldCostMb: 780, gatewayReserveMb: 256,
-  });
-  assert.deepEqual(
-    { cap: sup.capacity().cap, reason: sup.capacity().reason },
-    { cap: 1, reason: 'count' },
-  );
-  assert.ok(sup.ensure('a', 'private', 'ann'));
-  assert.equal(sup.ensure('b', 'private', 'bob'), null);
-});
-
-// NEGATIVE CONTROL. Remove the budget and the SAME calls succeed — so the refusal above is
-// the governor doing its job, not the harness running out of ports or the fake spawner
-// failing. Deleting the memBudgetMb check in ensure() makes the first test fail and this one
-// keep passing, which is the discrimination that matters.
 test('capacity: with no budget configured only the count cap applies', () => {
   const { sup } = harness({ maxWorlds: 10 });
   assert.equal(sup.capacity().reason, 'count');
-  assert.ok(sup.ensure('a', 'private', 'ann'));
-  assert.ok(sup.ensure('b', 'private', 'bob'));
-  assert.ok(sup.ensure('c', 'private', 'cid'), 'the third world that the budget refused');
+  assert.ok(sup.ensure('a'));
+  assert.ok(sup.ensure('b'));
+  assert.ok(sup.ensure('c'), 'the third world that the budget refused');
   assert.equal(sup.running, 3);
 });
 
-// #270: the static price is a guess; the box is the truth. A TR world weighs three vanilla
-// ones and a saturated CPU admits nobody, whatever the arithmetic says.
-test('capacity: measured RSS past the budget, or a saturated CPU, caps at what is running', () => {
-  const { sup, box } = harness({
-    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 640, gatewayReserveMb: 256, loadCap: 8,
-  });
-  assert.ok(sup.ensure('a', 'private', 'ann'));
-  assert.equal(sup.capacity().cap, 3, 'the static price alone admits three');
-  box.rssMb = 2100; // one TR world ate the whole usable budget
-  assert.deepEqual({ cap: sup.capacity().cap, reason: sup.capacity().reason }, { cap: 1, reason: 'mem' });
-  assert.equal(sup.ensure('b', 'private', 'bob'), null, 'admitted past the measured RSS');
-  box.rssMb = 0;
-  box.load1 = 1e6; // every core busy
-  assert.deepEqual({ cap: sup.capacity().cap, reason: sup.capacity().reason }, { cap: 1, reason: 'cpu' });
-  assert.equal(sup.ensure('b', 'private', 'bob'), null, 'admitted on a saturated box');
-  box.load1 = 0;
-  assert.ok(sup.ensure('b', 'private', 'bob'), 'the pressure gone, the static price rules again');
-  sup.capacity();
-  assert.equal(box.pids.length, 2, 'the sampler is handed every running world pid');
-});
-
-// A budget too small for one world must still run one. Refusing everything would make a
-// fat-fingered memBudgetMb indistinguishable from a broken gateway — the failure mode this
-// whole governor exists to make legible.
-test('capacity: a budget below one world still admits one, and says so', () => {
-  const { sup } = harness({
-    maxWorlds: 10, memBudgetMb: 300, worldCostMb: 780, gatewayReserveMb: 256,
-  });
-  assert.equal(sup.capacity().cap, 1);
-  assert.ok(sup.ensure('a', 'private', 'ann'));
-  assert.equal(sup.ensure('b', 'private', 'bob'), null);
-});
-
-// THE SECOND HALF OF THE SAME BUG, and it was introduced by the fix to the FIRST half's
-// neighbour. The governor above prices a world at a constant, which was honest while a world
-// ran exactly one sim peer. It no longer does: peers are one per OCCUPIED CELL, so a party
-// spread over four cells is four engines in a single world -- about 2100 MB against the 640 the
-// governor still charges. A budget sized on the old arithmetic then permits roughly three times
-// the RAM the box has, and every per-world cap reads as satisfied right up to the OOM kill.
-//
-// This is the same failure the memory governor was written to prevent, reintroduced underneath
-// it by a change one layer down, which is why it is worth a test rather than a comment.
-test('capacity: a world running several peers is priced for all of them', async () => {
-  const { sup, spawned, peers } = harness({
-    maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 487,
-    gatewayReserveMb: 256,
-  });
-  // 3840 usable after the reserve. At the old fixed price of 640 a world, that is 6.
-  assert.equal(sup.capacity().cap, 6);
-
-  assert.ok(sup.ensure('a', 'private', 'ann'));
-  const a0 = spawned[0]!;
-  const port = Number(a0.args[a0.args.indexOf('--port') + 1]);
-  peers.set(port, 4); // four occupied cells in one world -> four engines
-  await sup.poll();
-
-  // 640 + 3x487 = 2101 committed by ONE world, leaving 1739 -> two more at 640.
-  assert.deepEqual(
-    { cap: sup.capacity().cap, reason: sup.capacity().reason },
-    { cap: 3, reason: 'memory' },
-    'a four-peer world must not be priced as a one-peer world',
-  );
-
-  assert.ok(sup.ensure('b', 'private', 'bob'));
-  assert.ok(sup.ensure('c', 'private', 'cid'));
-  assert.equal(sup.ensure('d', 'private', 'dan'), null, 'refused by RAM the peers already spent');
-});
-
-// NEGATIVE CONTROL. Identical sequence with peerCostMb at 0 -- the documented opt-out that
-// restores the old whole-world arithmetic -- and the extra peers cost nothing again, so the cap
-// stays at 6 and the fourth world is admitted. Make committedMb() ignore peerCount and the test
-// above reports 6 and fails while this one still passes, which is the discrimination that
-// matters: it separates "the governor prices peers" from "the harness ran out of ports".
-test('capacity: peerCostMb 0 prices every world at worldCostMb however many peers it runs', async () => {
-  const { sup, spawned, peers } = harness({
-    maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 0,
-    gatewayReserveMb: 256,
-  });
-  assert.equal(sup.capacity().cap, 6);
-
-  assert.ok(sup.ensure('a', 'private', 'ann'));
-  const a0 = spawned[0]!;
-  const port = Number(a0.args[a0.args.indexOf('--port') + 1]);
-  peers.set(port, 4);
-  await sup.poll();
-
-  assert.equal(sup.capacity().cap, 6, 'opted out, so the extra peers are free');
-  assert.ok(sup.ensure('b', 'private', 'bob'));
-  assert.ok(sup.ensure('c', 'private', 'cid'));
-  assert.ok(sup.ensure('d', 'private', 'dan'), 'the world the priced-peers run refused');
-});
-
-// The governor's INPUTS have to be visible, or the only evidence a box is filling up is the
-// 503 a player gets when it is already full. worlds_running cannot carry that on its own any
-// more: a world is one process whether its players share a cell or are scattered across four,
-// and those two cost wildly different amounts of RAM.
-test('observability: peers and committed RAM track what the worlds actually report', async () => {
-  const { sup, spawned, peers } = harness({
-    maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 487,
-    gatewayReserveMb: 256,
-  });
-  assert.deepEqual({ peers: sup.peersRunning, mb: sup.committed }, { peers: 0, mb: 0 },
-    'an empty gateway has committed nothing');
-
-  assert.ok(sup.ensure('a', 'private', 'ann'));
-  // Before any poll: priced as the one peer worldCostMb already includes, not as free.
-  assert.deepEqual({ peers: sup.peersRunning, mb: sup.committed }, { peers: 1, mb: 640 });
-
-  const a0 = spawned[0]!;
-  peers.set(Number(a0.args[a0.args.indexOf('--port') + 1]), 4);
-  await sup.poll();
-  assert.deepEqual({ peers: sup.peersRunning, mb: sup.committed }, { peers: 4, mb: 640 + 487 * 3 },
-    'four engines in one world must show as four, and be priced as four');
-});
-
-// A world that has not answered /status yet is charged FULL price, not nothing. It is starting,
-// crashed, or wedged -- in every case its memory is spent or about to be, and a guard that reads
-// the unknown as free is not a guard. Without a poll there is no lastStatus at all, so this is
-// also the path every freshly created world takes for its first few seconds.
-test('capacity: a world with no status yet still costs its budget', () => {
-  const { sup } = harness({
-    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 640, peerCostMb: 487,
-    gatewayReserveMb: 256,
-  });
-  assert.equal(sup.capacity().cap, 3); // 2048 usable / 640
-  assert.ok(sup.ensure('a', 'private', 'ann'));
-  assert.ok(sup.ensure('b', 'private', 'bob'));
-  assert.ok(sup.ensure('c', 'private', 'cid'));
-  assert.equal(sup.ensure('d', 'private', 'dan'), null, 'unpolled worlds are not free');
-});
-
-// A WORLD THAT WEDGES WHILE OCCUPIED USED TO LIVE FOREVER.
-//
-// The poll deliberately leaves idleSince alone when /status fails, so one missed probe cannot
-// reap a world full of players. But a world that stopped answering WHILE OCCUPIED then matched
-// no reaper at all: idleSince was undefined (people had been connected) and everConnected was
-// true, so both branches of sweep() skipped it. It kept its port, its slot against maxWorlds
-// and its share of the memory budget until the gateway itself restarted — capacity bleeding
-// away, seen by an operator as "no new games can start" beside a dashboard listing a game
-// that is down. Only a process EXIT ended a world; a hang is not an exit.
 test('a world that stops answering while occupied is eventually reaped, not held forever', async () => {
   const { sup, spawned, counts, down, advance } = harness();
-  sup.ensure('wedged', 'party', 'owner-a');
+  sup.ensure('wedged');
   const port = spawned[0]!.child ? 40000 : 40000;
   counts.set(port, 2); // two people playing
   await sup.poll();
@@ -571,7 +366,7 @@ test('a world that stops answering while occupied is eventually reaped, not held
 
 test('a world that answers again after a blip keeps its slot', async () => {
   const { sup, counts, down, advance } = harness();
-  sup.ensure('blippy', 'party', 'owner-b');
+  sup.ensure('blippy');
   counts.set(40000, 1);
   await sup.poll();
   down.add(40000);
@@ -584,139 +379,6 @@ test('a world that answers again after a blip keeps its slot', async () => {
   assert.equal(sup.running, 1, 'recovering must clear the down clock, not merely pause it');
 });
 
-// AN ABANDONED SIGN-IN USED TO LEAVE A WORLD DIRECTORY BEHIND FOR EVER.
-//
-// A world is created BEFORE Morrowind's character creation finishes, so backing out of chargen
-// is enough to make one — and the never-joined reaper called stop(), which ends the process and
-// leaves the directory. Measured on a real box: five directories, none running, against a
-// gateway capacity of twelve. Nobody ever connected to these, so there is no cell state, no
-// journal and no save to lose.
-test('a world nobody ever joined is discarded, directory and all', async () => {
-  const { sup, settings, advance } = harness();
-  sup.ensure('abandoned', 'private', 'someone');
-  const dir = join(settings.worldsDir, 'abandoned');
-  assert.ok(existsSync(dir), 'the world must have a data directory to begin with');
-  // Backlog 322: the sqlite constructor creates world/world.db the moment a world boots, so a
-  // discard keyed on it never fired. A booted-but-never-joined world looks exactly like this.
-  mkdirSync(join(dir, 'world'), { recursive: true });
-  writeFileSync(join(dir, 'world', 'world.db'), 'schema only');
-
-  // Inside the startup grace: a first-play client can spend minutes fetching its data.
-  await sup.poll();
-  assert.ok(existsSync(dir), 'a world still inside its startup grace must be left alone');
-
-  advance(60 * 60_000);
-  await sup.poll();
-  sup.sweep();
-  await new Promise((r) => setTimeout(r, 50)); // discard() is async
-  assert.equal(existsSync(dir), false,
-    'a world nobody ever joined must take its directory with it, or every abandoned sign-in leaks one');
-});
-
-// A REVIVED WORLD IS NOT A FRESH SPAWN. A launcher join of a friend also spawned the guest's
-// own home world, and a returning character's first data download can outlast the grace: in
-// both, nobody connects to the NEW process inside 15 min, but the world's `.played` marker
-// (written by the world process on its first human join) is on disk. The never-joined path
-// deleted the whole directory (backlog 272).
-test('a revived world nobody connected to is stopped, not discarded', async () => {
-  const { sup, settings, advance } = harness();
-  sup.ensure('revived', 'private', 'someone');
-  const dir = join(settings.worldsDir, 'revived');
-  mkdirSync(join(dir, 'world'), { recursive: true });
-  writeFileSync(join(dir, 'world', 'world.db'), 'cells');
-  writeFileSync(join(dir, '.played'), '');
-  advance(60 * 60_000);
-  await sup.poll();
-  sup.sweep();
-  await new Promise((r) => setTimeout(r, 50));
-  assert.equal(sup.running, 0, 'the unreached process is still reaped');
-  assert.ok(existsSync(join(dir, 'world', 'world.db')),
-    'a world with cell state on disk must keep it even when nobody reached this process');
-});
-
-// THE CONTROL, and the one that must never break: a world somebody PLAYED keeps its data when
-// the idle reaper stops it. That directory is their cell state, their journal and their saves.
-test('a world that was played keeps its directory when it goes idle', async () => {
-  const { sup, settings, counts, advance } = harness();
-  sup.ensure('played', 'private', 'someone');
-  const dir = join(settings.worldsDir, 'played');
-  counts.set(40000, 1);
-  await sup.poll();          // everConnected
-  counts.set(40000, 0);
-  await sup.poll();          // now idle
-  advance(60 * 60_000);
-  await sup.poll();
-  sup.sweep();
-  await new Promise((r) => setTimeout(r, 50));
-  assert.equal(sup.running, 0, 'an idle world is stopped');
-  assert.ok(existsSync(dir), 'but a world that was PLAYED must keep its data');
-});
-
-// A FLIP IS NOT A BOOT MODE. The directory follows the owner's live flips from /status (so
-// friend-joins are not refused as not_open), and the rolling restart used to pass that
-// observed mode to the replacement process -- which then BOOTED as party: chargen gate on,
-// the empty-world revert to Solo gone, bots reading it as public. It restarts the way it
-// started; the owner flips it again if they want to, exactly as after any other restart.
-test('rolling restart: a world the owner flipped to party restarts with its BOOT mode', async () => {
-  const worldsDir = mkdtempSync(join(tmpdir(), 'omw-worlds-'));
-  const envs: NodeJS.ProcessEnv[] = [];
-  const sup = new WorldSupervisor({
-    settings: {
-      worldsDir, serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080, basePort: 44000, maxWorlds: 3,
-      idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100,
-      sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
-    },
-    now: () => 1_000_000,
-    spawner: (_id, _args, env) => { envs.push(env); return new FakeChild() as unknown as ChildProcess; },
-    fetchStatus: async () => ({ playerCount: 1, connectedCount: 1, peerCount: 1, maxPlayers: 32, name: 'w', mode: 'party' }),
-  });
-  assert.ok(sup.ensure('priv-host-1', 'private', 'acct-host'));
-  assert.equal(envs[0]!['OMW_WORLD_MODE'], 'private');
-  await sup.poll(); // the owner flipped it: /status says party
-  assert.equal(sup.get('priv-host-1')?.mode, 'party', 'the directory follows the live flip');
-  const r = await sup.rollingRestart({ readyTimeoutMs: 1_000 });
-  assert.deepEqual(r.restarted, ['priv-host-1']);
-  assert.equal(envs[1]!['OMW_WORLD_MODE'], 'private', 'the replacement boots as the original did, not as the flip');
-});
-
-// #30: a party world revived after a gateway restart comes back as a party -- resumed, not
-// booted as one (#9 keeps the boot mode private).
-test('revive: a world last seen as party is resumed as party, still booted private', async () => {
-  const worldsDir = mkdtempSync(join(tmpdir(), 'omw-worlds-'));
-  const envs: NodeJS.ProcessEnv[] = [];
-  const mk = () => new WorldSupervisor({
-    settings: {
-      worldsDir, serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080, basePort: 45000, maxWorlds: 3,
-      idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100,
-      sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
-    },
-    now: () => 1_000_000,
-    spawner: (_id, _args, env) => { envs.push(env); return new FakeChild() as unknown as ChildProcess; },
-    fetchStatus: async () => ({ playerCount: 1, connectedCount: 1, peerCount: 1, maxPlayers: 32, name: 'w', mode: 'party' }),
-  });
-  const first = mk();
-  assert.ok(first.ensure('priv-host-2', 'private', 'acct-host'));
-  assert.equal(envs[0]!['OMW_WORLD_LAST_MODE'], undefined, 'a fresh world has no mode to resume');
-  first.setMode('priv-host-2', 'party'); // the world reported the owner's flip
-  assert.equal(readFileSync(join(worldsDir, 'priv-host-2', '.mode'), 'utf8'), 'party');
-
-  const second = mk(); // the gateway restarted: a new supervisor, the dir on disk
-  const w = second.ensure('priv-host-2', 'private', 'acct-host');
-  assert.ok(w);
-  assert.equal(envs[1]!['OMW_WORLD_MODE'], 'private', 'the process still boots private');
-  assert.equal(envs[1]!['OMW_WORLD_LAST_MODE'], 'party', 'and is told to resume the party');
-  assert.equal(w.mode, 'party', 'the directory answers party before the first poll');
-
-  await second.poll(); // the poll also remembers what it observes
-  first.setMode('priv-host-2', 'private');
-  assert.equal(readFileSync(join(worldsDir, 'priv-host-2', '.mode'), 'utf8'), 'private');
-  const third = mk();
-  third.ensure('priv-host-2', 'private', 'acct-host');
-  assert.equal(envs[2]!['OMW_WORLD_LAST_MODE'], undefined, 'a world last seen solo is not resumed as party');
-});
-
-// #186/#191: SIGUSR1 (the backup cron's "flush now") reaches every world, and shutdown waits
-// for the children to actually exit rather than a fixed 3 s against a 20 s drain.
 test('worlds: SIGUSR1 is relayed to every world and allExited waits for the last one', async () => {
   // A child that answers signals the way a real world does: SIGUSR1 flushes and keeps
   // running; SIGTERM drains and exits a little later.
@@ -734,15 +396,15 @@ test('worlds: SIGUSR1 is relayed to every world and allExited waits for the last
   const children: LiveChild[] = [];
   const settings: WorldSettings = {
     worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')), gatewayPort: 8080, serverEntry: '/fake/server.mjs',
-    nodeBin: '/fake/node', basePort: 41000, maxWorlds: 3, idleReapMs: 60_000, startTimeoutMs: 60_000,
+    nodeBin: '/fake/node', basePort: 41000, maxWorlds: 3, startTimeoutMs: 60_000,
     restartBackoffMs: 15_000, sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
   };
   const sup = new WorldSupervisor({
     settings,
     spawner: () => { const c = new LiveChild(); children.push(c); return c as unknown as ChildProcess; },
   });
-  sup.ensure('a', 'private');
-  sup.ensure('b', 'private');
+  sup.ensure('a');
+  sup.ensure('b');
   sup.signalAll('SIGUSR1');
   assert.deepEqual(children.map((c) => c.killed), [['SIGUSR1'], ['SIGUSR1']], 'both worlds got the flush signal');
   assert.equal(sup.running, 2, 'a flush signal is not a stop');
@@ -756,33 +418,3 @@ test('worlds: SIGUSR1 is relayed to every world and allExited waits for the last
   assert.ok(children.every((c) => c.exitCode === 0), 'resolved only once every child had exited');
 });
 
-// A HOME KEPT WARM. The owner left to visit a friend's party; their own world emptied and was
-// reaped two minutes later, so coming home was a cold start (node + an 11 s sim peer). While
-// the owner is online in another world it is held for ownerAwayKeepMs more -- and no longer,
-// and never against measured memory pressure.
-test('an empty home is kept warm while its owner plays elsewhere, then reaped', async () => {
-  let away = true;
-  const { sup, counts, box, advance } = harness({ ownerAwayKeepMs: 600_000, memBudgetMb: 8192 },
-    { ownerOnlineElsewhere: (acct, id) => away && acct === 'owner' && id === 'home' });
-  sup.ensure('home', 'private', 'owner');
-  counts.set(40000, 1);
-  await sup.poll();          // played
-  counts.set(40000, 0);
-  await sup.poll();          // empty: idle clock starts
-  advance(5 * 60_000);
-  await sup.poll();
-  assert.equal(sup.running, 1, 'past the idle reap but the owner is away visiting: kept');
-  box.rssMb = 9000;          // the box is out of memory: the hold yields
-  await sup.poll();
-  assert.equal(sup.running, 0, 'a warm hold must never stand against measured memory pressure');
-
-  away = true; box.rssMb = 0;
-  sup.ensure('home', 'private', 'owner');
-  counts.set(40001, 1); counts.set(40000, 1);
-  await sup.poll();
-  counts.set(40001, 0); counts.set(40000, 0);
-  await sup.poll();
-  advance(13 * 60_000);      // idle reap + the whole hold
-  await sup.poll();
-  assert.equal(sup.running, 0, 'the hold is bounded');
-});

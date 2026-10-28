@@ -7,27 +7,23 @@
 // whole platform's movement traffic through one Node event loop, which is exactly the
 // bottleneck process-per-world exists to avoid.
 //
-//   GET  /worlds            list joinable worlds (yours only: private/party by owner)
-//   POST /worlds            create-or-join a private/party world, returns where to dial
+//   GET  /worlds            list the world (there is one: vvardenfell, OT3-28)
+//   POST /worlds            ensure the world is up, returns where to dial
 //   GET  /worlds/:id        one world
 //   GET  /healthz
 //
 // AUTH IS NOT DONE HERE and this is important: the gateway does not verify accounts. Each
 // world already authenticates on its own WebSocket (SessionHello -> Authing), so a client
-// that learns a port still cannot join without credentials. What the gateway must not do is
-// LEAK private world ids to people who were not invited, which is why listing filters on the
-// caller-supplied account and why that is only a listing filter, never an access control.
+// that learns a port still cannot join without credentials.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { clientIp, CLIENT_IP_HEADER } from '../net/ws';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { log } from '../log';
 import { renderMetrics } from '../metrics';
-import type { WorldSupervisor, WorldMode, WorldInfo } from './worlds';
+import { WORLD_ID, type WorldSupervisor, type WorldInfo } from './worlds';
 import { addressAllowed, clientLogRoute, json, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../net/http';
 import { IpRateLimiter } from '../net/ratelimit';
 import { VERIFY_PATH } from '../net/admin/setup-check';
@@ -41,7 +37,6 @@ interface DirectoryDeps {
   worlds: WorldSupervisor;
   host: string;
   port: number;
-  maxPerOwner: number;
   /** Hold on a dial to a world still starting (default BOOT_HOLD_MS); tests shorten it. */
   bootHoldMs?: number;
   // THE DASHBOARD, on the multiplayer server. gateway/admin.ts builds it; this router only
@@ -54,10 +49,6 @@ interface DirectoryDeps {
   // game: POST /worlds and the /w/* dial both answer 503, and the games already running have
   // been told to close their own doors.
   maintenance?: () => { on: boolean; message: string };
-  // Where world data dirs live. Used to revive a world that exists on disk but is not
-  // running: the directory's EXISTENCE is the proof it is a real world, which is what stops
-  // a dialled /w/priv-anything from spawning one.
-  worldsDir: string;
   /** Bearer for GET /metrics. Absent/empty leaves the route indistinguishable from any other
    *  unknown path, exactly as the world server's does. */
   metricsToken?: string;
@@ -90,9 +81,6 @@ interface DirectoryDeps {
   // none, so every world switch they attempted died at 'no locker session' before reaching
   // the network -- which made four scenarios permanently unable to test what they assert.
   mintHarnessSession?: (account: string, password: string) => string | undefined;
-  /** Derive the private-world id for one of this account's characters, or undefined when the
-   *  character does not exist — a stale tile must be refused, not built a world. */
-  privateWorldIdFor?: (accountKey: string, characterId: string) => Promise<string | undefined>;
 }
 
 /** Fold the gateway's metrics together with every world's into one valid exposition.
@@ -143,8 +131,7 @@ interface RunningDirectory {
 export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirectory> {
   // Reviving a reaped world on dial spawns an OS PROCESS, and the upgrade path has no Bearer
   // token to gate on — a browser cannot set one on a WebSocket handshake. So the spawn itself
-  // is what gets rate-limited. Generous, because a legitimate reconnect ladder retries: this
-  // only has to stop one address walking every priv-* directory on disk.
+  // is what gets rate-limited. Generous, because a legitimate reconnect ladder retries.
   const revives = new IpRateLimiter(30);
   // H1: POST /worlds spawns a process too. Per account AND per address, so neither a token
   // nor a pile of accounts behind one address can hammer it. Generous: a launcher retries
@@ -162,12 +149,11 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
   // GET /worlds/:id answers for any id, so the fields it sends are named one by one — a new
   // supervisor field must be added here deliberately to reach the internet.
   const pub = (w: WorldInfo): {
-    id: string; mode: WorldMode; playerCount: number; maxPlayers: number; name: string; up: boolean;
-    abandoned: boolean; ownerAccount?: string; wsPath: string;
+    id: string; playerCount: number; maxPlayers: number; name: string; up: boolean;
+    abandoned: boolean; wsPath: string;
   } => ({
-    id: w.id, mode: w.mode, playerCount: w.playerCount, maxPlayers: w.maxPlayers, name: w.name,
+    id: w.id, playerCount: w.playerCount, maxPlayers: w.maxPlayers, name: w.name,
     up: w.up, abandoned: w.abandoned,
-    ...(w.ownerAccount ? { ownerAccount: w.ownerAccount } : {}),
     wsPath: `/w/${w.id}`,
   });
 
@@ -299,20 +285,8 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     }
 
     if (req.method === 'GET' && path === '/worlds') {
-      // A private/party world is listed only to its owner. This is a VISIBILITY filter to
-      // avoid advertising other people's sessions — the world's own auth is what actually
-      // protects it.
-      // AND AN AUTHENTICATED ONE (#279): `account=` was taken on faith, so a guessed login
-      // name listed anyone's private world ids, mode and player count. The caller must be
-      // that account (its own locker session) or a world process (the server credential).
-      const account = url.searchParams.get('account') ?? undefined;
-      const auth = req.headers.authorization ?? '';
-      if (account !== undefined && !deps.isTrustedServer?.(auth) && deps.resolveAccount?.(auth) !== account) {
-        json(res, 401, { error: 'sign_in_first' });
-        return;
-      }
-      const list = deps.worlds.list().filter((w) =>
-        account !== undefined && w.ownerAccount === account);
+      // One public world: the listing is public too.
+      const list = deps.worlds.list();
       json(res, 200, { worlds: list.map(pub) });
       return;
     }
@@ -322,27 +296,6 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       const w = deps.worlds.get(id);
       if (!w) { json(res, 404, { error: 'no such world' }); return; }
       json(res, 200, pub(w));
-      return;
-    }
-
-    // A world process reporting its owner's Solo<->Party flip (server.ts setWorldMode).
-    // Trusted-server credential only -- a player cannot open somebody else's world from
-    // outside -- and the account named must be that world's owner.
-    if (req.method === 'PATCH' && path.startsWith('/worlds/')) {
-      const id = decodeURIComponent(path.slice('/worlds/'.length));
-      let body = '';
-      req.on('data', (c) => { body += c; if (body.length > 1024) req.destroy(); });
-      req.on('end', () => {
-        if (!deps.isTrustedServer?.(req.headers.authorization ?? '')) { json(res, 401, { error: 'server credential required' }); return; }
-        let parsed: { mode?: unknown; account?: unknown } = {};
-        try { parsed = JSON.parse(body || '{}'); } catch { json(res, 400, { error: 'bad json' }); return; }
-        if (parsed.mode !== 'private' && parsed.mode !== 'party') { json(res, 400, { error: 'mode must be private or party' }); return; }
-        const w = deps.worlds.get(id);
-        if (!w) { json(res, 404, { error: 'no such world' }); return; }
-        if (w.ownerAccount !== undefined && parsed.account !== w.ownerAccount) { json(res, 403, { error: 'not the owner' }); return; }
-        deps.worlds.setMode(id, parsed.mode);
-        json(res, 200, { id, mode: parsed.mode });
-      });
       return;
     }
 
@@ -369,14 +322,8 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       });
       // eslint-disable-next-line @typescript-eslint/no-misused-promises -- errors are caught below
       req.on('end', async () => {
-        let parsed: { id?: string; mode?: string; account?: string; characterId?: string };
+        let parsed: { account?: string };
         try { parsed = JSON.parse(body || '{}'); } catch { json(res, 400, { error: 'bad json' }); return; }
-        const mode = parsed.mode;
-        if (mode !== 'private' && mode !== 'party') {
-          // Public worlds are operator configuration, not something a client may conjure.
-          json(res, 400, { error: 'mode must be private or party' });
-          return;
-        }
         // Closed doors are closed for everyone, so this comes before asking who is knocking:
         // a launcher gets the maintenance message, not a sign-in error it cannot fix.
         const maint = deps.maintenance?.();
@@ -384,17 +331,8 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
           json(res, 503, { error: 'maintenance', message: maint.message || 'the server is in maintenance' });
           return;
         }
-        // The SESSION says who this is, never the message. A client-supplied account here
-        // made the per-owner cap decorative: fabricate a new name per request and one caller
-        // exhausts every world slot on the host, each holding its slot for the full startup
-        // grace, locking real players out with 503s.
-        // A trusted world process may name the account it is acting for; ANY OTHER CALLER
-        // may not, and is identified by its own session. The distinction is the whole point:
-        // a client-supplied account made the per-owner cap decorative, because one caller
-        // could fabricate a name per request and exhaust every world slot on the host. A
-        // world server cannot present a locker session, so without this it could never
-        // create a world for anyone -- which is exactly what was happening (401 on every
-        // in-game create).
+        // The SESSION says who this is, never the message; only a trusted world process may
+        // name the account it acts for. Unauthenticated callers do not get to spawn the world.
         const auth = req.headers.authorization ?? '';
         const trusted = deps.isTrustedServer?.(auth) === true;
         const account = trusted
@@ -408,66 +346,11 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
           json(res, 429, { error: 'slow_down' });
           return;
         }
-        let id = parsed.id && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(parsed.id) ? parsed.id : undefined;
-        // A PRIVATE WORLD IS MADE FOR A CHARACTER, so its id is DERIVED, never trusted from
-        // the client. The launcher computed it locally, and a stale tab computed it from a
-        // character list that no longer matched reality — worlds got minted for characters
-        // that did not exist, the player's real character was then refused at that world's
-        // door ("belongs to a different character"), and every retry minted another orphan.
-        // The client's id is accepted only as a fallback for launchers that predate
-        // characterId; the auth-time guard still refuses any mismatch loudly.
-        if (parsed.mode === 'private' && typeof parsed.characterId === 'string' && deps.privateWorldIdFor) {
-          const derived = await deps.privateWorldIdFor(account, parsed.characterId);
-          if (!derived) { json(res, 404, { error: 'no_such_character' }); return; }
-          if (id !== undefined && id !== derived) {
-            log('warn', 'directory.world_id_overridden', { account, sent: id, derived });
-          }
-          id = derived;
-        }
-        if (!id) { json(res, 400, { error: 'id must be [a-z0-9_-], 1-64 chars' }); return; }
-
-        // Per-owner cap: without it one account can exhaust maxWorlds and deny everyone
-        // else. Counted over worlds this owner already has, and an existing world is a
-        // re-join rather than a create, so it never trips on reconnect.
-        //
-        // ABANDONED worlds do not count. A world id is per character, so deleting a character
-        // and creating another asks for a new world each time, and the played-then-left worlds
-        // behind you were still counted — which locked the account out with a 429 after two
-        // characters. They are reaped shortly anyway; they must not block a live session first.
-        // A world that was JUST created and not yet joined still counts, so the cap keeps
-        // doing its job of stopping one account exhausting maxWorlds.
-        //
-        // H1: one world per owner by default. A world nobody is connected to does not hold
-        // its place: backing out of chargen leaves a never-joined world, and refusing the next
-        // character over it is the lockout above all over again -- so it is stopped instead
-        // (stopped, not discarded: a revived world has cell state on disk). Read fresh, since
-        // a player who just pressed Exit counts as connected for up to a poll. A world process
-        // creating for a player is moving them OUT of the world it runs, hence one more.
-        const cap = deps.maxPerOwner + (trusted ? 1 : 0);
-        const mine = (): WorldInfo[] => deps.worlds.list().filter((w) => w.ownerAccount === account
-          && !w.abandoned && w.id !== id && !deps.worlds.isStopping(w.id));
-        if (deps.worlds.get(id)?.ownerAccount !== account) {
-          if (mine().length >= cap) {
-            await deps.worlds.poll();
-            for (const w of mine()) {
-              if (w.connectedCount > 0) continue;
-              log('info', 'directory.world_displaced', { account, displaced: w.id, for: id });
-              deps.worlds.stop(w.id);
-            }
-          }
-          if (mine().length >= cap) {
-            json(res, 429, { error: `at most ${deps.maxPerOwner} sessions per account` });
-            return;
-          }
-        }
-
-        const world = deps.worlds.ensure(id, mode as WorldMode, account);
+        const world = deps.worlds.ensure(WORLD_ID);
         if (!world) {
-          // A world still draining from the idle reap is refused by ensure() too, and that
-          // read as "the server is full" to a player who clicked Continue twenty seconds
-          // after being reaped. It is back the moment the old process exits; say so and the
+          // Still draining from a stop: back the moment the old process exits, and the
           // launcher retries once (backlog 278).
-          if (deps.worlds.isStopping(id)) { json(res, 503, { error: 'restarting' }); return; }
+          if (deps.worlds.isStopping(WORLD_ID)) { json(res, 503, { error: 'restarting' }); return; }
           json(res, 503, { error: 'no capacity for another world right now' }); return;
         }
         json(res, 200, pub(world));
@@ -512,33 +395,14 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     }
     const m = /^\/w\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(path);
     let world = m ? deps.worlds.get(m[1]!) : undefined;
-    // RESTART A KNOWN WORLD ON DIAL. A private world is only started when the launcher asks
-    // for it, so after a gateway restart (or an idle reap) a client reconnecting to its own
-    // world found nothing here, got a 502, and retried forever — the world sat on disk the
-    // whole time. The world id encodes its owner and the world itself still authorises the
-    // arrival (mayJoinWorld), so bringing it back costs nothing a launcher request would not.
-    if (!world && m && /^priv-/.test(m[1]!) && existsSync(join(deps.worldsDir, m[1]!))) {
-      // THE OWNER MUST COME BACK WITH THE WORLD. This used to call ensure(id, 'private') with
-      // no owner, which stamps OMW_WORLD_OWNER='' — and server.ts reads an empty owner as
-      // "admit everyone" in BOTH mayJoinWorld and wrongWorldForCharacter. Since a private world
-      // spends most of its life reaped-and-revivable, that meant any signed-in account could
-      // dial /w/priv-<username>-<8hex> (both halves of which the launcher shows) and walk into
-      // someone else's solo game with any character.
-      //
-      // No recoverable owner means we cannot authorise, so we do not start it. The owner's own
-      // launcher re-creates it through POST /worlds, which knows who is asking.
-      const owner = deps.worlds.ownerOnDisk(m[1]!);
-      if (!owner) {
-        log('warn', 'world.revive_refused_no_owner', { id: m[1] });
-      } else if (!revives.allow(clientIp(req))) {
-        // Reviving spawns an OS process, and this path has no Bearer check to lean on (a
-        // browser cannot set one on a WebSocket upgrade). Rate-limiting the SPAWN is what
-        // stops an unauthenticated client walking every priv-* directory on disk and pinning
-        // the box at maxWorlds.
-        log('warn', 'world.revive_rate_limited', { id: m[1] });
-      } else {
-        world = deps.worlds.ensure(m[1]!, 'private', owner) ?? undefined;
-        if (world) log('info', 'world.revived_on_dial', { id: m[1], owner });
+    // RESTART THE WORLD ON DIAL, after a crash or an operator stop. Only the one world: any
+    // other id is not a world. Rate-limited, since this path has no Bearer to lean on (a
+    // browser cannot set one on a WebSocket upgrade) and ensure() spawns an OS process.
+    if (!world && m && m[1] === WORLD_ID) {
+      if (!revives.allow(clientIp(req))) log('warn', 'world.revive_rate_limited', { id: m[1] });
+      else {
+        world = deps.worlds.ensure(WORLD_ID) ?? undefined;
+        if (world) log('info', 'world.revived_on_dial', { id: m[1] });
       }
     }
     if (!world) {

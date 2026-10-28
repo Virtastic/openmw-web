@@ -27,14 +27,14 @@ async function gateway(t: test.TestContext, adminAllowFrom: string[]) {
   const worlds = new WorldSupervisor({
     settings: {
       worldsDir: wdir, gatewayPort: 8080, serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
-      basePort: 42000, maxWorlds: 1, idleReapMs: 60_000, startTimeoutMs: 1000, restartBackoffMs: 1000,
+      basePort: 42000, maxWorlds: 1, startTimeoutMs: 1000, restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-adm-shared-')),
     },
     spawner: () => { throw new Error('no worlds here'); },
     fetchStatus: async () => ({ playerCount: 0, connectedCount: 0, maxPlayers: 1, name: 'x' }),
   });
   const dir = await startDirectory({
-    worlds, host: '127.0.0.1', port: 0, maxPerOwner: 1, worldsDir: wdir, adminAllowFrom,
+    worlds, host: '127.0.0.1', port: 0, adminAllowFrom,
     admin: (_req, res) => { res.writeHead(200); res.end('dashboard'); return true; },
   });
   t.after(async () => { await dir.close(); worlds.stopAll(); });

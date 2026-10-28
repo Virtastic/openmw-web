@@ -25,14 +25,14 @@ test('POST /clientlog on the gateway is recorded as client.log', async (t) => {
   const worlds = new WorldSupervisor({
     settings: {
       worldsDir: wdir, gatewayPort: 8080, serverEntry: '/fake/s.mjs', nodeBin: '/fake/node',
-      basePort: 43000, maxWorlds: 4, idleReapMs: 60_000, startTimeoutMs: 1000,
+      basePort: 43000, maxWorlds: 4, startTimeoutMs: 1000,
       restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-gwcl-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     fetchStatus: async () => ({ playerCount: 0, connectedCount: 0, maxPlayers: 32, name: 'w' }),
   });
-  const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0, maxPerOwner: 4, worldsDir: wdir });
+  const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0});
   t.after(async () => { await dir.close(); worlds.stopAll(); });
 
   const seen: { level: string; text: string }[] = [];

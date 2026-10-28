@@ -27,8 +27,6 @@ interface StatusSnapshot {
   connectedCount: number;
   // SIM PEERS THIS WORLD IS RUNNING. One engine per OCCUPIED CELL, so this is not a constant
   // per world -- it is the number that actually spends the host's RAM, at roughly 487 MB each.
-  // The gateway's memory governor budgets on it; see gateway/worlds.ts capacity(). Reported
-  // even when it is 1 or 0, because a governor that has to guess is the bug it was written for.
   peerCount: number;
   maxPlayers: number;
   contentPolicy: 'names' | 'strict' | 'off';

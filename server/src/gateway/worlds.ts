@@ -1,43 +1,32 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// F3 — the world supervisor: many world PROCESSES, one directory in front of them.
+// F3 — the world supervisor: the world PROCESS, with the directory in front of it.
 //
-// WHY PROCESSES AND NOT ONE PROCESS WITH MANY WORLDS. Not only because Node is
-// single-threaded (that is the performance half). `core/authority.ts` keeps its tuning in a
-// module-level singleton that `configureAuthority()` MUTATES, and `metrics` is a module
-// singleton too. Two worlds sharing a process would share both: the last world to boot
-// would silently retune every other world's authority election, and no metric could be
-// attributed to a world. Process-per-world is a correctness boundary, not a preference.
+// v2 runs ONE public world (vvardenfell, OT3-28). main.ts ensures it at boot and nothing
+// reaps it for being empty; the private/party worlds, their owners, the idle reaper and the
+// memory governor are gone. What stays is the process lifecycle: start, crash backoff, stop,
+// the rolling restart, and reaping a dead gateway's orphans.
 //
-// This is also what makes a sim peer PER SESSION real: each world process runs its own
-// SimPeerSupervisor (H4), so a private session that spawns a world gets a headless peer with
-// it, and reaping the world reaps the peer.
-//
-// The lifecycle mirrors core/simpeer.ts deliberately — cap, idle reap, crash backoff — for
-// the same reason: a world per party is how a box runs out of memory if nothing reaps.
+// WHY A PROCESS AND NOT IN-PROCESS. `core/authority.ts` keeps its tuning in a module-level
+// singleton that `configureAuthority()` MUTATES, and `metrics` is a module singleton too, so
+// the world lives in its own process with its own SimPeerSupervisor (ONE peer for the whole
+// world), and stopping the world stops the peer.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadavg } from 'node:os';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
-// Written into a private/party world's data dir at creation so a later REVIVAL can authorise.
-// A dotfile so it cannot collide with anything the world itself writes.
-const OWNER_FILE = '.owner';
+/** The one public world (OT3-28). */
+export const WORLD_ID = 'vvardenfell';
+
 // The pid of the process last started for this world, so a NEW gateway can reap the children
 // of a dead one. See reapOrphanWorlds.
 const PID_FILE = '.pid';
-// The mode the world was LAST seen in (every flip, every poll that observes one), so a revival
-// after a gateway restart brings a party back as a party (#30). Not the boot mode: the process
-// still boots private (chargen gate, empty-world revert, #9) and is handed this as a resume.
-const MODE_FILE = '.mode';
 // Ceiling on the crash-bookkeeping maps. Far above any plausible number of worlds in flight,
 // so it only ever trims history nobody is going to consult.
 const MAX_TRACKED_WORLDS = 4096;
-
-export type WorldMode = 'private' | 'party';
 
 export interface WorldSettings {
   worldsDir: string; // per-world data dirs live under here
@@ -45,43 +34,7 @@ export interface WorldSettings {
   serverEntry: string; // path to the world server entry (dist/server.mjs)
   nodeBin: string;
   basePort: number;
-  maxWorlds: number; // hard cap across ALL modes
-  // THE MEMORY GOVERNOR. maxWorlds alone is a COUNT, and a count cannot see the thing that
-  // actually runs out: every occupied world is a node process AND its own sim peer (each world
-  // process runs its own SimPeerSupervisor), so worlds multiply the peer's cost rather than
-  // sharing it. A cap derived from maxPlayers therefore let the supervisor spawn worlds until
-  // the OOM killer took the container, while [simPeer].maxPeers — which is per-world — read as
-  // satisfied the whole time. Budget in megabytes, spent against what the worlds have actually
-  // committed — NOT converted to a fixed world count, which is what it used to do and what the
-  // move to one peer per occupied cell invalidated. See capacity().
-  //
-  // OPTIONAL because a test (and an embedder driving fake spawners) wants a pure count cap and
-  // has no memory to govern. main.ts — the real deployment path — always supplies these, and
-  // logs at boot when it cannot, so "no budget" is a stated condition rather than a silent one.
-  memBudgetMb?: number; // total RAM this gateway may spend on worlds + their peers (0/absent = no budget)
-  worldCostMb?: number; // MEASURED cost of one occupied world: node process + its FIRST sim peer (~640)
-  // MEASURED cost of each ADDITIONAL sim peer in a world beyond the first (~487).
-  //
-  // This exists because the premise under worldCostMb stopped being true. It was measured when
-  // a world ran exactly one peer, so "one world = one peer = 640 MB" was a fair unit and the
-  // governor could budget in whole worlds. A world now runs ONE PEER PER OCCUPIED CELL, so a
-  // world with four occupied cells costs about 2100 MB, and a governor still counting it as 640
-  // permits roughly three times the RAM the box has -- which is precisely the OOM this governor
-  // was written to prevent, reintroduced underneath it by a change one layer down.
-  //
-  // Absent/0 keeps the old whole-world arithmetic, so an embedder that never multiplies peers
-  // is unaffected and no existing deployment silently changes behaviour.
-  peerCostMb?: number;
-  gatewayReserveMb?: number; // held back for the gateway process itself
-  idleReapMs: number; // a world with no players this long is stopped
-  // A HOME KEPT WARM. An empty world whose owner is online in ANOTHER world is held this much
-  // longer than idleReapMs, so coming back from a friend's party is a join, not a cold start
-  // (a node process plus an 11 s sim peer). Absent/0 = reap on idleReapMs as before.
-  ownerAwayKeepMs?: number;
-  // #270: refuse NEW worlds while the 1-minute load average is above this (0 = never). Off by
-  // default: a bake on the build box, or a TR peer cold-starting, pins the load for a minute
-  // and a friend's world must not be refused for it (s102 in Jenkins #103, reason 'cpu').
-  loadCap?: number;
+  maxWorlds: number; // hard cap on world processes
   startTimeoutMs: number;
   restartBackoffMs: number;
   // One identity across every world: accounts, SSO identities, friends/party/presence and
@@ -92,18 +45,15 @@ export interface WorldSettings {
 }
 
 /** One row of a game's roster, as its /status reports it. */
-interface WorldPlayer { id: number; name: string; cellKey: string | null; level?: number }
+interface WorldPlayer { id: number; name: string; cellKey: string | null; level?: number; charId?: string }
 
 export interface WorldInfo {
   id: string;
-  mode: WorldMode;
   port: number;
   playerCount: number;
   maxPlayers: number;
   name: string;
   up: boolean;
-  ownerAccount?: string; // private/party: who created it
-  ownerPresent?: boolean; // live: the owner is connected (a Party world in its owner's grace is not open to newcomers)
   // Played, and now empty — an abandoned session waiting to be reaped. Distinct from a world
   // that was just created and has not been joined YET, which is still someone's live intent.
   abandoned: boolean;
@@ -127,11 +77,6 @@ export interface WorldInfo {
 
 interface World {
   id: string;
-  mode: WorldMode;
-  // What the process was STARTED as. mode follows the owner's live flips (poll); a restart
-  // must boot the way the original did, or a flip to Party becomes the world's boot mode --
-  // chargen gate on, the empty-world revert to Solo gone, bots reading it as public.
-  bootMode: WorldMode;
   port: number;
   child: ChildProcess;
   startedAt: number;
@@ -144,8 +89,7 @@ interface World {
   // longer startup grace (a first-play client can spend minutes downloading its data before it
   // connects); after someone has joined, the shorter idle-reap applies once they leave.
   everConnected?: boolean;
-  ownerAccount?: string;
-  lastStatus?: { playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players?: WorldPlayer[]; ownerPresent?: boolean };
+  lastStatus?: { playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players?: WorldPlayer[] };
 }
 
 export interface WorldDeps {
@@ -154,31 +98,8 @@ export interface WorldDeps {
   // peerCount is OPTIONAL here and required on World.lastStatus: a world from an older build --
   // or a test fake that predates peers being per-cell -- simply does not report it, and poll()
   // normalises the absence to 1 rather than making every caller restate the default.
-  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[]; mode?: WorldMode; ownerPresent?: boolean } | null>;
+  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[] } | null>;
   now?: () => number;
-  // Is this account online in a world other than `worldId`? (shared presence; ownerAwayKeepMs)
-  ownerOnlineElsewhere?: (account: string, worldId: string) => boolean;
-  // #270: the box as it IS, beside the static price. RSS of the world processes (their sim
-  // peers are children of them and counted by the pid sum) and the 1-minute load average.
-  // Wired by main.ts (measuredSample: /proc/<pid>/status on Linux + os.loadavg()); absent =
-  // no measured pressure, the static budget alone. Never a silent default: a test suite or a
-  // CI image build running on a saturated box must not see 'cpu' refusals (#100 lost the
-  // whole directory suite to the engine bake's load average).
-  sample?: (pids: number[]) => { rssMb: number; load1: number };
-}
-
-type CapReason = 'count' | 'memory' | 'mem' | 'cpu';
-
-function procRssMb(pid: number): number {
-  try {
-    const m = /^VmRSS:\s+(\d+)\s+kB/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
-    return m ? Number(m[1]) / 1024 : 0;
-  } catch { return 0; }
-}
-export function measuredSample(pids: number[]): { rssMb: number; load1: number } {
-  let rssMb = process.memoryUsage().rss / 1048576;
-  for (const pid of pids) rssMb += procRssMb(pid);
-  return { rssMb, load1: loadavg()[0] ?? 0 };
 }
 
 export class WorldSupervisor {
@@ -198,88 +119,17 @@ export class WorldSupervisor {
     return this.worlds.size;
   }
 
-  /** Sim peers across every supervised world. A world reports its own live count on /status;
-   *  one that has not answered yet is counted as the single peer worldCostMb already assumes,
-   *  matching how committedMb() prices it. */
+  /** Sim peers across every supervised world, as each reports on /status. */
   get peersRunning(): number {
     let n = 0;
     for (const w of this.worlds.values()) n += w.lastStatus?.peerCount ?? 1;
     return n;
   }
 
-  /** What committedMb() computes, exposed so it can be graphed against the budget. Public
-   *  because "how full is the box" is an operator's question, not an internal detail. */
-  get committed(): number {
-    return this.committedMb();
-  }
-
-  /** How long an empty game lives before the reaper takes it; the dashboard counts down to it. */
-  get idleReapMs(): number {
-    return this.deps.settings.idleReapMs;
-  }
-
-  /** RAM the running worlds have actually committed, counting the peers they are really
-   *  running rather than the one each was once assumed to have.
-   *
-   *  A world with no status yet is counted at full price. It is starting, crashed, or wedged,
-   *  and in every one of those cases its memory is either already spent or about to be — an
-   *  OOM guard that assumes the unknown is free is not a guard. */
-  private committedMb(): number {
-    const s = this.deps.settings;
-    const worldCost = s.worldCostMb ?? 0;
-    const peerCost = s.peerCostMb ?? 0;
-    let total = 0;
-    for (const w of this.worlds.values()) {
-      // The first peer is already inside worldCostMb; only the extras are added, so a
-      // single-peer world costs exactly what it always did.
-      const extraPeers = Math.max(0, (w.lastStatus?.peerCount ?? 1) - 1);
-      total += worldCost + peerCost * extraPeers;
-    }
-    return total;
-  }
-
-  /** How many worlds this gateway may run at once, and why. The memory budget and the hard
-   *  count cap are BOTH ceilings; the lower one wins, and `reason` names it so an operator
-   *  reading `world.at_cap` knows which number to change. A zero/absent budget means the
-   *  operator has opted out and only the count cap applies.
-   *
-   *  The memory ceiling is computed from what is COMMITTED right now, not from a fixed
-   *  per-world price. That distinction is the whole fix: worlds no longer cost a constant, so
-   *  a ceiling derived once from `usable / worldCostMb` describes a deployment that stopped
-   *  existing when peers went per-cell. The number this returns therefore MOVES as players
-   *  spread across cells — and it must, because that is when the box actually fills up. */
-  capacity(): { cap: number; reason: CapReason; fromMemory: number } {
-    const s = this.deps.settings;
-    const budget = s.memBudgetMb ?? 0;
-    const cost = s.worldCostMb ?? 0;
-    const usable = budget - (s.gatewayReserveMb ?? 0);
-    const running = this.worlds.size;
-    // #270: MEASURED pressure first. The static price cannot know that a TR world weighs three
-    // times a vanilla one, or that the CPU is already saturated; when the box says it is full
-    // the answer is "what is running, no more" (never below one), and the reason names the
-    // resource. Only ever binds with a budget set (mem) or with worlds running (cpu).
-    if (budget > 0 || running > 0) {
-      const pids = [...this.worlds.values()].map((w) => w.child.pid).filter((p): p is number => typeof p === 'number');
-      const { rssMb, load1 } = this.deps.sample ? this.deps.sample(pids) : { rssMb: 0, load1: 0 };
-      if (budget > 0 && rssMb > usable) return { cap: Math.max(1, running), reason: 'mem', fromMemory: Math.max(1, running) };
-      const loadCap = this.deps.settings.loadCap ?? 0;
-      if (running > 0 && loadCap > 0 && load1 > loadCap) return { cap: Math.max(1, running), reason: 'cpu', fromMemory: Number.POSITIVE_INFINITY };
-    }
-    let fromMemory = Number.POSITIVE_INFINITY;
-    if (budget > 0 && cost > 0) {
-      // How many MORE worlds fit beside what is already committed. Floor, and never negative:
-      // once the running worlds have overspent the budget the answer is "no more", which
-      // pins the cap at the current count instead of going backwards and reading as a cap
-      // that has already been breached.
-      const free = Math.max(0, Math.floor((usable - this.committedMb()) / cost));
-      // A budget too small for even one world is still one world: refusing to start anything
-      // would make a misconfigured budget indistinguishable from a broken gateway, and the
-      // operator sees the honest ceiling in gateway.capacity either way.
-      fromMemory = Math.max(1, running + free);
-    }
-    return fromMemory < s.maxWorlds
-      ? { cap: fromMemory, reason: 'memory', fromMemory }
-      : { cap: s.maxWorlds, reason: 'count', fromMemory };
+  /** The count cap, in the shape /healthz and the (frozen) dashboard read. The memory
+   *  governor that used to bind here priced many private worlds; one world needs none. */
+  capacity(): { cap: number; reason: 'count' } {
+    return { cap: this.deps.settings.maxWorlds, reason: 'count' };
   }
 
   list(): WorldInfo[] {
@@ -287,15 +137,12 @@ export class WorldSupervisor {
       const blocked = this.blockedUntil.get(w.id);
       return {
         id: w.id,
-        mode: w.mode,
         port: w.port,
         playerCount: w.lastStatus?.playerCount ?? 0,
         maxPlayers: w.lastStatus?.maxPlayers ?? 0,
         name: w.lastStatus?.name ?? w.id,
         up: w.lastStatus !== undefined,
         abandoned: w.everConnected === true && w.idleSince !== undefined,
-        ...(w.ownerAccount ? { ownerAccount: w.ownerAccount } : {}),
-        ...(w.lastStatus?.ownerPresent !== undefined ? { ownerPresent: w.lastStatus.ownerPresent } : {}),
         players: w.lastStatus?.players ?? [],
         ...(w.child.pid !== undefined ? { pid: w.child.pid } : {}),
         startedAt: w.startedAt,
@@ -313,38 +160,6 @@ export class WorldSupervisor {
     return this.list().find((w) => w.id === id);
   }
 
-  // THE WORLD TELLS US, THE MOMENT IT HAPPENS. The poll also observes a flip, but five
-  // seconds later -- and a friend who clicks "join" the instant their host says "I'm open"
-  // was refused as not_open inside that window, which is the normal human timing.
-  setMode(id: string, mode: WorldMode): boolean {
-    const w = this.worlds.get(id);
-    if (!w) return false;
-    if (w.mode !== mode) {
-      log('info', 'world.mode_set', { id, from: w.mode, to: mode });
-      w.mode = mode;
-      this.rememberMode(id, mode);
-    }
-    return true;
-  }
-
-  private rememberMode(id: string, mode: WorldMode): void {
-    try {
-      writeFileSync(join(this.deps.settings.worldsDir, id, MODE_FILE), mode, 'utf8');
-    } catch (err) {
-      log('warn', 'world.mode_write_failed', { id, error: String(err) });
-    }
-  }
-
-  /** The mode the world was last seen in, or undefined when it was never flipped. */
-  private lastModeOnDisk(id: string): WorldMode | undefined {
-    try {
-      const v = readFileSync(join(this.deps.settings.worldsDir, id, MODE_FILE), 'utf8').trim();
-      return v === 'party' || v === 'private' ? v : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
   /** True while the world is draining after SIGTERM: ensure() refuses it, but that refusal is
    *  "come back in seconds", not "the box is full" -- the directory tells them apart (278). */
   isStopping(id: string): boolean {
@@ -353,7 +168,7 @@ export class WorldSupervisor {
 
   // Idempotent. Returns the world (existing or new), or null if it could not be started —
   // callers must handle null rather than assume a world exists.
-  ensure(id: string, mode: WorldMode, ownerAccount?: string): WorldInfo | null {
+  ensure(id: string): WorldInfo | null {
     const existing = this.worlds.get(id);
     if (existing) {
       // A world that has been SIGTERMed is not a world you can join: it stays in the map
@@ -367,9 +182,6 @@ export class WorldSupervisor {
     }
     const { cap, reason } = this.capacity();
     if (this.worlds.size >= cap) {
-      // `reason` is the whole point of the line: "at cap" with no attribution is what sent an
-      // operator to raise maxWorlds when the binding constraint was RAM, which is how a box
-      // gets OOM-killed by a setting that was changed to prevent exactly that.
       log('warn', 'world.at_cap', { id, running: this.worlds.size, cap, reason });
       metrics.worldRefused.inc({ reason });
       return null;
@@ -379,18 +191,7 @@ export class WorldSupervisor {
       log('warn', 'world.backoff', { id });
       return null;
     }
-    return this.start(id, mode, ownerAccount);
-  }
-
-  /** The owner recorded on disk when the world was created, or undefined when the marker is
-   *  missing — callers MUST treat that as "cannot authorise", never as "no owner needed". */
-  ownerOnDisk(id: string): string | undefined {
-    try {
-      const v = readFileSync(join(this.deps.settings.worldsDir, id, OWNER_FILE), 'utf8').trim();
-      return v.length > 0 ? v : undefined;
-    } catch {
-      return undefined;
-    }
+    return this.start(id);
   }
 
   /** Drop least-recently-inserted keys until the map is within `cap`. */
@@ -410,7 +211,7 @@ export class WorldSupervisor {
     return null;
   }
 
-  private start(id: string, mode: WorldMode, ownerAccount?: string): WorldInfo | null {
+  private start(id: string): WorldInfo | null {
     const s = this.deps.settings;
     const port = this.allocPort();
     if (port === null) {
@@ -424,25 +225,6 @@ export class WorldSupervisor {
       log('error', 'world.mkdir_failed', { id, error: String(err) });
       return null;
     }
-    // THE OWNER OUTLIVES THE PROCESS. A private world is idle-reaped after two minutes and
-    // revived when its owner dials back in, so "reaped, on disk, revivable" is the normal
-    // resting state of a solo world — and a revival that could not name the owner started it
-    // with OMW_WORLD_OWNER='', which mayJoinWorld now fails CLOSED for a gateway world. Writing the
-    // owner beside the world's data is what lets a revival be as authorised as a creation.
-    if (ownerAccount) {
-      try {
-        writeFileSync(join(dataDir, OWNER_FILE), ownerAccount, 'utf8');
-      } catch (err) {
-        // Fail the start rather than run an unowned private world: an unwritable marker means
-        // the next revival cannot authorise, and that is the hole this closes.
-        log('error', 'world.owner_write_failed', { id, error: String(err) });
-        return null;
-      }
-    }
-    // A party that lost its gateway comes back as a party: the process boots private as
-    // always and RESUMES the remembered flip once up (server.ts OMW_WORLD_LAST_MODE), so the
-    // guests' retry lands in an open world rather than "not_open" until the host flips again.
-    const lastMode = mode === 'private' ? this.lastModeOnDisk(id) : undefined;
     // Tell the world where its gateway is. Without this the world browser is off and no
     // client can ever discover — or switch to — another world.
     const args = [s.serverEntry, '--data', dataDir, '--shared', s.sharedDir, '--port', String(port),
@@ -457,16 +239,7 @@ export class WorldSupervisor {
       // forever (~360 MB each) and counted against the peer cap until the box was restarted.
       const spawner = this.deps.spawner
         ?? ((_id, a, env) => spawn(s.nodeBin, a, { env, stdio: 'inherit', detached: process.platform !== 'win32' }));
-      child = spawner(id, args, {
-        ...process.env,
-        OMW_WORLD_ID: id,
-        OMW_WORLD_MODE: mode,
-        // Access control: the world itself refuses accounts that do not belong (private =
-        // owner only; party = owner or current party members). The directory's listing
-        // filter is visibility, never authorization — this is the authorization.
-        OMW_WORLD_OWNER: ownerAccount ?? '',
-        ...(lastMode === 'party' ? { OMW_WORLD_LAST_MODE: 'party' } : {}),
-      });
+      child = spawner(id, args, { ...process.env, OMW_WORLD_ID: id });
     } catch (err) {
       log('error', 'world.spawn_failed', { id, error: String(err) });
       return null;
@@ -482,9 +255,9 @@ export class WorldSupervisor {
     } catch (err) {
       log('warn', 'world.pid_write_failed', { id, error: String(err) });
     }
-    const world: World = { id, mode: lastMode ?? mode, bootMode: mode, port, child, startedAt: this.now(), stopping: false, ownerAccount };
+    const world: World = { id, port, child, startedAt: this.now(), stopping: false };
     this.worlds.set(id, world);
-    log('info', 'world.started', { id, mode, port, pid: child.pid ?? -1 });
+    log('info', 'world.started', { id, port, pid: child.pid ?? -1 });
 
     child.on('exit', (code, signal) => {
       if (this.worlds.get(id) !== world) return; // a stale exit must not evict its successor
@@ -505,10 +278,7 @@ export class WorldSupervisor {
         return;
       }
       this.blockedUntil.set(id, this.now() + s.restartBackoffMs);
-      // Bounded. World ids are per CHARACTER, so this key space grows with every character
-      // anyone ever made, and entries were only removed on a rolling restart or a clean run.
-      // Numbers, so it is a slow leak rather than a cliff — but a supervisor that runs for
-      // months should not accumulate one entry per character ever created.
+      // Bounded: a dialled id that is not a world can still land here.
       this.forgetOldest(this.blockedUntil, MAX_TRACKED_WORLDS);
       this.forgetOldest(this.fastCrashes, MAX_TRACKED_WORLDS);
       // A world that dies INSTANTLY, every time, is misconfigured — not unlucky. The harness
@@ -542,17 +312,6 @@ export class WorldSupervisor {
     await Promise.all([...this.worlds.values()].map(async (w) => {
       const st = await fetchStatus(w.port);
       if (st) {
-        // THE WORLD'S MODE IS THE WORLD'S TO SAY. It was fixed here at process start
-        // (OMW_WORLD_MODE), so an owner's flip to Party never reached the directory: the
-        // friend-join check read the stale 'private' and refused every friend as not_open.
-        if (st.mode && st.mode !== w.mode) {
-          log('info', 'world.mode_observed', { id: w.id, from: w.mode, to: st.mode });
-          w.mode = st.mode;
-          this.rememberMode(w.id, st.mode);
-        }
-        // Normalised HERE so the rest of the supervisor reads a definite number. Absent means a
-        // world that predates the field, which runs at least the one peer worldCostMb already
-        // includes -- reading it as 0 would price such a world as free to the memory governor.
         w.lastStatus = { ...st, peerCount: st.peerCount ?? 1 };
         // Idle = nobody CONNECTED (loading / at chargen counts), not merely nobody in a cell.
         if (st.connectedCount > 0) { w.idleSince = undefined; w.everConnected = true; }
@@ -560,26 +319,14 @@ export class WorldSupervisor {
         w.downSince = undefined; // answering again
       } else {
         w.lastStatus = undefined; // down: reported as up:false, not omitted
-        // A WEDGED WORLD IS NOT AN IDLE ONE, and nothing used to end it. idleSince is
-        // deliberately left alone here so a momentary hiccup cannot reap a world full of
-        // players — but that also meant a world which stopped answering WHILE OCCUPIED
-        // matched no reaper at all: idleSince was undefined (players had been connected),
-        // everConnected was true, so both branches of sweep() skipped it and it kept its
-        // port, its slot against maxWorlds and its share of the memory budget until the
-        // gateway itself restarted. On a long-lived platform that is capacity bleeding away,
-        // presenting as "no new games can start" beside a dashboard listing a game that is
-        // down. Timed separately, and generously: this is measured in minutes of total
-        // silence, not one missed probe.
+        // A WEDGED WORLD. Timed generously -- minutes of total silence, not one missed probe --
+        // and then stopped by sweep(), so the next dial or the boot ensure starts it fresh.
         if (w.downSince === undefined) w.downSince = this.now();
       }
     }));
     this.sweep();
   }
 
-  // A fresh world nobody has reached yet gets this long before the reaper touches it. A first-play
-  // client downloads its game data (hundreds of MB, minutes on a slow link) BEFORE it connects, so
-  // the reaper must not kill the world out from under a browser that is still loading toward it.
-  private static readonly STARTUP_GRACE_MS = 15 * 60_000;
   /** How long a world gets to drain after SIGTERM before it is killed outright. */
   private static readonly STOP_GRACE_MS = 20_000;
   /** Unanswered for this long and the world is gone, not merely down. Long enough that no
@@ -589,53 +336,8 @@ export class WorldSupervisor {
 
   sweep(): void {
     const now = this.now();
-    const idleCutoff = now - this.deps.settings.idleReapMs;
     for (const w of [...this.worlds.values()]) {
-      if (!w.everConnected) {
-        // Never joined: keep it until the startup grace elapses, then reap a truly-stale spawn.
-        //
-        // DISCARD, not stop. stop() ends the process and leaves the directory, so every
-        // abandoned sign-in left a world folder behind for ever -- and a world is created
-        // BEFORE Morrowind's character creation finishes, so backing out of chargen is enough
-        // to make one. Measured on a fresh box: five directories, none running, against a
-        // gateway capacity of twelve. Nobody ever connected to these, so there is no cell
-        // state, no journal and no save to lose; a world that WAS played keeps its directory
-        // through the idle path below, which is the one that must never delete anything.
-        //
-        // "Nobody connected to THIS process" is not "nobody ever played here": a REVIVED
-        // world (a launcher join that also spawned the guest's own home, a returning
-        // character whose first data download outlasts the grace) has cell state on disk
-        // from earlier sessions. That is looted containers, drops, doors and deaths, and it
-        // was deleted here (backlog 272). Discard only a fresh spawn; stop the rest.
-        //
-        // The tell is the `.played` marker the world process writes on its first HUMAN join
-        // (server.ts markPlayed). world/world.db was the tell before, and the sqlite
-        // constructor creates that the moment a world boots, so nothing was ever discarded
-        // and every abandoned sign-in leaked a directory (backlog 322).
-        if (now - w.startedAt > WorldSupervisor.STARTUP_GRACE_MS) {
-          const played = existsSync(join(this.deps.settings.worldsDir, w.id, '.played'));
-          log('info', 'world.reaped', { id: w.id, reason: 'never_joined', ageMs: now - w.startedAt, played });
-          if (played) this.stop(w.id);
-          else void this.discard(w.id, { reason: 'never_joined' });
-        }
-        continue;
-      }
-      if (w.idleSince !== undefined && w.idleSince <= idleCutoff) {
-        // ponytail: held at most ownerAwayKeepMs per visit, and never against measured pressure;
-        // a priced "warm world" class if a busy box needs to choose between homes.
-        const keep = this.deps.settings.ownerAwayKeepMs ?? 0;
-        if (keep > 0 && w.ownerAccount && now - w.idleSince < this.deps.settings.idleReapMs + keep
-          && this.deps.ownerOnlineElsewhere?.(w.ownerAccount, w.id)) {
-          const r = this.capacity().reason;
-          if (r !== 'mem' && r !== 'cpu') continue;
-        }
-        log('info', 'world.reaped', { id: w.id, idleMs: now - w.idleSince });
-        this.stop(w.id);
-        continue;
-      }
-      // Alive as a process, but answering nothing. Reported separately from an idle reap
-      // because they mean opposite things to an operator: one is a world nobody wanted, the
-      // other is a world that broke while people were in it.
+      // Alive as a process, but answering nothing.
       if (w.downSince !== undefined && now - w.downSince >= WorldSupervisor.DOWN_REAP_MS) {
         log('warn', 'world.reaped_unreachable', { id: w.id, downMs: now - w.downSince });
         this.stop(w.id);
@@ -649,15 +351,15 @@ export class WorldSupervisor {
     this.pollTimer.unref();
   }
 
-  // How long an OPERATOR's stop holds against revival. The owner's client is still connected
-  // when the operator stops their game; its reconnect backoff redials within a second and
+  // How long an OPERATOR's stop holds against revival. The players' clients are still connected
+  // when the operator stops the world; its reconnect backoff redials within a second and
   // the front door revives the world on dial -- measured: stopped at :17.9, started again at
   // :18.3. A stop that lasts 400 ms is not a stop. Long enough for the operator to act (a
   // ban, a config change), short enough that a game stopped by mistake comes back on its own.
   static readonly OPERATOR_STOP_HOLD_MS = 5 * 60_000;
 
   // `hold`: an OPERATOR's stop is held against revival; the reaper's, the rolling restart's
-  // and shutdown's are not -- an idle-reaped world MUST come back on its owner's next dial.
+  // and shutdown's are not -- a reaped world MUST come back on the next dial.
   stop(id: string, hold = false): void {
     const w = this.worlds.get(id);
     if (!w) return;
@@ -697,30 +399,6 @@ export class WorldSupervisor {
       t.unref();
       for (const w of alive) w.child.once('exit', done);
     });
-  }
-
-  // A deleted character's solo world is dead weight: nobody can ever reach it again, because
-  // the id is derived from the character. Stop it and remove its data.
-  //
-  // The id is composed on the CLIENT (launcher.html) as priv-<username-slug>-<charId8>, so it
-  // is rebuilt here rather than matched on the suffix alone. A suffix is not enough to delete
-  // by: two accounts whose character ids share their last 8 characters would let one delete
-  // the other's world. Exact id, or nothing happens.
-  // ponytail: the real cure is the SERVER owning the world-id scheme; this mirrors it until
-  // then, and the mirror is one line to update if the scheme moves.
-  // ASYNC because the process has to be GONE before its directory is removed and before the
-  // character row is erased for the last time. SIGTERM only starts a drain that runs for up
-  // to the stop grace, and that drain ends in flushAll() -> INSERT OR REPLACE INTO players:
-  // erasing the row first and rm -rf'ing underneath a live process resurrected the character
-  // as an orphan row (inventory, journal, position) that no account points at, and wrote the
-  // flush into a directory that had just been unlinked.
-  async discardForCharacter(owner: { accountKey: string; username?: string }, charId: string): Promise<string[]> {
-    if (!owner.username) return []; // no username, no derivable id — leave it to the reaper
-    const slug = owner.username.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '').slice(0, 40);
-    if (slug === '') return [];
-    const id = `priv-${slug}-${charId.slice(-8)}`;
-    return (await this.discard(id, { charId })) ? [id] : [];
   }
 
   /** Stop a game and remove its data, BY ID: the dashboard's "discard this game", where an
@@ -764,7 +442,7 @@ export class WorldSupervisor {
     const readyTimeoutMs = opts.readyTimeoutMs ?? this.deps.settings.startTimeoutMs;
     const order = [...this.worlds.values()]
       .sort((a, b) => (a.lastStatus?.playerCount ?? 0) - (b.lastStatus?.playerCount ?? 0))
-      .map((w) => ({ id: w.id, mode: w.bootMode, owner: w.ownerAccount }));
+      .map((w) => ({ id: w.id }));
     const restarted: string[] = [];
     const failed: string[] = [];
 
@@ -792,7 +470,7 @@ export class WorldSupervisor {
       // A crash backoff from the stop would block the restart; this is a deliberate
       // operator action, so clear it.
       this.blockedUntil.delete(w.id);
-      if (!this.ensure(w.id, w.mode, w.owner)) {
+      if (!this.ensure(w.id)) {
         failed.push(w.id);
         continue;
       }
@@ -838,38 +516,34 @@ function killGroup(child: ChildProcess, ownGroup: boolean): void {
   try { child.kill('SIGKILL'); } catch { /* already gone */ }
 }
 
-async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players: WorldPlayer[]; mode?: WorldMode; ownerPresent?: boolean } | null> {
+async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players: WorldPlayer[] } | null> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
     if (!r.ok) return null;
-    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string; players?: unknown; mode?: unknown; ownerPresent?: unknown };
+    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string; players?: unknown };
     // The roster, kept this time. Shape-checked row by row: a game from an older build sends
     // no list at all, and a row missing a name is not a player.
     const players: WorldPlayer[] = Array.isArray(j.players)
       ? j.players.flatMap((p: unknown) => {
-        const row = (p ?? {}) as { id?: unknown; name?: unknown; cellKey?: unknown; level?: unknown };
+        const row = (p ?? {}) as { id?: unknown; name?: unknown; cellKey?: unknown; level?: unknown; charId?: unknown };
         if (typeof row.name !== 'string') return [];
         return [{
           id: typeof row.id === 'number' ? row.id : 0,
           name: row.name,
           cellKey: typeof row.cellKey === 'string' ? row.cellKey : null,
           ...(typeof row.level === 'number' ? { level: row.level } : {}),
+          ...(typeof row.charId === 'string' ? { charId: row.charId } : {}),
         }];
       })
       : [];
     return {
       players,
-      ...(typeof j.ownerPresent === 'boolean' ? { ownerPresent: j.ownerPresent } : {}),
       playerCount: typeof j.playerCount === 'number' ? j.playerCount : 0,
       connectedCount: typeof j.connectedCount === 'number' ? j.connectedCount : (typeof j.playerCount === 'number' ? j.playerCount : 0),
-      // DEFAULTS TO 1, NOT 0. A world that predates this field, or one answering from an older
-      // build during a rolling restart, is running at least the peer it was always assumed to
-      // run -- and worldCostMb already includes exactly one. Defaulting to 0 would make such a
-      // world look FREE to the governor, which is the failure this field exists to stop.
+      // A world that predates this field runs the one peer every world runs.
       peerCount: typeof j.peerCount === 'number' ? j.peerCount : 1,
       maxPlayers: typeof j.maxPlayers === 'number' ? j.maxPlayers : 0,
       name: typeof j.name === 'string' ? j.name : `world:${port}`,
-      ...(j.mode === 'party' || j.mode === 'private' ? { mode: j.mode } : {}),
     };
   } catch {
     return null; // not up yet, or wedged — either way it is not joinable

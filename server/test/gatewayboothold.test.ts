@@ -14,7 +14,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import { WorldSupervisor } from '../src/gateway/worlds';
+import { WORLD_ID, WorldSupervisor } from '../src/gateway/worlds';
 import { startDirectory } from '../src/gateway/directory';
 
 class FakeChild extends EventEmitter {
@@ -28,17 +28,17 @@ async function harness(bootHoldMs: number) {
   const worlds = new WorldSupervisor({
     settings: {
       worldsDir: wdir, gatewayPort: 8080, serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
-      basePort: 43100, maxWorlds: 8, idleReapMs: 60_000, startTimeoutMs: 1000, restartBackoffMs: 1000,
+      basePort: 43100, maxWorlds: 8, startTimeoutMs: 1000, restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     fetchStatus: async () => (listening ? { playerCount: 0, connectedCount: 0, maxPlayers: 32, name: 'w' } : null),
   });
   const dir = await startDirectory({
-    worlds, host: '127.0.0.1', port: 0, maxPerOwner: 4, worldsDir: wdir, bootHoldMs,
+    worlds, host: '127.0.0.1', port: 0, bootHoldMs,
     resolveAccount: (auth: string) => (auth.startsWith('Bearer ') ? auth.slice(7) : undefined),
   });
-  const id = 'priv-alice-abcd1234';
+  const id = WORLD_ID;
   const r = await fetch(`http://127.0.0.1:${dir.port}/worlds`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer alice' },
     body: JSON.stringify({ id, mode: 'private' }),

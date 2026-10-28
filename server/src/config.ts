@@ -32,24 +32,15 @@ export interface Config {
    *  none at all) was used instead. The dashboard surfaces this and the notifier reports it:
    *  a silent revert is precisely the thing an operator must not discover by accident. */
   dashboardFallback?: string;
-  // F3 supervisor sizing. Read by the GATEWAY process only (dist/gateway.mjs); a single world
-  // server ignores it. See gateway/worlds.ts capacity() for why a count cap alone is not
-  // enough: every occupied world carries its own sim peer, so worlds multiply RAM.
+  // Read by the GATEWAY process only (dist/gateway.mjs); a single world server ignores it.
   worlds: {
-    maxWorlds: number; // hard count ceiling (0 = derive from memory alone)
+    maxWorlds: number; // hard count ceiling (0 = [server] maxPlayers)
     // Is the shared PUBLIC world offered at all? Default FALSE: it is the most experimental
     // surface here -- strangers, lobby containment, PvP zoning, movement correction -- and a
     // deployment should have to opt into it rather than discover it is live. When off the
     // gateway starts no public world and the directory does not list one, so the client's
     // Worlds tab has nothing to show and the Public button disappears on its own.
 
-    memBudgetMb: number; // total RAM for worlds + peers (0 = no memory governor)
-    worldCostMb: number; // measured: one world's node process + its FIRST sim peer
-    peerCostMb: number; // measured: each ADDITIONAL peer in a world (spill valve only now)
-    gatewayReserveMb: number; // held back for the gateway process itself
-    idleReapSec: number; // an empty game is stopped after this long (0 = the gateway's default, 120)
-    ownerAwayKeepSec: number; // ...but held this much longer while its owner is online in another game
-    loadCap: number; // refuse new worlds while loadavg(1) is above this (0 = off)
   };
   simPeer: {
     /** Always true once boot succeeds; boot fails otherwise. Kept so call sites read clearly. */
@@ -520,13 +511,6 @@ function validate(t: Tree): Config {
       // All optional: a config.toml written before the governor existed must keep booting,
       // and a single world server never reads this table at all.
       maxWorlds: optNum(t, 'worlds', 'maxWorlds', 0),
-      memBudgetMb: optNum(t, 'worlds', 'memBudgetMb', 0),
-      worldCostMb: optNum(t, 'worlds', 'worldCostMb', 640),
-      peerCostMb: optNum(t, 'worlds', 'peerCostMb', 487),
-      gatewayReserveMb: optNum(t, 'worlds', 'gatewayReserveMb', 256),
-      idleReapSec: optNum(t, 'worlds', 'idleReapSec', 0),
-      ownerAwayKeepSec: optNum(t, 'worlds', 'ownerAwayKeepSec', 600),
-      loadCap: optNum(t, 'worlds', 'loadCap', 0),
     },
     simPeer: {
       // Resolved in startServer once the game data has been inspected; the raw config cannot

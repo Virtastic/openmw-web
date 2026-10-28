@@ -260,9 +260,6 @@ interface FrontDoor {
   mwdataGate(req: IncomingMessage): Promise<boolean>;
   /** Flush anything queued for outbound integrations before the process exits. */
   close(): Promise<void>;
-  /** Derived private-world id for one of this account's characters; undefined = no such
-   *  character, and the directory must refuse rather than build a world for a ghost. */
-  privateWorldIdFor(accountKey: string, characterId: string): Promise<string | undefined>;
   /** The shared account store, so the dashboard signs in against the same accounts. */
   accounts: AccountStore;
   /** Savegame storage for the dashboard's saves page; undefined when the locker is off. */
@@ -270,16 +267,14 @@ interface FrontDoor {
 }
 
 // All state lives in the shared dir; the same files the world processes read and write.
-/** GET /auth/friends-playing: the signed-in account's friends whose world is open to friends
- *  and occupied right now -- what the launcher shows as "join <name>" so a drop-in is ONE boot
- *  straight into the friend's world, not a boot home followed by a second full reload. The
- *  destination still authorizes (mayJoinWorld: party + friends); this only says who is
- *  reachable. Blocked either way is not a friend for this purpose. */
+/** GET /auth/friends-playing: the signed-in account's friends who are in the one world right
+ *  now (OT3-28), read from the presence table every world heartbeats into. Blocked either way
+ *  is not a friend for this purpose. */
 export function friendsPlayingRoutes(
   accounts: AccountStore,
   lockerSessions: LockerSessionStore,
   social: SocialStore,
-  worldsNow: () => { ownerAccount?: string; ownerPresent?: boolean; mode: string; up: boolean; playerCount: number; id: string }[],
+  worldsNow: () => { up: boolean; playerCount: number; id: string; players: { charId?: string }[] }[],
 ): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/friends-playing') return false;
@@ -291,19 +286,13 @@ export function friendsPlayingRoutes(
     const accountKey = lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : '');
     if (!accountKey) { sendJson(res, 401, { error: 'sign_in_first' }); return true; }
     const worlds = worldsNow();
+    const present = social.presentEverywhere(Date.now(), 30_000).filter((p) => !p.isBot);
     const friends = social.friendsOf(accountKey)
       .filter((f) => !social.blockedEitherWay(accountKey, f.account))
       .map((f) => {
-        // The world they are IN: an owner on their second character has two worlds up.
-        // ...and the owner is actually IN it: a Party world in its host's crash grace, or one
-        // the host exited on purpose a moment ago, is not somewhere to join.
-        const mine = worlds.filter((w) => w.ownerAccount === f.account && w.up && w.ownerPresent !== false);
-        const open = mine.filter((w) => w.mode === 'party');
-        // A friend playing SOLO is listed too (#89) -- "playing solo", no join: an online friend
-        // used to be invisible here, which read as "offline". Occupied only: an idle private
-        // world is nobody playing.
-        const w = open.find((x) => x.playerCount > 0) ?? open[0] ?? mine.find((x) => x.mode === 'private' && x.playerCount > 0);
-        return w ? { acct: f.account, name: accounts.cachedByKey(f.account)?.username ?? accounts.usernameOf(f.account) ?? f.account, worldId: w.id, wsPath: `/w/${w.id}`, players: w.playerCount, mode: w.mode } : null;
+        const here = present.find((p) => p.account === f.account);
+        const w = here && worlds.find((x) => x.id === here.world && x.up);
+        return w ? { acct: f.account, name: accounts.cachedByKey(f.account)?.username ?? accounts.usernameOf(f.account) ?? f.account, worldId: w.id, wsPath: `/w/${w.id}`, players: w.playerCount, mode: 'public' } : null;
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
     sendJson(res, 200, { friends });
@@ -322,7 +311,7 @@ export async function buildFrontDoor(
   adminSessions?: AdminSessionStore,
   // The live world list, for /auth/friends-playing. Absent (a standalone front door) the
   // route answers an empty list.
-  worldsNow?: () => { ownerAccount?: string; ownerPresent?: boolean; mode: string; up: boolean; playerCount: number; id: string }[],
+  worldsNow?: () => { up: boolean; playerCount: number; id: string; players: { charId?: string }[] }[],
   // Poll every world's status right now (the gateway's WorldSupervisor.poll).
   refreshWorlds?: () => Promise<void>,
 ): Promise<FrontDoor> {
@@ -409,12 +398,9 @@ export async function buildFrontDoor(
   // have no Bearer header, which lockerRoutes would reject.
   const blobs = blobRoutes(storage instanceof FsStorage ? storage : undefined);
   const profile = profileRoutes(accounts, lockerSessions);
-  // A character's solo world id ends in the last 8 chars of its id (worlds.ts
-  // discardForCharacter); a live one with players in it means the character is in play.
-  // ponytail: misses a character playing as a GUEST in someone else's world; add a charId
-  // to the world status when that matters.
+  // In play = the world's /status lists the character (charId is reported to the gateway).
   const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted, (charId) =>
-    (worldsNow?.() ?? []).some((w) => w.id.startsWith('priv-') && w.id.endsWith('-' + charId.slice(-8)) && w.up && w.playerCount > 0),
+    (worldsNow?.() ?? []).some((w) => w.up && w.players.some((p) => p.charId === charId)),
     refreshWorlds);
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
   const social = new SocialStore(sharedDir);
@@ -443,25 +429,5 @@ export async function buildFrontDoor(
     mintSession: (accountKey: string) => lockerSessions.mint(accountKey),
     /** Who may read /mwdata/* (verified owners only). */
     mwdataGate: esmOwnerGate(locker, lockerSessions),
-    // The private-world id, derived HERE from the character rather than trusted from the
-    // launcher. A stale tab computed it from a character list that no longer matched reality,
-    // so worlds got minted for characters that did not exist and the player's real character
-    // was refused at their door. Same slug rule the launcher uses (username, never the
-    // account name — that is the person's real name), so ids stay stable across the change.
-    privateWorldIdFor: async (accountKey: string, characterId: string) => {
-      const account = await accounts.get(accountKey);
-      if (!account) return undefined;
-      // A NEW character is PROVISIONAL by design — the slot is only written when creation
-      // finishes (adoptCharacter, at ChargenComplete) — so "must exist on the account" refused
-      // every genuinely new character with no_such_character and broke character creation
-      // outright. So a provisional id is accepted -- but only one /auth/characters handed to
-      // THIS account (H1): any string of the right shape let one account mint worlds without end.
-      const char = account.characters?.find((c) => c.id === characterId);
-      if (!char && !accounts.isProvisionalFor(accountKey, characterId)) return undefined;
-      const slug = (account.username ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '').slice(0, 40)
-        || Math.abs([...accountKey].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)).toString(36);
-      return `priv-${slug}-${characterId.slice(-8)}`;
-    },
   };
 }

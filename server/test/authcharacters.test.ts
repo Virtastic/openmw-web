@@ -107,13 +107,13 @@ test('delete removes the slot; an unknown id is refused', async (t) => {
 });
 
 // Backlog 284 / commit cfb2a83f: frontdoor.ts buildFrontDoor passes characterRoutes an
-// isPlayed() derived from worldsNow (a live priv-...-<id8> world with players), and the DELETE
+// isPlayed() derived from worldsNow (an up world whose /status lists the charId), and the DELETE
 // refuses while it is true. Pre-fix the delete went through and stopped the world under the
 // other device's feet.
 test('DELETE refuses a character whose own world is up with players, through the real front door', async (t) => {
   const dir = tmpDataDir();
   let playerCount = 1;
-  const worlds: { id: string; mode: string; up: boolean; playerCount: number }[] = [];
+  const worlds: { id: string; up: boolean; playerCount: number; players: { charId?: string }[] }[] = [];
   const fd = await buildFrontDoor(dir, undefined, 8080, undefined, () => worlds);
   t.after(() => fd.close());
   const server: Server = createServer((req, res) => {
@@ -126,7 +126,7 @@ test('DELETE refuses a character whose own world is up with players, through the
   await fd.accounts.createSso('Alice');
   const c = await adopt(fd.accounts, 'Busy');
   const auth = `Bearer ${fd.mintSession('alice')}`;
-  worlds.push({ id: `priv-alice-${c.id.slice(-8)}`, mode: 'private', up: true, get playerCount() { return playerCount; } });
+  worlds.push({ id: 'vvardenfell', up: true, get playerCount() { return playerCount; }, get players() { return playerCount ? [{ charId: c.id }] : []; } });
 
   const del = () => fetch(`${base}/auth/characters?id=${encodeURIComponent(c.id)}`,
     { method: 'DELETE', headers: { authorization: auth } }).then((r) => r.json() as Promise<Json>);
@@ -148,7 +148,7 @@ test('DELETE re-reads the worlds before refusing: a stale "in play" does not blo
   let cached = 1; // what the last poll said
   let live = 0; // what the world says now: they have left
   let polls = 0;
-  const worlds: { id: string; mode: string; up: boolean; playerCount: number }[] = [];
+  const worlds: { id: string; up: boolean; playerCount: number; players: { charId?: string }[] }[] = [];
   const fd = await buildFrontDoor(dir, undefined, 8080, undefined, () => worlds,
     async () => { polls++; cached = live; });
   t.after(() => fd.close());
@@ -162,7 +162,7 @@ test('DELETE re-reads the worlds before refusing: a stale "in play" does not blo
   await fd.accounts.createSso('Alice');
   const c = await adopt(fd.accounts, 'JustLeft');
   const auth = `Bearer ${fd.mintSession('alice')}`;
-  worlds.push({ id: `priv-alice-${c.id.slice(-8)}`, mode: 'private', up: true, get playerCount() { return cached; } });
+  worlds.push({ id: 'vvardenfell', up: true, get playerCount() { return cached; }, get players() { return cached ? [{ charId: c.id }] : []; } });
 
   const r = await fetch(`${base}/auth/characters?id=${encodeURIComponent(c.id)}`,
     { method: 'DELETE', headers: { authorization: auth } }).then((x) => x.json() as Promise<Json>);

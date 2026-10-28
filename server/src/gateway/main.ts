@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 import { existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WorldSupervisor, measuredSample, reapOrphanWorlds } from './worlds';
+import { WORLD_ID, WorldSupervisor, reapOrphanWorlds } from './worlds';
 import { startDirectory } from './directory';
 import { buildFrontDoor } from './frontdoor';
 import { gatewayAdminRoutes, platformMaintenance } from './admin';
@@ -29,7 +29,6 @@ import { lockerPublicBase } from '../data/fsstorage';
 import { writeCaddyfile } from '../net/admin/caddy-config';
 import { gameDataDir } from '../core/gamedata';
 import { presentMods, readModDoc } from '../core/mods';
-import { SocialStore } from '../core/socialstore';
 
 const { values } = parseArgs({
   options: {
@@ -37,11 +36,6 @@ const { values } = parseArgs({
     port: { type: 'string' },
     'base-port': { type: 'string' },
     'max-worlds': { type: 'string' },
-    'max-per-owner': { type: 'string' },
-    // Testable reaping. The revive-on-dial path (a private world idles out, is reaped, and
-    // comes back when its owner returns) is a real player journey with no way to exercise it
-    // in scenario time while this was pinned at two minutes.
-    'idle-reap-ms': { type: 'string' },
     'server-entry': { type: 'string' },
     shared: { type: 'string' },
   },
@@ -98,7 +92,6 @@ if (!existsSync(serverEntry)) {
   process.exit(1);
 }
 
-const presence = new SocialStore(sharedDir);
 const worlds = new WorldSupervisor({
   settings: {
     worldsDir,
@@ -106,40 +99,10 @@ const worlds = new WorldSupervisor({
     nodeBin: process.execPath,
     basePort: Number(values['base-port'] ?? 9000),
     gatewayPort: port,
-    // TWO CEILINGS, AND THE MEMORY ONE IS USUALLY THE REAL ONE.
-    //
-    // The count cap answers "how many people may play alone at once", so it tracks maxPlayers:
-    // a solo world is simply where a player is when they are not in a shared one, and a cap
-    // below maxPlayers means a server advertising N seats cannot seat N people playing alone.
-    //
-    // What used to be written here was that this is NOT the memory governor, because "sim
-    // peers are capped SEPARATELY by [simPeer].maxPeers and are spawned on demand, not pinned
-    // one-per-world, so worlds do not multiply the peer's cost". THAT IS FALSE, and it is the
-    // reasoning that left this box undefended: every world is its own PROCESS and each one
-    // runs its own SimPeerSupervisor (gateway/worlds.ts), so [simPeer].maxPeers is per world.
-    // Worlds multiply the peer's cost exactly. With maxPlayers at 256 the supervisor would
-    // spawn worlds until the OOM killer took the container, while every per-world cap read as
-    // satisfied and simpeer.at_cap never fired.
-    //
-    // So the memory budget is passed too, and capacity() takes the lower of the two. Size a
-    // host by measuring on it and setting [worlds] memBudgetMb/worldCostMb/peerCostMb — not
-    // from a number in a comment, this one included.
-    //
-    // peerCostMb is there because the sentence above was itself overtaken: a world no longer
-    // costs "one world+peer" at all. Peers are one per OCCUPIED CELL, so a world's price is
-    // worldCostMb plus peerCostMb for every peer past the first, and the ceiling moves as
-    // players spread out. Measuring one world with one peer and stopping there is how this
-    // box would get undefended a second time, by the same reasoning in a different shape.
+    // A count cap only. One public world runs; the cap is a backstop, not a plan.
     maxWorlds: positiveInt(values['max-worlds'],
       config.worlds.maxWorlds > 0 ? config.worlds.maxWorlds : config.server.maxPlayers,
       'max-worlds'),
-    memBudgetMb: config.worlds.memBudgetMb,
-    worldCostMb: config.worlds.worldCostMb,
-    peerCostMb: config.worlds.peerCostMb,
-    gatewayReserveMb: config.worlds.gatewayReserveMb,
-    // #381e: the flag wins, then [worlds] idleReapSec (the dashboard's door), then 120 s.
-    idleReapMs: positiveInt(values['idle-reap-ms'], config.worlds.idleReapSec > 0 ? config.worlds.idleReapSec * 1000 : 120_000, 'idle-reap-ms'),
-    loadCap: config.worlds.loadCap,
     // 300 s, not 120: on the shared builder LXC a neighbour's load starves a world's boot for
     // tens of seconds at a time (mp-harness.mjs's own /healthz wait, #175 s117), and a rolling
     // restart used this same number to decide a world was gone (#175 s175: 120630 ms, one world
@@ -147,12 +110,7 @@ const worlds = new WorldSupervisor({
     startTimeoutMs: 300_000,
     restartBackoffMs: 15_000,
     sharedDir,
-    ownerAwayKeepMs: config.worlds.ownerAwayKeepSec * 1000,
   },
-  sample: measuredSample, // #270: the box as it is, prod only
-  // The presence table every world heartbeats into (30 s TTL, as social.ts reads it).
-  ownerOnlineElsewhere: (account, worldId) =>
-    presence.presentEverywhere(Date.now(), 30_000).some((r) => r.account === account && r.world !== worldId),
 });
 
 // Before anything binds a port: kill the world processes a previous gateway left behind. They
@@ -164,12 +122,7 @@ worlds.startPolling();
 // Dashboard sessions, shared with the front door so SSO can sign an operator in here.
 const adminSessions = new AdminSessionStore();
 // The shared SSO + locker front door, on the same public port as the directory.
-const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
-  // A deleted character's solo world can never be reached again — retire it rather than
-  // leaving a directory (and, until it is reaped, a process) behind for every character
-  // anyone ever deletes.
-  return worlds.discardForCharacter(owner, charId).then(() => undefined);
-}, port, adminSessions, () => worlds.list(), () => worlds.poll());
+const frontDoor = await buildFrontDoor(sharedDir, undefined, port, adminSessions, () => worlds.list(), () => worlds.poll());
 
 // ROLL THE WORLDS WITHOUT TAKING THE PLATFORM DOWN.
 //
@@ -242,16 +195,10 @@ writeCaddyfile(sharedDir, {
 });
 
 const directory = await startDirectory({
-  worlds, host: '0.0.0.0', port, worldsDir,
+  worlds, host: '0.0.0.0', port,
   admin: adminRoute,
   adminAllowFrom: config.admin.allowFrom,
   maintenance: () => maintenance.get(),
-  // H1: one live world per account -- a player is in one place at a time, and at ~0.5 GB a
-  // world, maxPlayers (the old default) let one account exhaust the box. The old default of 2
-  // locked accounts out after two characters because EMPTY worlds held their place; the
-  // directory now stops an owner's empty world instead of refusing (directory.ts).
-  // --max-per-owner still overrides.
-  maxPerOwner: Number(values['max-per-owner'] ?? 1),
   metricsToken: config.metrics.enabled ? config.metrics.token : '',
   frontDoor: frontDoor.route,
   // The operator's uploaded game files, from the SHARED dir — the same one the dashboard
@@ -281,7 +228,6 @@ const directory = await startDirectory({
     for (let i = 0; i < want.length; i++) diff |= got.charCodeAt(i) ^ want.charCodeAt(i);
     return diff === 0;
   },
-  privateWorldIdFor: frontDoor.privateWorldIdFor,
   // BROWSER HARNESS ONLY. Supplied only when the operator has ALREADY opted into harness
   // auth -- the same flag, and the same reasoning, as the fixed harness password: a test
   // affordance must not be a public account-takeover path. When the flag is off this is
@@ -294,28 +240,10 @@ const directory = await startDirectory({
     : {}),
 });
 
-// SAY THE CEILING OUT LOUD, AT BOOT. A platform that refuses a world at 03:00 must not be the
-// first time anyone learns what its limit was, and "no memory governor configured" is a
-// condition an operator should be told about rather than discover from an OOM kill.
-//
-// This is the BEST CASE and is logged as such. The memory ceiling is computed from what the
-// running worlds have committed, and a world costs one sim peer per OCCUPIED CELL — so the real
-// ceiling falls as players spread out. The live number is the worlds_capacity gauge, which
-// re-reads capacity() on every scrape; this line is the ceiling on an empty box.
 const cap = worlds.capacity();
-log('info', 'gateway.capacity', {
-  capIfEmpty: cap.cap,
-  reason: cap.reason,
-  memBudgetMb: config.worlds.memBudgetMb,
-  worldCostMb: config.worlds.worldCostMb,
-  peerCostMb: config.worlds.peerCostMb,
-  ...(config.worlds.memBudgetMb <= 0
-    ? { warning: 'no [worlds] memBudgetMb set: only the count cap applies, and worlds carry a sim peer each' }
-    : {}),
-});
+log('info', 'gateway.capacity', { cap: cap.cap, reason: cap.reason });
 metrics.worldsRunning.addCollector(() => worlds.running);
 metrics.gatewayPeersRunning.addCollector(() => worlds.peersRunning);
-metrics.gatewayCommittedMb.addCollector(() => worlds.committed);
 metrics.worldsCapacity.addCollector(() => {
   const c = worlds.capacity().cap;
   // A gauge must be a number; an unbounded cap renders as 0 ("not governed") rather than
@@ -325,10 +253,11 @@ metrics.worldsCapacity.addCollector(() => {
 
 log('info', 'gateway.start', {
   port: directory.port, worldsDir, sharedDir, serverEntry, admin: '/admin',
-  // NO WORLD RUNS AT BOOT: there is no public world, so nothing spawns a sim peer until a
-  // player creates their own — a deploy check must not read that silence as "the peer is
-  // broken".
+  world: WORLD_ID,
 });
+// THE ONE WORLD (OT3-28) starts with the gateway and is never reaped for being empty. A
+// crash restarts it on the next dial or create (crash backoff permitting).
+if (!worlds.ensure(WORLD_ID)) log('error', 'gateway.world_start_failed', { id: WORLD_ID });
 
 let shuttingDown = false;
 async function shutdown(signal: string, code = 0): Promise<void> {

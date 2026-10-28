@@ -105,27 +105,21 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     // accounts, so without the shared usernames table every game would be labelled with its
     // owner's ACCOUNT KEY — the login identifier, on an operator's screen and in the audit
     // line — instead of the handle players know them by.
-    const ownerName = g.ownerAccount
-      ? (deps.accounts.cachedByKey(g.ownerAccount)?.username
-        ?? deps.accounts.usernameOf(g.ownerAccount)
-        ?? g.ownerAccount)
-      : null;
+    // OT3-28: one public world, no owner. The row keeps its shape for the frozen dashboard.
     return {
       id: g.id,
-      mode: g.mode,
+      mode: 'public',
       up: g.up,
       abandoned: g.abandoned,
-      owner: g.ownerAccount ?? null,
-      ownerName,
-      label: ownerName ? `${ownerName}'s game` : g.name,
+      owner: null,
+      ownerName: null,
+      label: g.name,
       playerCount: g.playerCount,
       connectedCount: g.connectedCount,
       maxPlayers: g.maxPlayers,
       peerCount: g.peerCount,
       uptime: Math.round((now - g.startedAt) / 1000),
-      reapsInSec: g.idleSince !== undefined && g.everConnected
-        ? Math.max(0, Math.round((g.idleSince + deps.worlds.idleReapMs - now) / 1000))
-        : null,
+      reapsInSec: null,
       pid: g.pid ?? null,
       blockedUntil: g.blockedUntil ?? null,
       fastCrashes: g.fastCrashes,
@@ -169,8 +163,8 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
         health: {
           games: deps.worlds.running,
           peers: deps.worlds.peersRunning,
-          committedMb: deps.worlds.committed,
-          budgetMb: cfg.worlds.memBudgetMb,
+          committedMb: null,
+          budgetMb: null,
           capacity: Number.isFinite(cap.cap) ? cap.cap : null,
           capacityReason: cap.reason,
         },
@@ -229,10 +223,6 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
           body: JSON.stringify({ kind: 'kick', target: key, detail: 'account erased' }),
           signal: AbortSignal.timeout(3000),
         }).catch((err) => log('warn', 'admin.erase_kick_failed', { game: g.id, error: String(err) }))));
-      if (account) {
-        const owner = { accountKey: key, ...(account.username ? { username: account.username } : {}) };
-        for (const c of account.characters ?? []) await deps.worlds.discardForCharacter(owner, c.id);
-      }
       await deps.accounts.flush();
       const report = await deleteAccount(deps.sharedDir, key);
       if (!report.account && !report.player) return { ok: false, message: 'nothing found under that name' };

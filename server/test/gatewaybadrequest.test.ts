@@ -35,13 +35,13 @@ test('a request whose URL cannot be parsed gets a 400, and the gateway keeps ser
   const worlds = new WorldSupervisor({
     settings: {
       worldsDir: wdir, gatewayPort: 8080, serverEntry: '/fake/s.mjs', nodeBin: '/fake/node',
-      basePort: 43100, maxWorlds: 4, idleReapMs: 60_000, startTimeoutMs: 1000,
+      basePort: 43100, maxWorlds: 4, startTimeoutMs: 1000,
       restartBackoffMs: 1000, sharedDir: mkdtempSync(join(tmpdir(), 'omw-gwbad-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     fetchStatus: async () => ({ playerCount: 0, connectedCount: 0, maxPlayers: 32, name: 'w' }),
   });
-  const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0, maxPerOwner: 4, worldsDir: wdir });
+  const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0});
   t.after(async () => { await dir.close(); worlds.stopAll(); });
 
   const crashed: unknown[] = [];

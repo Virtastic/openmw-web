@@ -48,7 +48,7 @@ function supervisor(worldsDir: string, extra: Partial<WorldDeps> = {}): WorldSup
   return new WorldSupervisor({
     settings: {
       worldsDir, gatewayPort: 8080, serverEntry: '/fake/s.mjs', nodeBin: '/fake/node',
-      basePort: 43000, maxWorlds: 4, idleReapMs: 60_000, startTimeoutMs: 1000,
+      basePort: 43000, maxWorlds: 4, startTimeoutMs: 1000,
       restartBackoffMs: 1000, sharedDir: mkdtempSync(join(tmpdir(), 'omw-mpd-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
@@ -65,7 +65,7 @@ test('the supervisor keeps the roster its games already report', async () => {
       players: [{ id: 7, name: 'Runner', cellKey: '0,0', level: 3 }],
     }),
   });
-  worlds.ensure('alpha', 'private', 'owner-a');
+  worlds.ensure('alpha');
   await worlds.poll();
   const g = worlds.get('alpha')!;
   // The one question the multiplayer dashboard exists to answer: WHO, not how many.
@@ -81,7 +81,7 @@ test('the supervisor keeps the roster its games already report', async () => {
 test('discard(id) stops a game and removes its data, and says when there was nothing', async () => {
   const wdir = mkdtempSync(join(tmpdir(), 'omw-mpd-'));
   const worlds = supervisor(wdir);
-  worlds.ensure('priv-someone-abcd1234', 'private', 'someone');
+  worlds.ensure('priv-someone-abcd1234');
   assert.ok(existsSync(join(wdir, 'priv-someone-abcd1234')), 'the world dir is created on start');
   assert.equal(await worlds.discard('priv-someone-abcd1234', { by: 'test' }), true);
   assert.ok(!existsSync(join(wdir, 'priv-someone-abcd1234')), 'the data is gone');
@@ -216,13 +216,13 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
   const worlds = new WorldSupervisor({
     settings: {
       worldsDir, gatewayPort: 8080, serverEntry: '/fake/s.mjs', nodeBin: '/fake/node',
-      basePort: 44000, maxWorlds: 4, idleReapMs: 60_000, startTimeoutMs: 1000,
+      basePort: 44000, maxWorlds: 4, startTimeoutMs: 1000,
       restartBackoffMs: 1000, sharedDir,
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     // No fetchStatus: the real poller runs against the fake, roster parsing included.
   });
-  worlds.ensure('alpha', 'party', 'owner-a');
+  worlds.ensure('alpha');
   (worlds as unknown as { worlds: Map<string, { port: number }> }).worlds.get('alpha')!.port = alpha.port;
   await worlds.poll();
   mkdirSync(join(worldsDir, 'beta')); // on disk, not running: discardable all the same
@@ -237,7 +237,7 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
     maintenance,
   });
   const dir = await startDirectory({
-    worlds, host: '127.0.0.1', port: 0, maxPerOwner: 4, worldsDir,
+    worlds, host: '127.0.0.1', port: 0, 
     admin, maintenance: () => maintenance.get(),
   });
   t.after(async () => { await dir.close(); worlds.stopAll(); await accounts.close(); });
@@ -269,7 +269,7 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
   assert.equal(players.length, 1);
   assert.equal(players[0]!.name, 'Runner');
   assert.equal(players[0]!.game, 'alpha');
-  assert.equal(players[0]!.gameLabel, "owner-a's game", 'a game is named after its owner');
+  assert.equal(players[0]!.gameLabel, 'alpha', 'one public world (OT3-28): the label is its name');
   const health = o.health as { games: number; peers: number; capacityReason: string };
   assert.equal(health.games, 1);
   assert.equal(health.peers, 1);
@@ -333,9 +333,9 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
 });
 
 // Backlog 188 / commit 0833ff36: gateway/admin.ts deleteAccount relays a kick to every running
-// game and retires the character's solo world BEFORE accounts.flush() + erase. Pre-fix it went
-// straight to flush + erase, so a world's next flush wrote the character back.
-test('platform delete-account kicks and discards before it erases', async (t) => {
+// game BEFORE accounts.flush() + erase. Pre-fix it went straight to flush + erase, so a world's
+// next flush wrote the character back.
+test('platform delete-account kicks before it erases', async (t) => {
   const order: string[] = [];
   const srv: Server = createServer((req, res) => {
     let body = '';
@@ -360,16 +360,14 @@ test('platform delete-account kicks and discards before it erases', async (t) =>
   const worlds = new WorldSupervisor({
     settings: {
       worldsDir, gatewayPort: 8080, serverEntry: '/fake/s.mjs', nodeBin: '/fake/node',
-      basePort: 45000, maxWorlds: 4, idleReapMs: 60_000, startTimeoutMs: 1000, restartBackoffMs: 1000, sharedDir,
+      basePort: 45000, maxWorlds: 4, startTimeoutMs: 1000, restartBackoffMs: 1000, sharedDir,
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
   });
-  worlds.ensure('alpha', 'party', 'owner-a');
+  worlds.ensure('alpha');
   (worlds as unknown as { worlds: Map<string, { port: number }> }).worlds.get('alpha')!.port = (srv.address() as { port: number }).port;
   await worlds.poll();
   assert.equal(worlds.list()[0]?.up, true);
-  const realDiscard = worlds.discardForCharacter.bind(worlds);
-  worlds.discardForCharacter = async (owner, charId) => { order.push(`discard:${charId}`); return realDiscard(owner, charId); };
 
   const accounts = new AccountStore(sharedDir);
   const victim = await accounts.register('Victim', 'a-long-enough-passphrase');
@@ -385,7 +383,7 @@ test('platform delete-account kicks and discards before it erases', async (t) =>
     version: 'test', publicBase: () => 'http://test',
     restart: () => {}, rollingRestart: () => Promise.resolve({ restarted: [], failed: [] }), maintenance,
   });
-  const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0, maxPerOwner: 4, worldsDir, admin, maintenance: () => maintenance.get() });
+  const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0, admin, maintenance: () => maintenance.get() });
   t.after(async () => { await dir.close(); worlds.stopAll(); await accounts.close(); });
   const base = `http://127.0.0.1:${dir.port}/admin/api`;
   const owner = await fetch(`${base}/setup/owner`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(OWNER) });
@@ -397,7 +395,7 @@ test('platform delete-account kicks and discards before it erases', async (t) =>
     body: JSON.stringify({ name: 'victim', confirm: 'victim' }),
   });
   assert.equal(del.status, 200, await del.text());
-  assert.deepEqual(order, ['kick:victim', `discard:${char.id}`, 'flush'], 'kick, then discard, then the flush that precedes the erase');
+  assert.deepEqual(order, ['kick:victim', 'flush'], 'kick, then the flush that precedes the erase');
   const disk = new AccountStore(sharedDir);
   assert.equal(await disk.get('victim'), undefined, 'and the row is gone from accounts.db');
   await disk.close();
@@ -436,9 +434,6 @@ test('#381 the dashboard notes: rolling offered from the banner, log filter, der
   const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), { setup: { deploymentMode: 'multiplayer' }, simPeer: { enabled: true, maxPeers: 1 } });
   const peer = v.sections.find((s) => s.name === 'simPeer');
   assert.ok(peer && !peer.fields.some((f) => f.key === 'enabled'), 'd: simPeer.enabled is offered as a switch it is not');
-  const dir = mkdtempSync(join(tmpdir(), 'cfg-'));
-  assert.equal(loadConfig(dir).worlds.idleReapSec, 0, 'e: the default leaves the CLI/120 s rule');
-  assert.equal(loadConfig(dir, { worlds: { idleReapSec: 30 } }).worlds.idleReapSec, 30, 'e: [worlds] idleReapSec is not a setting');
   assert.match(app, /Tamriel Rebuilt/, 'f: the rolling-restart copy still promises seconds');
   assert.match(app, /Installed\. Restart to load it\.'\);\s*route\(\);\s*restartPrompt\(\)/, 'g: the install toast has no restart banner');
 });
