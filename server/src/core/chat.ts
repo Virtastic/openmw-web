@@ -260,8 +260,10 @@ export function handleChatSend(
       serverWhisper(player, 'Nobody is here to hear you.');
       return;
     }
+    // OT3-124: one pass with a Set; includes() per recipient was O(N^2) on world chat.
+    const audience = new Set(members);
     for (const p of ctx.roster.inWorld()) {
-      if (!members.includes(p.accountKey)) continue;
+      if (!audience.has(p.accountKey)) continue;
       if (p.accountKey !== player.accountKey && ctx.isMuted?.(p.accountKey, player.accountKey)) continue;
       p.peer.sendEvent('ChatMessage', msg);
     }

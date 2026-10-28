@@ -4487,6 +4487,15 @@ window.omw = (function(){
     feed.innerHTML = slice.map(lineHtml).join('');
     feed.scrollTop = feed.scrollHeight;
   }
+  // OT3-124: a new message appends its own line(s) instead of rebuilding the whole feed.
+  function appendFeed(n){
+    var log = chatLines(), keep = chatOpen ? log.length : IDLE_LINES;
+    feed.insertAdjacentHTML('beforeend', log.slice(-Math.min(n, log.length)).map(lineHtml).join(''));
+    while (feed.childElementCount > keep) feed.removeChild(feed.firstElementChild);
+    feed.scrollTop = feed.scrollHeight;
+  }
+  // Persisted once on the way out (a world switch is a navigation), not re-encoded per line.
+  window.addEventListener('pagehide', persistChat);
   function renderChans(){
     if (chans().indexOf(chChan) < 0) chChan = 'world';
     chansEl.innerHTML = chans().map(function(c){
@@ -5303,7 +5312,7 @@ window.omw = (function(){
       if (tro && tro.seq > seenTradeSeq){ seenTradeSeq = tro.seq;
         if (tro.phase === 'ask' || (tro.phase === 'open' && !socialOpen)){ sTab = 'friends'; if (!socialOpen) openSocial(); } }
     }
-    if (cs > seenChatSeq){ seenChatSeq = cs; lastChatAt = Date.now(); feed.classList.remove('idle'); renderFeed(); persistChat(); }
+    if (cs > seenChatSeq){ appendFeed(cs - seenChatSeq); seenChatSeq = cs; lastChatAt = Date.now(); feed.classList.remove('idle'); }
     // The engine mirrors the server's ack for every social action. Surface it: an action that
     // silently does nothing is indistinguishable from a broken server, and a REFUSAL that says
     // nothing is worse — the privacy control was refused on every click and looked fine.
