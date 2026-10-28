@@ -31,9 +31,9 @@ for (let i = src.indexOf('{', start); i < src.length; i++) {
 const body = src.slice(start, end + 1);
 
 let search = '';
-// buildLoadOrder only touches append() and location.search; stub both.
-const buildLoadOrder = new Function('append', 'location',
-  body + '; return buildLoadOrder;')(() => {}, { get search() { return search; } });
+// buildLoadOrder only touches append(), location.search and window.__mwDisabled; stub them.
+const buildLoadOrder = new Function('append', 'location', 'window',
+  body + '; return buildLoadOrder;')(() => {}, { get search() { return search; } }, {});
 
 // rootFiles maps lowercased name -> real on-disk name (what both callers build).
 const mk = names => new Map(names.map(n => [n.toLowerCase(), n]));

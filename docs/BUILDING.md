@@ -112,3 +112,15 @@ curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
   http://127.0.0.1:8910/w/<worldId>          # expect 101 Switching Protocols
 ```
+
+## Other scripts in wasm-build/
+
+Not part of the build, but kept on purpose:
+
+| script | what it is for |
+|---|---|
+| `fetch-deps.sh` | populates `deps/src` on a clean clone, before `build-deps.sh` |
+| `perf-ab.mjs` | frame-time and peak-heap sampler for A/B-ing two engine builds |
+| `make-navmesh-template.sh` | builds the prebuilt `navmesh.db` that `[simPeer] navmeshTemplate` points at |
+| `refresh-harness-engine.sh` | refreshes the harness's `play/` engine from the deployed image before a local harness run |
+| `telemetry-tapkey.test.mjs`, `test-loadorder.mjs`, `streamfs-retry.test.mjs` | standalone checks of `play/index.html` helpers: `node wasm-build/<file>` |

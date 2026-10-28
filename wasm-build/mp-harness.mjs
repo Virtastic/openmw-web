@@ -1004,8 +1004,18 @@ const wanted = process.argv.slice(2);
 // helper would be imported and run as one, fail for having no default export, and read as
 // a broken scenario.
 let files = readdirSync(SCENARIO_DIR)
-  .filter((f) => f.endsWith('.mjs') && !f.startsWith('_')).sort()
-  .filter((f) => wanted.length === 0 || wanted.some((w) => f.startsWith(w)));
+  .filter((f) => f.endsWith('.mjs') && !f.startsWith('_')).sort();
+// The id is the filename up to the first dash, and it must be unique: two files once shared
+// s90, so `s90` ran both and a verdict line could not say which one failed.
+const byId = new Map();
+for (const f of files) {
+  const id = f.split('-')[0];
+  if (byId.has(id)) { console.error(`duplicate scenario id ${id}: ${byId.get(id)} and ${f}`); process.exit(2); }
+  byId.set(id, f);
+}
+// A bare id (`s90`) matches that scenario only, not s900-s909; anything with a dash is a prefix.
+files = files.filter((f) => wanted.length === 0
+  || wanted.some((w) => (w.includes('-') ? f.startsWith(w) : f.split('-')[0] === w)));
 if (files.length === 0) { console.error('no scenarios matched:', wanted.join(' ')); process.exit(2); }
 // A STANDALONE scenario (`export const standalone = true`) needs a stack this runner does not
 // stand up -- s170 brings its own gateway and wants the play server proxied at it, which

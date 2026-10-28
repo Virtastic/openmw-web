@@ -146,7 +146,7 @@ cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscr
 # Three places it can come from, in order. The emsdk cache is only populated where the ICU
 # port has actually been built, and the prebaked builder image (openmw-builder64:1) does NOT
 # carry it -- the data is staged into the source tree instead, which is the convention
-# ci/jenkins/build-engine.sh asserts on and sync-to-builder.sh restages from
+# ci/jenkins/build-engine.sh asserts on and ci/jenkins/restage-inputs.sh restages from
 # ~/build-artifacts. Looking only in the cache made this script fail every build on the
 # build server while passing on a laptop with a warm emsdk -- so accept a pre-staged copy
 # and fall back to the cache, rather than the other way round.

@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s90: the server is unreachable. A real player must SEE a failure — Lua state goes Failed
+// s196 (was s90, renumbered OT3-241): the server is unreachable. A real player must SEE a failure — Lua state goes Failed
 // with UNREACHABLE and the failure modal appears.
 //
 // Self-redial (s81) made this retry with backoff, which is right for a drop AFTER joining

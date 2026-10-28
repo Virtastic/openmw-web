@@ -234,7 +234,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
 {
   const html = readFileSync(new URL('../play/index.html', import.meta.url), 'utf8');
   const re = html.match(/var WARM_RE = (\/.*\/i);/), first = html.match(/var WARM_FIRST = (\[.*\]);/);
-  assert.ok(re && first && /StreamFS\.warm\(WARM_RE, WARM_FIRST\)/.test(html), 'index.html warms WARM_RE in WARM_FIRST order');
+  assert.ok(re && first && /StreamFS\.warm\(WARM_RE, WARM_FIRST, share\)/.test(html), 'index.html warms WARM_RE in WARM_FIRST order');
   const vm = await import('node:vm');
   const posted = [];
   const ctx = {
@@ -254,7 +254,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   ctx.StreamFS.mount('/mods/openmw-web-assets.bsa', 'mods/openmw-web-assets.bsa', 1.1e8);
   assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 8, 'eight files queued');
   // ...and it starts at release, not 20 s later (prod 2026-10-23: the first steps in town cold).
-  assert.ok(/StreamFS\.warm\(WARM_RE, WARM_FIRST\); \} catch \(e\) \{\}\s+\}, 2000\);/.test(html), 'the warm-up starts 2 s after release');
+  assert.ok(/StreamFS\.warm\(WARM_RE, WARM_FIRST, share\); \} catch \(e\) \{\}\s+\}, 2000\);/.test(html), 'the warm-up starts 2 s after release');
   // THE BOOT PRELOAD names the logo and intro movies; the splash screens go to the background prefetch.
   const movies = new RegExp(html.match(/var BOOT_MOVIES = \/(.*)\/i;/)[1], 'i');
   assert.deepEqual(['Video/bethesda logo.bik', 'video/MW_Logo.bik', 'Video/mw_intro.bik', 'Video/mw_credits.bik', 'Video/mw_menu.bik']
@@ -353,7 +353,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   await mk(store, async () => { fetches++; return ok(2); }, msgs)(files, 2, 7);
   assert.equal(fetches, 3, 'every chunk of the file, once');
   assert.equal(stored.size, 3);
-  assert.deepEqual(msgs.at(-1), { preload: 7, end: true, done: 3, total: 3, bytes: 5 });
+  assert.deepEqual(msgs.at(-1), { preload: 7, end: true, done: 3, total: 3, bytes: 5, have: 5 });
   assert.equal(msgs.filter((m) => m.preload !== undefined && !m.end).length, 3, 'one progress message per chunk');
   // Each chunk's bytes go to the page for its in-memory LRU (prod 2026-10-21: stored-only chunks
   // were fetched again by the engine when the store answered late), with where they belong.
@@ -367,7 +367,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   const failed = [];
   await mk({ open: async () => ({ match: async () => undefined, put: async () => {} }) },
     async () => status(404), failed)([{ url: 'u', pkey: 'x', size: 4, offs: [0, 2] }], 2, 9);
-  assert.deepEqual(failed.at(-1), { preload: 9, end: true, done: 2, total: 2, bytes: 0 }, 'a failed chunk is skipped, the run ends');
+  assert.deepEqual(failed.at(-1), { preload: 9, end: true, done: 2, total: 2, bytes: 0, have: 0 }, 'a failed chunk is skipped, the run ends');
 }
 
 // THE FILE STORE (prod 2026-10-19..21: a Cache API read cost ~224 ms on mid-tier machines, as much

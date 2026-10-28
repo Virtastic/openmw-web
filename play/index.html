@@ -4247,7 +4247,7 @@ try {
       var ready = (st.state || '') === 'Joined' && st.simReady === '1';
       // A dial that FAILED (unreachable server, refused sign-in) has nothing to settle: the
       // net layer's modal is the answer and the boot screen must not sit under it for the
-      // whole ceiling (s90-server-down waited 300 s behind it, #105).
+      // whole ceiling (s196-server-down waited 300 s behind it, #105).
       if ((st.state || '') === 'Failed') { settled(); return; }
       if ((st.state || '') === 'Joined') { if (!joinedAt) joinedAt = Date.now(); } else joinedAt = 0;
       if (!ready) {
@@ -5265,7 +5265,7 @@ try {
     // forever. Whether the world has settled has nothing to do with whether chargen has.
     // A dial that never joins and FAILS (unreachable, refused) has no settle to wait for: the
     // hold above only starts on Joined, so without this the boot screen sat under the failure
-    // modal until the 310 s dead-man (s90-server-down, #105/#106).
+    // modal until the 310 s dead-man (s196-server-down, #105/#106).
     if (window.__omwMPSettling && !settleStarted && (m.state || '') === 'Failed') {
       settleStarted = true;
       window.__omwMPSettling = false;

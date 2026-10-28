@@ -137,7 +137,7 @@ is NOT a buildable tree -- `build-engine.sh` hard-fails on all three.
 `ci/jenkins/restage-inputs.sh` puts them back from `~/build-artifacts` when missing; normally a
 no-op, since `git checkout -f` leaves untracked files alone.
 
-**`sync-to-builder.sh` is retired.** It rsynced the laptop's tree including
+**There is no sync script** (`sync-to-builder.sh` was retired, then removed in OT3-241). It rsynced the laptop's tree including
 `ci/jenkins/config.env` -- which is how the deploy stage silently broke: that file carries
 laptop-shaped `TEST_HOST`/`SSH_KEY` values that cannot resolve inside the Jenkins container, so
 deploys failed there while working by hand, and nobody saw a red build because the job simply
