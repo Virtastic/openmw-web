@@ -919,3 +919,29 @@ test('a cell doc at every cap is trimmed to a frame the decoder accepts', () => 
   small.moved['c:1:1'] = { x: 1, y: 2, z: 3, rotZ: 4 };
   assert.deepEqual(cellStateBody('0,0', small, [], true)['moved'], { 'c:1:1': { x: 1, y: 2, z: 3, rotZ: 4 } });
 });
+
+// OT3-130: a contents roll is per engine, so only the cell's holder (or the peer) seeds a container.
+test("a non-holder's first open is not credited; the holder's roll becomes canonical", async (t) => {
+  const PEER_PASS = 'peer-secret-1';
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  bob.sendCellChange('0,0', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  bob.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0', contents: [{ id: 'ash_yam', n: 9 }] });
+  peer.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0', contents: [{ id: 'ash_yam', n: 2 }] });
+  await peer.waitEvent('ContainerState');
+  assert.equal(bob.inbox.events.filter((e) => e.name === 'ContainerState').length, 0, "the non-holder's roll was credited");
+  bob.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0', contents: [{ id: 'ash_yam', n: 9 }] });
+  const st = (await bob.waitEvent('ContainerState')).value as { items: unknown };
+  assert.deepEqual(st.items, [{ id: 'ash_yam', n: 2 }]);
+});

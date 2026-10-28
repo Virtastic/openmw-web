@@ -1745,6 +1745,16 @@ export class WorldState {
       this.cells.markDirty(cellKey);
     }
     if (!cont || (!cont.stash && isUnseededContainer(cont, doc.actorDeaths?.[ref.key] !== undefined))) {
+      // OT3-130 LEDGER SOURCES. Levelled lists and Random roll per ENGINE, so a contents list
+      // is only authoritative from the engine that simulates the cell: the world peer, or the
+      // cell's holder. Every later count is server-derived (take/put conserve against this
+      // seed; gold moves by delta). A non-holder's roll legitimately differs and is never
+      // credited -- the cell stays unseeded until the holder (or peer) opens it.
+      const holder = this.authority.holderOf(cellKey);
+      if (player.system !== true && holder !== undefined && holder !== player.id) {
+        log('info', 'world.container_seed_not_holder', { player: player.name, cellKey, key: ref.key, holder });
+        return;
+      }
       // First opener's contents are the leveled-loot roll and become canonical; an
       // absent list captures an empty container. Later opens never overwrite -- except an
       // untouched empty row (isUnseededContainer), which a non-empty open re-seeds.
