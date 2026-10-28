@@ -1,12 +1,11 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Filesystem backend for the storage locker: the same interface S3Storage implements,
-// backed by a directory on the server.
+// Filesystem backend for the storage locker, backed by a directory on the server.
 //
-// WHY. Without an S3 endpoint the locker was inert — every /locker/* answered 503 and a
-// self-hoster with a disk and no object-storage account got nothing at all. The bytes are
-// the operator's own disk either way; the only thing S3 was buying is somewhere to put
-// them. So this is the fallback, chosen automatically when endpoint/bucket/keys are absent.
+// WHY. v2 is one world on one box (CL9, OT3-223): players upload only the three ESMs, which
+// are hashed, and the server hosts the rest of the game itself. What remains is ESM uploads
+// and cloud saves, small enough for the box's own disk. The S3 backend is gone; there is no
+// object-storage account to keep keys for.
 //
 // PRESIGNING WITHOUT S3. The browser PUTs and Ranges directly against the URL it is handed,
 // with no Authorization header (StreamFS mounts one URL and reads Ranges against it for
@@ -24,10 +23,9 @@ import { rm, mkdir, rename, stat } from 'node:fs/promises';
 import { join, resolve, sep, dirname } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HttpRoute } from '../net/http';
-import { S3Storage, s3FromEnv } from './s3';
 import { log } from '../log';
 
-const EXPIRY_SEC = 3600; // matches s3FromEnv: long enough for a multi-hundred-MB PUT
+const EXPIRY_SEC = 3600; // long enough for a multi-hundred-MB PUT
 
 export class FsStorage {
   constructor(
@@ -99,7 +97,7 @@ export class FsStorage {
     }
   }
 
-  /** See S3Storage.objectSize. */
+  /** Size of a stored object, or undefined when it is absent. */
   async objectSize(key: string): Promise<number | undefined> {
     try {
       return (await stat(this.pathFor(key))).size;
@@ -172,14 +170,13 @@ export function fsStorageFrom(sharedDir: string, publicBase: string): FsStorage 
   return new FsStorage(root, publicBase.replace(/\/+$/, ''), blobSecret(sharedDir));
 }
 
-/** S3 when the operator configured it, this server's disk otherwise. The locker is never
- *  inert now: an operator with no object-storage account still gets uploads and saves. */
+/** This server's disk (v2 has no S3 backend, CL9), or undefined when the locker is off. */
 export function lockerStorageFrom(
   cfg: { enabled?: boolean; endpoint: string; region: string; bucket: string; publicBase: string;
          accessKeyId?: string; secretAccessKey?: string },
   sharedDir: string,
   fallbackBase: string,
-): S3Storage | FsStorage | undefined {
+): FsStorage | undefined {
   // OFF MEANS OFF, and it has to be decided here: every caller in both programs builds its
   // storage through this function, and "no storage" is already the shape the rest of the code
   // understands — Locker.enabled reads false and /saves answers saves_disabled.
@@ -187,24 +184,12 @@ export function lockerStorageFrom(
     log('info', 'locker.disabled', { note: 'players cannot store files on this server' });
     return undefined;
   }
-  const s3 = s3FromEnv({
-    endpoint: cfg.endpoint, region: cfg.region, bucket: cfg.bucket,
-    ...(cfg.accessKeyId ? { accessKeyId: cfg.accessKeyId } : {}),
-    ...(cfg.secretAccessKey ? { secretAccessKey: cfg.secretAccessKey } : {}),
-  });
-  if (s3) return s3;
   if (cfg.endpoint !== '') {
-    // The operator ASKED for S3 (endpoint in config) but the env keys are absent, so this
-    // boot is about to silently fall back to disk. That fallback is not harmless: filesystem
-    // URLs go through the site origin, and a proxy in front of it (v1's CDN capped request
-    // bodies at 100 MB) can refuse the big uploads at the edge — where nothing
-    // ever reaches this server's logs. Production ran that way for a month, every player's
-    // BSA upload dying with a generic failure while every boot logged one info line. An
-    // explicit endpoint with no keys is a broken deployment, so say so at error level, and
-    // deploy-mp.yml fails the deploy when it sees this event.
-    log('error', 'locker.s3_creds_missing', {
+    // A v1 config with an S3 endpoint: say once that it is ignored, rather than letting an
+    // operator believe uploads land in a bucket.
+    log('warn', 'locker.s3_ignored', {
       endpoint: cfg.endpoint, bucket: cfg.bucket,
-      fix: 'add the access key and secret under Settings -> Player file storage in the dashboard (or set S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY in the container env), or clear [locker] endpoint to choose filesystem storage deliberately',
+      note: 'v2 keeps the locker on this server\'s disk; clear [locker] endpoint',
     });
   }
   if (cfg.publicBase === '') {

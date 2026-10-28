@@ -121,14 +121,14 @@ export interface Config {
      *  Needs clients that report acquisitions per event (PlayerItemAcquired). */
     refuseUnownedDrops: boolean;
   };
-  // Phase 3.5 storage locker. S3 creds come from env (S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY);
-  // endpoint/region/bucket are config. Empty endpoint = locker disabled, client falls back
-  // to its own disk. maxBytesPerAccount caps one player's library.
+  // Phase 3.5 storage locker, on this server's disk (CL9: v2 has no S3 backend; endpoint,
+  // region, bucket and the keys are still parsed for the frozen dashboard, and ignored).
+  // maxBytesPerAccount caps one player's library.
   // acceptByNameAndSize (default true): also accept a known game file by name + plausible
   // size when its exact hash is unknown, so Steam/GOG/disc/localized copies from different
   // players all upload. Set false for a strict hash-only gate.
-  // publicBase: the origin the browser reaches this server on, used to build blob URLs when
-  // storage falls back to the filesystem (no S3 endpoint). Empty = localhost, which works
+  // publicBase: the origin the browser reaches this server on, used to build blob URLs.
+  // Empty = localhost, which works
   // for a single-machine dev run and nothing else.
   // maxSaveBytesPerAccount caps server-side savegames, which are a separate budget from the
   // game-data library — a full library must not make the player unable to save.
@@ -588,8 +588,6 @@ function validate(t: Tree): Config {
       acceptByNameAndSize: optBool(t, 'locker', 'acceptByNameAndSize', true),
       publicBase: optStr(t, 'locker', 'publicBase', ''),
       maxSaveBytesPerAccount: optNum(t, 'locker', 'maxSaveBytesPerAccount', 536870912),
-      // Optional: empty falls back to the environment, which is how the hosted platform
-      // supplies them. See s3FromEnv.
       accessKeyId: optStr(t, 'locker', 'accessKeyId', ''),
       secretAccessKey: optStr(t, 'locker', 'secretAccessKey', ''),
       esmHashes: optStrArray(t, 'locker', 'esmHashes', []),

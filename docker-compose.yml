@@ -76,13 +76,6 @@ services:
       - ${REPO_DIR:-.}/play:/client
     environment:
       - NODE_ENV=production
-      # Object storage keys, ONLY as a fallback. The setup wizard asks for these in the
-      # browser and stores them with the rest of your settings, which is the path a
-      # self-hoster should use. These variables stay supported for deployments that inject
-      # credentials from outside (the hosted platform does); a value set in the dashboard
-      # wins over them.
-      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
-      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
     expose:
       - "8080"
     # Ports are published by Caddy, not here, so the server is only reachable through it.

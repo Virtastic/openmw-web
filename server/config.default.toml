@@ -138,30 +138,19 @@ worldGlobals = []
 # within a tolerance, backed by a header sniff of the uploaded bytes. true because legitimate
 # retail distributions differ; set false to accept ONLY exact hashes from vanilla-manifest.json.
 acceptByNameAndSize = true
-# S3 credentials. Set these in the dashboard (Settings -> Player file storage, or the setup
-# wizard's storage step) rather than by hand. They are masked whenever the dashboard reads
-# them back, so they are never shown in the browser once saved.
-#
-# Left empty, the environment is used instead (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY),
-# which is how the hosted platform passes them. A value here wins.
-#
-# NOTE: these live in the data directory, so a backup you download contains them. The backup
-# page says so; treat that archive like a password either way, because it also holds every
-# account's password hash.
+# Storage locker: a player's ESM uploads and cloud saves, kept on THIS server's disk
+# (<dataDir>/locker-blobs). v2 has no S3 backend (CL9): accessKeyId, secretAccessKey,
+# endpoint, region and bucket are still read so a v1 config parses, and ignored; a non-empty
+# endpoint logs locker.s3_ignored at boot.
 accessKeyId = ""
 secretAccessKey = ""
-# Storage locker: a player uploads their own Morrowind data once, streams it back on any
-# device. S3-compatible (OVH Object Storage, AWS, Backblaze, MinIO). Credentials come from the
-# env (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY) so they stay out of config files. An empty
-# endpoint falls back to a folder on THIS server (<dataDir>/locker-blobs) instead.
-endpoint = ""                     # e.g. https://s3.gra.io.cloud.ovh.net
-region = "auto"                   # the bucket region (e.g. "gra"); "auto" where the provider allows
+endpoint = ""
+region = "auto"
 bucket = ""
 maxBytesPerAccount = 6442450944   # 6 GiB — Morrowind GOTY + a few mods
-# Only used by the filesystem fallback: the origin a BROWSER reaches this server on, which
-# is what upload/download URLs are built from. Wrong or empty and the browser cannot reach
-# the URLs the server hands it (the server itself still can). Set it whenever there is no
-# S3 endpoint and players are not on this machine.
+# The origin a BROWSER reaches this server on, which is what upload/download URLs are built
+# from. Wrong or empty and the browser cannot reach the URLs the server hands it (the server
+# itself still can). Set it whenever players are not on this machine.
 publicBase = ""                   # e.g. https://mp.example.com
 # Server-side savegames, a separate budget from the game-data library above: a full library
 # must never be the reason a player cannot save. 512 MiB is many .omwsave slots.
