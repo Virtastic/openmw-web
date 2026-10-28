@@ -80,9 +80,9 @@ respawnCellKey = ""
 respawnX = 0.0
 respawnY = 0.0
 respawnZ = 0.0
-# Death penalty applied by the death-penalty plugin: "none" (M2 default; hook is a
-# documented no-op seed for operators/plugins to extend).
-deathPenalty = "none"
+# Death penalty applied by the death-penalty plugin: "none", or "repeat" (a death within
+# 10 min of the last one sends the client a DeathPenalty debuff; OT3-122).
+deathPenalty = "repeat"
 # M5: player-vs-player. false -> the pvp plugin drops CombatHit/CombatSpellHit aimed at
 # players (actor targets are unaffected). Swap the plugin for faction/team rules.
 pvp = false

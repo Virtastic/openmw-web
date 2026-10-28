@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { respawn } from '../src/plugins/builtin/respawn';
+import { deathPenalty } from '../src/plugins/builtin/death-penalty';
 import type { PluginApi, PluginPlayer } from '../src/plugins/api';
 import type { Config } from '../src/config';
 
@@ -91,4 +92,15 @@ test('no configured point, below zero indoors: where you fell, untouched', () =>
   const { api, events } = fakeApi({ respawnCellKey: '', positions: { 1: deep } });
   respawn.onPlayerDeath!(api, DEAD);
   assert.deepEqual(events[0]!.body, { ...deep, restoreHp: true });
+});
+
+// OT3-122: a second death inside the window is debuffed; the first is free.
+test('repeat death penalty: the second death in the window sends DeathPenalty', () => {
+  const { api, events } = fakeApi({});
+  (api.config.rules as { deathPenalty: string }).deathPenalty = 'repeat';
+  const who: PluginPlayer = { id: 7, name: 'Repeat Offender', rank: 0 };
+  deathPenalty.onPlayerDeath!(api, who);
+  assert.equal(events.filter((e) => e.name === 'DeathPenalty').length, 0, 'a first death was penalised');
+  deathPenalty.onPlayerDeath!(api, who);
+  assert.deepEqual(events.find((e) => e.name === 'DeathPenalty'), { target: 7, name: 'DeathPenalty', body: { stacks: 1, durationSec: 120 } });
 });

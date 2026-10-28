@@ -146,7 +146,7 @@ export interface Config {
     respawnX: number;
     respawnY: number;
     respawnZ: number;
-    deathPenalty: 'none';
+    deathPenalty: 'none' | 'repeat';
     pvp: boolean;
     // Phase 3 PvP zoning. 'all' = anywhere pvp allows (M5 behaviour), 'wilderness' =
     // exteriors only, minus safeCells and never in interiors (shops, homes, guildhalls),
@@ -397,7 +397,7 @@ function optNum(t: Tree, sec: string, key: string, dflt: number): number {
  */
 export const ENUM_OPTIONS = {
   'content.enforce': ['strict', 'names', 'off'],
-  'rules.deathPenalty': ['none'],
+  'rules.deathPenalty': ['none', 'repeat'],
   'rules.pvpZone': ['all', 'wilderness', 'none'],
   'rules.sayScope': ['world', 'proximity'],
   'rules.timeSkip': ['anyone', 'owner', 'party', 'off'],

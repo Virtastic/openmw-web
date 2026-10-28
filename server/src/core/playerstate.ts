@@ -1215,7 +1215,10 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
     // A death the peer does not confirm is not a death. The peer rules this player's bars,
     // and the raise-only path already refuses a client's hp claim -- but the death EVENT
     // used to be taken on faith, and a respawn is a free full heal and a teleport.
-    if (player.peerStatsAt !== undefined && Date.now() - player.peerStatsAt <= PEER_STATS_FRESH_MS) {
+    // OT3-122: STALE OR MISSING PEER STATS TOO. The doc's hp is then the client's own last
+    // declaration, still the server's record: a death it does not agree with waits for the
+    // hp 0 report (the 5 s resend), and is never accepted on faith.
+    {
       const hp = ctx.store.getCached(player.charId)?.stats?.dynamic?.hp?.c;
       if (hp !== undefined && hp > 0) {
         log('warn', 'state.death_unconfirmed', { from: player.name, hp });
