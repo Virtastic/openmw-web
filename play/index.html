@@ -4326,7 +4326,7 @@ try {
     document.body.appendChild(b);
   }
   function pj(s){ try { return JSON.parse(s); } catch(e){ return null; } }
-  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function el(tag, cls, html){ var d = document.createElement(tag); if (cls) d.className = cls; if (html!=null) d.innerHTML = html; return d; }
 
   // ---- cursor handshake: refcount overlays that need the mouse/keyboard freed ----
