@@ -58,6 +58,9 @@ export function esmOwnerGate(locker: Locker, sessions: LockerSessions) {
 }
 
 const BODY_LIMIT = 65536;
+// OT3-50: the client attests the handful of core files it is about to upload; 256 leaves
+// headroom for any install while keeping the stored attestation small.
+const MAX_ATTEST_FILES = 256;
 
 function parseFile(v: unknown): LockerFile | undefined {
   if (typeof v !== 'object' || v === null) return undefined;
@@ -97,6 +100,7 @@ export function lockerRoutes(deps: LockerRouteDeps) {
     try {
       if (req.method === 'POST' && url.pathname === '/locker/attest') {
         const body = (await readJsonBody(req, BODY_LIMIT)) as { files?: unknown };
+        if (Array.isArray(body.files) && body.files.length > MAX_ATTEST_FILES) { json(res, 400, { error: 'too_many_files' }); return true; }
         const files = Array.isArray(body.files) ? body.files.map(parseFile) : [];
         if (files.some((f) => f === undefined)) { json(res, 400, { error: 'bad_files' }); return true; }
         const att = await deps.locker.attest(accountKey, files as LockerFile[], clientIp(req));
@@ -188,6 +192,9 @@ export function lockerRoutes(deps: LockerRouteDeps) {
       json(res, 404, { error: 'not_found' });
       return true;
     } catch (err) {
+      // OT3-50: an oversize or malformed body is the client's fault, not a 500.
+      if (err instanceof Error && err.message === 'too large') { json(res, 413, { error: 'too_large' }); return true; }
+      if (err instanceof SyntaxError) { json(res, 400, { error: 'bad_body' }); return true; }
       log('error', 'locker.route_threw', { path: url.pathname, error: String(err) });
       json(res, 500, { error: 'internal' });
       return true;

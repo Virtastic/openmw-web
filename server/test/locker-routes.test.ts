@@ -56,6 +56,15 @@ test('no bearer token = 401; the account is never taken from the body', async (t
 });
 
 // Confirm reads the bytes back and hashes them; that half lives in locker-esm.test.ts.
+test('OT3-50: an oversize attest list or body is refused, not a 500', async (t) => {
+  const { base, aliceAuth } = await boot(t);
+  let r = await call(base, '/locker/attest', aliceAuth, 'POST', { files: Array.from({ length: 257 }, () => FILE) });
+  assert.equal(r.status, 400);
+  assert.deepEqual(await r.json(), { error: 'too_many_files' });
+  r = await call(base, '/locker/attest', aliceAuth, 'POST', { files: [{ ...FILE, name: 'x'.repeat(70000) }] });
+  assert.equal(r.status, 413);
+});
+
 test('the authorized flow: attest -> authorize', async (t) => {
   const { base, aliceAuth } = await boot(t);
 
