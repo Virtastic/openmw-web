@@ -95,8 +95,10 @@ const MAX_GOLD_DELTA = 1000000;
 // (dialogue.cpp), and only the purse -- not their stock -- so this matches that exactly
 // rather than inventing a richer rule.
 const GOLD_RESTOCK_HOURS = 24;
-// fCorpseRespawnDelay (vanilla 72): a dead actor's record is forgotten after this many game
-// hours, at which point the engine's own CellStore::respawn stands a fresh one up. No GMST
+// fCorpseRespawnDelay (vanilla 72): a peer-rolled levelled spawn (n:) or an actor whose record
+// carries the Respawn flag is forgotten after this many game hours, at which point the engine's
+// own CellStore::respawn stands a fresh one up. Every other content actor stays dead (OT3-10):
+// each boot is a fresh game, so a forgotten Fargoth would stand back up for good. No GMST
 // table is read server-side; the value is the unmodded default, like GOLD_RESTOCK_HOURS.
 const CORPSE_RESPAWN_HOURS = 72;
 
@@ -1020,7 +1022,7 @@ export class WorldState {
     const nowH = absGameHours(this.cells.worldM7().time);
     const deaths = this.deathsOf(doc, nowH);
     if ((deaths[ref.key]?.deathNo ?? -Infinity) >= deathNo) return; // duplicate death event
-    deaths[ref.key] = { deathNo, atH: nowH };
+    deaths[ref.key] = { deathNo, atH: nowH, ...(body.get('respawns') === true ? { respawns: true } : {}) };
     this.cells.markDirty(cellKey);
     // A corpse follows nobody: a restarted peer replayed the claim and stood the companion up.
     this.followedBy.delete(ref.key);
@@ -1844,6 +1846,7 @@ export class WorldState {
     const nowH = absGameHours(this.cells.worldM7().time);
     const deaths = this.deathsOf(doc, nowH);
     for (const [key, d] of Object.entries(deaths)) {
+      if (!key.startsWith('n:') && d.respawns !== true) continue; // content NPCs stay dead (OT3-10)
       if (nowH - d.atH < CORPSE_RESPAWN_HOURS) continue;
       delete deaths[key];
       delete doc.placed[key];

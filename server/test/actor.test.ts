@@ -564,6 +564,7 @@ test('a follow claim survives a world restart', async (t) => {
 // even the engine's own CellStore::respawn was undone the moment the cell was entered again.
 // A death now carries the world hour it happened at and is forgotten after
 // fCorpseRespawnDelay (72 h), together with the placed entry of a peer-rolled levelled spawn.
+// OT3-10: only levelled spawns and Respawn-flagged records expire; a plain content NPC stays dead.
 test('a death is forgotten after fCorpseRespawnDelay, and the levelled corpse with it', async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
@@ -579,6 +580,7 @@ test('a death is forgotten after fCorpseRespawnDelay, and the levelled corpse wi
   peer.sendEvent('ObjectSpawnRequest', { tempId: 7, recordId: 'cliff racer', cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0, count: 1, actor: true });
   const netId = ((await peer.waitEvent('ObjectSpawnAck')).value as { netId: number }).netId;
   peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, ref: ACTOR_REF, deathNo: 1, killedRecordId: 'smuggler' });
+  peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, ref: { __refnum: { index: 43, contentFile: 0 } }, deathNo: 1, killedRecordId: 'rat', respawns: true });
   peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, net: netId, deathNo: 1, killedRecordId: 'cliff racer' });
   await peer.waitEvent('WorldKillCount', (v) => (v as { refId?: string }).refId === 'cliff racer');
 
@@ -599,17 +601,17 @@ test('a death is forgotten after fCorpseRespawnDelay, and the levelled corpse wi
   };
 
   const at10 = await stateAfter(10);
-  assert.deepEqual(at10.deaths.sort(), ['c:42:0', `n:${netId}`].sort(), 'ten hours on, both are still dead');
+  assert.deepEqual(at10.deaths.sort(), ['c:42:0', 'c:43:0', `n:${netId}`].sort(), 'ten hours on, all three are still dead');
   assert.equal(at10.placed.length, 1, 'the levelled corpse is still placed');
 
   const at80 = await stateAfter(70);
-  assert.deepEqual(at80.deaths, [], 'past 72 h the deaths are forgotten: the engine may respawn');
+  assert.deepEqual(at80.deaths, ['c:42:0'], 'past 72 h only the plain content NPC is still dead; the flagged one may respawn');
   assert.equal(at80.placed.length, 0, 'the levelled spawn goes with its death: the peer rolls a fresh one');
 
   // The forgotten record does not shadow a fresh kill of the respawned actor.
-  peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, ref: ACTOR_REF, deathNo: 1, killedRecordId: 'smuggler' });
-  const tally = await peer.waitEvent('WorldKillCount', (v) => (v as { refId?: string; count?: number }).refId === 'smuggler' && (v as { count?: number }).count === 2);
-  assert.deepEqual(tally.value, { refId: 'smuggler', count: 2 }, 'the same deathNo was read as a duplicate of the forgotten death');
+  peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, ref: { __refnum: { index: 43, contentFile: 0 } }, deathNo: 1, killedRecordId: 'rat', respawns: true });
+  const tally = await peer.waitEvent('WorldKillCount', (v) => (v as { refId?: string; count?: number }).refId === 'rat' && (v as { count?: number }).count === 2);
+  assert.deepEqual(tally.value, { refId: 'rat', count: 2 }, 'the same deathNo was read as a duplicate of the forgotten death');
   peer.close();
   await peer.closed;
 });

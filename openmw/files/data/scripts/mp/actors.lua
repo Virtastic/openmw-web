@@ -390,6 +390,8 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
         if dead and not tracked.dead then
             tracked.dead = true
             tracked.deathNo = (tracked.deathNo or 0) + 1
+            -- OT3-10: only a Respawn-flagged record may come back; the server keeps the rest dead.
+            local okR, respawns = pcall(function() return obj.type.record(obj).isRespawning end)
             mp.sendEvent('ActorDeath', {
                 cellKey = cellKey,
                 epoch = epoch,
@@ -398,6 +400,7 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
                 killerPlayerId = deps.ownIdFn(), -- holder attribution; nil-safe on the server
                 deathNo = tracked.deathNo,
                 killedRecordId = obj.recordId,
+                respawns = (okR and respawns == true) or nil,
             })
             if deps.corpseFn then pcall(deps.corpseFn, obj) end -- #297: our copy is the loot
         elseif not dead then

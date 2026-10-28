@@ -97,7 +97,7 @@ export interface CellDoc {
   // game hour it happened at, so the record expires on fCorpseRespawnDelay (WorldState
   // .liveDeaths). Older docs hold a bare deathNo; WorldState.deathsOf upgrades them in place.
   actorOverrides?: unknown;
-  actorDeaths?: Record<string, { deathNo: number; atH: number }>;
+  actorDeaths?: Record<string, { deathNo: number; atH: number; respawns?: true }>;
   // M6: per-object MWScript locals, refKey -> {varName: value}.
   memberVars?: Record<string, Record<string, number>>;
   // Phase 4: refKey -> the enabled state a script last set. A `true` is a scripted reveal
