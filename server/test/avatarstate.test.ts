@@ -95,7 +95,7 @@ test('a player joining after the peer is announced to it; a CLIENT never sees Av
 // record: every client sets it on its own player, so every avatar must carry it too -- and it
 // must survive the next AvatarState refresh, which used to re-seed each avatar from its own doc
 // (0 for everyone but the campaign it was persisted on).
-test('a shared bounty reaches every avatar and survives an AvatarState refresh', async (t) => {
+test("a bounty is the criminal's own: the peer hears who, and a bystander stays clean (OT3-51)", async (t) => {
   const { server, a } = await bootWithCharacter(t);
   const b = await TestClient.connect(server.port);
   t.after(() => b.close());
@@ -111,14 +111,14 @@ test('a shared bounty reaches every avatar and survives an AvatarState refresh',
   peer.inbox.events.length = 0;
   a.sendEvent('CrimeUpdate', { bounty: 500, kind: 'murder' });
   const crime = await peer.waitEvent('CrimeUpdate');
-  assert.equal((crime.value as { shared?: boolean }).shared, true, 'the peer is told the record is shared');
+  assert.equal((crime.value as { bounty?: number }).bounty, 500);
+  assert.equal((crime.value as { byId?: number }).byId, a.playerId, 'the peer is told whose bounty it is');
 
-  // A refresh of the BYSTANDER's avatar (any inventory change) must carry the party's bounty.
+  // A refresh of the BYSTANDER's avatar (any inventory change) carries their own clean record.
   b.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 5 }] });
   const st = await peer.waitEvent('AvatarState',
     (v) => (v as { id?: number })?.id === b.playerId && (v as { inventory?: unknown[] }).inventory !== undefined);
-  assert.equal((st.value as { bounty?: number }).bounty, 500,
-    "the bystander's avatar was re-seeded from their own doc and stopped being wanted");
+  assert.equal((st.value as { bounty?: number }).bounty ?? 0, 0, "the criminal's bounty did not spread");
 });
 
 // ARREST. A guard that reaches a wanted avatar on the peer cannot open a dialogue there; the

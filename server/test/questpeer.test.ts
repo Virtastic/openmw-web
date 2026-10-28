@@ -5,9 +5,8 @@
 // Under the one-peer model the peer runs every cell script authoritatively, but each
 // client's engine runs its local copy on the same puppeted actors -- so the same global is
 // written twice. Rule: a client write to a name the peer wrote within INPUT_DRIVING_MS is
-// dropped (dialogue-only names the peer never writes are untouched); and the peer's
-// character-global writes are relayed LIVE to everyone in-world, so local script copies do
-// not hold a stale value until the next login. Member variables use the same gate keyed by
+// dropped (dialogue-only names the peer never writes are untouched). Since OT3-51 the peer's
+// character-global writes reach only the character they credit; world globals stay shared. Member variables use the same gate keyed by
 // cell|ref|name (identical code path; the wire test here uses globals).
 
 import test from 'node:test';
@@ -45,17 +44,15 @@ async function world(t: { after(fn: () => unknown): void }) {
 
 const gv = (name: string) => (v: unknown) => (v as { name?: string })?.name === name;
 
-test("the peer's CHARACTER-global write is relayed live to every client in the world", async (t) => {
+test("the peer's CHARACTER-global write with no character named reaches nobody (OT3-51)", async (t) => {
   const { peer, a, b } = await world(t);
-  // Not in worldGlobals: a character (campaign) global. Before 4E these persisted to the
-  // owner's doc and were never relayed.
+  // Not in worldGlobals: a character (campaign) global. Per-character progression credits
+  // only the character a peer write names; with none named it is nobody's story.
   peer.sendEvent('GlobalVarUpdate', { name: 'mp_campaign_stage', value: 7 });
-  const [ga, gb] = await Promise.all([
-    a.waitEvent('GlobalVarUpdate', gv('mp_campaign_stage')),
-    b.waitEvent('GlobalVarUpdate', gv('mp_campaign_stage')),
-  ]);
-  assert.equal((ga.value as { value: number }).value, 7);
-  assert.equal((gb.value as { value: number }).value, 7);
+  await new Promise((r) => setTimeout(r, 500));
+  for (const c of [a, b]) {
+    assert.equal(c.inbox.events.filter((e) => e.name === 'GlobalVarUpdate' && gv('mp_campaign_stage')(e.value)).length, 0);
+  }
 });
 
 test("a client's write to a global the peer just wrote is dropped; after the window it lands", async (t) => {
@@ -90,15 +87,14 @@ test('a dialogue-only global (never written by the peer) is untouched by the gat
     'dialogue-driven quest state stays exactly as it was');
 });
 
-test("a human's campaign global reaches the other human live", async (t) => {
+test("a human's campaign global reaches the simulator, not the other human (OT3-51)", async (t) => {
   const { a, b, peer } = await world(t);
   a.sendEvent('GlobalVarUpdate', { name: 'mp_dialogue_stage', value: 4 }); // not a world global: campaign-shadowed
-  const [gb, gp] = await Promise.all([
-    b.waitEvent('GlobalVarUpdate', gv('mp_dialogue_stage'), 3000),
-    peer.waitEvent('GlobalVarUpdate', gv('mp_dialogue_stage'), 3000),
-  ]);
-  assert.equal((gb.value as { value: number }).value, 4, 'the other human hears the dialogue result');
-  assert.equal((gp.value as { value: number }).value, 4, 'and so does the simulator');
+  const gp = await peer.waitEvent('GlobalVarUpdate', gv('mp_dialogue_stage'), 3000);
+  assert.equal((gp.value as { value: number }).value, 4, 'the simulator hears the dialogue result');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(b.inbox.events.filter((e) => e.name === 'GlobalVarUpdate' && gv('mp_dialogue_stage')(e.value)).length, 0,
+    "the other human keeps their own campaign");
 });
 
 

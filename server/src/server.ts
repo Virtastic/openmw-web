@@ -218,6 +218,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // vanilla defaults, never a boot failure.
   const contentTable = await ContentTable.load(sharedDir);
   world.setQuestItems(contentTable.questItems);
+  world.setCharacterKills({
+    bump: (charId, refId) => {
+      let n = 0;
+      playerStore.update(charId, (doc) => { n = ((doc.kills ??= {})[refId] ?? 0) + 1; doc.kills[refId] = n; }, 'debounced');
+      return n;
+    },
+    all: (charId) => Object.entries(playerStore.getCached(charId)?.kills ?? {}),
+  });
   world.setEconomyRules({
     uniqueActors: contentTable.uniqueActors,
     noDrop: config.economy.noDrop,
@@ -518,7 +526,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     roster,
     cells: cellStore,
     players: playerStore,
-    isShared: (family) => hooks.shareFamily(family),
     regressAllowed: (questId) => hooks.journalRegress(questId),
     worldGlobals: config.sharing.worldGlobals,
     worldPeer: () => worldPeerImpl(),

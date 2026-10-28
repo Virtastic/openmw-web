@@ -17,8 +17,7 @@ const NPC2_REF = { __refnum: { index: 301, contentFile: 0 } };
 
 async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartial<Config>, dataDir = tmpDataDir()) {
   // All test clients share 127.0.0.1; the per-IP cap is not what these tests exercise.
-  // These tests cover SHARED progression, an operator opt-in since OT3-19 (personal is default).
-  const configOverride = { ...override, sharing: { journal: true, questVars: true, factions: true, ...override?.sharing }, limits: { ...override?.limits, maxConnsPerIp: 16 } };
+  const configOverride = { ...override, limits: { ...override?.limits, maxConnsPerIp: 16 } };
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride });
   t.after(() => server.close());
   return { server, dataDir };
@@ -50,45 +49,19 @@ async function fence(from: TestClient, ...watchers: TestClient[]) {
   for (const w of watchers) await w.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === text);
 }
 
-test('journal arbitration and sharing', async (t) => {
-  const { server } = await boot(t, { sharing: { regressAllowlist: ['a1_1_findspymaster'] } });
+// OT3-51: journal, factions, bounty and topics are the character's own. Nothing is shared.
+test('journal, factions and crime are per character', async (t) => {
+  const { server } = await boot(t);
   const { a, b } = await twoInCell(server);
 
-  await t.test('advancing index relays to peers, not back to the sender', async () => {
-    a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 10, actorRefId: 'caius cosades' });
-    const got = await b.waitEvent('JournalEntry');
-    assert.deepEqual(got.value, { questId: 'a1_1_thelefthanded', index: 10, actorRefId: 'caius cosades' });
-    await fence(a, a);
-    assert.equal(a.inbox.events.filter((e) => e.name === 'JournalEntry').length, 0);
-  });
-
-  await t.test('regression is blocked (stored, not relayed); equal index is a no-op', async () => {
-    b.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 5 }); // lagging client
-    b.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 10 }); // identical
-    await fence(b, a);
-    assert.equal(a.inbox.events.filter((e) => e.name === 'JournalEntry').length, 0);
-    // Advancing past the max still works afterwards.
-    b.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 20 });
-    assert.equal(((await a.waitEvent('JournalEntry')).value as { index: number }).index, 20);
-  });
-
-  await t.test('allowlisted questId may regress', async () => {
-    a.sendEvent('JournalEntry', { questId: 'a1_1_findspymaster', index: 50 });
-    assert.equal(((await b.waitEvent('JournalEntry')).value as { index: number }).index, 50);
-    b.sendEvent('JournalEntry', { questId: 'a1_1_findspymaster', index: 30 }); // legit regress
-    assert.equal(((await a.waitEvent('JournalEntry')).value as { index: number }).index, 30);
-  });
-
-  await t.test('late joiner receives the full shared journal', async () => {
-    const c = await TestClient.connect(server.port);
-    await c.joinAsNew('Cara');
-    const sync = await c.waitEvent('JournalSync');
-    assert.deepEqual((sync.value as { quests: Record<string, number> }).quests, {
-      a1_1_thelefthanded: 20,
-      a1_1_findspymaster: 30,
-    });
-    c.close();
-    await c.closed;
+  await t.test('nothing is relayed, but state is stored per player', async () => {
+    a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 10 });
+    a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 5 }); // lagging client: refused
+    a.sendEvent('FactionUpdate', { factionId: 'blades', rank: 2, reputation: 5 });
+    a.sendEvent('CrimeUpdate', { bounty: 40, kind: 'theft' });
+    a.sendEvent('TopicsLearned', { topics: ['background'] });
+    await fence(a, b);
+    assert.equal(b.inbox.events.filter((e) => ['JournalEntry', 'FactionUpdate', 'CrimeUpdate', 'TopicsLearned'].includes(e.name)).length, 0);
   });
 
   await t.test('malformed entries are dropped', async () => {
@@ -96,20 +69,9 @@ test('journal arbitration and sharing', async (t) => {
     a.sendEvent('JournalEntry', { questId: 'q', index: 1.5 });
     a.sendEvent('JournalEntry', { questId: 'x'.repeat(65), index: 1 });
     a.sendEvent('JournalEntry', { index: 1 });
-    await fence(a, b);
-    assert.equal(b.inbox.events.filter((e) => e.name === 'JournalEntry').length, 0);
-  });
-});
-
-test('journal and factions in individual mode', async (t) => {
-  const { server } = await boot(t, { sharing: { journal: false, factions: false } });
-  const { a, b } = await twoInCell(server);
-
-  await t.test('nothing is relayed, but state is stored per player', async () => {
-    a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 10 });
-    a.sendEvent('FactionUpdate', { factionId: 'blades', rank: 2, reputation: 5 });
-    await fence(a, b);
-    assert.equal(b.inbox.events.filter((e) => e.name === 'JournalEntry' || e.name === 'FactionUpdate').length, 0);
+    a.sendEvent('FactionUpdate', { factionId: 'blades', rank: 99 }); // out of range
+    a.sendEvent('CrimeUpdate', { bounty: -5 });
+    await fence(a, a);
   });
 
   await t.test('rejoin sync serves the player their OWN journal', async () => {
@@ -130,45 +92,17 @@ test('journal and factions in individual mode', async (t) => {
   });
 });
 
-test('shared factions and crime relay', async (t) => {
-  // crime is PERSONAL by default since backlog 353; this test is about the shared relay.
-  const { server } = await boot(t, { sharing: { crime: true } });
-  const { a, b, aId } = await twoInCell(server);
-
-  await t.test('faction update relays with full state', async () => {
-    a.sendEvent('FactionUpdate', { factionId: 'blades', rank: 3, reputation: 12, expelled: false });
-    assert.deepEqual((await b.waitEvent('FactionUpdate')).value, {
-      factionId: 'blades', rank: 3, reputation: 12, expelled: false,
-    });
-    a.sendEvent('FactionUpdate', { factionId: 'blades', rank: 99 }); // out of range
-    a.sendEvent('FactionUpdate', { factionId: 'blades', rank: 1, expelled: 'yes' }); // wrong type
-    await fence(a, b);
-    assert.equal(b.inbox.events.filter((e) => e.name === 'FactionUpdate').length, 0);
-  });
-
-  await t.test('crime update relays with the reporter id', async () => {
-    a.sendEvent('CrimeUpdate', { bounty: 40, kind: 'theft' });
-    assert.deepEqual((await b.waitEvent('CrimeUpdate')).value, { bounty: 40, kind: 'theft', byId: aId, shared: true });
-    a.sendEvent('CrimeUpdate', { bounty: -5 });
-    await fence(a, b);
-    assert.equal(b.inbox.events.filter((e) => e.name === 'CrimeUpdate').length, 0);
-  });
-});
-
-// Phase 4 changed the DEFAULT: a global is character-shadowed (persisted to the CAMPAIGN,
-// not seq-arbitrated) unless it describes the world. It is still relayed live to every
-// engine running that campaign (backlog 224: one campaign per instance, and the other
-// human's journal had already advanced with it); the peer-owned window (questpeer.test.ts)
-// is what stops the TES3MP ping-pong. The seq/LWW arbitration below governs the WORLD
-// globals, so these tests declare a pair of them to exercise it.
+// A global is the character's (OT3-51: its doc, the peer, nobody else) unless it describes the
+// world. The seq/LWW arbitration below governs the WORLD globals, so these tests declare a
+// pair of them to exercise it.
 test('global and member variables', async (t) => {
   const { server } = await boot(t, { sharing: { worldGlobals: ['world_flag', 'seqless_var'] } });
   const { a, b } = await twoInCell(server);
 
-  await t.test('a quest-progress global is relayed plain (no seq): campaign state, not arbitrated', async () => {
+  await t.test("a quest-progress global stays on the writer's character (OT3-51)", async () => {
     a.sendEvent('GlobalVarUpdate', { name: 'nerevarine', value: 1, seq: 5 });
-    assert.deepEqual((await b.waitEvent('GlobalVarUpdate')).value, { name: 'nerevarine', value: 1 },
-      'a dialogue result must reach the other human live');
+    await fence(a, b);
+    assert.equal(b.inbox.events.filter((e) => e.name === 'GlobalVarUpdate').length, 0);
   });
 
   await t.test('world global relays and echoes the accepted seq', async () => {
@@ -401,7 +335,7 @@ test('dialogue lock', async (t) => {
   });
 });
 
-test('shared quest state survives a restart', async (t) => {
+test("a character's quest state survives a restart, and nobody else sees it", async (t) => {
   const dataDir = tmpDataDir();
   let { server } = await boot(t, undefined, dataDir);
   const a = await TestClient.connect(server.port);
@@ -409,7 +343,6 @@ test('shared quest state survives a restart', async (t) => {
   await a.waitEvent('PlayerList');
   await a.waitEvent('JournalSync');
   a.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 40 });
-  a.sendEvent('GlobalVarUpdate', { name: 'nerevarine', value: 1, seq: 3 });
   a.sendEvent('FactionUpdate', { factionId: 'blades', rank: 4 });
   await fence(a, a);
   await server.flush();
@@ -422,18 +355,17 @@ test('shared quest state survives a restart', async (t) => {
   await b.joinAsNew('Bob');
   await b.waitEvent('PlayerList');
   const sync = await b.waitEvent('JournalSync');
-  assert.deepEqual((sync.value as { quests: Record<string, number> }).quests, { a1_1_thelefthanded: 40 });
-  // The restored global still arbitrates: a stale seq is refused after restart.
-  b.sendCellChange('0,0', 0, 0, 0);
-  await b.waitEvent('PlayerCellChange');
-  b.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 39 }); // regress, blocked
-  b.sendEvent('JournalEntry', { questId: 'a1_1_thelefthanded', index: 41 });
-  const c = await TestClient.connect(server.port);
-  await c.joinAsNew('Cara');
-  const sync2 = await c.waitEvent('JournalSync');
-  assert.deepEqual((sync2.value as { quests: Record<string, number> }).quests, { a1_1_thelefthanded: 41 });
-  c.close();
-  await c.closed;
+  assert.equal(Object.keys((sync.value as { quests: object }).quests).length, 0, "Bob is not shown Alice's log");
+  const back = await TestClient.connect(server.port);
+  back.hello();
+  await back.waitJson('SessionHelloOk');
+  back.login('Alice', 'hunter22');
+  await back.waitJson('SessionWelcome');
+  back.sendJson({ t: 'SessionReady' });
+  const mine = await back.waitEvent('JournalSync');
+  assert.deepEqual((mine.value as { quests: Record<string, number> }).quests, { a1_1_thelefthanded: 40 });
+  back.close();
+  await back.closed;
 });
 
 // Backlog 219: Sleepers / VampireCheck / MoveMehra are started once and expected to run for
@@ -504,45 +436,6 @@ test('the journal sync carries the entries in the order they were earned, with t
   assert.ok(first.d >= 1 && first.m >= 1 && first.dm >= 1, 'stamped with the world clock');
   assert.ok(third.d > first.d, 'the later entry carries a later day');
   assert.deepEqual([third.d, third.m, third.dm], [daysPassed(clock), clock.month, clock.day], 'stamped with the clock as it stood');
-});
-
-test('dialogue topics reach the other player, and never bounce back to the sender', async (t) => {
-  const dataDir = tmpDataDir();
-  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride: { sharing: { journal: true, questVars: true, factions: true } } });
-  t.after(() => server.close());
-
-  const a = await TestClient.connect(server.port);
-  await a.joinAsNew('Teller');
-  await a.waitEvent('PlayerList');
-  const b = await TestClient.connect(server.port);
-  await b.joinAsNew('Listener');
-  await b.waitEvent('PlayerList');
-
-  // A learns two topics in conversation. Sharing them is the same rule the JOURNAL follows:
-  // a guest's quest state routes through the host's journal, so without this they can be
-  // looking at a quest in their log with no way to ask anyone about it.
-  a.sendEvent('TopicsLearned', { topics: ['nerevarine', 'sixth house'] });
-  const got = await b.waitEvent('TopicsLearned');
-  const body = got.value as { topics: string[]; byId: number };
-  assert.deepEqual(body.topics, ['nerevarine', 'sixth house']);
-
-  // THE ECHO GUARD, which is the whole reason this is safe to ship. TES3MP synced topics and
-  // earned "infinite topic packet spam" for it, and the mechanism is a loop: B applies the
-  // topic, B's own diff then sees a topic it did not have, and sends it back to A. `byId`
-  // names the origin so a client can recognise its own, and the client records an applied
-  // topic in its baseline BEFORE adding it so the diff never reports it at all.
-  assert.equal(typeof body.byId, 'number', 'the relay must name who learned it');
-
-  // Proved by ORDERING rather than by waiting out a timeout for a non-event: B now learns a
-  // topic of their own, and the FIRST thing A ever receives must be that one. If A had been
-  // echoed its own, A's first event would be 'nerevarine'. This also runs in milliseconds
-  // instead of burning the full wait, and unlike a timeout it cannot pass by accident.
-  b.sendEvent('TopicsLearned', { topics: ['sleepers'] });
-  const first = await a.waitEvent('TopicsLearned');
-  assert.deepEqual((first.value as { topics: string[] }).topics, ['sleepers'],
-    "the first topics A hears about must be B's — anything else means A was echoed its own");
-
-  a.close(); b.close();
 });
 
 test('a full journal log and a large quest map fit one JournalSync frame', async () => {

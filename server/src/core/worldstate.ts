@@ -282,6 +282,13 @@ export class WorldState {
     this.questItems = new Set([...ids].map((s) => s.toLowerCase()));
   }
 
+  // OT3-51: each character's own GetDeadCount tally, kept on its doc. Absent (tests) = humans
+  // get the world tally like the peer.
+  private charKills?: { bump(charId: string, refId: string): number; all(charId: string): [string, number][] };
+  setCharacterKills(k: NonNullable<WorldState['charKills']>): void {
+    this.charKills = k;
+  }
+
   // Public-realm rules: unique NPCs respawn (the world is stateless) and therefore must
   // not be farmable. Off by default — a private or party campaign keeps vanilla loot.
   /** Turn the unowned-drop SIGNAL into a refusal. Requires clients that report acquisitions
@@ -1049,8 +1056,16 @@ export class WorldState {
       log('info', 'world.unique_no_drop', { refId: killedRecordId, cellKey });
     }
     if (killedRecordId) {
+      // The world tally is the PEER's GetDeadCount (it runs the world's scripts). A human's is
+      // their own (OT3-51): the killer's, plus every human who saw it die -- an unattributed
+      // death (a guard, a fall) still counts for whoever was there, as vanilla counts it for its
+      // one player. Someone across the map who never saw it keeps their quest step open.
       const count = this.cells.bumpKill(killedRecordId);
-      for (const p of this.roster.inWorld()) p.peer.sendEvent('WorldKillCount', { refId: killedRecordId, count });
+      for (const p of this.roster.inWorld()) {
+        if (p.system || !this.charKills) { p.peer.sendEvent('WorldKillCount', { refId: killedRecordId, count }); continue; }
+        if (p.bot || (p.id !== killer && !cellsVisible(p.cellKey, cellKey))) continue;
+        p.peer.sendEvent('WorldKillCount', { refId: killedRecordId, count: this.charKills.bump(p.charId, killedRecordId) });
+      }
       log('info', 'world.kill', { refId: killedRecordId, count, by: killer !== undefined ? player.name : 'unattributed' });
     }
   }
@@ -1800,7 +1815,8 @@ export class WorldState {
    *  fresh engine GetDeadCount read 0, so "kill X and report back" could not be completed
    *  once the session that made the kill ended. */
   sendKillCounts(player: Player): void {
-    for (const [refId, count] of this.cells.allKills()) player.peer.sendEvent('WorldKillCount', { refId, count });
+    const tally = player.system || !this.charKills ? this.cells.allKills() : this.charKills.all(player.charId);
+    for (const [refId, count] of tally) player.peer.sendEvent('WorldKillCount', { refId, count });
   }
 
   // THE CELLS A PLAYER CAN SEE, not only the one they stand in. An exterior loads its 3x3,

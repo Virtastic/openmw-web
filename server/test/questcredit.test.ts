@@ -13,7 +13,7 @@ import { tmpDataDir } from './helpers';
 
 type Sent = { name: string; body: Record<string, unknown> };
 
-function harness(opts: { shareJournal?: boolean; worldGlobals?: string[] } = {}) {
+function harness(opts: { worldGlobals?: string[] } = {}) {
   const dir = tmpDataDir();
   const players = new PlayerStore(dir, 'w1');
   const cells = new CellStore(dir);
@@ -45,7 +45,6 @@ function harness(opts: { shareJournal?: boolean; worldGlobals?: string[] } = {})
     roster,
     cells,
     players,
-    isShared: (f) => (f === 'journal' ? opts.shareJournal !== false : f === 'questVars'),
     regressAllowed: () => false,
     ...(opts.worldGlobals ? { worldGlobals: opts.worldGlobals } : {}),
   });
@@ -54,7 +53,6 @@ function harness(opts: { shareJournal?: boolean; worldGlobals?: string[] } = {})
     quests, players, add,
     events: (acct: string, name: string) => (sent.get(acct) ?? []).filter((e) => e.name === name),
     journalOf: (acct: string) => players.getCached(acct)?.journal ?? {},
-    sharedJournal: () => cells.sharedQuest().journal,
     setJournal: (acct: string, questId: string, idx: number) =>
       players.update(acct, (d) => { (d.journal ??= {})[questId] = idx; }),
     close: async () => { await players.close(); await cells.close(); },
@@ -72,7 +70,7 @@ test("a player's deed advances their own log, and nobody else's", async () => {
   w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 20));
   assert.equal(w.journalOf('bob').MQ, 20, "bob's own campaign advanced");
   assert.equal(w.journalOf('alice').MQ, 10, "alice's campaign is untouched by bob's deed");
-  assert.equal(w.events('alice', 'JournalEntry').length, 1, 'but it is relayed live');
+  assert.equal(w.events('alice', 'JournalEntry').length, 0, 'nor is it relayed to her (OT3-51)');
   await w.close();
 });
 

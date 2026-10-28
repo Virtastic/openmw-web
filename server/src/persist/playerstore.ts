@@ -144,6 +144,8 @@ export interface PlayerDoc {
   usedBooks?: string[];
   factions?: Record<string, { rank: number; reputation?: number; expelled?: boolean }>;
   bounty?: number;
+  // OT3-51: this character's GetDeadCount, per base recordId (worldstate.ts ActorDeath).
+  kills?: Record<string, number>;
 }
 
 type LivePosition = { cellKey: string; x: number; y: number; z: number };

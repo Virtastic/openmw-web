@@ -122,11 +122,10 @@ export interface FactionState {
   expelled?: boolean;
 }
 
-interface SharedQuestState {
-  journal: Record<string, number>; // questId -> arbitrated index
-  globals: Record<string, { value: number; seq: number }>; // MWScript globals + LWW seq
-  factions: Record<string, FactionState>;
-  bounty: number; // shared crime bounty
+// OT3-51: journal, factions and bounty are per character (PlayerDoc); only world globals and
+// the peer's seed stay shared. Old global.json files carrying the dropped fields are ignored.
+interface WorldSharedState {
+  globals: Record<string, { value: number; seq: number }>; // world MWScript globals + LWW seq
   // 1.7.1, STANDALONE (owner-less) worlds only: what the PEER is seeded with at join. Its own
   // doc is throwaway there, so GlobalVarSync/GlobalScriptsSync from it were always empty and
   // the world it simulates ran every gate the "not yet" way. Humans keep theirs on their docs.
@@ -134,8 +133,8 @@ interface SharedQuestState {
   scripts?: string[];
 }
 
-function emptySharedQuestState(): SharedQuestState {
-  return { journal: {}, globals: {}, factions: {}, bounty: 0 };
+function emptyWorldSharedState(): WorldSharedState {
+  return { globals: {} };
 }
 
 // M7 world state, persisted next to the M3/M4/M6 globals in world/global.json.
@@ -174,7 +173,7 @@ function emptyWorldM7State(): WorldM7State {
 interface GlobalDoc {
   nextNetIdCeiling: number;
   kills?: Record<string, number>; // M4 shared kill tally, per base recordId
-  quest?: SharedQuestState; // M6
+  quest?: WorldSharedState; // M6 (OT3-51: world part only)
   m7?: WorldM7State; // M7 clock / weather / cell-reset schedule
   // Backlog 298: the content list (file names, load order) every c:<index>:<contentFile>
   // key in the cell docs was written against. Stamped when the peer's manifest becomes
@@ -223,7 +222,7 @@ export class CellStore {
   private nextNetId = 1;
   private netIdCeiling = 1; // ids < ceiling are reserved on disk
   private kills = new Map<string, number>();
-  private quest: SharedQuestState = emptySharedQuestState();
+  private quest: WorldSharedState = emptyWorldSharedState();
   private m7: WorldM7State = emptyWorldM7State();
   private content: string[] | undefined;
   private globalLoaded: Promise<void>;
@@ -250,7 +249,7 @@ export class CellStore {
         this.netIdCeiling = g.nextNetIdCeiling;
       }
       if (g?.kills) for (const [k, v] of Object.entries(g.kills)) this.kills.set(k, v);
-      if (g?.quest) this.quest = { ...emptySharedQuestState(), ...g.quest };
+      if (g?.quest) this.quest = { globals: g.quest.globals ?? {}, ...(g.quest.campaignGlobals ? { campaignGlobals: g.quest.campaignGlobals } : {}), ...(g.quest.scripts ? { scripts: g.quest.scripts } : {}) };
       if (Array.isArray(g?.content)) this.content = g.content.map(String);
       if (g?.m7) {
         const base = emptyWorldM7State();
@@ -329,9 +328,9 @@ export class CellStore {
     return [...this.kills.entries()];
   }
 
-  // M6 shared quest state. Mutate through sharedQuest() then call saveShared() — writes
-  // are atomic and coalesced by the same fire-and-forget path as the counters.
-  sharedQuest(): SharedQuestState {
+  // World-shared globals + the peer's seed. Mutate through worldShared() then call saveShared()
+  // — writes are atomic and coalesced by the same fire-and-forget path as the counters.
+  worldShared(): WorldSharedState {
     return this.quest;
   }
 
@@ -340,7 +339,7 @@ export class CellStore {
   }
 
   // M7 world state (clock, per-region weather, cell-reset schedule). Same contract as
-  // sharedQuest(): mutate in place, then saveShared() to schedule the atomic write.
+  // worldShared(): mutate in place, then saveShared() to schedule the atomic write.
   worldM7(): WorldM7State {
     return this.m7;
   }
