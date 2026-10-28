@@ -636,9 +636,9 @@ test('password sign-in is refused when the operator turned it off', async (t) =>
 });
 
 test('an operator can add a PLAYER without handing them the dashboard', async (t) => {
-  // On a password server there is no self-serve sign-up: /auth/password only ever logs an
-  // existing account in, and login.allowRegistration gates the SSO path alone. So this form is
-  // where a friend's account comes from -- and its role list held only viewer, moderator and
+  // On a password server with registration closed this form is where a friend's account comes
+  // from (with it open, /auth/password/register lets players make their own; see
+  // password-signup.test.ts) -- and its role list held only viewer, moderator and
   // owner. Adding someone to your game therefore gave them a login to your admin dashboard.
   // '' is the same "no access" the per-account row has always understood.
   const { call, token } = await boot(t);

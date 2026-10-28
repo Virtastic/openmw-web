@@ -123,13 +123,25 @@
   }
 
   let out = '';
+  // PASSWORD SIGN-UP. The same form creates an account when the server allows it
+  // (POST /auth/password/register): a password-only server had no way in for a new player at
+  // all, so an "invite only" server's invite link opened a sign-in form nobody new could pass.
+  // The invite field and the password rule show only while creating an account.
+  const canSignup = !!(auth.allowPasswordLogin && auth.allowPasswordSignup);
   if (auth.allowPasswordLogin) {
     out += '<form id="pwForm" autocomplete="on">'
       + '<label class="fld"><span>Username</span>'
       + '<input id="pwName" name="username" autocomplete="username" required></label>'
       + '<label class="fld"><span>Password</span>'
-      + '<input id="pwPass" name="password" type="password" autocomplete="current-password" required></label>'
-      + '<button class="btn primary" type="submit" id="pwGo">Play now</button></form>';
+      + '<input id="pwPass" name="password" type="password" autocomplete="current-password" required>'
+      + '<small id="pwRule" hidden>At least 12 characters, and not your username.</small></label>'
+      + (canSignup && auth.inviteRequired
+        ? '<label class="fld" id="pwInviteFld" hidden><span>Invite code</span>'
+          + '<input id="pwInvite" name="invite" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128"></label>'
+        : '')
+      + '<button class="btn primary" type="submit" id="pwGo">Play now</button></form>'
+      + (canSignup ? '<p class="swap" id="pwSwapLine"><span id="pwSwapText">New player?</span> '
+        + '<a href="#" id="pwSwap">Create an account</a></p>' : '');
   }
   // THE INVITE LINK. An invite-only server checks the passphrase when an SSO sign-in would
   // create a new account. Players never type it: it rides in https://<server>/?invite=<code>,
@@ -161,15 +173,23 @@
     if (!a) return;
     try { sessionStorage.setItem('omwmp:prov', a.href); } catch { /* blocked */ }
   });
-  if (auth.inviteRequired && invited) {
-    // The server checks it only when the sign-in would create an account; a returning
-    // player's is ignored.
+  // One place an invite code goes, whichever field it was typed in: kept for the tab, put on
+  // every provider link (the server checks it only when a sign-in would create an account; a
+  // returning player's is ignored), and mirrored into the other field.
+  const setInvite = (raw, from) => {
+    const code = String(raw || '').trim();
+    try { if (code) sessionStorage.setItem('omwmp:invite', code); else sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ }
     for (const a of box.querySelectorAll('a.prov')) {
       const u = new URL(a.href);
-      u.searchParams.set('invite', invited.trim());
+      if (code) u.searchParams.set('invite', code); else u.searchParams.delete('invite');
       a.href = u.href;
     }
-  }
+    for (const id of ['#inviteCode', '#pwInvite']) {
+      const el = $(id);
+      if (el && el !== from && el.value.trim() !== code) el.value = code;
+    }
+  };
+  if (auth.inviteRequired && invited) setInvite(invited);
 
   // WHERE TO GET A CODE: shown on the invite form AND on a refused sign-in. The refusal note
   // replaces the form's note, so it carried no link at all (prod 2026-10-19: 36 refused sign-ins
@@ -180,7 +200,7 @@
   if (auth.allowRegistration === false) {
     note('This server is not taking new players: sign-in works for existing accounts, but new '
       + 'ones cannot be created here.');
-  } else if (auth.inviteRequired && !invited) {
+  } else if (auth.inviteRequired && !invited && providers.length) {
     // NEW PLAYERS TYPE THE CODE. An invite link is not always how a code travels (a Discord
     // post, a friend reading it out), so the code can also be typed here; it then rides on
     // every provider link exactly as an invite link's would. Returning players ignore it.
@@ -189,15 +209,7 @@
     form.innerHTML = '<label class="fld"><span>Invite code (new players only)</span>'
       + '<input id="inviteCode" name="invite" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128"></label>';
     box.prepend(form);
-    const apply = () => {
-      const code = String($('#inviteCode').value || '').trim();
-      try { if (code) sessionStorage.setItem('omwmp:invite', code); else sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ }
-      for (const a of box.querySelectorAll('a.prov')) {
-        const u = new URL(a.href);
-        if (code) u.searchParams.set('invite', code); else u.searchParams.delete('invite');
-        a.href = u.href;
-      }
-    };
+    const apply = () => setInvite($('#inviteCode').value, $('#inviteCode'));
     // THE BUTTONS ARE NEVER GREYED. 1.7.6 held them shut until a code was typed or this browser
     // remembered a sign-in, which locked returning players out on any new browser or cleared
     // storage (2026-10-26). The server refuses a new account without a code; that is the gate.
@@ -205,6 +217,37 @@
     form.addEventListener('submit', (e) => { e.preventDefault(); apply(); });
     note('This server is invite-only. New players: enter your invite code above, then pick a sign-in. '
       + 'Returning players sign in as usual.' + help);
+  } else if (auth.inviteRequired && !invited && canSignup) {
+    // Password only: the code goes in the sign-up form's own field.
+    note('This server is invite-only. New players: choose <b>Create an account</b> and enter your '
+      + 'invite code. Returning players sign in as usual.' + help);
+  }
+
+  // SIGN IN or CREATE AN ACCOUNT. Starts on "create" for somebody who arrived on an invite link
+  // and has never signed in from this browser: that is a new player, and the link was sent so
+  // they could join. Everyone else starts on sign-in.
+  let signup = false;
+  const setSignup = (on) => {
+    signup = on;
+    $('#pwPass').autocomplete = on ? 'new-password' : 'current-password';
+    $('#pwRule').hidden = !on;
+    const fld = $('#pwInviteFld');
+    if (fld) fld.hidden = !on;
+    // The top invite form (there for the provider buttons) would be a second field asking for
+    // the same code; the sign-up form's own field feeds the provider links too.
+    const top = $('#inviteForm');
+    if (top) top.hidden = on && !!fld;
+    $('#pwGo').textContent = on ? 'Create account and play' : 'Play now';
+    $('#pwSwapText').textContent = on ? 'Already have an account?' : 'New player?';
+    $('#pwSwap').textContent = on ? 'Sign in' : 'Create an account';
+  };
+  if (canSignup && $('#pwForm')) {
+    $('#pwSwap').addEventListener('click', (e) => { e.preventDefault(); setSignup(!signup); note(''); });
+    const pi = $('#pwInvite');
+    if (pi) pi.addEventListener('input', () => setInvite(pi.value, pi));
+    let returning = false;
+    try { returning = localStorage.getItem('omwmp:returning') === '1'; } catch { /* blocked */ }
+    if (auth.allowRegistration !== false && invited && !returning) setSignup(true);
   }
 
   /**
@@ -255,17 +298,27 @@
       e.preventDefault();
       const go = $('#pwGo');
       const label = go.textContent;
-      go.disabled = true; go.textContent = 'Signing in…';
+      const creating = signup;
+      go.disabled = true; go.textContent = creating ? 'Creating your account…' : 'Signing in…';
       note('');
       try {
-        const r = await fetch('/auth/password', {
+        const name = $('#pwName').value.trim();
+        const r = await fetch(creating ? '/auth/password/register' : '/auth/password', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ name: $('#pwName').value.trim(), password: $('#pwPass').value }),
+          body: JSON.stringify(creating
+            ? { name, password: $('#pwPass').value, invite: ($('#pwInvite')?.value || invited || '').trim() }
+            : { name, password: $('#pwPass').value }),
         });
         const body = await r.json();
         if (!r.ok) {
-          note(esc(body.error || 'Could not sign in.'), 'err');
+          // A refused code is a stale one: forgotten, so a retry is not sent with it again.
+          if (body.code === 'invite_required') {
+            invited = '';
+            try { sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ }
+          }
+          note(esc(body.error || (creating ? 'Could not create the account.' : 'Could not sign in.'))
+            + (body.code === 'invite_required' ? help : ''), 'err');
         } else if (!hasClient) {
           note('Signed in, but the player app has not been added to this server yet, so '
             + 'there is nothing to launch.', 'err');

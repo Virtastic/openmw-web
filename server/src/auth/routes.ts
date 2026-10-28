@@ -20,7 +20,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { Config } from '../config';
-import type { AccountStore } from '../core/accounts';
+import { accountNameProblem, type AccountStore } from '../core/accounts';
+import { passwordProblem } from '../net/admin/auth';
 import type { BanStore } from '../persist/banstore';
 import type { IpRateLimiter } from '../net/ratelimit';
 import { clientIp, isSecureRequest, readCookie, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
@@ -309,6 +310,80 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     const seg = url.pathname.split('/').filter((s) => s !== '');
     if (seg[0] !== 'auth') return also ? also(req, res, url) : false;
 
+    // PASSWORD SIGN-UP, from the front door.
+    //
+    // /auth/password below only ever signs an EXISTING account in, so a server whose only
+    // sign-in method is a password had no way for a new player to get an account: the
+    // wizard's "invite only" answer handed the owner an invite link that opened a sign-in
+    // form nobody new could pass, and the owner had to create every account by hand. This is
+    // the in-game SessionRegister (net/connection.ts handleRegister) as a page can reach it,
+    // with the same gates: the shared per-IP auth budget, registration open, the name and
+    // password rules, the invite passphrase (auth/invite.ts: its own guess budget, charged
+    // before the compare), then the bans. The password rule is the one the
+    // dashboard's own account form uses, so a self-made account is no weaker than one the
+    // owner makes. Success is exactly a password sign-in: a ticket and a locker session.
+    if (seg.length === 3 && seg[1] === 'password' && seg[2] === 'register') {
+      res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+      res.setHeader('access-control-allow-headers', 'content-type');
+      res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
+      if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+      if (req.method !== 'POST') { sendJson(res, 405, { error: 'method_not_allowed' }); return true; }
+      const ip = clientIp(req);
+      if (!limiter.allow(ip)) {
+        metrics.rateLimited.inc({ budget: 'login' });
+        sendJson(res, 429, { error: 'too many attempts, wait a minute' });
+        return true;
+      }
+      if (!config.auth.allowPasswordLogin) {
+        sendJson(res, 403, { error: 'this server does not accept password sign-in' });
+        return true;
+      }
+      if (!config.login.allowRegistration) {
+        sendJson(res, 403, { error: 'this server is not taking new players' });
+        return true;
+      }
+      const body = await readBody(req);
+      const name = String(body.name ?? '').trim();
+      const password = String(body.password ?? '');
+      const invite = String(body.invite ?? '').slice(0, 128);
+      // Name and password first: they are the player's own typing, checked against no secret,
+      // and a too-short password must not cost one of the few invite guesses (auth/invite.ts
+      // charges every attempt that carries a code). Whether a name is TAKEN is only answered
+      // after the invite, so a stranger cannot use this to list accounts.
+      const nameWhy = accountNameProblem(name);
+      if (nameWhy !== null) { sendJson(res, 400, { error: `that name ${nameWhy}` }); return true; }
+      const pwWhy = passwordProblem(password, name);
+      if (pwWhy !== null) { sendJson(res, 400, { error: `password ${pwWhy}` }); return true; }
+      const gate = checkInvite(config.login.inviteCode, invite, [`ip:${ip}`]);
+      if (gate !== 'ok') {
+        log('warn', 'auth.register_invite_refused', { ip, result: gate });
+        metrics.auth.inc({ op: 'register', result: 'AUTH_FAILED' });
+        sendJson(res, 403, gate === 'locked'
+          ? { error: 'too many invite code attempts; try again later', code: 'invite_locked' }
+          : { error: invite.trim() === '' ? 'This server needs an invite code for new accounts.'
+            : 'That invite code is not right.', code: 'invite_required' });
+        return true;
+      }
+      const key = name.toLowerCase();
+      if (bans.isIpBanned(ip) || bans.isAccountBanned(key)) {
+        log('warn', 'auth.register_banned', { account: key, ip });
+        sendJson(res, 403, { error: 'this account is banned' });
+        return true;
+      }
+      const created = await accounts.register(name, password);
+      if (created === 'exists') {
+        sendJson(res, 409, { error: 'that name is taken. If it is yours, sign in instead.' });
+        return true;
+      }
+      if (created === 'badname') { sendJson(res, 400, { error: 'that name is not usable' }); return true; }
+      const ticket = tickets.mint(key, created.name);
+      const locker = lockerSessions ? lockerSessions.mint(key) : '';
+      log('info', 'auth.register_ok', { account: created.name, ip });
+      metrics.auth.inc({ op: 'register', result: 'success' });
+      sendJson(res, 200, { ticket, account: key, name: created.name, locker, created: true });
+      return true;
+    }
+
     // PASSWORD SIGN-IN INTO THE GAME.
     //
     // Tickets could only be minted by the SSO callback, or reissued at /auth/ticket to
@@ -392,6 +467,9 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
         // page asks for it and sends it as ?invite= on /auth/<provider>/start. Without this no
         // page knew to ask, so an invite-only server refused every SSO sign-up (invite_required).
         inviteRequired: config.login.allowRegistration && config.login.inviteCode !== '',
+        // Whether the password form can also CREATE an account (POST /auth/password/register).
+        // Same switches as the in-game register: password sign-in on, registration open.
+        allowPasswordSignup: config.auth.allowPasswordLogin && config.login.allowRegistration,
         // Only a public link (an https URL), so a typo cannot turn the sign-in page into an open redirect.
         inviteHelpUrl: /^https:\/\/[^\s"<>]+$/.test(config.login.inviteHelpUrl) ? config.login.inviteHelpUrl : '',
       });

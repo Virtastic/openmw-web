@@ -1074,9 +1074,9 @@ export function adminRoutes(deps: AdminDeps) {
       if (body === undefined) return true;
       const name = String(body.name ?? '').trim();
       const password = String(body.password ?? '');
-      // '' MEANS A PLAYER, and it has to be offered here. On a password server there is no
-      // self-serve sign-up -- /auth/password only ever logs an existing account in -- so this
-      // form is where a friend's account comes from, and it could only make moderators,
+      // '' MEANS A PLAYER, and it has to be offered here. On a password server with
+      // registration closed this form is where a friend's account comes from (with it open,
+      // players can also make their own at /auth/password/register), and it could only make moderators,
       // viewers and owners. Adding someone to your game therefore handed them your dashboard.
       // The per-account row below has always understood '' as "no access"; creation now does too.
       const role = String(body.role ?? 'moderator');
