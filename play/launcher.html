@@ -1,43 +1,7 @@
 <!doctype html><html lang="en"><head><!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app | SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web --><meta charset="utf-8">
-<title>Morrowind in your browser - OpenMW compiled to WebAssembly</title>
+<title>Play</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Play Morrowind in your browser - the OpenMW engine compiled to WebAssembly. Free sample world, bring your own copy, or multiplayer. Desktop Chrome/Chromium.">
-<!-- Canonical host for every entry point. /launcher.html and /index.html (with or without the
-     ?nomw / ?src boot query) are the SAME landing experience to a search engine, so they all
-     fold into the bare root. Without this, Google indexed morrowind.virtastic.app/index.html?nomw=
-     as its own result - and because a crawler cannot run the engine, the title it showed was the
-     "Engine failed to load" overlay. -->
-<link rel="canonical" href="https://morrowind.virtastic.app/">
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="Virtastic">
-<meta property="og:title" content="Morrowind in your browser">
-<meta property="og:description" content="The OpenMW engine compiled to WebAssembly. Play at morrowind.virtastic.app - free sample world, bring your own copy, or multiplayer.">
-<meta property="og:url" content="https://morrowind.virtastic.app/">
-<meta property="og:image" content="https://morrowind.virtastic.app/og.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Morrowind in your browser - the OpenMW engine compiled to WebAssembly, at morrowind.virtastic.app">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Morrowind in your browser">
-<meta name="twitter:description" content="The OpenMW engine compiled to WebAssembly. Play at morrowind.virtastic.app.">
-<meta name="twitter:image" content="https://morrowind.virtastic.app/og.png">
-<script type="application/ld+json">
-{"@context":"https://schema.org","@type":"VideoGame",
- "name":"Morrowind in your browser (OpenMW-Web)",
- "url":"https://morrowind.virtastic.app/",
- "description":"The OpenMW engine - the open-source reimplementation of The Elder Scrolls III: Morrowind - compiled to WebAssembly and running in a desktop browser. Play the free sample world, stream your own copy of the game from disk, or join multiplayer.",
- "image":"https://morrowind.virtastic.app/og.png",
- "applicationCategory":"GameApplication",
- "operatingSystem":"Web browser (desktop Chrome/Chromium)",
- "gamePlatform":"Web browser",
- "playMode":["SinglePlayer","MultiPlayer"],
- "browserRequirements":"Requires WebAssembly, SharedArrayBuffer and WebGL2. Desktop Chrome or Chromium.",
- "isAccessibleForFree":true,
- "offers":{"@type":"Offer","price":"0","priceCurrency":"USD","availability":"https://schema.org/InStock"},
- "publisher":{"@type":"Organization","name":"Virtastic","url":"https://virtastic.app"},
- "license":"https://www.gnu.org/licenses/gpl-3.0.html"}
-</script>
-<link rel="icon" type="image/png" href="data:image/png;base64,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">
+<meta name="robots" content="noindex">
 <style>
  :root{
    /* Volcanic Vvardenfell: ash + Dwemer bronze + a low Red Mountain ember */
@@ -54,22 +18,6 @@
    -webkit-font-smoothing:antialiased; padding:clamp(66px,8vh,92px) 22px 48px;
    display:flex; justify-content:center;
  }
- /* Fixed top bar: Virtastic home (left) + social links (right). Transparent bar; only the links
-    catch clicks so it never blocks content that scrolls under it. */
- /* z above the character-select page (z-70) so the bar stays visible there too. */
- .topbar{position:fixed; top:0; left:0; right:0; z-index:80; pointer-events:none;
-   display:flex; align-items:center; justify-content:space-between; padding:13px 22px}
- .topbar > *{pointer-events:auto}
- .topbar a{display:inline-flex; align-items:center; text-decoration:none; color:var(--bronze-hi);
-   transition:color .16s ease}
- .topbar a:hover{color:var(--gold-hi)}
- .topbar a:focus-visible{outline:2px solid var(--gold); outline-offset:3px; border-radius:4px}
- .topbar .home{gap:9px; font:600 12px/1 "Optima","Gill Sans",-apple-system,sans-serif;
-   letter-spacing:.17em; text-transform:uppercase}
- .topbar .home svg{width:20px; height:20px; fill:currentColor}
- .topbar .socials{display:flex; align-items:center; gap:16px}
- .topbar .socials svg{width:18px; height:18px; fill:currentColor; display:block}
- @media (max-width:520px){ .topbar{padding:11px 15px} .topbar .home .label{display:none} .topbar .socials{gap:13px} }
  /* Red Mountain glow low on the horizon - the one atmospheric flourish. */
  body::before{
    content:''; position:fixed; inset:0; z-index:-2; pointer-events:none;
@@ -85,101 +33,7 @@
  }
  @keyframes ember{0%,100%{opacity:.82}50%{opacity:1}}
 
- .wrap{width:100%; max-width:1180px; text-align:center}
- .brand{display:inline-flex; align-items:center; gap:10px; text-decoration:none; margin:0 auto 26px;
-   color:var(--gold); transition:color .16s ease}
- .brand:hover{color:var(--gold-hi)}
- .brand svg{width:30px; height:30px; fill:currentColor}
- .brand span{font:600 17px/1 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif;
-   letter-spacing:.28em; text-transform:uppercase; padding-left:.28em}
- .brand:focus-visible{outline:2px solid var(--gold); outline-offset:4px; border-radius:5px}
-
- /* --- Masthead --- */
- .eyebrow{font-size:11.5px; letter-spacing:.26em; text-transform:uppercase; font-weight:600;
-   color:var(--bronze-hi); margin:0 0 18px}
- h1{margin:0; font-family:"Hoefler Text","Baskerville","Palatino Linotype",Palatino,Georgia,serif;
-   font-weight:600; font-size:clamp(40px,6.6vw,66px); line-height:1.02; letter-spacing:.005em;
-   color:var(--ink); text-shadow:0 1px 0 rgba(0,0,0,.5), 0 0 34px rgba(211,168,78,.10)}
- .deck{margin:20px auto 0; max-width:56ch; color:var(--muted); font-size:16.5px}
-
- /* Engraved divider */
- .rule{display:flex; align-items:center; gap:16px; max-width:560px; margin:30px auto 42px}
- .rule::before,.rule::after{content:''; height:1px; flex:1;
-   background:linear-gradient(90deg,transparent,var(--bronze) 60%,transparent)}
- .rule::after{background:linear-gradient(90deg,transparent,var(--bronze) 40%,transparent)}
- .diamond{width:7px; height:7px; transform:rotate(45deg); border:1px solid var(--gold); flex:none}
-
- /* --- Choice cards, styled as inscribed artifact plaques --- */
- /* --card-cols is set from the number of VISIBLE cards (see the experimental gate): a fixed
-    four columns left a hole and an off-centre row whenever a card was hidden. */
- .cards{display:grid; grid-template-columns:repeat(var(--card-cols,4),1fr); gap:22px; align-items:stretch}
- /* Four across on a full-width desktop, so the entry points read as one row of choices
-    rather than three and an orphan. Two is the honest middle: four in ~1180px would give
-    each card under 280px and the copy starts wrapping to ribbons. */
- @media (max-width:1100px){ .cards{grid-template-columns:repeat(2,1fr)} }
- @media (max-width:900px){ .cards{grid-template-columns:1fr; max-width:440px; margin-left:auto; margin-right:auto} }
- /* [hidden] must win over this: .card sets display:flex, which outranks the browser's
-    default [hidden]{display:none} and left a 'hidden' card fully visible. */
- .card[hidden]{display:none !important}
- .card{
-   position:relative; padding:34px 30px 30px;
-   background:linear-gradient(160deg,var(--panel-2),var(--panel));
-   border:1px solid rgba(138,104,56,.38); border-radius:7px;
-   display:flex; flex-direction:column; align-items:center; gap:14px;
-   transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease;
- }
- /* Corner brackets - the signature. Kindle from bronze to gold on hover/focus. */
- .card::after{
-   content:''; position:absolute; inset:13px; pointer-events:none; opacity:.7;
-   --c:var(--bronze); transition:opacity .18s ease;
-   background:
-     linear-gradient(var(--c),var(--c)) left top/17px 1.5px no-repeat,
-     linear-gradient(var(--c),var(--c)) left top/1.5px 17px no-repeat,
-     linear-gradient(var(--c),var(--c)) right top/17px 1.5px no-repeat,
-     linear-gradient(var(--c),var(--c)) right top/1.5px 17px no-repeat,
-     linear-gradient(var(--c),var(--c)) left bottom/17px 1.5px no-repeat,
-     linear-gradient(var(--c),var(--c)) left bottom/1.5px 17px no-repeat,
-     linear-gradient(var(--c),var(--c)) right bottom/17px 1.5px no-repeat,
-     linear-gradient(var(--c),var(--c)) right bottom/1.5px 17px no-repeat;
- }
- .card.actionable{cursor:pointer}
- .card.actionable:hover{transform:translateY(-3px); border-color:rgba(211,168,78,.55);
-   box-shadow:0 18px 40px rgba(0,0,0,.45)}
- .card.actionable:hover::after{--c:var(--gold-hi); opacity:1}
- .card.disabled{opacity:.5}
- .card:focus-visible{outline:2px solid var(--gold); outline-offset:3px}
-
- .glyph{color:var(--bronze-hi); width:46px; height:46px; transition:color .18s ease}
- .card.actionable:hover .glyph{color:var(--gold-hi)}
- .glyph svg{width:100%; height:100%; display:block}
- /* Top left, mirroring the help button's 19px inset on the right. It clears the corner
-    bracket without needing to dodge it: the brackets' arms sit at 13-15px, and this starts at
-    19px, below the horizontal arm and right of the vertical one.
-    Kept NARROW on purpose — at four across a card is 279px and the centred glyph begins at
-    117px, so a wider pill runs into it. Measured, not guessed. */
- .pill{position:absolute; top:19px; left:19px; z-index:3; padding:2px 7px; border-radius:999px;
-   border:1px solid rgba(138,104,56,.45); font-size:8px; letter-spacing:.1em;
-   text-transform:uppercase; font-weight:600; color:var(--faint); opacity:.85}
- .kicker{font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; font-weight:600; color:var(--faint)}
- .card h2{margin:0; font-family:"Hoefler Text","Baskerville","Palatino Linotype",Palatino,Georgia,serif;
-   font-weight:600; font-size:23px; letter-spacing:.01em; color:var(--ink)}
- .card p{margin:0 auto; color:var(--muted); font-size:14.5px; line-height:1.55; max-width:34ch}
- .card p.lead{flex:1}
- .card .micro{font-size:12px; color:var(--faint); margin-top:-2px}
- .card .micro b{color:var(--muted)}
- .card b{color:var(--ink); font-weight:600}
-
- /* Per-card "?" help icon (top-right). Sits above the tile's own click; opens a detail modal. */
- /* Sit just INSIDE the corner bracket (the ::after frame is inset 13px with 17px arms), not over it. */
- .help-btn{position:absolute; top:19px; right:19px; z-index:3; width:24px; height:24px;
-   display:flex; align-items:center; justify-content:center; border-radius:50%;
-   border:1px solid var(--bronze); background:rgba(8,6,3,.5); color:var(--bronze-hi);
-   font:600 13px/1 Georgia,"Times New Roman",serif; cursor:pointer;
-   transition:color .16s ease, border-color .16s ease, background .16s ease}
- .help-btn:hover{color:var(--gold-hi); border-color:var(--gold-hi); background:rgba(211,168,78,.14)}
- .help-btn:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
-
- /* Help modal (deep docs per card). */
+ /* Error modal. */
  .modal-bd{position:fixed; inset:0; z-index:60; display:none; padding:24px;
    align-items:flex-start; justify-content:center; overflow-y:auto;
    background:rgba(6,5,3,.74); -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px)}
@@ -290,71 +144,8 @@
    border:1px solid var(--line); color:var(--ink); font:14px/1.2 -apple-system,"Segoe UI",sans-serif}
  .cs-create input:focus{outline:none; border-color:var(--gold)}
  .cs-actions{display:flex; gap:10px; justify-content:center; margin-top:26px}
- .mp-glyph{width:44px; height:44px; margin:2px auto 14px; color:var(--bronze-hi)}
- .mp-glyph svg{width:100%; height:100%; display:block}
- .mp-providers{display:flex; flex-direction:column; gap:9px; margin-top:22px}
- .mp-prov.soon{background:rgba(255,255,255,.04); color:var(--faint); border-color:var(--line);
-   cursor:default; position:relative}
- .mp-prov.soon:hover{background:rgba(255,255,255,.04); transform:none}
- .mp-prov.soon svg{opacity:.4}
- .mp-prov .soon-tag{position:absolute; right:14px; font:600 9px/1 "Optima",sans-serif;
-   letter-spacing:.14em; text-transform:uppercase; color:var(--faint); border:1px solid var(--line);
-   border-radius:3px; padding:3px 6px}
- .mp-prov{display:flex; align-items:center; justify-content:center; gap:11px; width:100%;
-   box-sizing:border-box; padding:12px 16px; border-radius:5px; cursor:pointer;
-   font:600 14px/1 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; letter-spacing:.01em;
-   background:#f6f4ee; color:#20242b; border:1px solid #d9d3c4;
-   transition:background .14s ease, transform .06s ease}
- .mp-prov:hover{background:#fff} .mp-prov:active{transform:translateY(1px)}
- .mp-prov:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
- .mp-prov svg{width:19px; height:19px; flex:none}
- .mp-pw{margin-top:6px}
- .mp-pw #mp-pw-go{margin-top:18px}
- .mp-fine{font-size:11.5px; color:var(--faint); line-height:1.55; margin:16px 0 0}
-
- /* Action cue - the whole tile is clickable, so this is a text prompt, not a button. */
- .go{align-self:center; margin-top:10px; display:inline-flex; align-items:center; gap:8px;
-   font:600 12.5px/1 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif;
-   letter-spacing:.12em; text-transform:uppercase; color:var(--gold); transition:color .16s ease, gap .16s ease}
- .go .arw{font-size:14px; transform:translateY(-.5px)}
- .card.actionable:hover .go{color:var(--gold-hi); gap:12px}
- /* Keep the cue gold even when the tile is disabled (e.g. no folder-picker API). */
- .card.disabled .go{color:var(--gold)}
-
  .note{margin-top:4px; font-size:13px; min-height:18px; color:var(--muted)}
  .note.err{color:var(--err)} .note.ok{color:var(--ok)} .note.muted{color:var(--muted)}
-
- /* --- Return-visit plaque --- */
- .continue{display:none; align-items:center; justify-content:space-between; gap:16px;
-   margin:0 0 24px; padding:15px 20px; background:linear-gradient(160deg,var(--panel-2),var(--panel));
-   border:1px solid rgba(211,168,78,.45); border-radius:6px; text-align:left}
- .continue.show{display:flex}
- .continue .txt{font-size:14px; color:var(--muted)}
- .continue .txt b{color:var(--gold); font-weight:600}
-
- /* "This needs a desktop browser" panel. Hidden unless the capability check fails. */
- .unsupported{margin:0 0 26px; padding:24px 22px; text-align:left;
-   background:linear-gradient(160deg,var(--panel-2),var(--panel));
-   border:1px solid rgba(211,168,78,.45); border-radius:7px}
- .unsupported h2{margin:0 0 8px; font-size:20px; color:var(--gold)}
- .unsupported .lead{margin:0; font-size:14.5px; line-height:1.6; color:var(--muted)}
- .unsupported .lead b{color:var(--ink); font-weight:600}
- .unsupported .u-actions{display:flex; flex-wrap:wrap; gap:10px; margin-top:18px}
- /* text-decoration:none because two of these are anchors, and .btn alone does not reset it. */
- .unsupported .u-actions .btn{flex:1 1 auto; text-align:center; justify-content:center;
-   text-decoration:none}
- .btn-solid{background:var(--gold); color:#1a140a; border-color:var(--gold)}
- .btn-solid:hover{background:var(--gold-hi); border-color:var(--gold-hi); color:#1a140a}
- .unsupported .micro{margin:12px 0 0; font-size:12px; color:var(--faint); min-height:1em}
- /* Cards stay usable, just visibly demoted, so a false negative never locks anyone out. */
- .cards.demoted{opacity:.5}
- .cards.demoted:hover,.cards.demoted:focus-within{opacity:1}
-
- /* --- Footer --- */
- footer{margin:44px auto 0; padding-top:22px; border-top:1px solid rgba(138,104,56,.22);
-   color:var(--faint); font-size:12.5px; line-height:1.7; max-width:64ch}
- footer a{color:var(--bronze-hi); text-decoration:none; border-bottom:1px solid rgba(138,104,56,.5)}
- footer a:hover{color:var(--gold)}
 
  /* --- Entrance --- */
  @keyframes rise{from{opacity:0; transform:translateY(16px)} to{opacity:1; transform:none}}
@@ -364,214 +155,20 @@
    *,body::before{animation:none!important}
    .reveal{opacity:1; transform:none}
  }
-/* DOOR MODE (/join): only the sign-in steps, never the demo chooser behind them. */
-html.door .topbar, html.door .wrap { display:none !important }
 </style>
 <script>
- // DOOR MODE. A self-hosted server's front door (play.html) signs a player in and hands the
- // ticket to /join, which is THIS page with the showcase stripped away: the username, character
- // and world steps on the bare ground, nothing to choose between. The launcher is the hosted
- // site's demo chooser, and a player who came to play on someone's server must never land on it.
- //
- // Remembered for the tab, because the game's own exits are hard-wired to launcher.html
- // (#characters to pick another character); on a door tab those come straight back here.
- // Runs in <head>, before anything paints, so the chooser never flashes.
- (function(){ try {
-   var door = location.pathname === '/join';
-   if (!door && sessionStorage.getItem('omw-door') === '1'){ location.replace('/join' + location.hash); return; }
-   if (!door) return;
-   sessionStorage.setItem('omw-door', '1');
-   document.documentElement.classList.add('door');
-   document.title = 'Play'; // not the showcase's "Morrowind in your browser" pitch
-   // Nothing to continue here without a ticket or a session to return to: back to the door.
-   if (!/[#&](mpticket|mperror|characters)\b/.test(location.hash)) location.replace('/');
- } catch(e){} })();
+ // THE DOOR (/join). The front door (/) signs a player in and hands the ticket here: the
+ // username, character and world steps, nothing else. Runs in <head>, before anything paints.
+ // Nothing to continue without a ticket, an error or a session to return to: back to the door.
+ if (!/[#&](mpticket|mperror|characters)\b/.test(location.hash)) location.replace('/');
 </script>
 </head>
 <body>
-<header class="topbar">
-  <a class="home" href="https://virtastic.app" target="_blank" rel="noopener" aria-label="Virtastic home">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
-    <span class="label">Virtastic</span>
-  </a>
-  <nav class="socials" aria-label="Virtastic on social media">
-    <a href="https://github.com/Virtastic" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
-    <a href="https://discord.gg/PzFfDkbSue" target="_blank" rel="noopener" aria-label="Discord" title="Discord"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/></svg></a>
-    <a href="https://www.linkedin.com/company/virtastic" target="_blank" rel="noopener" aria-label="LinkedIn" title="LinkedIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></a>
-    <a href="https://www.patreon.com/virtastic" target="_blank" rel="noopener" aria-label="Patreon" title="Patreon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 .48v23.04h4.22V.48zm15.385 0c-4.764 0-8.641 3.88-8.641 8.65 0 4.755 3.877 8.623 8.641 8.623 4.75 0 8.615-3.868 8.615-8.623C24 4.36 20.136.48 15.385.48z"/></svg></a>
-    <a href="https://www.reddit.com/r/virtastic" target="_blank" rel="noopener" aria-label="Reddit" title="Reddit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z"/></svg></a>
-    <a href="https://www.youtube.com/@Virtastic-Apps" target="_blank" rel="noopener" aria-label="YouTube" title="YouTube"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></a>
-    <a href="https://ko-fi.com/virtastic" target="_blank" rel="noopener" aria-label="Ko-fi" title="Ko-fi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.658-3.734 4.352.24 7.422-2.831 6.649-6.916zm-11.062 3.511c-1.246 1.453-4.011 3.976-4.011 3.976s-.121.119-.31.023c-.076-.057-.108-.09-.108-.09-.443-.441-3.368-3.049-4.034-3.954-.709-.965-1.041-2.7-.091-3.71.951-1.01 3.005-1.086 4.363.407 0 0 1.565-1.782 3.468-.963 1.904.82 1.832 3.011.723 4.311zm6.173.478c-.928.116-1.682.028-1.682.028V7.284h1.77s1.971.551 1.971 2.638c0 1.913-.985 2.667-2.059 3.015z"/></svg></a>
-  </nav>
-</header>
-<div class="wrap">
-  <div class="brand reveal d1"><span>OpenMW-Web</span></div>
-  <h1 class="reveal d1">Morrowind in your browser</h1>
-  <p class="deck reveal d2">Play the free sample world, bring your own copy of Morrowind, or sign in
-    to play multiplayer with friends. The single-player modes run entirely on your machine.</p>
-  <div class="rule reveal d2"><span class="diamond"></span></div>
-
-  <!-- Return-visit fast path: shown when a previously-picked folder is remembered. -->
-  <div class="continue reveal" id="continue">
-    <div class="txt">Remembered install: <b id="continue-name">Data Files</b></div>
-    <button class="btn btn-ghost" id="continue-btn">Continue <span class="arw">▸</span></button>
-  </div>
-
-  <!-- Shown only when the engine cannot run here (phones, and any browser without the APIs it
-       needs). Most inbound traffic is mobile, and without this a phone visitor taps "Start the
-       demo", gets a black tab, and reasonably concludes the project is broken. Offer the things
-       that DO work on a phone instead of a dead end. The cards below stay reachable on purpose:
-       detection can be wrong, and being wrong should cost prominence, not access. -->
-  <div class="unsupported" id="unsupported" hidden>
-    <h2>This needs Chrome or Edge on a computer</h2>
-    <p class="lead">The game runs on your own machine, in <b>Chrome</b> or <b>Edge</b> 133+
-      (or Brave) on a desktop or laptop. Until you are there you can still:</p>
-    <div class="u-actions">
-      <a class="btn btn-solid" href="https://www.youtube.com/watch?v=iqZ20MtdD4I"
-         target="_blank" rel="noopener">Watch it running <span class="arw">▸</span></a>
-      <a class="btn btn-ghost" href="https://discord.gg/PzFfDkbSue"
-         target="_blank" rel="noopener">Join the Discord</a>
-      <button class="btn btn-ghost" id="send-link" type="button">Send myself the link</button>
-    </div>
-    <p class="micro" id="send-note" aria-live="polite"></p>
-  </div>
-
-  <div class="cards">
-    <div class="card actionable reveal d3" id="card-sample" role="button" tabindex="0">
-      <button class="help-btn" id="help-sample" type="button" aria-label="About the example world">?</button>
-      <div class="glyph" aria-hidden="true">
-        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-          <circle cx="24" cy="24" r="17"/>
-          <circle cx="24" cy="24" r="2.2" fill="currentColor" stroke="none"/>
-          <path d="M24 7 27 24 24 41 21 24Z"/>
-          <path d="M7 24 24 21 41 24 24 27Z"/>
-        </svg>
-      </div>
-      <div class="kicker">Free sample</div>
-      <h2>The example world</h2>
-      <p class="lead">A small demo island that ships with OpenMW: a town of NPCs, guards and roaming
-         creatures. No copy of Morrowind required.</p>
-      <div class="go">Start the demo <span class="arw">▸</span></div>
-    </div>
-
-    <div class="card actionable reveal d4" id="card-local" role="button" tabindex="0">
-      <button class="help-btn" id="help-local" type="button" aria-label="How to bring your own Morrowind">?</button>
-      <div class="glyph" aria-hidden="true">
-        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-          <rect x="9" y="12" width="30" height="8" rx="1.5"/>
-          <rect x="9" y="22" width="30" height="8" rx="1.5"/>
-          <rect x="9" y="32" width="24" height="7" rx="1.5"/>
-          <line x1="14" y1="12" x2="14" y2="20"/>
-          <line x1="14" y1="22" x2="14" y2="30"/>
-        </svg>
-      </div>
-      <div class="kicker">Your copy</div>
-      <h2>Bring your own Morrowind</h2>
-      <p class="lead">Point to the <b>Data Files</b> folder from a legal install. Files stream straight
-         from your disk on demand, with no multi-gigabyte upload or copy. <b>Tribunal</b>, <b>Bloodmoon</b>
-         and any <b>mods</b> (.esp/.esm/.bsa) in the folder are detected and loaded automatically.</p>
-      <div class="note" id="local-note"></div>
-      <div class="go" id="local-go">Choose Data Files <span class="arw">▸</span></div>
-    </div>
-
-    <!-- Shown INSTEAD of the folder picker when this server hosts its own copy of the game.
-         The two are mutually exclusive on purpose: offering both would present a choice the
-         player cannot meaningfully make, and the hosted copy is the one that works with no
-         setup. Hidden until the probe below confirms the data is actually there, so a server
-         without it never advertises a card that would dead-end. -->
-    <div class="card actionable reveal d4" id="card-hosted" role="button" tabindex="0" hidden>
-      <button class="help-btn" id="help-hosted" type="button" aria-label="About playing this server's copy">?</button>
-      <div class="glyph" aria-hidden="true">
-        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-          <rect x="8" y="10" width="32" height="9" rx="2"/>
-          <rect x="8" y="21" width="32" height="9" rx="2"/>
-          <circle cx="13.5" cy="14.5" r="1.4" fill="currentColor" stroke="none"/>
-          <circle cx="13.5" cy="25.5" r="1.4" fill="currentColor" stroke="none"/>
-          <path d="M24 32v6M18 38h12"/>
-        </svg>
-      </div>
-      <div class="kicker">Hosted here</div>
-      <h2>Play this server's copy</h2>
-      <p class="lead">This server hosts Morrowind, so you can play the full game with
-         <b>nothing to install and no folder to pick</b>. Files are read from the server as the
-         world needs them, not downloaded up front, and your saves stay in this browser.</p>
-      <div class="note" id="hosted-note"></div>
-      <div class="go" id="hosted-go">Play now <span class="arw">▸</span></div>
-    </div>
-
-    <!-- Multiplayer. Deliberately the THIRD card, not the first: the single-player paths
-         must stay one click away, and a login wall in front of the demo is exactly what
-         kills a browser port's first impression. -->
-    <div class="card actionable reveal d4" id="card-mp" role="button" tabindex="0" hidden>
-      <button class="help-btn" id="help-mp" type="button" aria-label="About multiplayer">?</button>
-      <div class="glyph" aria-hidden="true">
-        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-          <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
-          <path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/>
-        </svg>
-      </div>
-      <div class="kicker">Play together</div>
-      <h2>Multiplayer</h2>
-      <p class="lead">Sign in, pick a character, and play solo, with friends, or in the public
-         world. Your character follows you between all three.</p>
-      <div class="go">Sign in <span class="arw">▸</span></div>
-      <div class="pill">Experimental</div>
-    </div>
-
-    <!-- Cloud locker: the same sign-in and the same uploaded library as multiplayer, without
-         the multiplayer. The locker was always "your files, streamed back to you on any
-         device" (docs/LEGAL.md §2); this is simply the door to it that does not require
-         other people. -->
-    <div class="card actionable reveal d4" id="card-cloud" role="button" tabindex="0">
-      <button class="help-btn" id="help-cloud" type="button" aria-label="About playing from anywhere">?</button>
-      <div class="glyph" aria-hidden="true">
-        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-          <path d="M14 34h20a7 7 0 0 0 .6-13.97A10 10 0 0 0 15.2 18.4 6.6 6.6 0 0 0 14 34z"/>
-          <path d="M24 22v10M20 28l4 4 4-4"/>
-        </svg>
-      </div>
-      <div class="kicker">Your copy, anywhere</div>
-      <h2>Cloud locker</h2>
-      <p class="lead">Sign in once and upload your Morrowind. It is waiting on any machine you
-         sign in from, and your saves go with it. Single player.</p>
-      <div class="go">Sign in <span class="arw">▸</span></div>
-    </div>
-  </div>
-
-  <footer class="reveal d5">
-    Morrowind game data is not included or distributed here. Supply your own legally-obtained copy.
-    openmw-web is based on the <a href="https://openmw.org/" target="_blank" rel="noopener">OpenMW</a>
-    engine, effectively rebuilt in WebAssembly to run in the browser, and is released under the GPLv3.
-    Loading your own files needs a Chromium browser (Chrome, Edge or Brave) on desktop.
-    <br><br>
-    WASM port &copy; 2025&ndash;2026 <a href="https://virtastic.app" target="_blank" rel="noopener">Virtastic</a>
-    &middot; <a href="https://github.com/Virtastic/openmw-web" target="_blank" rel="noopener">Source code &amp; releases</a>
-    &middot; <a href="https://github.com/Virtastic/openmw-web/issues" target="_blank" rel="noopener">Report a bug</a>
-  </footer>
-</div>
-
-<!-- Help modal (populated per card by JS) -->
+<!-- Error modal (launcherError) -->
 <div class="modal-bd" id="modal-bd" role="dialog" aria-modal="true" aria-labelledby="modal-title">
   <div class="modal">
     <button class="m-close" id="modal-close" type="button" aria-label="Close">&times;</button>
     <div id="modal-body"></div>
-  </div>
-</div>
-
-<!-- Multiplayer sign-in. A themed tile, not a browser prompt(): pick the server, then pick
-     an identity provider ("Continue with Google"). The SSO redirect happens on button click. -->
-<div class="modal-bd" id="mp-bd" role="dialog" aria-modal="true" aria-labelledby="mp-title">
-  <div class="modal mp-modal">
-    <div class="mp-glyph" id="mp-glyph" aria-hidden="true">
-      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-        <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
-        <path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/>
-      </svg>
-    </div>
-    <div class="m-kicker" id="mp-kicker">Multiplayer</div>
-    <h3 id="mp-title">Sign in to play together</h3>
-    <div id="mp-providers" class="mp-providers"></div>
-    <p class="note" id="mp-note"></p>
   </div>
 </div>
 
@@ -612,7 +209,7 @@ html.door .topbar, html.door .wrap { display:none !important }
     <div class="cs-grid" id="cs-grid"></div>
     <p class="note" id="cs-note"></p>
     <div class="cs-actions">
-      <button id="cs-back" class="btn btn-ghost" type="button">‹ Back to launcher</button>
+      <button id="cs-back" class="btn btn-ghost" type="button">‹ Back</button>
     </div>
   </div>
 </div>
@@ -636,10 +233,8 @@ html.door .topbar, html.door .wrap { display:none !important }
 <script>
  'use strict';
  const $ = (id) => document.getElementById(id);
- // Door mode (/join, see the <head>): every "back out to the launcher" goes to the server's
- // own front door instead, since on a door there is no launcher to go back to.
- const DOOR = document.documentElement.classList.contains('door');
- function leaveDoor(){ if (DOOR) location.href = '/'; }
+ // Every "back out" goes to the server's front door.
+ function leaveDoor(){ location.href = '/'; }
  // Themed error dialog (reuses the .modal styling) instead of a raw browser alert().
  function launcherError(title, msg){
    const body = $('modal-body');
@@ -649,426 +244,17 @@ html.door .topbar, html.door .wrap { display:none !important }
    $('modal-bd').classList.add('show');
    try { $('modal-close').focus(); } catch(e){}
  }
- const hasFSA = typeof window.showDirectoryPicker === 'function';
 
- // --- Help modals: deep, docs-style detail per card, opened by the "?" icons. ---
- const HELP = {
-   cloud: `
-     <div class="m-kicker">Your copy, anywhere &middot; single sign-on</div>
-     <h3 id="modal-title">Cloud locker</h3>
-     <p>Upload your own Morrowind once. After that it is waiting on any machine you sign in
-        from, and your saves go with it. This is single player: no other people, no world to
-        join.</p>
-     <h4>What gets uploaded</h4>
-     <p>Only the retail files you already own, checked against a manifest as they go up.
-        They are stored under your account alone, streamed back only to you, and you can
-        export or delete the lot whenever you like.</p>
-     <h4>Saves</h4>
-     <p>A save goes up when the game writes one, which means when you save, quicksave, or rest
-        with autosave on. Nothing is uploaded while you are simply playing.</p>
-     <h4>Already used multiplayer?</h4>
-     <p>Same account, same library. If you uploaded there, this just works, and the other way
-        round.</p>`,
-   mp: `
-     <!-- No "single sign-on" here: how you sign in depends on how THIS server was set up, and
-          describeThisServer() says so a few lines down once it has asked. -->
-     <div class="m-kicker">Play together</div>
-     <h3 id="modal-title">Multiplayer</h3>
-     <p>One account, one character, three ways to play: <b>solo</b> in your own private world,
-        in a <b>party</b> with friends, or in the shared <b>public</b> world. Your character and
-        progress follow you between all three, on any device.</p>
-     <h4>Signing in</h4>
-     <p id="mp-help-signin">Signing in is what lets your character and saves persist and sync.</p>
-     <h4>Your game data</h4>
-     <p id="mp-help-data">Checking how this server supplies the game…</p>
-     <div class="m-hr"></div>
-     <p style="margin-top:16px" id="mp-help-go">Press <b>Sign in</b> to get started.</p>`,
-   sample: `
-     <div class="m-kicker">Free sample &middot; no download of the game</div>
-     <h3 id="modal-title">The example world</h3>
-     <h4>What it is</h4>
-     <p>A small, self-contained demo world that ships <b>with the OpenMW engine itself</b>. It is
-        freely distributable, and not Bethesda content. It exists so you can try the engine in your browser
-        <b>without owning Morrowind</b>.</p>
-     <h4>What you'll see</h4>
-     <p>A little island town populated with NPCs, town guards and roaming creatures that actually
-        fight. Enough to show off rendering, lighting, physics, AI and combat running live on your
-        machine. It's a tech demo, not a full quest.</p>
-     <h4>Controls (OpenMW defaults)</h4>
-     <ul>
-       <li><b>Move</b>: W A S D &middot; <b>Look</b>: mouse &middot; <b>Jump</b>: Space</li>
-       <li><b>Attack</b>: hold left mouse &middot; <b>Interact / pick up</b>: left click</li>
-       <li><b>Inventory</b>: I &middot; <b>Menu / back</b>: Esc &middot; <b>Console</b>: backtick <code>\`</code></li>
-     </ul>
-     <h4>Privacy &amp; performance</h4>
-     <p>Everything runs locally in your browser, nothing is uploaded. First load fetches the engine
-        (~50&nbsp;MB, cached afterwards). Best on a Chromium browser (Chrome, Edge, Brave) on desktop.</p>
-     <div class="m-hr"></div>
-     <p style="margin-top:16px">Just press <b>Start the demo</b>: no setup needed.</p>`,
-   hosted: `
-     <div class="m-kicker">This server &middot; nothing to install</div>
-     <h3 id="modal-title">Play this server's copy</h3>
-     <p>This server hosts its own copy of Morrowind, so you can play the full game without
-        owning a copy on this machine and without picking a folder.</p>
-
-     <h4>What actually happens</h4>
-     <p>Nothing is uploaded and nothing is installed. The game files are read from the server
-        <b>on demand, in small pieces</b> — the engine asks for the few megabytes it needs as
-        you move through the world, rather than downloading the whole game up front. What you
-        do fetch is cached by the browser, so a second visit starts much faster.</p>
-
-     <h4>Your saves</h4>
-     <p>Saves are written in your browser, on this machine. They are yours and they are not
-        sent anywhere. Clearing site data clears them, so export anything you care about.</p>
-
-     <h4>If you own Morrowind</h4>
-     <p>Pointing at your own <b>Data&nbsp;Files</b> folder is still the better experience — your
-        mods and expansions load, and nothing streams over the network. That option appears
-        here whenever this server has no copy of its own.</p>
-
-     <div class="m-hr"></div>
-     <p style="margin-top:16px">Availability is the server operator's choice, not a setting you
-        control: this card only appears when a copy is actually present.</p>`,
-   local: `
-     <div class="m-kicker">Your copy &middot; nothing is uploaded</div>
-     <h3 id="modal-title">Bring your own Morrowind</h3>
-     <p>Own Morrowind? Point the browser at your installed copy and it plays in-engine, streaming
-        files straight from your disk, <b>no upload, no multi-gigabyte copy</b>. Here's the whole flow.</p>
-
-     <h4>1 · Find your Data&nbsp;Files folder</h4>
-     <p>It's inside your Morrowind install:</p>
-     <ul>
-       <li><b>Steam</b>: <code>...\\steamapps\\common\\Morrowind\\Data Files</code><br>
-           (Steam → right-click Morrowind → Manage → Browse local files)</li>
-       <li><b>GOG</b>: <code>C:\\GOG Games\\Morrowind\\Data Files</code></li>
-       <li><b>Disc / other</b>: wherever you installed it, the <code>Data Files</code> subfolder.</li>
-     </ul>
-     <p>Tip: you can also just pick the <b>Morrowind</b> folder itself, and it finds
-        <code>Data Files</code> inside.</p>
-
-     <h4>2 · Windows: copy it somewhere the browser can open</h4>
-     <p>Browsers refuse to open folders inside a protected system location, which on Windows includes
-        <code>Program&nbsp;Files</code> and <code>Program&nbsp;Files&nbsp;(x86)</code>. <b>Steam's default
-        library lives there</b> (<code>C:\\Program Files (x86)\\Steam\\</code>), so a default Steam copy
-        of Morrowind gets blocked with <i>"can't open this folder because it contains system files."</i>
-        This is a browser rule, so it is the same in Chrome and Edge; switching browsers does not help.</p>
-     <p><b>The fix:</b> copy your whole <code>Data&nbsp;Files</code> folder to a normal location such as
-        <b>Documents</b>, <b>Desktop</b>, or another drive, then point the picker at that copy. GOG installs
-        under <code>C:\\GOG Games\\</code> are already fine and don't need copying. Once the game is running,
-        your saves are written next to that copy, so keep it around.</p>
-
-     <h4>3 · Let the browser open it</h4>
-     <p>Click <b>Choose Data Files</b>, select the folder, and when the browser asks to <b>edit</b> the
-        folder choose <b>Edit files</b>. Nothing leaves your machine; this lets the engine read your
-        game assets on demand and write your saves back to the folder (see below). Your pick is
-        remembered for next time.</p>
-
-     <h4>4 · Make sure it's a complete copy</h4>
-     <p>A full install has loose <code>Sound</code>, <code>Music</code> and <code>Video</code> folders
-        <b>inside Data Files</b> (they are <b>not</b> stored in <code>Morrowind.bsa</code>). If they're
-        missing, the game still runs but with <b>no sound, voices, music or intro video</b>: so we
-        check and warn you before starting rather than leaving you confused. A normal Steam/GOG
-        install has them.</p>
-
-     <h4>Your saves live on disk</h4>
-     <p>Games you save are written to an <code>openmw-web-saves</code> folder <b>inside the folder you
-        picked</b>: real files on your drive, <b>not</b> in the browser. Clearing your browser history
-        or cache won't touch them, they're there next time you play, and you can back them up or copy
-        them like any other file. (This is why Chrome asks to <b>edit</b> the folder, not just view it.)</p>
-
-     <h4>Expansions &amp; mods</h4>
-     <p><b>Tribunal</b> and <b>Bloodmoon</b> are detected and loaded automatically. Any mod
-        <code>.esp</code>/<code>.esm</code>/<code>.bsa</code> files you've dropped into the folder are
-        picked up too (alphabetical load order).</p>
-
-     <h4>Requirements &amp; privacy</h4>
-     <ul>
-       <li><b>Chromium browser on desktop</b> (Chrome, Edge, Brave), this uses the File System Access
-           API, which Firefox and Safari don't support.</li>
-       <li><b>Nothing is uploaded.</b> Files stream from your disk as the game needs them. Your pick is
-           remembered for next time as a revocable browser permission, no copy is stored on any server.</li>
-     </ul>
-
-     <h4>If something's off</h4>
-     <ul>
-       <li><b>"Can't open this folder because it contains system files"</b>: your game is in a
-           location the browser refuses to open. Windows blocks <code>Program&nbsp;Files</code> and
-           <code>Program&nbsp;Files&nbsp;(x86)</code>, and <b>Steam's default library lives there</b>
-           (<code>C:\\Program Files (x86)\\Steam\\</code>). This is the same in Chrome and Edge, so
-           switching browsers won't help. <b>Fix:</b> copy the <code>Data&nbsp;Files</code> folder to
-           your <b>Documents</b> or <b>Desktop</b> (or any non-system folder, e.g. another drive) and
-           pick it there.</li>
-       <li><b>"Doesn't look like a Data Files folder"</b>: pick the folder that contains
-           <code>Morrowind.esm</code> and <code>Morrowind.bsa</code>.</li>
-       <li><b>No sound / no intro</b>: your copy is missing the loose <code>Sound</code>/<code>Video</code> folders.</li>
-       <li><b>Permission denied</b>: reopen the picker and choose <b>View files</b>.</li>
-     </ul>`
- };
  (function(){
-   const bd=$('modal-bd'), body=$('modal-body');
-   function open(key){
-     body.innerHTML = HELP[key];
-     bd.classList.add('show'); $('modal-close').focus();
-     if (key === 'mp') describeThisServer();
-   }
-
-   // THIS SERVER, NOT THE HOSTED ONE. Every word under "Signing in" and "Your game data" used
-   // to be written for the hosted platform: single sign-on, and a per-player locker you upload
-   // your own Data Files to. On a self-hosted server that had already been set up for
-   // username-and-password with the game served from disk, both paragraphs were simply untrue --
-   // and the second one told a player to go and upload a copy of Morrowind that the operator
-   // had already installed for everyone. Ask the server instead; it answers both questions.
-   async function describeThisServer(){
-     let providers = [], password = false, serves = false;
-     try {
-       const doc = await (await fetch('/auth/providers')).json();
-       providers = doc.providers || [];
-       password = doc.allowPasswordLogin === true;
-     } catch(e){ /* leave the neutral wording in place */ }
-     // The manifest route 404s unless this server is set to serve the game itself, so its
-     // status IS the answer -- no second endpoint to keep in step with the first.
-     try { serves = (await fetch('/mwdata-manifest.json', { method:'HEAD' })).ok; } catch(e){}
-     const signin = $('mp-help-signin'), data = $('mp-help-data'), go = $('mp-help-go');
-     if (signin) {
-       signin.innerHTML = (password && providers.length ? 'Sign in with a <b>username and password</b>, or with an account you already have elsewhere. '
-         : password ? 'Sign in with the <b>username and password</b> the operator gave you. '
-         : providers.length ? 'Sign in with an account you already have (<b>single sign-on</b>), so there is no password to create or manage. '
-         : 'Sign-in is not set up on this server yet — ask the operator to turn on a way to sign in. ')
-         + 'Signing in is what lets your character and saves persist and sync.';
-     }
-     if (data) {
-       data.innerHTML = serves
-         ? 'Nothing to upload. <b>This server supplies the game</b> to everyone who plays on it, '
-           + 'so it streams to you when you join.'
-         : 'The first time, you upload your own <b>Data Files</b> once to your private, account-only '
-           + 'locker; after that they stream back to you on any device. They stay private to you and '
-           + 'are never shared. You confirm they’re your own backup copies of a game you legally own.';
-     }
-     if (go) {
-       go.innerHTML = 'Just press <b>Sign in</b>'
-         + (password && !providers.length ? '.' : ' and choose how you want to sign in.');
-     }
-   }
+   const bd=$('modal-bd');
    function close(){ bd.classList.remove('show'); leaveDoor(); }
-   // The "?" buttons live inside clickable cards — stop the event so the card's start/pick handler
-   // doesn't also fire (on both click and keyboard activation).
-   [['help-sample','sample'],['help-local','local'],['help-mp','mp'],['help-hosted','hosted'],
-    ['help-cloud','cloud']].forEach(([id,key])=>{
-     const b=$(id); if(!b) return;
-     b.addEventListener('click', e=>{ e.stopPropagation(); open(key); });
-     b.addEventListener('keydown', e=>{ e.stopPropagation(); });
-   });
    $('modal-close').addEventListener('click', close);
    bd.addEventListener('click', e=>{ if(e.target===bd) close(); });   // backdrop click
    document.addEventListener('keydown', e=>{ if(e.key==='Escape' && bd.classList.contains('show')) close(); });
  })();
 
- // --- tiny IndexedDB handle store (shared shape with index.html?src=local) ---
- const DB='omw-launcher', STORE='handles', KEY='mwdata';
- function idbOpen(){ return new Promise((res,rej)=>{
-   const r=indexedDB.open(DB,1);
-   r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE); };
-   r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
- }); }
- function idbGet(key){ return idbOpen().then(db=>new Promise((res,rej)=>{
-   const t=db.transaction(STORE,'readonly').objectStore(STORE).get(key);
-   t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error);
- })); }
- function idbSet(key,val){ return idbOpen().then(db=>new Promise((res,rej)=>{
-   const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).put(val,key);
-   tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error);
- })); }
-
- // --- can the engine actually run here? ---
- // Capability checks, not user-agent sniffing: UA strings lie and break, whereas these are the
- // exact features the engine needs. SharedArrayBuffer requires cross-origin isolation, and a
- // coarse pointer on a narrow screen is a phone regardless of what it claims to be.
- function engineUnsupported(){
-   if (/[?&]forceUnsupported\b/.test(location.search)) return true;   // ?forceUnsupported to preview it
-   const noSAB = typeof SharedArrayBuffer === 'undefined' || !self.crossOriginIsolated;
-   // The engine is a wasm64 build and needs WebAssembly Memory64 (Chrome/Edge 133+,
-   // Firefox 134+). Feature-detected for the same reason as everything else here: a browser
-   // without it cannot instantiate openmw.wasm at all, so this belongs in the gate rather
-   // than surfacing later as a LinkError on the game page.
-   // Same descriptor the engine actually requests (shared, 64-bit, 16 GiB maximum), not just
-   // "does memory64 exist" -- see the matching probe in index.html.
-   let noMem64 = false;
-   try { new WebAssembly.Memory({ initial: 1n, maximum: 262144n, shared: true, address: 'i64' }); }
-   catch(e){ noMem64 = true; }
-   // Touch signal OR-ed from two sources because neither is universal, then AND-ed with a SMALL
-   // viewport so touchscreen laptops (maxTouchPoints > 0, wide screen) are not caught by mistake.
-   // The long side is what tells them apart (#283): a 1366x768 touch laptop is under 820 on its
-   // short side just like a phone, but no phone is 1100 wide in either orientation.
-   const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
-   const phone = touch && Math.min(innerWidth, innerHeight) < 820 && Math.max(innerWidth, innerHeight) < 1100;
-   // Chromium by brand as well: Firefox 134+ passes every probe above and cannot carry the game.
-   const chromium = !!(navigator.userAgentData && navigator.userAgentData.brands
-     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }));
-   return noSAB || noMem64 || phone || !chromium;
- }
-
- (function gateOnCapability(){
-   if (!engineUnsupported()) return;         // desktop Chromium: nothing changes
-   $('unsupported').hidden = false;
-   // AN INSECURE PAGE, NOT AN INCAPABLE BROWSER. Cross-origin isolation needs a secure context,
-   // so a desktop Chrome on http://<LAN address> fails the same check a phone does -- and was
-   // told to "open this on a desktop" while sitting at one. Say what is actually wrong.
-   if (!self.isSecureContext) {
-     $('unsupported').dataset.reason = 'insecure';
-     $('unsupported').querySelector('h2').textContent = 'Open this page over HTTPS';
-     $('unsupported').querySelector('.lead').textContent = 'Your browser can run the game, but not '
-       + 'from a plain http:// address: the engine needs a secure page, and browsers only treat '
-       + 'https:// (or this computer\'s own localhost) as one. Ask the server\'s owner for its '
-       + 'https:// address, or play on the server machine itself at http://localhost.';
-   }
-   document.querySelector('.cards').classList.add('demoted');
-
-   // Capture the intent we would otherwise lose: hand the URL to the share sheet so they can
-   // mail/message it to themselves and open it on a desktop later.
-   const btn = $('send-link'), note = $('send-note');
-   const url = location.href;
-   btn.addEventListener('click', async ()=>{
-     const payload = { title:'Morrowind in your browser', text:'Open this on a desktop to play:', url };
-     try {
-       if (navigator.share){ await navigator.share(payload); return; }
-       await navigator.clipboard.writeText(url);
-       note.textContent = 'Link copied. Open it on a desktop to play.';
-     } catch(e){
-       if (e && e.name === 'AbortError') return;   // user dismissed the share sheet
-       note.textContent = url;                      // last resort: show it to copy by hand
-     }
-   });
- })();
-
- // --- sample game ---
- function playSample(){ location.href='index.html?nomw'; }
- $('card-sample').addEventListener('click', playSample);
- $('card-sample').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); playSample(); } });
-
- // --- own-data helpers ---
- const note=(msg,cls)=>{ const n=$('local-note'); n.textContent=msg||''; n.className='note '+(cls||'muted'); };
-
- // Users often pick the install root, not "Data Files" - descend one level if present.
- async function resolveDataDir(dir){
-   for await (const [name,h] of dir.entries())
-     if (h.kind==='directory' && name.toLowerCase()==='data files') return h;
-   return dir;
- }
- // Returns null if the base game is missing, else the detected content set (expansions are
- // optional — index.html auto-adds Tribunal/Bloodmoon to the load order when present).
- async function scanMorrowind(dir){
-   const files=new Set(), dirs=new Set();
-   for await (const [name,h] of dir.entries()){
-     if (h.kind==='file') files.add(name.toLowerCase());
-     else if (h.kind==='directory') dirs.add(name.toLowerCase());
-   }
-   if (!(files.has('morrowind.esm') && files.has('morrowind.bsa'))) return null;
-   // Sound/Music/Video are LOOSE folders in a retail install — they are NOT inside Morrowind.bsa.
-   // A trimmed/partial copy still boots but is silently mute with no intro, which is baffling, so
-   // report them and warn before starting rather than letting the player discover it in-game.
-   return {
-     tribunal:  files.has('tribunal.esm')  && files.has('tribunal.bsa'),
-     bloodmoon: files.has('bloodmoon.esm') && files.has('bloodmoon.bsa'),
-     sound: dirs.has('sound'), music: dirs.has('music'), video: dirs.has('video'),
-   };
- }
-
- // Which of the WORLD's content files this folder does not have. The server states its own
- // load order (/locker/needed -> content); anything it lists that we lack is a hard stop.
- // Empty on any failure: an unreachable gateway must not block a player from starting, and
- // the world's own check still refuses a genuinely mismatched client.
- async function missingWorldContent(scan){
-   try {
-     const base = httpBaseOf(mpServerUrl());
-     if (!base) return [];
-     const r = await fetch(base+'/locker/needed', { credentials:'include' });
-     if (!r.ok) return [];
-     const want = (await r.json()).content || [];
-     const have = { 'morrowind.esm':true, 'tribunal.esm':!!scan.tribunal, 'bloodmoon.esm':!!scan.bloodmoon };
-     return want.filter(function(n){
-       const k = String(n).toLowerCase();
-       return k in have && !have[k];   // only judge files we can actually detect
-     });
-   } catch(e){ return []; }
- }
-
- // Set once the folder is validated + remembered but the player still needs to confirm starting
- // with missing assets — a second click on the card then starts anyway.
- let confirmStart = false;
- async function pickLocal(){
-   if (confirmStart){ location.href='index.html?src=local'; return; }   // "Start anyway"
-   if (!hasFSA){ note('Your browser has no folder-picker (File System Access API). Use Chrome, Edge or Brave on desktop.','err'); return; }
-   try {
-     const picked = await window.showDirectoryPicker({ id:'morrowind', mode:'readwrite' });
-     note('Checking folder…');
-     const dir = await resolveDataDir(picked);
-     const scan = await scanMorrowind(dir);
-     if (!scan){
-       note('That doesn’t look like a Morrowind Data Files folder, it must contain Morrowind.esm and Morrowind.bsa. Pick the folder shown above (Tribunal and Bloodmoon are optional and picked up automatically).','err');
-       return;
-     }
-     // Grant read permission while we still hold the user gesture, then remember the handle.
-     if ((await dir.requestPermission({ mode:'readwrite' })) !== 'granted'){
-       note('Edit access was declined. It’s needed so your saved games can be written to the folder, reopen the picker and choose “Edit files”.','err');
-       return;
-     }
-     // CONTENT THE WORLD RUNS IS NOT OPTIONAL. A world's content list is fixed by the server,
-     // so a player missing any of it cannot join — this used to let a base-game copy through,
-     // and they only found out after sign-in, chargen and a loading screen, as a raw
-     // BAD_CONTENT refusal. Check it here, where the fix is "pick a complete folder".
-     const lackContent = await missingWorldContent(scan);
-     if (lackContent.length){
-       note('This server runs Morrowind + '+lackContent.join(' + ').replace(/\.esm/gi,'')
-            +', so every player needs '+(lackContent.length>1?'those expansions':'that expansion')
-            +' installed. Your folder does not have '+lackContent.join(', ')
-            +'. Install '+(lackContent.length>1?'them':'it')+' and pick the folder again.','err');
-       return;
-     }
-     await idbSet(KEY, dir);
-     const exps=[scan.tribunal&&'Tribunal', scan.bloodmoon&&'Bloodmoon'].filter(Boolean);
-     const found = 'Found Morrowind'+(exps.length?' + '+exps.join(' + '):' (no expansions detected)');
-     // Warn about missing LOOSE asset folders instead of booting into a silently mute game.
-     const missing=[ !scan.sound&&'Sound', !scan.music&&'Music', !scan.video&&'Video' ].filter(Boolean);
-     if (missing.length){
-       const lacks=[ !scan.sound&&'sound effects and voices', !scan.music&&'music', !scan.video&&'intro videos' ].filter(Boolean);
-       confirmStart = true;
-       $('local-go').innerHTML = 'Start anyway <span class="arw">▸</span>';
-       note(found+', but no '+missing.join('/')+' folder'+(missing.length>1?'s':'')+', the game will run without '
-            +lacks.join(' or ')+'. Those live loose in Data Files (not inside the .bsa), so this copy looks incomplete. Click again to start anyway.','err');
-       return;
-     }
-     note(found+'. Starting…','ok');
-     location.href='index.html?src=local';
-   } catch(e){
-     if (e && e.name==='AbortError') return; // user cancelled the picker
-     // Chromium blocks picking folders inside system locations (Program Files, Windows, …).
-     // Steam's default library lives under C:\Program Files (x86)\Steam\, so it trips this.
-     if (e && (e.name==='SecurityError' || /system files|blocklist/i.test((e && e.message)||''))){
-       note('That folder is in a location the browser won’t open (Windows blocks Program Files, including Steam’s default C:\\Program Files (x86)\\Steam\\ folder). This is the same in Chrome and Edge. Copy your Data Files folder to Documents or Desktop and pick it there.','err');
-       return;
-     }
-     note('Could not open that folder: '+(e && e.message || e),'err');
-   }
- }
-
- // --- multiplayer: sign in, choose a character, choose a mode -------------------------
- // The whole flow is a thin client over ops the server already exposes (SessionRegister /
- // SessionLoginRequest carry characterId; CharacterCreate adds a slot). It is kept OUT of
- // the single-player paths on purpose: the demo must stay one click from the front page,
- // because a login wall in front of it is what kills a browser port's first impression.
- const MP = {
-   account: localStorage.getItem('omw-mp-account') || '',
- };
-
- // Evict addresses stored by older builds. Both used to shadow the derived server, so a
- // browser that had signed in once kept dialling whatever host that build guessed — long
- // after the deployment it belonged to was gone. Harmless to run forever; drop it once no
- // browser plausibly still carries one.
- try { ['omw-mp-url', 'omw-mp-pending'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}
-
- // Multiplayer is SSO-only, and game data comes from your server-side locker — never a
- // password, never a bring-your-own folder. The launcher's job is: pick the server, do the
- // single-sign-on round trip, then hand the game the one-time ticket. Character selection
+ // Sign-in is SSO at the front door; game data is the server's, unlocked by the player's three
+ // ESMs (index.html runs that upload). This page takes the ticket the door hands over. Character selection
  // and any first-time data upload happen IN the game, where the account is known.
  //
  // ws:// -> http(s):// for the auth + locker HTTP endpoints, which live on the same host.
@@ -1076,15 +262,6 @@ html.door .topbar, html.door .wrap { display:none !important }
    try { const u = new URL(wsUrl); return (u.protocol==='wss:'?'https:':'http:')+'//'+u.host; }
    catch(e){ return null; }
  }
-
- // Brand glyphs for the provider buttons (inline so the CSP stays strict — no remote assets).
- const PROVIDER_ICONS = {
-   google: '<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.2 13.5 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.4 5.7C43.6 38 46.5 31.8 46.5 24.5z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-2.9-.8-4.7s.3-3.3.8-4.7l-7.8-6.1C1 16.4 0 20.1 0 24s1 7.6 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.2-8.5 2.2-6.4 0-11.8-4-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>',
-   discord: '<svg viewBox="0 0 24 24" fill="#5865F2"><path d="M20.3 4.5A19.8 19.8 0 0 0 15.4 3l-.3.5c1.8.4 3.3 1 4.7 1.9-1.7-.8-3.5-1.3-5.4-1.5a20.4 20.4 0 0 0-4.8 0c-1.9.2-3.7.7-5.4 1.5 1.4-.9 2.9-1.5 4.7-1.9L8.6 3A19.8 19.8 0 0 0 3.7 4.5C1.2 8.2.4 11.8.8 15.4a19.9 19.9 0 0 0 6 3l.8-1.3c-.7-.3-1.4-.6-2-1l.5-.4a14.2 14.2 0 0 0 12 0l.5.4c-.6.4-1.3.7-2 1l.8 1.3a19.9 19.9 0 0 0 6-3c.5-4.2-.8-7.8-2.4-10.9zM9 13.5c-1 0-1.7-.9-1.7-1.9S8 9.7 9 9.7s1.7.9 1.7 1.9S10 13.5 9 13.5zm6 0c-1 0-1.7-.9-1.7-1.9S14 9.7 15 9.7s1.7.9 1.7 1.9S16 13.5 15 13.5z"/></svg>',
-   github: '<svg viewBox="0 0 24 24" fill="#1b1f23"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>',
-   microsoft: '<svg viewBox="0 0 24 24"><path fill="#F25022" d="M1 1h10.5v10.5H1z"/><path fill="#7FBA00" d="M12.5 1H23v10.5H12.5z"/><path fill="#00A4EF" d="M1 12.5h10.5V23H1z"/><path fill="#FFB900" d="M12.5 12.5H23V23H12.5z"/></svg>',
- };
- function providerLabel(p){ return p.charAt(0).toUpperCase()+p.slice(1); }
 
  // The multiplayer server is not something a player types, and it is not a per-environment
  // constant either: it lives behind the SAME origin as the game, because the site's Caddy
@@ -1116,131 +293,6 @@ html.door .topbar, html.door .wrap { display:none !important }
    s.gwUrl = mpServerUrl();
    s.gwHttp = httpBaseOf(s.gwUrl);
    return s;
- }
-
- const mpBd = $('mp-bd');
- function mpClose(){ mpBd.classList.remove('show'); }
- function mpNote(msg, cls){ const n=$('mp-note'); n.textContent=msg||''; n.className='note'+(cls?' '+cls:''); }
-
- const CLOUD_GLYPH = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">'
-   + '<path d="M14 34h20a7 7 0 0 0 .6-13.97A10 10 0 0 0 15.2 18.4 6.6 6.6 0 0 0 14 34z"/>'
-   + '<path d="M24 22v10M20 28l4 4 4-4"/></svg>';
- const MP_GLYPH = $('mp-glyph').innerHTML;
-
- function mpStart(){
-   // THE DIALOG NAMES THE THING YOU CLICKED. Sign-in is shared, so this said "Multiplayer" to
-   // someone who asked for the cloud locker — the wrong product at the exact moment they are
-   // deciding whether to hand over an account.
-   const cloud = window.__omwSignInIntent === 'cloud';
-   $('mp-kicker').textContent = cloud ? 'Cloud locker' : 'Multiplayer';
-   $('mp-title').textContent = cloud ? 'Sign in to play anywhere' : 'Sign in to play together';
-   $('mp-glyph').innerHTML = cloud ? CLOUD_GLYPH : MP_GLYPH;
-   $('mp-providers').innerHTML = '';
-   mpNote('');
-   mpBd.classList.add('show');
-   mpLoadProviders(); // fetch and render the "Continue with X" buttons straight away
- }
-
- // Redirect into the chosen provider's SSO flow. The server returns us HERE with #mpticket.
- // Nothing is stashed across the redirect: the gateway is same-origin, so mpServerUrl()
- // gives the same answer coming back as it did going out. A stored address only creates a
- // way for a stale one to win — which it did, sending a returning sign-in at the port a
- // previous build had guessed.
- function mpGoProvider(http, url, provider){
-   // WHICH TILE ASKED. Sign-in is shared; only what happens on the way back differs, and the
-   // provider round-trip is the one moment that knowledge would be lost.
-   try { sessionStorage.setItem('omw-signin-intent', window.__omwSignInIntent || 'mp'); } catch(e){}
-   const back = location.origin + location.pathname;
-   location.href = http + '/auth/' + encodeURIComponent(provider) + '/start?return=' + encodeURIComponent(back);
- }
-
- // Fetch the configured server's providers and render a "Continue with X" button per provider.
- async function mpLoadProviders(){
-   const url = mpServerUrl();
-   const http = httpBaseOf(url);
-   if (!http){ mpNote('The multiplayer server is misconfigured. Contact the operator.','err'); return; }
-   mpNote('Connecting…','muted');
-   let list, allowPassword;
-   try {
-     const r = await fetch(http + '/auth/providers', { mode:'cors' });
-     const doc = (await r.json()) || {};
-     list = doc.providers || [];
-     // THE SERVER SAYS SO IN THE SAME BREATH. This endpoint has always returned
-     // allowPasswordLogin next to the provider list, and only the provider list was ever read
-     // -- so a server set up for username-and-password (which the wizard offers first, and
-     // which /auth/password serves perfectly well) showed three greyed-out "Soon" buttons and
-     // told the player to go and ask the operator to enable something. The operator had
-     // already enabled it. This was the multiplayer door being shut on a correctly configured
-     // server, and the only way in was the other login page, which nothing links to from here.
-     allowPassword = doc.allowPasswordLogin === true;
-   } catch(e){
-     mpNote('Could not reach the multiplayer server. It may be down, try again shortly.','err');
-     return;
-   }
-   mpNote('');
-   // Always show the full provider line-up; ones the server hasn't enabled render as
-   // "Soon" and aren't clickable, so players see what's coming without hitting a dead link.
-   const available = list.map(function(p){ return p.toLowerCase(); });
-   const ALL = ['google','discord','microsoft'];
-   const box = $('mp-providers'); box.innerHTML = '';
-   let firstLive = null;
-   ALL.forEach(function(key){
-     const live = available.indexOf(key)!==-1;
-     const b = document.createElement('button');
-     b.type = 'button'; b.className = 'mp-prov' + (live?'':' soon');
-     b.innerHTML = (PROVIDER_ICONS[key]||'') + '<span>Continue with '+providerLabel(key)+'</span>'
-       + (live?'':'<span class="soon-tag">Soon</span>');
-     if (live){
-       b.addEventListener('click', function(){ mpNote('Redirecting to '+providerLabel(key)+'…','muted'); mpGoProvider(http, url, key); });
-       if (!firstLive) firstLive = b;
-     } else {
-       b.disabled = true; b.setAttribute('aria-disabled','true');
-     }
-     box.appendChild(b);
-   });
-   if (allowPassword) mpPasswordForm(box, http);
-   if (!firstLive && !allowPassword) {
-     mpNote('No sign-in provider is enabled yet. Ask the operator to turn one on.','err');
-   } else if (firstLive) firstLive.focus();
- }
-
- // Username-and-password sign-in, rendered under the provider line-up when the server accepts
- // it. /auth/password answers with exactly what an SSO round trip comes back with -- a boot
- // ticket, the account key and a locker token -- so this hands off through the SAME fragment
- // the redirect would have returned, and handleSsoReturn does the rest. One entry path for
- // both doors: a second copy of character select and world dial-in is how they drift apart.
- function mpPasswordForm(box, http){
-   const wrap = document.createElement('form');
-   wrap.className = 'mp-pw';
-   wrap.innerHTML =
-     '<label class="ob-field"><span>Username</span><input id="mp-pw-name" autocomplete="username" required></label>'
-   + '<label class="ob-field"><span>Password</span><input id="mp-pw-pass" type="password" autocomplete="current-password" required></label>'
-   + '<button class="mp-prov" id="mp-pw-go" type="submit"><span>Sign in</span></button>';
-   box.appendChild(wrap);
-   wrap.addEventListener('submit', async function(e){
-     e.preventDefault();
-     const go = $('mp-pw-go');
-     go.disabled = true;
-     mpNote('Signing in…','muted');
-     let doc;
-     try {
-       const r = await fetch(http + '/auth/password', {
-         method:'POST', mode:'cors', headers:{ 'content-type':'application/json' },
-         body: JSON.stringify({ name: $('mp-pw-name').value.trim(), password: $('mp-pw-pass').value }),
-       });
-       doc = await r.json();
-       if (!r.ok) { mpNote((doc && doc.error) || 'Could not sign in.','err'); go.disabled = false; return; }
-     } catch(err){
-       mpNote('Could not reach the multiplayer server. It may be down, try again shortly.','err');
-       go.disabled = false; return;
-     }
-     // Same as mpGoProvider: remember which tile asked, because the reload below loses it.
-     try { sessionStorage.setItem('omw-signin-intent', window.__omwSignInIntent || 'mp'); } catch(err){}
-     location.hash = '#mpticket=' + encodeURIComponent(doc.ticket)
-       + '&mpaccount=' + encodeURIComponent(doc.account)
-       + (doc.locker ? '&mplocker=' + encodeURIComponent(doc.locker) : '');
-     location.reload();
-   });
  }
 
  // First-login onboarding modal: collect a unique public username (and email if we have none),
@@ -1409,7 +461,7 @@ html.door .topbar, html.door .wrap { display:none !important }
        });
        grid.parentNode.insertBefore(wrap, grid.nextSibling);
      }
-     if (DOOR) $('cs-back').textContent = '‹ Back to sign-in';
+     $('cs-back').textContent = '‹ Back to sign-in';
      $('cs-back').onclick = () => done(null);
      note.textContent = '';
      bd.classList.add('show');
@@ -1525,8 +577,8 @@ html.door .topbar, html.door .wrap { display:none !important }
    // manifest configured yet", because an empty locker plus an empty needed-list reads as a
    // broken server unless you know the server is the one supplying the bytes.
    //
-   // The manifest route answers 404 unless deliveryModel is "serve", so its status IS the
-   // question. Failure is treated as "not hosted", which is the behaviour that existed before.
+   // The manifest answers only an account that has proved ownership with its three ESMs, so
+   // its status IS the question; before that, index.html's locker gate runs the ESM upload.
    let hosted = false;
    try { hosted = (await fetch('/mwdata-manifest.json', { method: 'HEAD' })).ok; } catch(e){}
    // MINT THE BOOT TICKET LAST. A ticket lives 15 minutes from the SSO callback, and a player
@@ -1570,9 +622,9 @@ html.door .topbar, html.door .wrap { display:none !important }
    if (location.hash !== '#characters') return;
    history.replaceState(null, '', location.pathname);
    const sess = mpSession();
-   if (!sess || !sess.lockerToken) return leaveDoor(); // no session, the normal launcher shows
+   if (!sess || !sess.lockerToken) return leaveDoor(); // no session: sign in again
    const ch = await runCharacterSelect(sess.gwHttp, sess.lockerToken).catch(() => null);
-   if (!ch) return leaveDoor(); // backed out to the launcher
+   if (!ch) return leaveDoor(); // backed out
    await bootGame(sess, '', ch); // no spare ticket: bootGame mints the boot ticket itself
  })();
 
@@ -1631,25 +683,9 @@ html.door .topbar, html.door .wrap { display:none !important }
    // this tab only, gone when the tab closes.
    // Deliberately NOT storing gwHttp/gwUrl — see mpSession(). They are derived on read.
    try { sessionStorage.setItem('omw-mp-session', JSON.stringify({ account, lockerToken })); } catch(e){}
-   // WHICH DOOR did they come through? Sign-in is shared between multiplayer and the cloud
-   // locker, so the intent has to be resolved BEFORE the profile gate below rather than after
-   // it — see the gate for why.
-   let intent = 'mp';
-   try { intent = sessionStorage.getItem('omw-signin-intent') || 'mp'; } catch(e){}
-   try { sessionStorage.removeItem('omw-signin-intent'); } catch(e){}
    // First-login onboarding: pick a public username (and a contact email if we have none) BEFORE
    // entering any world, so a new player is never shown by their real name. Skipped once set.
-   //
-   // NOT ON THE CLOUD LOCKER PATH. A username is a PUBLIC HANDLE — it exists so other players
-   // have something to see instead of your real name. The locker has no other players: it is
-   // single player, every row in server/src/data/locker.ts is keyed on accountKey and that
-   // module never reads a username at all, files stream back only to the account that uploaded
-   // them, and there is no world, directory or join link whose id could be derived from it.
-   // Asking for one here put an invented public identity in front of a player who only wanted
-   // their own save files. If they later open multiplayer, needsProfile is still true and they
-   // are asked then — the prompt moves to the moment it is actually true, and multiplayer keeps
-   // both its gates (this one, and the backstop in server/src/net/connection.ts).
-   if (intent !== 'cloud') try {
+   try {
      let st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
      if (st && st.needsProfile){
        const ok = await runOnboarding(gwHttp, lockerToken, st.hasEmail);
@@ -1669,136 +705,17 @@ html.door .topbar, html.door .wrap { display:none !important }
        } catch(e){}
      }
    } catch(e){ /* if the check fails, proceed; the in-game gate is the backstop */ }
-   // CLOUD LOCKER: same account, same library, no world. Character slots are a multiplayer
-   // concept, so there is nothing to pick; boot straight into single player with the locker
-   // mounted. index.html keys multiplayer off `mp=` alone, so omitting it is the whole mode.
-   if (intent === 'cloud'){
-     window.__omwAllowLeave = true;
-     location.href = 'index.html#locker=' + encodeURIComponent(gwHttp)
-       + '&mplocker=' + encodeURIComponent(lockerToken)
-       + '&mpaccount=' + encodeURIComponent(account)
-       + '&cloud=1';   // read by index.html's launcher gate; see the guard there
-     return;
-   }
    // Character select: pick or create a character (given an alias) on a launcher-styled tile
    // screen BEFORE opening any world. Returns the chosen slot id, or null if they backed out.
    let chosenChar = null;
    try { chosenChar = await runCharacterSelect(gwHttp, lockerToken); }
    catch(e){ chosenChar = null; }
-   if (!chosenChar) return leaveDoor(); // backed out to the launcher
+   if (!chosenChar) return leaveDoor(); // backed out
    // A new player lands in their own PRIVATE world — that is where character creation happens.
    // Party and public come after (a fresh character must be created in private first).
    let username = '';
    try { username = (JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}')).username || ''; } catch(e){}
    await bootGame({ gwHttp, gwUrl, account, lockerToken, username }, decodeURIComponent(tk[1]), chosenChar);
- })();
- // EXPERIMENTAL MODES, OFF ON THE LIVE SITE ONLY.
- //
- // HOST-BASED ON PURPOSE, not a build flag: the same artifact deploys everywhere, so a dev
- // box or localhost keeps every tile and pushing updates never changes what dev shows. Only
- // the live hostname hides anything, and ?experimental=1 opens them there for a deliberate
- // test. Drop a card from this list when its mode is ready to be offered.
- //
- // The markup ships `hidden` and is revealed here, so prod fails toward "not offered" if this
- // script ever breaks before this line — the safe direction for a server people play on.
- //
- // WHY MULTIPLAYER IS STILL GATED, as of 2026-08-24.
- //
- // NOT for the reason this comment used to give. It said the world switch dead-ends at
- // AUTH_FAILED "because the login ticket is minted and then never presented" — but the auth
- // ladder learned to rescue itself (net.lua askPageForFreshTicket -> index.html's watcher,
- // commit db48a67) AFTER this gate went up, and nobody re-tested. The loading screen dropping
- // and returning with music over it was real and is fixed: two paths cleared the boot screen
- // while the destination was still settling, neither deferring to __omwMPSettling.
- //
- // It stays gated because nothing has driven a BROWSER through the journey since. The server
- // side is covered (680 tests, negative-controlled) and the lobby/capacity behaviour has been
- // proven against real containers, but the client half — the auth ladder, the switcher, the
- // settle hold — has no passing run behind it: the 42 scenarios need a built wasm engine, and
- // deps/ is a maintainer artifact that is not in this checkout.
- //
- // TO LIFT IT: run wasm-build/mp-harness.mjs (including the new s57-world-revival) twice
- // consecutively on a quiet box with a real engine build, then a human playtest per
- // PLAYTEST.md §10, then delete 'card-mp' from EXPERIMENTAL below.
- (function(){
-   var EXPERIMENTAL = ['card-mp'];
-   var isProd = /^morrowind\.virtastic\.app$/i.test(location.hostname);
-   var optIn = /[?&]experimental=1\b/.test(location.search);
-   EXPERIMENTAL.forEach(function(id){ var el = $(id); if (el) el.hidden = isProd && !optIn; });
-   syncCardColumns();
- })();
- function cloudStart(){ window.__omwSignInIntent = 'cloud'; mpStart(); }
- $('card-cloud').addEventListener('click', cloudStart);
- $('card-cloud').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); cloudStart(); } });
- $('card-mp').addEventListener('click', ()=>{ window.__omwSignInIntent = 'mp'; mpStart(); });
- $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); window.__omwSignInIntent='mp'; mpStart(); } });
- mpBd.addEventListener('click', (e)=>{ if(e.target===mpBd) mpClose(); }); // click outside to close
- document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && mpBd.classList.contains('show')) mpClose(); });
-
- $('card-local').addEventListener('click', pickLocal);
- $('card-local').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pickLocal(); } });
-
- if (!hasFSA){
-   const card=$('card-local');
-   card.classList.remove('actionable'); card.classList.add('disabled');
-   note('Needs a Chromium browser (Chrome/Edge/Brave) on desktop.','muted');
- }
-
- // --- Does THIS server host its own copy of the game? -------------------------------------
- // Whether a server ships game data is the operator's choice and can change without the page
- // changing, so it is detected rather than baked in. A one-byte Range request is enough: it
- // proves the file is present AND that the host answers 206, which the streaming reader needs
- // — a host that 200s the whole file would appear fine here and then pull the entire game on
- // first read. Cheap enough to run on every load.
- //
- // Found  -> offer the hosted copy and HIDE the folder picker: with data on the server the
- //           picker is the strictly worse path, and showing both asks the player to decide
- //           something they have no basis to decide.
- // Absent -> leave the folder picker exactly as it was. This must fail silently: a server
- //           without data is the normal case, not an error.
- // The grid is a fixed four columns, so hiding any card left a hole and pushed the rest off
- // centre. Drive the column count from what is ACTUALLY visible, and call this again after
- // anything changes a card's visibility — the hosted/local swap below is async, so a count
- // taken once at startup is only correct by luck.
- function syncCardColumns(){
-   var grid = document.querySelector('.cards');
-   if (!grid) return;
-   var shown = Array.prototype.filter.call(grid.children, function(el){ return !el.hidden; }).length;
-   if (shown) grid.style.setProperty('--card-cols', String(shown));
- }
-
- (async function detectHostedData(){
-   let ok = false;
-   try {
-     const r = await fetch('mwdata/Morrowind.esm', { headers: { Range: 'bytes=0-0' } });
-     ok = r.status === 206;
-   } catch(e){ ok = false; }
-   if (!ok) return;
-   $('card-local').hidden = true;
-   $('card-hosted').hidden = false;
-   syncCardColumns();
-   const go = () => { location.href = 'index.html?src=hosted'; };
-   $('card-hosted').addEventListener('click', go);
-   $('card-hosted').addEventListener('keydown', (e)=>{
-     if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } });
- })();
-
- // --- return-visit fast path ---
- (async function(){
-   if (!hasFSA) return;
-   let handle; try { handle = await idbGet(KEY); } catch(e){ return; }
-   if (!handle) return;
-   let perm='prompt';
-   try { perm = await handle.queryPermission({ mode:'readwrite' }); } catch(e){ return; }
-   $('continue-name').textContent = handle.name || 'your Data Files';
-   $('continue').classList.add('show');
-   $('continue-btn').addEventListener('click', async ()=>{
-     try {
-       if (perm!=='granted') perm = await handle.requestPermission({ mode:'readwrite' });
-       if (perm!=='granted'){ note('Edit access was declined, it’s needed to save your games to the folder. Choose “Edit files”.','err'); return; }
-       location.href='index.html?src=local';
-     } catch(e){ note('Could not reopen that folder. Pick it again.','err'); }
-   });
  })();
 </script>
 </body></html>

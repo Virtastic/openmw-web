@@ -33,17 +33,20 @@ H=$(curl -s -D- -o /dev/null --max-time 20 "$BASE/index.html")
 grep -qi 'cross-origin-opener-policy: *same-origin' <<<"$H" && pass "COOP: same-origin"   || fail "COOP: same-origin"   "engine cannot start without it"
 grep -qi 'cross-origin-embedder-policy: *require-corp'<<<"$H" && pass "COEP: require-corp" || fail "COEP: require-corp" "engine cannot start without it"
 
-# 2. The launcher gate. "/" is the chooser; "/index.html" is the GAME. Rewriting index.html
-#    back to the launcher makes multiplayer bounce between the two forever — the boot URL
-#    carries its parameters in the FRAGMENT, which never reaches the server, so a
-#    "no query string" guard sees a bare /index.html and rewrites it.
-LAUNCHER_RE='Bring your own|CHOOSE DATA FILES|FREE SAMPLE'
+# 2. The door gate. "/" is the sign-in door, "/join" its ticket steps (CL3: no chooser any
+#    more), "/index.html" is the GAME. Rewriting index.html back to the door makes
+#    multiplayer bounce between the two forever — the boot URL carries its parameters in the
+#    FRAGMENT, which never reaches the server, so a "no query string" guard sees a bare
+#    /index.html and rewrites it.
+LAUNCHER_RE='Sign in to play|mpticket\|mperror\|characters'
 # Capture first, then match. Piping curl into `grep -q` makes grep close the pipe on the
 # first hit, curl dies of SIGPIPE, and with pipefail the pipeline reports failure ON A
 # MATCH — inverting every one of these checks.
 is_launcher() { grep -qE "$LAUNCHER_RE" <<<"$1"; }
 B_ROOT=$(get "$BASE/"); B_IDX=$(get "$BASE/index.html"); B_NOMW=$(get "$BASE/index.html?nomw")
-is_launcher "$B_ROOT" && pass "/ serves the launcher" || fail "/ serves the launcher" "the chooser is missing"
+is_launcher "$B_ROOT" && pass "/ serves the sign-in door" || fail "/ serves the sign-in door" "the door is missing"
+B_JOIN=$(get "$BASE/join")
+is_launcher "$B_JOIN" && pass "/join serves the ticket steps" || fail "/join serves the ticket steps" "the door has nowhere to hand the ticket"
 is_launcher "$B_IDX"  && fail "/index.html serves the game" "rewritten to the launcher -> multiplayer loops on 'Creating...'" || pass "/index.html serves the game"
 is_launcher "$B_NOMW" && fail "?nomw serves the game" "rewritten to the launcher" || pass "/index.html?nomw serves the game"
 # The gate that keeps a bare /index.html from booting into whatever data the host serves
