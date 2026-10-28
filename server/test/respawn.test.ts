@@ -17,6 +17,7 @@ function fakeApi(over: {
   positions?: Record<number, { cellKey: string; x: number; y: number; z: number }>;
   respawnCellKey?: string;
   simPeer?: boolean;
+  party?: number[];
 }) {
   const events: { target: 'all' | number; name: string; body: unknown }[] = [];
   const chats: { target: 'all' | number; text: string }[] = [];
@@ -33,17 +34,20 @@ function fakeApi(over: {
     sendEvent: (target: 'all' | number, name: string, body: unknown) => { events.push({ target, name, body }); },
     chat: (target: 'all' | number, msg: { text: string }) => { chats.push({ target, text: msg.text }); },
     posOfPlayer: (id: number) => over.positions?.[id],
+    players: () => Object.keys(over.positions ?? {}).map((id) => ({ id: Number(id), name: `P${id}`, rank: 0 })),
+    partyOnline: () => over.party ?? [],
   } as unknown as PluginApi;
   return { api, events, chats, logs };
 }
 
-test('the world is TOLD about a death', () => {
-  const { api, chats } = fakeApi({
-    positions: { 2: { cellKey: 'a', x: 0, y: 0, z: 0 } },
-  });
+// OT3-176: the cell and the party hear it; a stranger elsewhere never does.
+test('a death is told to the cell and the party, not the server', () => {
+  const at = (cellKey: string) => ({ cellKey, x: 0, y: 0, z: 0 });
+  const { api, chats } = fakeApi({ positions: { 1: at('a'), 2: at('a'), 3: at('b'), 4: at('c') }, party: [3] });
   respawn.onPlayerDeath!(api, DEAD);
-  assert.ok(chats.length >= 1, 'the death is announced');
-  assert.match(chats[0]!.text, /Faller has fallen/);
+  const told = chats.filter((c) => /Faller has fallen/.test(c.text)).map((c) => c.target).sort();
+  assert.deepEqual(told, [1, 2, 3]);
+  assert.ok(!chats.some((c) => c.target === 'all'));
 });
 
 // NEGATIVE CONTROL: alone, the operator's configured point is still honoured exactly as before.

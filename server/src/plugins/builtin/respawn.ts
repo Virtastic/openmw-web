@@ -96,11 +96,17 @@ export const respawn: Plugin = {
     const downed = downedOf(api);
     if (downed.has(player.id)) return;
 
-    // TELL THE WORLD. A friend vanishing mid-fight with no message reads as a bug or a
-    // disconnect rather than as a death. One line is the whole fix.
-    api.chat('all', { channel: 'server', text: `${player.name} has fallen.` });
-
+    // TELL THE PEOPLE WHO CARE. A friend vanishing mid-fight with no message reads as a bug
+    // or a disconnect rather than as a death. OT3-176: the same cell and the party only --
+    // a server-wide "X has fallen" is noise to everyone else (and a free stalker feed).
     const party = api.partyOnline?.(player.id) ?? [];
+    const cell = api.posOfPlayer?.(player.id)?.cellKey;
+    const told = new Set([player.id, ...party]);
+    if (cell !== undefined) {
+      for (const p of api.players()) if (api.posOfPlayer?.(p.id)?.cellKey === cell) told.add(p.id);
+    }
+    for (const id of told) api.chat(id, { channel: 'server', text: `${player.name} has fallen.` });
+
     if (party.length === 0) { respawnNow(api, player); return; }
     const timer = setTimeout(() => { downed.delete(player.id); respawnNow(api, player); }, DOWNED_MS);
     timer.unref?.();
