@@ -83,13 +83,6 @@ try {
       font:11px/1.35 ui-monospace,Menlo,monospace;text-shadow:0 1px 2px #000;user-select:none}
  #hud.show{display:block}
  #hud:hover{background:rgba(20,20,30,.9)}
- /* Save backup/restore controls — top-right, appear once the game is running. */
- #savetools{position:fixed;top:0;right:0;z-index:11;display:none;gap:6px;padding:3px 8px;
-      background:rgba(10,10,15,.72);font:11px/1.35 ui-monospace,Menlo,monospace}
- #savetools.show{display:flex}
- #savetools button{cursor:pointer;background:rgba(20,20,30,.6);color:#cba6f7;border:1px solid #45475a;
-      border-radius:4px;padding:2px 8px;font:inherit}
- #savetools button:hover{background:rgba(40,40,55,.95);color:#f5e0dc}
  /* --- Themed loading overlay (matches launcher.html: ash + Dwemer bronze + Red Mountain
     ember). Covers the canvas during download/boot, fades out on the engine's first frame. --- */
  #loading{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;
@@ -226,11 +219,6 @@ try {
 <body>
 <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="0"></canvas>
 <div id="hud">☰ starting…</div>
-<div id="savetools" title="Back up or restore your saves and settings">
-  <button id="btn-backup" type="button">⬇ Backup</button>
-  <button id="btn-restore" type="button">⬆ Restore</button>
-  <input id="restore-file" type="file" accept=".tar" style="display:none">
-</div>
 <div id="log">booting…</div>
 <div id="loading" class="indet">
   <div class="ld-inner">
@@ -1177,7 +1165,7 @@ try {
              if (d.characters.some(function(c){ return c && c.id === savedChar; })) return;
              try { sessionStorage.removeItem('omwmp:bootfrag'); } catch (e) {}
              window.__omwAllowLeave = true;
-             location.replace('launcher.html#characters');
+             location.replace('/join#characters');
            }).catch(function(){});
        }
      }
@@ -1185,13 +1173,9 @@ try {
  } catch (e) {}
  if (location.pathname.endsWith('/index.html')
      && (location.search === '' || location.search === '?')
-     // `cloud` is listed EXPLICITLY. A cloud-locker boot (#locker=&mplocker=&cloud=1) already
-     // passed this only because `mp` matches as a prefix of `mplocker` and the `=` is optional —
-     // an accident, not a decision, and the next tightening of this regex would have bounced
-     // the whole mode back to the launcher with no clue why.
-     && !/[#&](mp|mpticket|characters|cloud)=?/.test(location.hash || '')) {
-   location.replace('launcher.html');
-   throw new Error('redirecting to launcher');   // stop this script; the navigation is queued
+     && !/[#&](mp|mpticket|characters)=?/.test(location.hash || '')) {
+   location.replace('/');
+   throw new Error('redirecting to the door');   // stop this script; the navigation is queued
  }
  // Hard requirement check: this build uses pthreads (SharedArrayBuffer), which needs
  // cross-origin isolation and a capable browser. Fail with a CLEAR message, not a cryptic
@@ -1285,12 +1269,9 @@ try {
      // soon as it went up -- a door's "Entering a new area" lasted until the next tick, 34 ms
      // in the s189 timeline (2026-10-17). Later screens have their own owners.
      if (!bootDismissed && rendering && window.__omwLoading && !window.__omwMPSettling) { window.__omwLoading.done(); bootDismissed = true; }
-     // Save Backup/Restore toolbar is opt-in (?savetools=1) — hidden by default so it never sits in
-     // the chrome. The tar backup/restore functionality stays wired up; only the buttons are gated.
-     if (rendering && /[?&]savetools=1\b/.test(location.search)) { var st=document.getElementById('savetools'); if (st) st.classList.add('show'); }
      // The visible HUD text + console heartbeat only matter when the debug HUD is on. For the default
      // player (HUD hidden) skip both — no point writing textContent to a display:none node twice a
-     // second or growing the console forever. (The loading-overlay fade + savetools above still run.)
+     // second or growing the console forever. (The loading-overlay fade above still runs.)
      if (!__hudEnabled) return;
      const open = logEl.classList.contains('show');
      hudEl.textContent = '☰ ' + (running ? ('FPS '+fps+'  ('+ms+'ms/frame)') : 'loading…') + '   ' + lastMsg + (open ? '   [click to hide log]' : '   [click for log]');
@@ -1301,126 +1282,6 @@ try {
        lastFps = fps;
      }
    }, 500);
- })();
-
- // --- Save backup / restore. Everything persistent (saves, settings, keybindings, screenshots)
- // lives under /userdata on IDBFS. Backup tars that whole tree so a player can move machines or
- // recover from browser-data loss; Restore unpacks a backup and re-syncs it to IndexedDB. Uses a
- // tiny self-contained USTAR reader/writer (no deps). ---
- (function(){
-   var ROOT='/userdata';
-   function octal(n,len){ var s=n.toString(8); while(s.length<len-1) s='0'+s; return s+'\0'; }
-   // Build a 512-byte tar header. typeflag 48='0' (regular file), 76='L' (GNU @LongLink). Names >100
-   // bytes are carried by a preceding '@LongLink' record (see makeTar) so NOTHING is truncated — long
-   // OpenMW save filenames round-trip intact. (FS paths are ASCII, so char length == byte length.)
-   function tarHeader(name, size, typeflag){
-     var hdr=new Uint8Array(512), enc=new TextEncoder();
-     function put(str,off,len){ var b=enc.encode(str); for(var i=0;i<b.length&&i<len;i++) hdr[off+i]=b[i]; }
-     put(name,0,100);
-     put('0000644\0',100,8);                           // mode
-     put('0000000\0',108,8); put('0000000\0',116,8);   // uid/gid
-     put(octal(size,12),124,12);                       // size
-     put(octal(0,12),136,12);                          // mtime (0; deterministic)
-     for(var i=148;i<156;i++) hdr[i]=32;               // checksum field = spaces while summing
-     hdr[156]=typeflag;
-     put('ustar\0',257,6); put('00',263,2);
-     var sum=0; for(var j=0;j<512;j++) sum+=hdr[j];
-     var cs=sum.toString(8); while(cs.length<6) cs='0'+cs; cs=cs.slice(-6);
-     put(cs,148,6); hdr[154]=0; hdr[155]=32;           // checksum: 6 octal digits + NUL + space
-     return hdr;
-   }
-   // Walk FS collecting {path,data} for every regular file under dir.
-   function collect(dir, out){
-     var ents; try { ents=FS.readdir(dir); } catch(e){ return; }
-     ents.forEach(function(name){
-       if (name==='.'||name==='..') return;
-       var p=dir+'/'+name, st;
-       try { st=FS.stat(p); } catch(e){ return; }
-       if (FS.isDir(st.mode)) collect(p, out);
-       else if (FS.isFile(st.mode)) { try { out.push({path:p, data:FS.readFile(p)}); } catch(e){} }
-     });
-   }
-   function makeTar(files){
-     var blocks=[], enc=new TextEncoder();
-     function pad(n){ var p=(512-(n%512))%512; if(p) blocks.push(new Uint8Array(p)); }
-     files.forEach(function(f){
-       var name=f.path.replace(/^\//,'');             // tar paths are relative
-       if(name.length>100){                           // GNU longname: carry the full path in an
-         var lb=enc.encode(name+'\0');                // '@LongLink' record so nothing is truncated
-         blocks.push(tarHeader('././@LongLink', lb.length, 76 /* 'L' */), lb); pad(lb.length);
-       }
-       blocks.push(tarHeader(name.slice(0,100), f.data.length, 48 /* '0' */), f.data); pad(f.data.length);
-     });
-     blocks.push(new Uint8Array(1024));               // two zero blocks = end
-     var total=blocks.reduce(function(a,b){return a+b.length;},0), buf=new Uint8Array(total), off=0;
-     blocks.forEach(function(b){ buf.set(b,off); off+=b.length; });
-     return buf;
-   }
-   function readTar(buf){
-     var dec=new TextDecoder(), out=[], off=0, longName=null;
-     while(off+512<=buf.length){
-       var name=dec.decode(buf.subarray(off,off+100)).replace(/\0.*$/,'');
-       var typeflag=buf[off+156];
-       var size=parseInt(dec.decode(buf.subarray(off+124,off+136)).replace(/[\0 ]/g,''),8)||0;
-       if(!name && typeflag!==76){ break; }            // zero block = end of archive
-       off+=512;
-       if(typeflag===76){                              // 'L' GNU longname: this record's DATA is the
-         longName=dec.decode(buf.subarray(off,off+size)).replace(/\0.*$/,''); // real path for the next entry
-         off+=size+((512-(size%512))%512); continue;
-       }
-       var real=longName||name; longName=null;
-       out.push({path:'/'+real, data:buf.subarray(off,off+size)});
-       off+=size+((512-(size%512))%512);
-     }
-     return out;
-   }
-   function stamp(){ var d=new Date(); function p(n){return(n<10?'0':'')+n;}
-     return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes()); }
-
-   function backup(){
-     try {
-       if (window.__omwSync) window.__omwSync();     // flush latest state to FS first
-       var files=[]; collect(ROOT, files);
-       if(!files.length){ append('[backup] nothing to back up yet','err'); return; }
-       var tar=makeTar(files);
-       var blob=new Blob([tar],{type:'application/x-tar'});
-       var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-       a.download='morrowind-saves-'+stamp()+'.tar';
-       document.body.appendChild(a); a.click();
-       setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },4000);
-       append('[backup] '+files.length+' files ('+(tar.length/1048576).toFixed(1)+' MB) downloaded');
-     } catch(e){ append('[backup err] '+(e&&e.message||e),'err'); }
-   }
-   function restore(file){
-     var r=new FileReader();
-     r.onload=function(){
-       try {
-         var entries=readTar(new Uint8Array(r.result)), n=0;
-         entries.forEach(function(en){
-           if(!/^\/userdata\//.test(en.path)) return; // only touch our own tree
-           var dir=en.path.replace(/\/[^\/]*$/,''); try{ FS.mkdirTree(dir); }catch(e){}
-           FS.writeFile(en.path, en.data); n++;
-         });
-         if (window.__omwSyncfs) window.__omwSyncfs();
-         append('[restore] '+n+' files restored. Reload to load them.');
-         // The game's own modal, not a Chrome alert() — a browser dialog is the one style a
-         // player cannot mistake for the game. Falls back only if the modal is not up yet.
-         if (window.__omwNotice) {
-           window.__omwNotice('Saves restored',
-             'Restored <b>'+n+'</b> files. Reload the page to pick up the restored saves and settings.',
-             '', false);
-         } else {
-           alert('Restored '+n+' files. Reload the page to pick up the restored saves/settings.');
-         }
-       } catch(e){ append('[restore err] '+(e&&e.message||e),'err'); }
-     };
-     r.readAsArrayBuffer(file);
-   }
-   var b=document.getElementById('btn-backup'), rb=document.getElementById('btn-restore'),
-       rf=document.getElementById('restore-file');
-   if(b) b.addEventListener('click', backup);
-   if(rb&&rf){ rb.addEventListener('click', function(){ rf.click(); });
-     rf.addEventListener('change', function(){ if(rf.files&&rf.files[0]){ restore(rf.files[0]); rf.value=''; } }); }
  })();
 
  // --- Windowless full-viewport rendering: keep the canvas DRAWING BUFFER matched to the
@@ -1804,7 +1665,7 @@ try {
        ENV.HOME='/home/web_user'; ENV.USER='player'; ENV.LOGNAME='player';
        // ?nomw boots the free example-suite: enable its compat shims (chargen auto-confirm,
        // +10h daytime start). NEVER set for retail Morrowind — the engine stays 1:1 stock.
-       if (window.__FORCE_NOMW || /[?&]nomw\b/.test(location.search)) ENV.OPENMW_EXAMPLE_SUITE='1';
+       if (/[?&]nomw\b/.test(location.search)) ENV.OPENMW_EXAMPLE_SUITE='1';
        // ?start=<cell> (deep-link) => auto-complete chargen so the new game drops straight into
        // the target cell (see Module.arguments above + charactercreation.cpp). QA aid only.
        if (/[?&]start=/.test(location.search)) ENV.OPENMW_QA_AUTOCHARGEN='1';
@@ -2116,7 +1977,7 @@ try {
                  + 'letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
                // ON PURPOSE: tell the world before going, so a Party world closes to its
                // guests now rather than after the crash grace (see net.lua switchTo).
-               btn.onclick = function(){ window.__omwExitToLauncher(signedIn ? 'launcher.html#characters' : 'launcher.html'); };
+               btn.onclick = function(){ window.__omwExitToLauncher(signedIn ? '/join#characters' : '/'); };
                if (opts && opts.reload) {
                  var rl = document.createElement('button');
                  rl.textContent = 'Reload';
@@ -2160,12 +2021,11 @@ try {
                  }
                }, 1000);
              })();
-             // Content chain: the retail and ?src=local paths rewrite /openmw.cfg and append
-             // content=mp.omwscripts themselves (they strip all content= lines first). The
+             // Content chain: the /mwdata path rewrites /openmw.cfg and appends
+             // content=mp.omwscripts itself (it strips all content= lines first). The
              // ?nomw demo boots the BAKED cfg unrewritten, so append to it here — demo mode
              // only, or this would race the other writers.
-             if ((window.__FORCE_NOMW || /[?&]nomw\b/.test(location.search))
-                 && !/[?&]src=local\b/.test(location.search)){
+             if (/[?&]nomw\b/.test(location.search)){
                addRunDependency('mp-cfg');
                (function waitMpCfg(){
                  if (FS.analyzePath('/openmw.cfg').exists){
@@ -2476,64 +2336,11 @@ try {
                       'first load will work but re-downloads on each visit', 'err');
            });
        } catch(e){}
-       // --- Folder-backed saves (?src=local) ---------------------------------------------------
-       // When the player brings their own Morrowind, mirror OpenMW's saves to/from a dedicated
-       // openmw-web-saves subfolder INSIDE their chosen folder, so saves live ON DISK and survive
-       // clearing browser data (like desktop OpenMW). The folder is the authoritative copy; IDBFS is
-       // just a working cache. __idbfsReady lets the mount flow wait until IDBFS has loaded before we
-       // write folder saves into MEMFS (otherwise the IDBFS reconcile could wipe them).
+       // --- Saves ---------------------------------------------------
+       // __idbfsReady lets the server-save mirror wait until IDBFS has loaded (otherwise the
+       // IDBFS reconcile could wipe what it restores).
        window.__idbfsReady = new Promise(function(r){ window.__idbfsReadyResolve = r; });
-       var __folderSaves = null, __mirrored = {}, __mirroring = false, __mirrorAgain = false;
        var __SAVES_DIR = '/userdata/data-home/openmw/saves';
-       async function setupFolderSaves(dir){
-         var perm='prompt'; try { perm = await dir.queryPermission({mode:'readwrite'}); } catch(e){}
-         if (perm !== 'granted'){
-           append('[saves] your folder is read-only this session — saves use browser storage. Re-pick '
-                + 'your folder and allow editing to store saves on disk (use Backup meanwhile).','err');
-           return;
-         }
-         var sh; try { sh = await dir.getDirectoryHandle('openmw-web-saves', {create:true}); }
-         catch(e){ append('[saves] could not open openmw-web-saves in your folder: '+e,'err'); return; }
-         FS.mkdirTree(__SAVES_DIR);
-         var loaded=0;                                    // mirror IN: folder -> MEMFS (folder wins)
-         try { for await (const [name,h] of sh.entries()){
-           if (h.kind!=='file' || !/\.omwsave$/i.test(name)) continue;
-           try { var buf=new Uint8Array(await (await h.getFile()).arrayBuffer());
-                 FS.writeFile(__SAVES_DIR+'/'+name, buf);
-                 try { __mirrored[name]=FS.stat(__SAVES_DIR+'/'+name).mtime.getTime(); } catch(_){}
-                 loaded++; }
-           catch(e){ append('[saves] loading '+name+' failed: '+e,'err'); }
-         } } catch(e){ append('[saves] could not read your saves folder: '+e,'err'); }
-         __folderSaves = { dir: dir, saves: sh };
-         append('[saves] '+(loaded ? ('loaded '+loaded+' save(s) from') : 'saving to')
-              + ' openmw-web-saves in your folder (on disk, not the browser)');
-         try { window.__omwSyncfs(); } catch(e){}         // also cache the loaded saves in IDBFS
-       }
-       // mirror OUT: MEMFS -> folder. Only files whose mtime changed since last mirror (so unchanged
-       // saves aren't rewritten), plus removes folder saves deleted in-game. Coalesced like syncfs.
-       async function mirrorSavesToFolder(){
-         if (!__folderSaves || __mirroring){ if(__folderSaves) __mirrorAgain=true; return; }
-         __mirroring=true;
-         var sh=__folderSaves.saves, live={};
-         try {
-           var names=[]; try { names=FS.readdir(__SAVES_DIR).filter(function(n){ return /\.omwsave$/i.test(n); }); } catch(e){}
-           for (var i=0;i<names.length;i++){
-             var n=names[i], st; try { st=FS.stat(__SAVES_DIR+'/'+n); } catch(e){ continue; }
-             live[n]=1; var mt=st.mtime.getTime();
-             if (__mirrored[n]===mt) continue;
-             try { var data=FS.readFile(__SAVES_DIR+'/'+n);
-                   var fh=await sh.getFileHandle(n,{create:true});
-                   var w=await fh.createWritable(); await w.write(data); await w.close();
-                   __mirrored[n]=mt; }
-             catch(e){ append('[saves] writing '+n+' to your folder failed: '+e,'err'); }
-           }
-           for (var d in __mirrored){ if(!live[d]){ try { await sh.removeEntry(d); } catch(e){} delete __mirrored[d]; } }
-         } catch(e){ append('[saves] mirror to folder failed: '+e,'err'); }
-         __mirroring=false;
-         if (__mirrorAgain){ __mirrorAgain=false; mirrorSavesToFolder(); }
-       }
-       window.__setupFolderSaves = setupFolderSaves;
-       window.__mirrorSaves = mirrorSavesToFolder;
 
        // --- Server-backed saves ----------------------------------------------------------------
        // The same mirror as above with the SERVER standing in for the folder, for the modes that
@@ -2677,7 +2484,7 @@ try {
                } catch(e){ append('[cfg override err] '+e,'err'); }
                window.__omwSyncfs();
              } catch(e){ append('[idbfs setup err] '+e,'err'); }
-             try { window.__idbfsReadyResolve(); } catch(e){}   // unblock folder-save mirror-in
+             try { window.__idbfsReadyResolve(); } catch(e){}   // unblock the server-save mirror
              removeRunDependency('idbfs-load');
            });
            // Flush game state back to IndexedDB periodically (lifecycle handlers cover exits).
@@ -2686,8 +2493,7 @@ try {
              // CLOSE — without this, changing settings then refreshing loses them), then sync.
              try { if (Module._omw_save_settings && Module.__omwRunning !== undefined) Module._omw_save_settings(); } catch(e){}
              window.__omwSyncfs();
-             try { mirrorSavesToFolder(); } catch(e){}    // push new/changed saves out to disk (?src=local)
-             try { mirrorSavesToServer(); } catch(e){}    // ...or up to the server (locker / hosted data)
+             try { mirrorSavesToServer(); } catch(e){}    // push new/changed saves up to the server
            };
            setInterval(window.__omwSync, 15000);
          } else {
@@ -2697,20 +2503,12 @@ try {
        } catch(e){ append('[idbfs mount err] '+e,'err'); try { window.__idbfsReadyResolve(); } catch(_){} }
 
        // --- Data source selection ---
-       // ?src=local: mount the user's OWN Morrowind Data Files folder (picked in
-       // launcher.html, persisted as a FileSystemDirectoryHandle in IndexedDB). Every file
-       // is mounted as a lazy StreamFS node read from disk on demand — nothing is copied.
-       // Otherwise fall through to the sample suite (?nomw) or the server-hosted retail
-       // fetch below.
-       var __srcLocal = /[?&]src=local\b/.test(location.search);
+       // One data path: the locker gate proves ownership with the three ESMs, then the page
+       // reboots with mwdata=1 and mounts the server's own copy from /mwdata. ?nomw (harness and
+       // smoke tests only) boots the baked example suite instead.
+       //
        // The locker token rides in the URL FRAGMENT (captured to __omwLockerToken above), not
        // the query string — so key the locker path off the captured token, never location.search.
-       //
-       // "Above" means the multiplayer branch — which only runs with mp=. The cloud-locker
-       // boot (#locker=&mplocker=&cloud=1) deliberately has NO mp=, so without this capture
-       // the token was never read, the locker mount never ran, and the boot fell through to
-       // the server-hosted retail path: an account with a fully uploaded library was told
-       // "No game data on this server". Same library, same account, different door.
        if (!window.__omwLockerToken) {
          var clok = /[#&]mplocker=([^&]+)/.exec(location.hash || '');
          if (clok) window.__omwLockerToken = decodeURIComponent(clok[1]);
@@ -2734,43 +2532,18 @@ try {
        var __mpLocker = !!window.__omwLockerToken && !__hostedData;
        window.__omwMpLocker = __mpLocker; // the world-change rebuild keeps the destination on the same data source
 
-       // SCRUB THE CLOUD FRAGMENT, for the same reason the multiplayer branch scrubs its own.
-       //
-       // That branch erases the URL once it has read it, so a credential cannot be replayed
-       // out of history. The cloud-locker boot never reached it: the scrub is gated on an
-       // mpticket, and this door has no mp= at all. So #mplocker= — a bearer token for every
-       // /locker/* route, including the erase that destroys the library AND the savegames,
-       // good for 24h — sat in the address bar for the whole session, went into history, and
-       // rode browser profile sync to other machines. The account's email address sat next to
-       // it. A fragment is genuinely never sent to the server, which is why the token travels
-       // this way; that argument covers the trip, not the parking.
-       //
-       // Everything above has already read what it needs, and the readers that run later take
-       // the fragment from __omwBootFrag (see the world-switch rebuild). The token itself is
-       // held in __omwLockerToken and deliberately left out of that copy: nothing rebuilds a
-       // destination from a cloud boot, so keeping a live credential there would be storing it
-       // twice for no reason.
-       if (/[#&]cloud=1\b/.test(location.hash || '')) {
-         window.__omwBootFrag = String(location.hash || '').replace(/^#/, '')
-           .split('&').filter(function(p){ return !/^#?mplocker=/.test(p); }).join('&');
-         history.replaceState(null, '', location.pathname + location.search);
-       }
-       if (__mpLocker) mountLockerMorrowind();       // MP: game data streams from your locker
-       else if (__srcLocal) mountLocalMorrowind();   // bring-your-own local folder (single-player)
+       if (__mpLocker) mountLockerMorrowind();       // prove ownership, then reboot onto /mwdata
 
-       // Server-backed saves need an account, so they follow the locker session token. NOT in
-       // ?src=local: there the player's own folder is authoritative and running both mirrors
-       // would have two writers for one slot. Waits for the IDBFS reconcile, or it would race
-       // it and see its own restored files wiped.
-       if (window.__omwLockerToken && !__srcLocal) {
+       // Server-backed saves need an account, so they follow the locker session token. Waits for
+       // the IDBFS reconcile, or it would race it and see its own restored files wiped.
+       if (window.__omwLockerToken) {
          window.__idbfsReady.then(setupServerSaves).catch(function(e){ append('[saves] '+e,'err'); });
        }
 
        // Build the openmw.cfg load order from the game files that are ACTUALLY present.
        // `rootFiles` maps lowercased top-level filename -> its real on-disk name.
        //
-       // Shared by both data paths (the launcher's picked folder and a server-hosted mwdata/) so
-       // they can't drift: naming a content file or archive the VFS doesn't have is a HARD startup
+       // Naming a content file or archive the VFS doesn't have is a HARD startup
        // failure, so a base-game-only copy must never be handed content=Tribunal.esm. Expansions
        // are optional by construction here.
        //
@@ -3008,35 +2781,12 @@ try {
          var TOKEN = window.__omwLockerToken || '';
          var HTTP = lockerHttpBase();   // shared with the server-save mirror
          function api(path, opts){ opts=opts||{}; opts.headers=Object.assign({ authorization:'Bearer '+TOKEN }, opts.headers||{}); return fetch(HTTP+path, opts); }
-         // THE CACHE HELPERS LIVE OUT HERE, not inside the wizard's IIFE, because the UPLOAD
-         // path is a sibling closure of the download path. cachePut was declared in the IIFE
-         // and called from the uploader, so the call resolved to nothing: a ReferenceError on
-         // every uploaded file, swallowed by the surrounding try/catch, which meant the write
-         // documented as "cache what we just read" never happened and every file the player
-         // had just uploaded was re-downloaded from S3 on first play. test/pagescope.test.ts
-         // resolves the real scope chain now and fails on this shape.
-         var LOCKER_CACHE = 'omw-locker-v1';
-         async function cacheGet(sha){
-           if (!self.caches || !sha) return null;
-           try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.arrayBuffer() : null; } catch(e){ return null; }
-         }
-         async function cacheGetBlob(sha){
-           if (!self.caches || !sha) return null;
-           try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.blob() : null; } catch(e){ return null; }
-         }
-         async function cachePut(sha, buf){
-           if (!self.caches || !sha) return;
-           try { var c=await caches.open(LOCKER_CACHE); await c.put('https://locker.local/'+sha, new Response(buf)); } catch(e){ /* quota — non-fatal */ }
-         }
-         // EVERY locker failure lands here, so the title has to be true in both modes: the
-         // cloud tile mounts this same path with no multiplayer anywhere, and naming the wrong
-         // product in the one message a stuck player actually reads is its own small betrayal.
+         // EVERY locker failure lands here.
          function bounce(msg){ append('[locker] '+msg,'err');
-           fatalOverlay(window.__omwMPEnabled ? 'Multiplayer sign-in needed' : 'Sign-in needed',
-             msg+' Returning to the launcher…', false);
+           fatalOverlay('Sign-in needed', msg+' Returning to sign in…', false);
            // The auto-redirect is a deliberate leave too — without the flag it raised the
            // browser's "Leave site?" dialog on top of the overlay whenever the guard was armed.
-           setTimeout(function(){ window.__omwAllowLeave = true; location.href='launcher.html'; }, 2400); }
+           setTimeout(function(){ window.__omwAllowLeave = true; location.href='/'; }, 2400); }
          try { StreamFS.init(); } catch(e){ return bounce('Streaming unavailable (needs a Chromium browser on desktop).'); }
          if (!TOKEN || !HTTP) return bounce('No locker session. Please sign in again.');
          addRunDependency('mw-local');
@@ -3048,64 +2798,8 @@ try {
          // ArrayBuffer (largest vanilla file ~310MB) is affordable on desktop Chrome.
          async function hashFile(file){ var buf=await file.arrayBuffer(); var d=await crypto.subtle.digest('SHA-256', buf); var b=new Uint8Array(d), o='',i; for(i=0;i<b.length;i++)o+=('00'+b[i].toString(16)).slice(-2); return o; }
 
-         // --- media pack: loose Sound/Music/Video/Fonts/Splash files ride as ONE USTAR blob.
-         // The Blob references the picked Files lazily (disk-backed), so building a ~300MB tar
-         // costs almost no memory; only the final hash reads it through once.
-         var MEDIA_DIR_RE = /^(Sound|Music|Video|Fonts|Splash)\//i;
+         // Loose media the wizard still knows how to pick (dead while the manifest is ESMs only; CL15).
          var MEDIA_EXT_RE = /\.(mp3|wav|bik|fnt|tex|dds|tga|bmp|zip)$/i;
-         function tarHeader(name, size){
-           var h = new Uint8Array(512);
-           function put(s, off, len){ for (var i=0;i<s.length&&i<len;i++) h[off+i]=s.charCodeAt(i)&0xff; }
-           var nm = name, prefix = '';
-           if (nm.length > 100){ var cut = nm.lastIndexOf('/', 154); prefix = nm.slice(0, cut); nm = nm.slice(cut+1); }
-           put(nm, 0, 100);
-           put('0000644\0', 100, 8); put('0000000\0', 108, 8); put('0000000\0', 116, 8);
-           put(size.toString(8).padStart(11,'0')+'\0', 124, 12);
-           put('00000000000\0', 136, 12);
-           put('        ', 148, 8);          // checksum: spaces while summing
-           put('0', 156, 1);                  // regular file
-           put('ustar', 257, 5); put('00', 263, 2);
-           put(prefix, 345, 155);
-           var sum = 0; for (var j=0;j<512;j++) sum += h[j];
-           put(sum.toString(8).padStart(6,'0')+'\0 ', 148, 8);
-           return h;
-         }
-         function buildMediaTar(entries){ // entries: [{path, file}]
-           var parts = [], total = 0;
-           entries.forEach(function(e){
-             var pad = (512 - (e.file.size % 512)) % 512;
-             parts.push(tarHeader(e.path, e.file.size), e.file, new Uint8Array(pad));
-             total += 512 + e.file.size + pad;
-           });
-           parts.push(new Uint8Array(1024)); total += 1024;
-           return { blob: new Blob(parts), size: total };
-         }
-         async function uploadMediaPack(entries){
-           var built = buildMediaTar(entries);
-           wiz.set('media.tar','busy','packing '+entries.length+' files…');
-           var sha = await hashFile(built.blob); // one pass over ~300MB, pre-game so RAM is free
-           var rec = { name:'media.tar', size: built.size, sha256: sha };
-           wiz.set('media.tar','busy','authorizing…');
-           var au = await (await api('/locker/authorize-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
-           if (!au.ok) throw new Error(au.reason==='quota'?'over quota':'not accepted');
-           wiz.set('media.tar','busy','uploading '+Math.round(built.size/1048576)+' MB…');
-           var put = await fetch(au.url,{method:'PUT',body:built.blob});
-           if (!put.ok) throw new Error('upload failed');
-           wiz.set('media.tar','busy','verifying…');
-           var conf = await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
-           if (conf && conf.ok===false) throw new Error('not accepted');
-           // KEEP THE PACK WE JUST BUILT, exactly like the per-file uploader above does. The
-           // reader is keyed by the SAME sha256, so without this the first play session missed
-           // the cache and pulled the whole voice pack back out of S3 — hundreds of megabytes,
-           // re-downloading bytes that were in this tab's memory a moment earlier. That is the
-           // "Downloading voices" the player sees immediately after uploading voices.
-           // Best-effort and last: cachePut swallows QuotaExceeded, and a cache miss only ever
-           // costs a download, so a full cache must never fail the upload that already
-           // succeeded.
-           try { await cachePut(sha, built.blob); } catch(e){ /* non-fatal, see above */ }
-           wiz.set('media.tar','done','uploaded');
-         }
-
          // Recursively collect the files we care about from a picked Data Files folder.
          async function collectFiles(handle, prefix, out){
            for await (const [name,h] of handle.entries()){
@@ -3139,17 +2833,10 @@ try {
          // list and refuses any client whose own list differs (server/src/core/manifest.ts
          // ContentGate), so a base-game client cannot join a world that loads the expansions
          // no matter how politely it asks.
-         //
-         // `soloOptional` rows are required FOR THAT REASON ONLY. The cloud locker is also a
-         // single-player library with no world behind it (launcher's `cloud=1` door), and
-         // there is no content list to match there — so Tribunal and Bloodmoon go back to
-         // being what they are in retail: extra content, not an entry fee. Morrowind itself
-         // and the media are never soloOptional, so this can never wave through a library
-         // that has no game in it.
          function needs(f){
-           return !!f.required && !(f.soloOptional && !window.__omwMPEnabled);
+           return !!f.required;
          }
-         // The soloOptional rows this library is still missing, for the sentences below.
+         // The optional rows this library is still missing, for the sentences below.
          function optionalGap(needed, haveNames){
            return needed.filter(function(f){
              if (needs(f)) return false;
@@ -3417,13 +3104,6 @@ try {
                  if (row) wiz.set(row,'busy','verifying…');
                  var conf=await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
                  if(conf&&conf.ok===false){ if(row) wiz.set(row,'err','not a valid file'); return false; }
-                 // Keep the bytes we just sent. The reader is keyed by the SAME sha, so this
-                 // turns the first play session's fetch into a cache hit instead of pulling
-                 // the whole library back out of S3 — the file is already on this machine and
-                 // was, until now, thrown away the moment the PUT succeeded. Best-effort: a
-                 // library larger than the browser's quota simply keeps the parts that fit,
-                 // and cachePut swallows QuotaExceeded (a cache miss only costs a download).
-                 try { await cachePut(rec.sha256, file); } catch(e){ /* non-fatal, see above */ }
                  if (row) wiz.set(row,'done','uploaded');
                  return true;
                } catch(e){ if(row) wiz.set(row,'err','failed'); return false; }
@@ -3543,13 +3223,6 @@ try {
                    else wiz.set(dir,'done','added');
                  }
                }
-               // Voice: thousands of tiny files, so one packed upload.
-               if (skippedVoice) append('[locker] packing '+voice.length+' voice files; skipped '
-                 + skippedVoice + ' this server does not use.');
-               if (voice.length && mediaRow && have.indexOf('media.tar')===-1){
-                 try { await uploadMediaPack(voice); }
-                 catch(e){ wiz.set('media.tar','err','failed'); wiz.note('Voices could not be added ('+(e&&e.message||e)+'). Starting without them.','err'); }
-               }
                done();
              }
 
@@ -3570,36 +3243,24 @@ try {
          }
 
          (async function(){
-           var files, mediaPack = null;
-           try {
-             var lf = await (await api('/locker/files')).json();
-             files = lf.files; mediaPack = lf.mediaPack || null;
-           }
+           var files;
+           try { files = (await (await api('/locker/files')).json()).files; }
            catch(e){ return bounce('Could not reach your locker on the server.'); }
-           // A pack that was accepted and then failed its content check is deleted server-side
-           // AFTER the wizard reported success, so being asked for the voices again is the only
-           // symptom. Say what the server decided instead of silently re-asking.
-           if (mediaPack && mediaPack.reason && mediaPack.reason !== 'ok'){
-             append('[locker] your last voice upload was rejected: ' + mediaPack.reason
-               + (mediaPack.detail ? ' (' + mediaPack.detail + ')' : '')
-               + ' at ' + mediaPack.at, 'err');
-           }
            // The wizard runs when the locker is EMPTY, and also when it is merely INCOMPLETE:
            // an account that uploaded before the manifest knew about music/videos/voices has
            // the plugins but none of the media, and would otherwise silently keep playing a
            // silent game with no way to add them. Anything the server lists as needed and the
            // account does not have re-opens the wizard, which now takes a single folder pick.
            var have = (files||[]).map(function(f){ return f.name.toLowerCase(); });
-           var needed, neededFailed = null, hosted = false;
+           var needed, neededFailed = null;
            try {
              var nres = await api('/locker/needed');
              if (!nres.ok) throw new Error('HTTP '+nres.status);
              var nj = await nres.json();
              needed = nj.files||[];
-             // [setup] deliveryModel = "esm": the server hosts the game and the locker only
-             // proves ownership. Uploaded-but-unverified does not count, so ask again.
-             hosted = !!nj.hosted;
-             if (hosted && !nj.owned) { files = []; have = []; }
+             // The server hosts the game and the locker only proves ownership.
+             // Uploaded-but-unverified does not count, so ask again.
+             if (!nj.owned) { files = []; have = []; }
            }
            catch(e){
              // Silent failure here used to mean "no prompt, ever" — the account would keep
@@ -3644,15 +3305,7 @@ try {
            } else if (missing.length){
              append('[locker] have '+have.length+' of '+needed.length+' — missing: '
                + missing.map(function(m){ return m.name; }).join(', '));
-             var rejectNote = (mediaPack && mediaPack.reason && mediaPack.reason !== 'ok')
-               ? (mediaPack.reason === 'unknown_entry'
-                   ? 'Your last voice upload was rejected: it contained a file this server does not use'
-                     + (mediaPack.detail ? ' (' + mediaPack.detail + ')' : '')
-                     + '. Pick the same folder again — those files are now left out.'
-                   : 'Your last voice upload was rejected by the server (' + mediaPack.reason
-                     + '). Pick your Data Files folder to try again.')
-               : '';
-             try { files = await runWizard(needed, have, rejectNote) || files; }
+             try { files = await runWizard(needed, have) || files; }
              catch(e){
                // Never swallow this: a wizard that fails to open leaves the player with a
                // half-installed game and no explanation of why.
@@ -3673,350 +3326,29 @@ try {
            } else {
              append('[locker] library complete ('+have.length+' items).');
            }
-           if (hosted) {
-             // Ownership verified: reboot onto the server's hosted copy (mwdata=1). After the
-             // reload __mpLocker is false, so this function does not run again.
-             var hf = String(window.__omwBootFrag || location.hash || '').replace(/^#/, '').split('&')
-               .filter(function(kv){ return kv && !/^(mpticket|mpclosed|mpclosedby|mperror|mwdata|mplocker)=/.test(kv); });
-             hf.push('mplocker=' + encodeURIComponent(TOKEN), 'mwdata=1');
-             hf = hf.join('&');
-             try { if (sessionStorage.getItem('omwmp:bootfrag') !== null) sessionStorage.setItem('omwmp:bootfrag', hf); } catch(e){}
-             append('[locker] Morrowind ownership verified, loading the game from the server.');
-             window.__omwAllowLeave = true;
-             history.replaceState(null, '', location.pathname + location.search + '#' + hf);
-             location.reload();
-             return;
-           }
-           // Content files (.esm/.esp) are read HEAVILY at load and during play — the engine
-           // walks the whole ESM into its record store. Streaming those over the network makes
-           // every read a synchronous round-trip that STALLS the main thread ("page unresponsive").
-           // So DOWNLOAD content files in full into memory (they total ~90MB) and only STREAM the
-           // big BSAs (meshes/textures, read a little at a time). This mirrors the retail path.
-           var LD = window.__omwLoading;
-           // SHOW IT, don't just set() it. set() writes values into the overlay; show() is what
-           // makes the overlay VISIBLE, and by this point it is almost always hidden — the boot
-           // screen finished while the upload wizard (its own overlay) was on top. So the
-           // download loop below reported progress into an element with display:none and the
-           // player watched a BLACK SCREEN for minutes while hundreds of megabytes came down,
-           // with no indication anything was happening. Reported as "after upload the screen
-           // just goes black, then four minutes later the game started".
-           //
-           // show(), not lock(): a lock that never clears strands the player behind a screen
-           // they cannot dismiss, which is worse than this was. The engine's own boot takes the
-           // screen over when it starts.
-           if (LD) LD.show('Preparing your game', 'Fetching your files…');
-           function ldSet(pct,label,detail){ if(LD) LD.set(pct,label,detail); }
-           async function fetchFull(url, size, name){
-             var r = await fetch(url);
-             if (!r.ok && r.status !== 206) throw new Error('HTTP '+r.status);
-             if (!r.body || !r.body.getReader) return await r.arrayBuffer();
-             var reader=r.body.getReader(), chunks=[], got=0, last=-5;
-             for(;;){ var x=await reader.read(); if(x.done) break; chunks.push(x.value); got+=x.value.length;
-               var pct = size ? Math.floor(got*100/size) : 0;
-               if (pct >= last+5){ last=pct; ldSet(pct,'Downloading', name+'  '+Math.round(got/1048576)+'MB'); }
-             }
-             var out=new Uint8Array(got), p=0; for(var i=0;i<chunks.length;i++){ out.set(chunks[i],p); p+=chunks[i].length; }
-             return out.buffer;
-           }
-           // Content-addressed local cache: content files are keyed by their sha256, so a repeat
-           // visit reads them from the browser's Cache storage instead of re-downloading ~90MB
-           // from S3 every time. The hash comes from the locker manifest, so a re-uploaded (changed)
-           // file has a new hash -> cache miss -> re-download. Persists across sessions.
-           // USTAR reader for the voice pack — the mirror of the wizard's writer. Writes each
-           // entry into the engine FS at its retail relative path (Sound/Vo/...), creating
-           // directories as it goes. Returns how many files landed.
-           // ASYNC on purpose: 6,400 FS.writeFile calls in one loop pins the main thread long
-           // enough for Chrome to show "Page Unresponsive". Yield every batch so the browser
-           // can paint (and so the loading bar actually moves), and remember which directories
-           // exist rather than calling mkdirTree once per file.
-           async function untarInto(root, ab){
-             var u = new Uint8Array(ab), off = 0, n = 0, madeDirs = {};
-             var total = u.length, batch = 0;
-             function str(a, b){ var s=''; for (var i=a;i<b && u[off+i];i++) s+=String.fromCharCode(u[off+i]); return s; }
-             while (off + 512 <= u.length){
-               if (u[off] === 0) break;                     // end-of-archive
-               if (str(257,262) !== 'ustar') break;         // not a header: stop rather than guess
-               var nm = str(0,100), prefix = str(345,500);
-               var full = prefix ? prefix+'/'+nm : nm;
-               var size = parseInt(str(124,136).trim() || '0', 8) || 0;
-               var type = String.fromCharCode(u[off+156] || 48);
-               var body = off + 512;
-               if (type === '0' || type === '\0'){
-                 var path = root + '/' + full;
-                 var dir = path.slice(0, path.lastIndexOf('/'));
-                 try {
-                   if (!madeDirs[dir]){ FS.mkdirTree(dir); madeDirs[dir] = 1; }
-                   FS.writeFile(path, u.subarray(body, body + size));
-                   n++;
-                 } catch(e){ /* one bad entry must not abort the rest of the pack */ }
-               }
-               off = body + Math.ceil(size / 512) * 512;
-               if (++batch >= 150){
-                 batch = 0;
-                 ldSet(Math.floor(off * 100 / total), 'Unpacking voices', n + ' files');
-                 await new Promise(function(r){ setTimeout(r, 0); }); // let the browser breathe
-               }
-             }
-             return n;
-           }
-           append('[locker] loading '+files.length+' files from your library…');
-           ldSet(null,'Loading your library');
-           FS.mkdirTree('/mwdata');
-           var fbarch=[], content=[], hasVideoBik=false;
-           var mounted=[];
-           for (const f of files){
-             if (/\.bsa$/i.test(f.name)){
-               // Download the BSA ONCE into the local Cache, then read chunks from that local
-               // blob — no synchronous S3 streaming during gameplay, which is what stalled cell
-               // loads and timed out the MP handshake. Cached across sessions (keyed by sha256).
-               var blob = await cacheGetBlob(f.sha256);
-               if (blob){ ldSet(null,'Loading', f.name+' (cached)'); append('[locker] '+f.name+' from local cache'); }
-               else {
-                 var dlb = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
-                 if (!dlb || !dlb.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
-                 var ab = await fetchFull(dlb.url, f.size, f.name); // full download with % progress
-                 await cachePut(f.sha256, ab);
-                 blob = (await cacheGetBlob(f.sha256)) || new Blob([ab]); // prefer disk-backed; ab freed after
-               }
-               StreamFS.mountBlob('/mwdata/'+f.name, blob, f.size); // LOCAL reads: no network, no stall
-               fbarch.push(f.name);
-             } else if (/\.(esm|esp|omwaddon)$/i.test(f.name)){
-               var buf = await cacheGet(f.sha256);
-               if (buf){ ldSet(null,'Loading', f.name+' (cached)'); append('[locker] '+f.name+' from local cache'); }
-               else {
-                 var dlc = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
-                 if (!dlc || !dlc.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
-                 buf = await fetchFull(dlc.url, f.size, f.name); // full download to memory
-                 await cachePut(f.sha256, buf);
-               }
-               FS.writeFile('/mwdata/'+f.name, new Uint8Array(buf));
-               content.push(f.name);
-               // Backlog 299: the locker manifest already carries each plugin's sha256, and
-               // Lua cannot hash a file. Hand the hashes to net.lua (mp.getContentHashes,
-               // lowercase name=sha256 pairs) so a locker boot's manifest lets a `strict`
-               // world refuse a same-named different-version plugin instead of desyncing.
-               if (f.sha256) ENV.OPENMW_MP_CONTENT_SHA256 = (ENV.OPENMW_MP_CONTENT_SHA256 ? ENV.OPENMW_MP_CONTENT_SHA256 + ';' : '') + f.name.toLowerCase() + '=' + f.sha256;
-             } else if (f.name === 'media.tar'){
-               // Voice pack: thousands of tiny files in one object. Fetch once (cached by
-               // sha256 like everything else), then unpack straight into the data dir so the
-               // engine finds Sound/Vo/... exactly where retail keeps it.
-               var tbuf = await cacheGet(f.sha256);
-               if (tbuf){ ldSet(null,'Loading','voices (cached)'); }
-               else {
-                 var dlt = await (await api('/locker/download?name=media.tar')).json();
-                 if (dlt && dlt.url){
-                   tbuf = await fetchFull(dlt.url, f.size, 'voices');
-                   await cachePut(f.sha256, tbuf);
-                 }
-               }
-               if (tbuf){
-                 var n = await untarInto('/mwdata', tbuf); // async: yields so the page stays alive
-                 append('[locker] unpacked '+n+' voice files');
-               }
-             } else if (/\//.test(f.name)){
-               // Loose media (Music/, Video/, Splash/, Fonts/): few and large, so they take
-               // the same per-file path as the plugins and land at their retail relative path.
-               var mbuf = await cacheGet(f.sha256);
-               if (!mbuf){
-                 var dlm = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
-                 if (dlm && dlm.url){
-                   mbuf = await fetchFull(dlm.url, f.size, f.name);
-                   await cachePut(f.sha256, mbuf);
-                 }
-               }
-               if (mbuf){
-                 var mp = '/mwdata/'+f.name;
-                 FS.mkdirTree(mp.slice(0, mp.lastIndexOf('/')));
-                 FS.writeFile(mp, new Uint8Array(mbuf));
-               }
-             }
-           }
-           ldSet(null,'Starting Morrowind');
-           // Presigned download URLs are minted with a 1h life; a play session is longer, and
-           // StreamFS keeps reading Ranges against the SAME mounted URL for the whole session.
-           // So re-sign every mounted file well before expiry and swap the fresh URL in. The
-           // engine read path is synchronous (can't re-sign on a 403), so this is pre-emptive.
-           setInterval(function(){
-             mounted.forEach(async function(name){
-               try {
-                 var r = await (await api('/locker/download?name='+encodeURIComponent(name))).json();
-                 if (r && r.url) StreamFS.setUrl('/mwdata/'+name, r.url);
-               } catch(e){ /* a missed renewal is retried on the next tick, well within the 1h window */ }
-             });
-           }, 30*60*1000); // every 30 min, vs the 1h URL life = 2x margin
-           // Canonical GOTY load order first, then any extra plugins the player uploaded.
-           var base=['Morrowind.esm','Tribunal.esm','Bloodmoon.esm'];
-           var baseArch=['Morrowind.bsa','Tribunal.bsa','Bloodmoon.bsa'];
-           var extraContent=content.filter(function(c){ return base.indexOf(c)<0; });
-           var assetPack = await mountAssetPack();
-           (function waitCfg(){
-             if (FS.analyzePath('/openmw.cfg').exists){
-               var cfg = FS.readFile('/openmw.cfg',{encoding:'utf8'}).split('\n').filter(function(l){
-                 return !/^content=/.test(l) && !/^data=\/gamedata\s*$/.test(l) && !/^fallback-archive=/.test(l) && !/^fallback=Movies_/.test(l);
-               });
-               cfg.push('data=/mwdata','config="/userdata/config/openmw"');
-               if (assetPack) cfg.push('data=/mods');
-               baseArch.forEach(function(a){ if(fbarch.indexOf(a)>=0) cfg.push('fallback-archive='+a); });
-               fbarch.forEach(function(a){ if(baseArch.indexOf(a)<0) cfg.push('fallback-archive='+a); });
-               if (assetPack) cfg.push('fallback-archive='+assetPack); // LAST = overrides vanilla meshes
-               base.forEach(function(c){ if(content.indexOf(c)>=0) cfg.push('content='+c); });
-               extraContent.forEach(function(c){ cfg.push('content='+c); });
-               // NOT ALWAYS. The locker is "your files, streamed back to you on any device"
-               // (docs/LEGAL.md §2), which is useful with or without other players — the cloud
-               // tile signs in and mounts exactly this way with no world at all. Gated like
-               // the other two data paths (the local and hosted branches below) so one mount
-               // serves both modes; loading the multiplayer scripts with no socket behind
-               // them would be a permanent "connecting" that never resolves.
-               if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts');
-               FS.writeFile('/openmw.cfg', cfg.join('\n'));
-               append('[locker] READY -> ' + (window.__omwMPEnabled ? 'multiplayer' : 'single player')
-                 + ' with your library ('+content.join(' + ')+')');
-               // The 8s SETTLE DELAY that used to sit here is gone. It was meant to cover the
-               // window where the player has control but the simulation peer does not yet hold
-               // their cell — walk in it and the peer arrives, asserts its own view of where
-               // you are, and you rubber-band. But it wrapped removeRunDependency, which is a
-               // BOOT gate: the whole 8s elapsed before the engine even started, let alone
-               // connected, so it covered none of that window and simply taxed every join.
-               //
-               // That window is now closed at both ends: the server starts the peer when a
-               // player CONNECTS rather than when one reaches a cell (server.ts simPeerTick),
-               // and it announces readiness with SimReady, which the loading screen waits on
-               // (watchCellLoad below). An event, not a clock — the wait is a variable.
-               removeRunDependency('mw-local');
-               return;
-             } else { setTimeout(waitCfg, 25); }
-           })();
-         })().catch(function(e){ bounce('Unexpected error: '+(e&&e.message||e)); });
-       }
-
-       // --- Mount the user-picked Data Files folder (?src=local). Boot waits on 'mw-local'. ---
-       function mountLocalMorrowind(){
-         try { StreamFS.init(); }
-         catch(e){ append('[local] streamfs unavailable: '+e,'err');
-           fatalOverlay('Streaming unavailable', 'Your browser could not start the file streamer (needs cross-origin isolation). Try Chrome/Edge on desktop.'); return; }
-         addRunDependency('mw-local');
-         // Minimal IndexedDB read of the handle stored by launcher.html.
-         function idbGetHandle(){
-           return new Promise(function(res,rej){
-             var r = indexedDB.open('omw-launcher',1);
-             r.onupgradeneeded=function(){ if(!r.result.objectStoreNames.contains('handles')) r.result.createObjectStore('handles'); };
-             r.onsuccess=function(){ try {
-               var t=r.result.transaction('handles','readonly').objectStore('handles').get('mwdata');
-               t.onsuccess=function(){ res(t.result); }; t.onerror=function(){ rej(t.error); };
-             } catch(e){ rej(e); } };
-             r.onerror=function(){ rej(r.error); };
-           });
-         }
-         function bounce(msg){
-           append('[local] '+msg,'err');
-           fatalOverlay('Pick your Morrowind folder again', msg + ' Returning to the launcher…', false);
-           // Keep 'mw-local' held so the engine stays parked at the loader (no half-boot with
-           // the wrong data) until we navigate back to the launcher.
-           setTimeout(function(){ location.href='launcher.html'; }, 2200);
-         }
-         (async function(){
-           var dir;
-           try { dir = await idbGetHandle(); } catch(e){ return bounce('Could not read the saved folder.'); }
-           if (!dir) return bounce('No folder was remembered.');
-           var perm='prompt';
-           try { perm = await dir.queryPermission({mode:'read'}); } catch(e){}
-           if (perm !== 'granted') return bounce('Read permission is no longer granted.');
-
-           FS.mkdirTree('/mwdata');
-           var count=0, rootFiles=new Map(), hasVideoBik=false;
-           async function walk(handle, prefix){
-             var entries=[];
-             for await (const ent of handle.entries()) entries.push(ent);
-             // Recurse into subdirs first so their FS dirs exist before we mount their files.
-             for (const [name,h] of entries){
-               if (h.kind==='directory'){ var rel = prefix ? prefix+'/'+name : name;
-                 try { FS.mkdirTree('/mwdata/'+rel); } catch(e){}
-                 await walk(h, rel); }
-             }
-             // Mount this dir's files, probing sizes in parallel.
-             await Promise.all(entries.filter(function(e){return e[1].kind==='file';}).map(async function(ent){
-               var name=ent[0], h=ent[1], rel = prefix ? prefix+'/'+name : name;
-               var size=0; try { size=(await h.getFile()).size; } catch(e){ append('[local] cannot read '+rel,'err'); return; }
-               try { StreamFS.mountLocal('/mwdata/'+rel, h, size); count++;
-                 if ((count % 400)===0) append('[local] mounted '+count+' files…'); }
-               catch(e){ append('[local mount err] '+rel+' '+e,'err'); return; }
-               if (!prefix) rootFiles.set(name.toLowerCase(), name);
-               if (prefix && prefix.toLowerCase()==='video' && /\.bik$/i.test(name)) hasVideoBik=true;
-             }));
-           }
-           try { append('[local] scanning your Data Files folder…'); await walk(dir, ''); }
-           catch(e){ return bounce('Failed while reading the folder: '+(e&&e.message||e)); }
-           if (!rootFiles.has('morrowind.esm') || !rootFiles.has('morrowind.bsa'))
-             return bounce('Morrowind.esm / Morrowind.bsa were not found.');
-           append('[local] mounted '+count+' files (streaming from disk)');
-           // Diagnostic: report what top-level folders actually got mounted. Retail audio/voice/video
-           // are LOOSE files (Sound/, Music/, Video/, Splash/) — NOT in the BSA — so if any of these
-           // read 0 the picked folder is missing them (or a subfolder wasn't granted/readable).
-           try {
-             var __want=['sound','music','video','splash'], __log=function(m){ append(m); console.log(m); };
-             FS.readdir('/mwdata').forEach(function(d){
-               if (d==='.'||d==='..') return;
-               var p='/mwdata/'+d; try { if (!FS.isDir(FS.stat(p).mode)) return; } catch(e){ return; }
-               var n=0; (function cnt(dir){ FS.readdir(dir).forEach(function(e){ if(e==='.'||e==='..')return;
-                 var f=dir+'/'+e; try{ FS.isDir(FS.stat(f).mode)?cnt(f):n++; }catch(_){} }); })(p);
-               var lc=d.toLowerCase(), tag=(__want.indexOf(lc)>=0)?(n?'':' ⚠ EMPTY'):'';
-               __log('[local]   '+d+'/ = '+n+' files'+tag);
-             });
-             __log('[local] intro video (.bik in Video/) '+(hasVideoBik?'FOUND':'NOT found'));
-           } catch(e){ console.log('[local] tree summary failed: '+e); }
-
-           // Build the load order from what's present (shared with the server-hosted mwdata/ path).
-           var lo = buildLoadOrder(rootFiles);
-           var content = lo.content, fbarch = lo.fbarch;
-
-           var wantMovies = hasVideoBik && !/[?&]novid\b/.test(location.search);
-
-           // Folder-backed saves: wait for IDBFS to finish loading (so its reconcile can't wipe the
-           // saves we load in), then wire this folder's openmw-web-saves <-> the engine. The game data
-           // mount above only needs READ; saving to disk needs the read-write grant (falls back to
-           // browser storage + a warning if the player only allowed reading).
-           try { await window.__idbfsReady; await setupFolderSaves(dir); }
-           catch(e){ append('[saves] folder-save setup skipped: '+(e&&e.message||e),'err'); }
-
-           var assetPack = await mountAssetPack();
-
-           (function waitCfg(){
-             if (FS.analyzePath('/openmw.cfg').exists){
-               var cfg = FS.readFile('/openmw.cfg', {encoding:'utf8'}).split('\n').filter(function(l){
-                 return !/^content=/.test(l) && !/^data=\/gamedata\s*$/.test(l) && !/^fallback-archive=/.test(l)
-                     && !/^fallback=Movies_/.test(l);
-               });
-               cfg.push('data=/mwdata', 'config="/userdata/config/openmw"');
-               // data=/mods must exist for fallback-archive= to resolve: it takes a BARE FILENAME and
-               // is looked up by scanning the data= dirs (components/files/collections.cpp).
-               if (assetPack) cfg.push('data=/mods');
-               fbarch.forEach(function(a){ cfg.push('fallback-archive='+a); });
-               // LAST among archives => highest BSA priority => overrides vanilla meshes.
-               if (assetPack) cfg.push('fallback-archive='+assetPack);
-               content.forEach(function(c){ cfg.push('content='+c); });
-               if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
-               if (wantMovies)
-                 cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',
-                          'fallback=Movies_Morrowind_Logo,mw_logo.bik',
-                          'fallback=Movies_New_Game,mw_intro.bik');
-               FS.writeFile('/openmw.cfg', cfg.join('\n'));
-               append('[local] READY -> '+content.join(' + ')+' (your files)');
-               removeRunDependency('mw-local');
-             } else { setTimeout(waitCfg, 25); }
-           })();
+           // Ownership verified: reboot onto the server's hosted copy (mwdata=1). After the
+           // reload __mpLocker is false, so this function does not run again.
+           var hf = String(window.__omwBootFrag || location.hash || '').replace(/^#/, '').split('&')
+             .filter(function(kv){ return kv && !/^(mpticket|mpclosed|mpclosedby|mperror|mwdata|mplocker)=/.test(kv); });
+           hf.push('mplocker=' + encodeURIComponent(TOKEN), 'mwdata=1');
+           hf = hf.join('&');
+           try { if (sessionStorage.getItem('omwmp:bootfrag') !== null) sessionStorage.setItem('omwmp:bootfrag', hf); } catch(e){}
+           append('[locker] Morrowind ownership verified, loading the game from the server.');
+           window.__omwAllowLeave = true;
+           history.replaceState(null, '', location.pathname + location.search + '#' + hf);
+           location.reload();
          })().catch(function(e){ bounce('Unexpected error: '+(e&&e.message||e)); });
        }
 
        // --- Load REAL Morrowind data at runtime (esm + bsa + loose audio tar) ---
        // Fetched SEQUENTIALLY (not Promise.all) so peak JS-heap stays low, into MEMFS under
        // /mwdata, then the preloaded openmw.cfg is rewritten to load Morrowind. Boot waits.
-       // Skipped for BOTH bring-your-own (__srcLocal) AND multiplayer (__mpLocker): those mount
-       // their own data (local folder / the S3 locker). Running this too would fetch server-hosted
-       // retail data that isn't there and fail the boot on top of a locker mount that succeeded.
-       if (!__srcLocal && !__mpLocker) try {
+       // Skipped while the locker gate runs (__mpLocker): it reboots onto this path once
+       // ownership is proved.
+       if (!__mpLocker) try {
          // Diagnostic: ?nomw skips the 817MB Morrowind load and boots the tiny preloaded
          // example-suite instead — lets a light load verify the render path (S3TC/SIMD/resize).
-         if (window.__FORCE_NOMW || /[?&]nomw\b/.test(location.search)){
+         if (/[?&]nomw\b/.test(location.search)){
            // The example-suite demo (village of NPCs, guards, monsters, hi-def CC0 textures
            // + curated MW dressing) is BAKED into the preloaded /gamedata package + openmw.cfg
            // by content/suite-enhance/*, so nothing extra is fetched at runtime.
@@ -4109,10 +3441,9 @@ try {
          function noGameData(why){
            fatalOverlay('No game data on this server',
              'This server does not host a copy of Morrowind, so there is nothing here to play. '
-             + 'Go back and either start the free example world, or point the launcher at your '
-             + 'own Data Files folder.',
+             + 'Ask the operator to install the game data.',
              false,
-             { kicker: 'Game data', actionLabel: 'Back to the launcher', actionHref: 'launcher.html' });
+             { kicker: 'Game data', actionLabel: 'Back', actionHref: '/' });
            throw new Error(why);   // stop the chain; the overlay is the outcome
          }
          // DISCOVER what the host actually put in mwdata/, instead of demanding a fixed file list.
@@ -5013,7 +4344,7 @@ try {
     try { sessionStorage.removeItem('omwmp:bootfrag'); sessionStorage.removeItem('omwmp:chatlog'); } catch (e) {}
     var go = function(){
       try { if (window.Module) Module.__omwRunning = false; } catch (e) {}
-      location.href = dest || 'launcher.html#characters';
+      location.href = dest || '/join#characters';
     };
     var p; try { p = window.omw.send('leaving', 4000); } catch (e) {}
     (p && p.then ? p : Promise.resolve()).then(go, go);

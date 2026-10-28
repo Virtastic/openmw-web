@@ -49,22 +49,14 @@ const clientOpts = index === ''
   ? { skip: 'play/index.html is not part of the server image' }
   : {};
 
-test('the cloud-locker boot erases its own fragment', clientOpts, () => {
-  const scrub = /if \(\/\[#&\]cloud=1\\b\/\.test\(location\.hash \|\| ''\)\) \{[\s\S]*?\n       \}/.exec(index);
-  assert.ok(scrub, 'no cloud-fragment scrub; the locker token stays in the URL');
-  assert.match(scrub[0], /history\.replaceState\(null, '', location\.pathname \+ location\.search\)/);
-});
-
-test('and does not keep the live token in the fragment it stashes', clientOpts, () => {
-  const scrub = /if \(\/\[#&\]cloud=1\\b\/\.test\(location\.hash \|\| ''\)\) \{[\s\S]*?\n       \}/.exec(index)!;
-  // __omwBootFrag outlives the scrub, so copying mplocker into it would move the credential
-  // rather than remove it.
-  assert.match(scrub[0], /mplocker/, 'the stash must explicitly drop mplocker');
-  assert.match(scrub[0], /filter\(/);
+test('one data path: the locker gate, then /mwdata (?nomw for tests)', clientOpts, () => {
+  // CL5: no cloud door, no bring-your-own folder, no locker download, no backup toolbar.
+  assert.doesNotMatch(index, /cloud=1|src=local|mountLocalMorrowind|setupFolderSaves|savetools|uploadMediaPack|\/locker\/download|__FORCE_NOMW/);
+  assert.doesNotMatch(index, /'launcher\.html/, 'launcher.html is /join now');
+  assert.ok(index.includes("hf.push('mplocker=' + encodeURIComponent(TOKEN), 'mwdata=1');"), 'the gate reboots onto /mwdata');
 });
 
 test('the multiplayer scrub is still in place', clientOpts, () => {
-  // Both doors, not one: fixing the cloud path by disturbing the MP path would be a trade.
   assert.match(index, /window\.__omwBootFrag = String\(location\.hash \|\| ''\)\.replace\(\/\^#\/, ''\);/);
 });
 
@@ -96,7 +88,7 @@ test('a rescue reboot mid-creation keeps mpnew, a character switch still drops i
 test('an F5 into a deleted character goes to the character screen, not a dead world', clientOpts, () => {
   // A tab left open on a character deleted elsewhere restored its fragment on reload and
   // dialled that character's discarded world forever (404 each time).
-  const block = /var mchS = [\s\S]*?location\.replace\('launcher\.html#characters'\);/.exec(index);
+  const block = /var mchS = [\s\S]*?location\.replace\('\/join#characters'\);/.exec(index);
   assert.ok(block, 'no stale-character check on the restored fragment');
   assert.match(block[0], /fetch\('\/auth\/characters'/);
   assert.match(block[0], /!\/\(\^\|&\)mpnew=\/\.test\(savedFrag\)/, 'a character in creation must be exempt');
@@ -217,11 +209,10 @@ test('buildLoadOrder accepts every content extension the peer does', clientOpts,
   assert.match(fn[0], /\/\\\.esm\$\/\.test\(lower\)\) modEsm/);
 });
 
-// Backlog 299 (locker half): the locker manifest's sha256 reaches net.lua through the engine
-// env, so a locker boot's SessionHello can be verified by a `strict` world.
-test('a locker boot hands each plugin sha256 to Lua', clientOpts, () => {
-  assert.ok(index.includes("ENV.OPENMW_MP_CONTENT_SHA256 = (ENV.OPENMW_MP_CONTENT_SHA256 ? ENV.OPENMW_MP_CONTENT_SHA256 + ';' : '') + f.name.toLowerCase() + '=' + f.sha256"),
-    'the locker mount loop must publish lowercase name=sha256 pairs');
+// Backlog 299: net.lua puts any page-supplied sha256 on the manifest entry. CL5: every v2
+// client boots the server's own /mwdata copy and reports none (manifest.ts: served by the
+// server's own data), so nothing in index.html sets OPENMW_MP_CONTENT_SHA256 any more.
+test('net.lua still carries a page-supplied plugin sha256', clientOpts, () => {
   const lua = readFileSync(join(process.cwd(), '..', 'openmw', 'files', 'data', 'scripts', 'mp', 'net.lua'), 'utf8');
   assert.ok(lua.includes('sha256 = hashes[string.lower(name)]'), 'net.lua must put the hash on the manifest entry');
 });
