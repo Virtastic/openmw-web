@@ -426,3 +426,21 @@ test('pvp gate blocks player targets but not actor targets', async (t) => {
     assert.equal((welcome['flags'] as Record<string, unknown>).difficulty, 0);
   });
 });
+
+// OT3-169: the spell table. Mind control, soul trap and teleports never reach a player;
+// Command/Frenzy Humanoid and teleports never reach an actor. Allowed effects still relay.
+test('griefing effects are refused by target kind (OT3-169)', async (t) => {
+  const { peer, atk, vic, atkId, vicId, epoch } = await scenario(t, true);
+  for (const id of ['commandhumanoid', 'frenzy_humanoid', 'CalmHumanoid', 'soultrap', 'divineintervention', 'telekinesis', 'lock']) {
+    castHit(atk, { ...spellBody({ playerId: vicId }, atkId), effects: [{ id: 'firedamage', magnitude: 5, duration: 1 }, { id, magnitude: 5, duration: 1 }] });
+  }
+  for (const id of ['commandhumanoid', 'frenzyhumanoid', 'recall']) {
+    castHit(atk, { ...spellBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }, atkId), effects: [{ id, magnitude: 5, duration: 1 }] });
+  }
+  await fence(atk, vic, peer);
+  assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0, 'a griefing effect reached a player');
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0, 'a griefing effect reached an actor');
+  // Calm on a creature is a tool, not a grief.
+  castHit(atk, { ...spellBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }, atkId), effects: [{ id: 'calmcreature', magnitude: 5, duration: 1 }] });
+  await peer.waitEvent('CombatSpellHit');
+});

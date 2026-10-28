@@ -22,6 +22,20 @@ import { log } from '../log';
 const MAX_CELL_KEY = 128;
 const MAX_EFFECTS = 64;
 
+// OT3-169: effects that never land through the relay, by target kind. A player is an avatar
+// on the peer: a mind effect would hand its AI to whoever cast it, a soul trap or a teleport
+// would act on a body its owner doesn't drive. On actors, Command/Frenzy Humanoid would turn
+// a town's NPCs on everyone, and a teleport would move a shared NPC out of every world.
+// combat.lua MP_CombatSpellHit enforces the same table on the RECORD (authoritative); this
+// is the early drop, against the claimed ids. Ids compare lowercased without '_'.
+const MIND = ['commandhumanoid', 'commandcreature', 'frenzyhumanoid', 'frenzycreature', 'calmhumanoid',
+  'calmcreature', 'demoralizehumanoid', 'demoralizecreature', 'rallyhumanoid', 'rallycreature'];
+const TELEPORT = ['divineintervention', 'almsiviintervention', 'recall', 'mark'];
+export const EFFECTS_NEVER_ON_PLAYERS: ReadonlySet<string> = new Set([...MIND, ...TELEPORT,
+  'soultrap', 'telekinesis', 'open', 'lock']);
+export const EFFECTS_NEVER_ON_ACTORS: ReadonlySet<string> = new Set(['commandhumanoid', 'frenzyhumanoid', ...TELEPORT]);
+const effectKey = (id: string): string => id.toLowerCase().replace(/_/g, '');
+
 const COMBAT_EVENTS = new Set(['CombatHit', 'CombatSpellHit', 'CombatCast', 'CombatProjectile']);
 
 // Target union: a player session, or an actor owned by a cell's authority holder.
@@ -392,6 +406,7 @@ export class Combat {
     // one Restore riding a Fire Damage does not make the cast a heal (backlog 249), so an
     // entry that calls itself harmful vetoes the whole-cast claim.
     let beneficial = body.get('beneficial') === true;
+    const never = target.kind === 'player' ? EFFECTS_NEVER_ON_PLAYERS : EFFECTS_NEVER_ON_ACTORS;
     for (const [, entry] of effects) {
       const e = tbl(entry);
       const id = e ? str(e.get('id')) : undefined;
@@ -399,6 +414,10 @@ export class Combat {
       const duration = e ? checkedMagnitude(e.get('duration'), durCap) : undefined;
       if (!id || magnitude === undefined || duration === undefined) {
         this.drop(player, 'CombatSpellHit', 'invalid effect entry or over cap');
+        return;
+      }
+      if (never.has(effectKey(id))) {
+        this.drop(player, 'CombatSpellHit', 'effect not allowed on target', { effect: id, kind: target.kind });
         return;
       }
       if (e!.get('beneficial') === false) beneficial = false;

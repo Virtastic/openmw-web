@@ -631,6 +631,11 @@ Rules:
   replace it). Actor targets are unaffected. A `CombatSpellHit` crosses the gate only when
   `beneficial` is true AND no effect entry says `beneficial=false` (a heal on a friend is help;
   a record that heals and burns is an attack — the client keeps the heal and drops the burn).
+- **Effect table** (OT3-169): a `CombatSpellHit` naming any of these effect ids is dropped,
+  and the owner strips them from the record it applies. On a *player*: Command/Frenzy/Calm/
+  Demoralize/Rally (Humanoid and Creature), Soul Trap, Divine/Almsivi Intervention, Recall,
+  Mark, Telekinesis, Open, Lock. On an *actor*: Command Humanoid, Frenzy Humanoid, the four
+  teleports. Ids compare lowercased with `_` removed.
 - Clients MUST cancel local damage application for remote-authoritative victims (register an
   `I.Combat` handler that forwards then `return false`) and re-emit the stock `Hit` event
   locally when they receive `CombatHit` for themselves, so the victim's own armor/difficulty

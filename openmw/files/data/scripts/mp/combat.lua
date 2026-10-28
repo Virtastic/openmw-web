@@ -26,6 +26,15 @@ local deps = nil
 -- OT3-164: story actors and who may hurt them, from the server's StoryLicense (peer only).
 -- actors: {recordId=true}; byPlayer: {[playerId string]={recordId=true}}. Empty = no veto.
 local story = { actors = {}, byPlayer = {} }
+-- OT3-169: see MP_CombatSpellHit.
+local function idSet(ids) local s = {} for _, id in ipairs(ids) do s[id] = true end return s end
+local MIND = { 'commandhumanoid', 'commandcreature', 'frenzyhumanoid', 'frenzycreature', 'calmhumanoid',
+    'calmcreature', 'demoralizehumanoid', 'demoralizecreature', 'rallyhumanoid', 'rallycreature' }
+local NEVER_ON_PLAYERS = idSet(MIND)
+for _, id in ipairs({ 'divineintervention', 'almsiviintervention', 'recall', 'mark', 'soultrap',
+    'telekinesis', 'open', 'lock' }) do NEVER_ON_PLAYERS[id] = true end
+local NEVER_ON_ACTORS = idSet({ 'commandhumanoid', 'frenzyhumanoid', 'divineintervention',
+    'almsiviintervention', 'recall', 'mark' })
 
 local lastHitTaken = nil -- diagnostic mirror for the scenarios
 
@@ -324,6 +333,19 @@ combat.handlers.MP_CombatSpellHit = function(data)
             end
             indexes = kept
         end
+        -- OT3-169: effects that never land through the relay, whatever the wire claimed
+        -- (server/src/core/combat.ts EFFECTS_NEVER_ON_*, same table).
+        local never = (data.target and data.target.playerId ~= nil) and NEVER_ON_PLAYERS or NEVER_ON_ACTORS
+        local allowed = {}
+        for _, i in ipairs(indexes) do
+            local e = effects[i + 1]
+            if e and never[string.lower(tostring(e.id))] then
+                print(string.format('[mp] spell %s: effect %s refused on this target', tostring(spellId), tostring(e.id)))
+            else
+                allowed[#allowed + 1] = i
+            end
+        end
+        indexes = allowed
         if #indexes == 0 then return end
         types.Actor.activeSpells(victim):add({
             id = spellId,
