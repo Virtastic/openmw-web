@@ -131,7 +131,15 @@ cp -a "$MP_SRC/." "$MP_DST/"
 # asks for them. The harness builds (Jenkins build-engine.sh, local full-stack) pass
 # OMW_TEST_HOOKS=1; release and prod leave it unset, and player.lua then drops every command
 # the page itself does not send.
-if [ "${OMW_TEST_HOOKS:-0}" = 1 ]; then echo 'return { testHooks = true }' > "$MP_DST/buildflags.lua"; fi
+# OT3-234: and without the flag the handlers themselves are blanked out (strip-testhooks.awk),
+# so a release openmw.data carries no give/kill/quest seam at all, gated or not.
+if [ "${OMW_TEST_HOOKS:-0}" = 1 ]; then
+  echo 'return { testHooks = true }' > "$MP_DST/buildflags.lua"
+else
+  for f in "$MP_DST"/*.lua; do
+    awk -f "$ROOT/wasm-build/strip-testhooks.awk" "$f" > "$f.strip" && mv "$f.strip" "$f" || exit 1
+  done
+fi
 cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscripts"
 
 # ICU DATA. The emscripten ICU port links `libicu_stubdata` — ICU's "data supplied elsewhere"

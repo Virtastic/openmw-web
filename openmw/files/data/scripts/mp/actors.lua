@@ -1224,6 +1224,7 @@ function actors.noteCellDeaths(cellKey, keys)
     end
 end
 
+-- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
 function actors.killActorByRecord(recordId)
     watchKillRecord = recordId
     for _, obj in ipairs(cellActors(deps.ownCellKeyFn())) do
@@ -1247,6 +1248,7 @@ function actors.killActorByRecord(recordId)
     end
     return false
 end
+-- @testhook end
 
 -- Snap service for actor puppets that diverged (routed here from global.lua's mpSnapRequest).
 function actors.snapActor(actorKey, pos)

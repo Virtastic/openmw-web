@@ -813,6 +813,7 @@ function worldmp.reset()
     exploredSent = {}
 end
 
+-- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
 -- ================================================================== test hooks
 
 -- Advance the LOCAL clock the way resting does, so the jump detector (the real mechanism)
@@ -942,6 +943,7 @@ function worldmp.testCreateEnchanted(name)
     mp.set('lastEnchantLocalId', armor.id)
     return armor.id
 end
+-- @testhook end
 
 -- What a record resolves to here, including its enchantment chain: the scenarios compare
 -- this across clients, because a placeholder stand-in still "exists".
@@ -974,6 +976,7 @@ function worldmp.describeRecord(recordId)
     return nil
 end
 
+-- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
 function worldmp.testWeather(index)
     local rec = weatherRecordAt(index)
     if not rec then
@@ -987,6 +990,7 @@ function worldmp.testWeather(index)
     local ok, err = pcall(function() core.weather.changeWeather(ownRegion, rec) end)
     if not ok then print('[mp] testWeather failed: ' .. tostring(err)) end
 end
+-- @testhook end
 
 -- Name of the record an object resolves to here (scenario evidence that a peer got the
 -- REAL record and not a placeholder).

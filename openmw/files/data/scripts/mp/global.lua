@@ -2936,6 +2936,7 @@ local eventHandlers = {
         toPlayer('MP_DoResurrect', { restoreHp = data.restoreHp == true, standUp = data.standUp == true, hp = data.hp })
     end,
 
+    -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
     -- Test hook (equip:<id>:<slot>): grant an item into the LOCAL player's inventory.
     mpGrantItem = function(data)
         local player = playerScript()
@@ -3343,6 +3344,7 @@ local eventHandlers = {
             end
         end
     end,
+    -- @testhook end
 
     -- M1/M4 snap service: puppet.lua steering diverged (blocked, warp) -> hard teleport.
     -- actorKey => an M4 NPC puppet (routed to the actors hub); id => a remote-player puppet.
@@ -3756,6 +3758,7 @@ local eventHandlers = {
         mp.sendEvent('PlayerSpellbook', { add = mapped(data.add), remove = mapped(data.remove) })
         if #pending > 0 then toPlayer('MP_ForgetSpells', { ids = pending }) end
     end,
+    -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
     mpTestRest = function(data) worldmp.testRest(data.hours) end,
     mpTestRecord = function(data) worldmp.testCreateRecord(data.name, data.noRegister) end,
     mpTestSpell = function(data) worldmp.testCreateSpell(data.name) end,
@@ -3789,6 +3792,7 @@ local eventHandlers = {
     mpOpenUi = function(data)
         if data.which == 'social' then toPlayer('MP_SocialUiOpen', {}) end
     end,
+    -- @testhook end
 
     -- --- M6: quest-layer bridges + test hooks -------------------------------------------
     -- onQuestUpdate is a PLAYER-context engine handler; player.lua forwards it here so the
@@ -3803,6 +3807,7 @@ local eventHandlers = {
         if data and data.merchant then objects.onBarterOpen(data.merchant) end
     end,
     mpBarterClose = function() objects.onBarterClose() end,
+    -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
     -- HARNESS ONLY (player.lua barter:sell:/barter:buy:): one item crosses between the pack and
     -- the merchant, and the merchant's purse moves by its value, as the trade window would.
     mpTestBarter = function(data)
@@ -3824,6 +3829,7 @@ local eventHandlers = {
             types.Actor.setBarterGold(m, math.max(0, gold + (data.sell and -value or value)))
         end)
     end,
+    -- @testhook end
     mpDialogueClosed = function()
         quests.releaseLock('windowclosed')
     end,
@@ -3834,6 +3840,7 @@ local eventHandlers = {
     mpDialogueForced = function(data)
         if data and data.target then quests.onDialogueForced(data.target) end
     end,
+    -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
     mpTestQuest = function(data) quests.testSetQuestStage(data.id, data.stage) end,
     mpTestGlobal = function(data) quests.testSetGlobal(data.name, data.value) end,
     mpTestBounty = function(data) quests.testSetBounty(data.n) end,
@@ -3870,8 +3877,10 @@ local eventHandlers = {
     end,
     mpTestFaction = function(data) quests.testJoinFaction(data.id, data.rank) end,
     mpTestDialogue = function(data) quests.testActivateNpc(data.id) end,
+    -- @testhook end
     -- The player pressed something (player.lua): the rejoin position hold must let go.
     mpPlayerTookControls = function() releaseRestoreHold('controls') end,
+    -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
     mpTestFollow = function(data)
         for _, obj in ipairs(world.activeActors) do
             if obj:isValid() and obj.recordId == data.id then
@@ -3901,6 +3910,7 @@ local eventHandlers = {
     -- the engine gives no way to do this for real from a script.
     mpTestLearnTopic = function(data) quests.testLearnTopic(data.id) end,
     mpTestMemberVar = function(data) quests.testSetMemberVar(data.id, data.name, data.value) end,
+    -- @testhook end
 }
 
 -- The appliers that live in their own modules, merged in this order (a later module wins a

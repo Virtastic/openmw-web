@@ -400,11 +400,13 @@ end
 -- Taking the baseline here, before the flag is set, makes the seam behave like a genuine
 -- post-login discovery no matter how early a scenario calls it -- which is the whole point of
 -- a seam that is supposed to exercise the real path.
+-- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
 function quests.testLearnTopic(id)
     if type(id) ~= 'string' or id == '' then return end
     if knownTopics == nil then knownTopics = topicSet() or {} end
     testLearned[string.lower(id)] = true
 end
+-- @testhook end
 
 local function diffTopics()
     local now = topicSet()
@@ -1261,6 +1263,7 @@ function quests.reset()
     lockGrantedAt = nil
 end
 
+-- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
 -- ================================================================== test hooks
 
 -- Drive a quest stage through the REAL engine path (setJournalIndex -> onQuestUpdate ->
@@ -1336,6 +1339,7 @@ function quests.testSetMemberVar(recordId, name, value)
     end
     print('[mp] testSetMemberVar: no scripted object "' .. tostring(recordId) .. '" in cell')
 end
+-- @testhook end
 
 function quests.init(d)
     deps = d

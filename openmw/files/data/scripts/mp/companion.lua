@@ -265,6 +265,7 @@ return {
                 releaseHold()
             end
         end,
+        -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
         -- Scenario probe (s114): what this actor's AI stack looks like from its own script.
         mpTestFollowProbe = function()
             local out = {}
@@ -280,6 +281,7 @@ return {
             pcall(function() I.AI.filterPackages(function(p) n = n + 1; out[#out + 1] = 'pkg:' .. tostring(p.type); return true end) end)
             pcall(function() require('openmw.mp').set('followProbe', table.concat(out, ' ')) end)
         end,
+        -- @testhook end
         -- THE BARS A HANDOFF HANDS US. Dynamic-stat setters are Self-gated (mwlua/stats.cpp),
         -- so the holder cannot write a snapshot's health onto an actor from the global script
         -- -- it threw inside a pcall, and every actor a new holder took over came back at
