@@ -92,17 +92,13 @@ local SNAP_COOLDOWN = 1.0 -- let a requested teleport land before asking again
 -- global.lua to forward to whoever owns the actor.
 local playerId = nil -- set for remote-player puppets (declared here: markPuppet reads it)
 local function markPuppet(on)
-    if not mp.setPuppet then
-        if mp.set then mp.set('puppetMark', 'no-binding') end
-        return
-    end
     local ok, err = pcall(function() mp.setPuppet(self.object, on) end)
     -- A PLAYER's body, not an NPC's (backlog 342): the crime/witness/sneak exemptions ask the
     -- registry rather than guessing from "no content file". setPuppet(false) unmarks both.
-    if ok and on and playerId ~= nil and mp.setPlayerPuppet then
+    if ok and on and playerId ~= nil then
         pcall(function() mp.setPlayerPuppet(self.object, true) end)
     end
-    if mp.set then
+    do
         mp.set('puppetMark', ok and (on and 'marked' or 'unmarked') or ('failed:' .. tostring(err)))
     end
 end
@@ -413,14 +409,13 @@ end
 
 local function forwardMagicHits()
     if not (playerId or actorKey) then return end
-    if not mp.takeMagicHits then return end
     local ok, hits = pcall(mp.takeMagicHits, self.object) -- no closure a frame (#159 s177)
     if not ok then
-        if mp.set then mp.set('magicFwd', 'take-failed:' .. tostring(hits)) end
+        mp.set('magicFwd', 'take-failed:' .. tostring(hits))
         return
     end
     if not hits or #hits == 0 then return end
-    if mp.set then mp.set('magicFwd', 'drained:' .. tostring(#hits)) end
+    mp.set('magicFwd', 'drained:' .. tostring(#hits))
     -- Per hit: the record's effect INDEX (the owner applies only the effects that hit, not
     -- the whole record -- backlog 250) and its own beneficial word. The cast as a whole is
     -- beneficial only when EVERY hit is: an OR let one Restore ride a Fire Damage past the

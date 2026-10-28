@@ -56,7 +56,7 @@ local function targetUrl() return currentUrl or mp.getUrl() end
 local desiredCharId = nil
 -- The character slot chosen on the HTML pre-boot tile screen (OPENMW_MP_CHARACTER via
 -- mp.getBootCharacter). Applied on the first auth; an in-game switch overrides it below.
-if mp.getBootCharacter then
+do
     local boot = mp.getBootCharacter()
     if type(boot) == 'string' and boot ~= '' then desiredCharId = boot end
 end
@@ -148,7 +148,7 @@ local function buildManifest()
     -- manifest), keyed by lowercase name. Absent for every other boot; the server's `strict`
     -- refuses an unhashed client and `names` ignores the field, so nothing else changes.
     local hashes = {}
-    local raw = mp.getContentHashes and mp.getContentHashes() or ''
+    local raw = mp.getContentHashes() or ''
     for name, sha in string.gmatch(raw, '([^=;]+)=([0-9a-f]+)') do hashes[name] = sha end
     local manifest = {}
     for i, name in ipairs(core.contentFiles.list) do
@@ -201,7 +201,7 @@ end
 -- failure after a bounded wait, so nothing hangs forever.
 local rescueDeadline = nil
 local function ssoUser()
-    local pass = mp.getPassword and mp.getPassword() or ''
+    local pass = mp.getPassword() or ''
     -- A configured password means the password ladder is REAL (dev flags, self-hosted,
     -- harness); only its absence marks an SSO user. System peers have their own gate.
     return (pass == nil or pass == '') and not mp.isSystem()
@@ -231,7 +231,7 @@ function net.start()
     if switchDeadline == nil then switchDeadline = core.getRealTime() + 45 end
     -- M8: the ticket survives a PAGE RELOAD (mp.setResumeToken -> localStorage), which is
     -- the case §M8 is really about — a reloaded tab rejoins in place instead of re-authing.
-    local token = mp.getResumeToken and mp.getResumeToken() or ''
+    local token = mp.getResumeToken() or ''
     -- Character slots: an explicit switch must NEVER resume — resume pins the character
     -- the old session was playing, which is exactly the one we are leaving. Fall through
     -- to ticket/login, which carry the characterId selection.
@@ -252,7 +252,7 @@ function net.start()
     -- the fresh credential with the dead one and refuse every world switch.
     local ticket = net.loginTicket
     if not ticket or ticket == '' then
-        ticket = mp.getLoginTicket and mp.getLoginTicket() or ''
+        ticket = mp.getLoginTicket() or ''
     end
     if authMode ~= 'resume' and type(ticket) == 'string' and ticket ~= '' then
         authMode = 'ticket'
@@ -369,7 +369,7 @@ function net.onClose()
         -- ticket do we drop to register/login.
         triedResume = true
         net.resumeToken = nil
-        if mp.setResumeToken then mp.setResumeToken('') end
+        mp.setResumeToken('')
         net.lastError = nil
         -- The TRAVEL ticket (minted for this hop by the world we just left) outranks the
         -- boot-time env ticket, which is single-use and was spent on the first join. Reading
@@ -377,7 +377,7 @@ function net.onClose()
         -- that had never seen us, and the fallback then presented the dead credential.
         local ticket = net.loginTicket
         if not ticket or ticket == '' then
-            ticket = mp.getLoginTicket and mp.getLoginTicket() or ''
+            ticket = mp.getLoginTicket() or ''
         end
         if type(ticket) == 'string' and ticket ~= '' then
             authMode = 'ticket'
@@ -475,7 +475,7 @@ function net.onClose()
     -- "sign-in was refused" over a world that was simply not up yet. Before the first join a
     -- refused dial keeps retrying on the switchDeadline branch below.
     if net.state == 'Joined' or (reconnecting and everJoined) then
-        if net.resumeToken or (mp.getResumeToken and mp.getResumeToken() ~= '') then
+        if net.resumeToken or (mp.getResumeToken() ~= '') then
             authMode = 'resume'
             triedResume = false
             net.resumeToken = net.resumeToken or mp.getResumeToken()
@@ -569,7 +569,7 @@ dispatch.SessionHelloOk = function(msg)
         -- switched slots.
         if type(net.characterId) == 'string' and net.characterId ~= '' then
             charForAuth = net.characterId
-        elseif mp.getBootCharacter then
+        else
             local boot = mp.getBootCharacter()
             if type(boot) == 'string' and boot ~= '' then charForAuth = boot end
         end
@@ -586,7 +586,7 @@ dispatch.SessionWelcome = function(msg)
     net.playerId = msg.playerId
     net.sessionToken = msg.sessionToken
     -- Tokens are single use: a resumed session gets a fresh one, so always overwrite.
-    if mp.setResumeToken and type(msg.sessionToken) == 'string' then
+    if type(msg.sessionToken) == 'string' then
         mp.setResumeToken(msg.sessionToken)
     end
     -- ...and the copy in memory too. onClose redials with `net.resumeToken or <stored>`, so the

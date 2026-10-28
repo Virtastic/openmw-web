@@ -387,7 +387,7 @@ local function visibleFrom(ownKey, key)
     -- they stand — the anchors keep every occupied cell loaded, and gating avatars on the
     -- peer's own parked cell would leave players outside it unembodied (Phase 3). Clients
     -- keep the neighbourhood rule: a puppet two cells away renders nothing.
-    if mp.isSystem and mp.isSystem() then return key ~= nil end
+    if mp.isSystem() then return key ~= nil end
     if not ownKey or not key then return false end
     if ownKey == key then return true end
     local ax, ay = parseExteriorKey(ownKey)
@@ -558,7 +558,7 @@ local function pushEquipmentToPuppet(id)
             if okc then
                 reconcile.moveInto(item, inventory, key, grantId)
             else
-                if mp.isSystem and mp.isSystem() then
+                if mp.isSystem() then
                     -- THE PLACEHOLDER BAN, equipment half (Phase 2b): an authoritative avatar
                     -- must never wield a stand-in -- a placeholder weapon computes the wrong
                     -- damage. Fail loud, leave the slot empty.
@@ -638,7 +638,7 @@ local avatarDocAppliedGen = {}
 local partyOwnerId = 0
 local partyLevelSaid = nil
 local function applyPartyLevel()
-    if not (mp.isSystem and mp.isSystem() and mp.setPartyLevel) then return end
+    if not mp.isSystem() then return end
     local doc = partyOwnerId > 0 and avatarDocs[partyOwnerId] or nil
     local level = doc and doc.stats and tonumber(doc.stats.level) or 0
     if level ~= (partyLevelSaid or -1) then
@@ -661,10 +661,10 @@ local function applyAvatarDoc(id)
     -- The bounty rides the doc, and the avatar is who the world should hold responsible for it.
     -- Seeded here as well as on live CrimeUpdate, so a player who arrives ALREADY wanted is
     -- pursued on sight instead of only after their next offence.
-    if mp.setAvatarBounty then pcall(function() mp.setAvatarBounty(obj, doc.bounty or 0) end) end
+    pcall(function() mp.setAvatarBounty(obj, doc.bounty or 0) end)
     -- Faction ranks too (#145): an NPC's aggression toward the avatar reads ITS memberships,
     -- and an avatar in no faction was a stranger to every guild hall its owner belongs to.
-    if mp.setAvatarFactions and type(doc.factions) == 'table' then
+    if type(doc.factions) == 'table' then
         local list = {}
         for fid, f in pairs(doc.factions) do
             if type(f) == 'table' then
@@ -766,7 +766,6 @@ local drownSaidAt = 0
 local function avatarDrownProbe(now)
     if now - drownSaidAt < DROWN_PROBE_EVERY then return end
     drownSaidAt = now
-    if not mp.drownState then return end
     for id, p in pairs(puppets) do
         if p.obj and p.obj:isValid() then
             local ok, d = pcall(mp.drownState, p.obj)
@@ -821,7 +820,7 @@ local function shedProbeTick(now)
 end
 
 local function avatarStreamTick(now)
-    if not (mp.isSystem and mp.isSystem()) then return end
+    if not (mp.isSystem()) then return end
     avatarDrownProbe(now)
     shedProbeTick(now)
     if now - avatarStreamAt < AVATAR_STREAM_EVERY then return end
@@ -874,7 +873,7 @@ local function avatarStreamTick(now)
             if ok then jumpPending[id] = nil; usePending[id] = nil end
         end
     end
-    if #entries > 0 and mp.sendAvatarMoveBatch then mp.sendAvatarMoveBatch(entries) end
+    if #entries > 0 then mp.sendAvatarMoveBatch(entries) end
 end
 
 -- Phase 4A: the peer reports each avatar's dynamic stats back to the server, which owns the
@@ -890,7 +889,7 @@ local avatarStatsAnnounced = false
 local AVATAR_STATS_REFRESH_S = 3.0
 
 local function avatarStatsTick(now)
-    if not (mp.isSystem and mp.isSystem()) then return end
+    if not (mp.isSystem()) then return end
     if now - avatarStatsAt < AVATAR_STATS_EVERY then return end
     avatarStatsAt = now
     local entries = {}
@@ -914,12 +913,12 @@ local function avatarStatsTick(now)
                     -- Backlog 73: knocked down here = the owner must stop walking (player.lua).
                     -- ...or PARALYZED: a placed avatar no longer freezes its owner by refusing to
                     -- move, so the owner walked on (and dragged it) until the 1 Hz effect relay.
-                    kd = ((mp.isKnockedDown and mp.isKnockedDown(p.obj)) == true or (function()
+                    kd = ((mp.isKnockedDown(p.obj)) == true or (function()
                         local ok, e = pcall(function() return types.Actor.activeEffects(p.obj):getEffect('paralyze') end)
                         return ok and e ~= nil and (e.magnitude or 0) > 0
                     end)()) or nil,
                     -- Backlog 312: a block since the last report; the owner plays its sound.
-                    blk = (function() local s = mp.takeBlock and mp.takeBlock(p.obj); return s ~= '' and s or nil end)() }
+                    blk = (function() local s = mp.takeBlock(p.obj); return s ~= '' and s or nil end)() }
             end)
             if ok and entry then
                 local key = string.format('%d:%.1f/%.1f %.1f/%.1f %.1f/%.1f %s', entry.id,
@@ -981,7 +980,7 @@ local function snapAvatarItemStates(obj)
 end
 
 local function avatarItemStatesTick(now)
-    if not (mp.isSystem and mp.isSystem()) then return end
+    if not (mp.isSystem()) then return end
     if now - avatarItemStatesAt < AVATAR_ITEMSTATES_EVERY then return end
     avatarItemStatesAt = now
     local entries = {}
@@ -1078,7 +1077,7 @@ local avatarEffectsReported = {} -- id -> { activeSpellId -> localRecordId }
 local avatarOwnerEffectsSeen = {} -- id -> { activeSpellId -> localRecordId } owner records seen on the avatar
 
 local function avatarEffectsTick(now)
-    if not (mp.isSystem and mp.isSystem()) then return end
+    if not (mp.isSystem()) then return end
     if now - avatarEffectsAt < AVATAR_EFFECTS_EVERY then return end
     avatarEffectsAt = now
     local entries = {}
@@ -1183,7 +1182,7 @@ end
 -- Mirrors the engine's own default (mwmp/puppets.cpp): a human multiplayer client starts
 -- with local spawns OFF, before the first cell loads; only a confirmed degraded world (joined,
 -- nobody simulating) turns them on.
-local localSummonsOn = not (mp.isEnabled() and not (mp.isSystem and mp.isSystem()))
+local localSummonsOn = not (mp.isEnabled() and not (mp.isSystem()))
 -- The LAST SimReady the server sent (nil until one arrives), not the join-time flag
 -- (backlog 325): the join flag was true for the whole session, so a peer outage never
 -- turned the peer rules off -- no fall damage, no drowning, for as long as it lasted.
@@ -1193,11 +1192,9 @@ local localSpawnsGuardSaid = false
 local function localSummonsTick()
     if not localSpawnsGuardSaid then
         localSpawnsGuardSaid = true
-        pcall(function() mp.set('localSpawnsBind', tostring(mp.setLocalSpawns ~= nil) .. '/' .. tostring(mp.setLocalSummons ~= nil)) end)
-        print('[mp] localSpawns guard: setLocalSpawns=' .. tostring(mp.setLocalSpawns) .. ' setLocalSummons=' .. tostring(mp.setLocalSummons))
         pcall(function() mp.set('localSpawns', localSummonsOn and 'on' or 'off') end) -- scenario mirror
     end
-    if (mp.isSystem and mp.isSystem()) or not (mp.setLocalSpawns or mp.setLocalSummons) then return end
+    if mp.isSystem() then return end
     -- STICKY on "this world is simulated": levelled lists roll at cell load, before the new
     -- cell's ActorAuthorityInfo arrives, so gating on our own cell alone would roll a local
     -- creature in every cell we enter and then learn better. Once any holder has been seen the
@@ -1213,12 +1210,12 @@ local function localSummonsTick()
     local nowD = core.getRealTime()
     if nowD - (localSpawnsDbgAt or 0) >= 1 then
         localSpawnsDbgAt = nowD
-        pcall(function() mp.set('localSpawnsDbg', string.format('sim=%s bind=%s holder=%s any=%s',
-            tostring(simulated), tostring(mp.setLocalSpawns ~= nil), tostring(actors.hasHolder(ownCellKeyCache)), tostring(actors.anyHolder()))) end)
+        pcall(function() mp.set('localSpawnsDbg', string.format('sim=%s holder=%s any=%s',
+            tostring(simulated), tostring(actors.hasHolder(ownCellKeyCache)), tostring(actors.anyHolder()))) end)
     end
     if want ~= localSummonsOn then
         localSummonsOn = want
-        pcall(mp.setLocalSpawns or mp.setLocalSummons, want)
+        pcall(mp.setLocalSpawns, want)
         pcall(function() mp.set('localSpawns', want and 'on' or 'off') end) -- scenario mirror
     end
 end
@@ -1235,7 +1232,6 @@ end
 local NOTE_SENDS_PER_SEC = 20
 local pendingNotes, noteSendSec, noteSendCount = {}, 0, 0
 local function scriptNotesTick()
-    if not mp.takeScriptNotes then return end
     local ok, notes = pcall(mp.takeScriptNotes)
     if ok and notes then
         for _, n in ipairs(notes) do pendingNotes[#pendingNotes + 1] = n end
@@ -1271,12 +1267,12 @@ end
 -- it to the server for the owner's client, which opens the dialogue with ITS copy of the
 -- guard -- and vanilla's own greeting does the rest: pay the fine, go to jail, or resist.
 local function avatarArrestTick()
-    if not (mp.isSystem and mp.isSystem()) or not mp.takeArrests then return end
+    if not mp.isSystem() then return end
     for id, p in pairs(puppets) do
         if p.obj and p.obj:isValid() then
             -- Crimes the avatar committed on this engine (assault, murder: the peer's swing is
             -- the one that lands). The bounty is the owner's; they get the increment.
-            if mp.takeCrimes then
+            do
                 local okc, crimes = pcall(mp.takeCrimes, p.obj)
                 if okc and crimes then
                     for _, c in ipairs(crimes) do
@@ -1306,7 +1302,7 @@ local pushAvatarPolicyQueued = false
 local pushAvatarPolicyAt = 0
 local AVATAR_POLICY_EVERY = 5.0 -- re-push cadence; a dropped event must not disable the veto
 local function pushAvatarPolicy()
-    if not (mp.isSystem and mp.isSystem()) then return end
+    if not (mp.isSystem()) then return end
     local ids = {}
     for _, p in pairs(puppets) do
         if p.obj and p.obj:isValid() then
@@ -1335,7 +1331,7 @@ end
 -- by such a pose lands in an UNLOADED cell, where its script never runs (no onUpdate off the
 -- active grid): a ghost nothing can steer, until the owner next crosses a border (480).
 local function poseInView(pose)
-    if mp.isSystem and mp.isSystem() then return true end -- the peer anchors every occupied cell
+    if mp.isSystem() then return true end -- the peer anchors every occupied cell
     if not (ownCellKeyCache and parseExteriorKey(ownCellKeyCache)) then return true end -- interiors: same room by construction
     if type(pose.x) ~= 'number' or type(pose.y) ~= 'number' then return true end
     return visibleFrom(ownCellKeyCache, math.floor(pose.x / 8192) .. ',' .. math.floor(pose.y / 8192))
@@ -1348,12 +1344,12 @@ local function spawnPuppet(id, pose)
     -- the PEER's own cell at the player's coordinates -- interior coords in an exterior, say
     -- -- and its pose stream then hard-snaps the owner into the void. The PlayerCellChange
     -- relay always arrives; waiting for it costs a frame, guessing costs the session.
-    if mp.isSystem and mp.isSystem() and not remoteCell[id] then return end
+    if mp.isSystem() and not remoteCell[id] then return end
     -- On the peer the body goes to the PLAYER'S cell (remoteCell relay); destCellArg is the
     -- LOCAL player's cell, which on a one-peer-many-anchors world is just where the peer
     -- happens to be parked.
     local cellArg
-    if mp.isSystem and mp.isSystem() and remoteCell[id] then
+    if mp.isSystem() and remoteCell[id] then
         cellArg = inviteCellArg(remoteCell[id])
     else
         cellArg = destCellArg()
@@ -1369,7 +1365,7 @@ local function spawnPuppet(id, pose)
     -- Phase 3: on the SIM PEER the body is an AVATAR — driven by the owner's raw input
     -- (avatar.lua), producing the authoritative pose. Everywhere else it stays a puppet
     -- steered toward reported poses. Attaching both would have them fight over controls.
-    if mp.isSystem and mp.isSystem() then
+    if mp.isSystem() then
         print(string.format('[mp] avatar spawned for #%d at (%.0f,%.0f,%.0f) cell=%s',
             id, pose.x or 0, pose.y or 0, pose.z or 0, tostring(remoteCell[id])))
         obj:addScript('scripts/mp/avatar.lua', { playerId = id })
@@ -1390,7 +1386,7 @@ local function spawnPuppet(id, pose)
     if app and type(app.vampireSpell) == 'string' and app.vampireSpell ~= '' then
         pcall(function() types.Actor.spells(obj):add(app.vampireSpell) end)
     end
-    if mp.isSystem and mp.isSystem() then actors.refollow(id, obj) end -- companions aim at the new body
+    if mp.isSystem() then actors.refollow(id, obj) end -- companions aim at the new body
     pushAvatarPolicy()
     applyAvatarDoc(id) -- Phase 2b: a doc that arrived before the body existed lands now
     print('[mp] puppet spawned for ' .. name .. ' (#' .. tostring(id) .. ')')
@@ -1427,7 +1423,7 @@ local function despawnPuppet(id)
     -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
     -- with it, leaving the roster mirror stale and remoteCell/lastPose still holding a
     -- player who had left. Same transient-engine-state reasoning as tryTeleport.
-    if mp.isSystem and mp.isSystem() then actors.refollow(id, nil) end -- release, re-aimed on respawn
+    if mp.isSystem() then actors.refollow(id, nil) end -- release, re-aimed on respawn
     -- A REFUSED REMOVE IS RETRIED, NOT FORGOTTEN (480). remove() throws "Can't remove 0 of 0"
     -- while a teleport is in flight on the body (teleport zeroes the count until its action
     -- lands; the spawn's own placement and a PlayerCellChange follow both do this), and at
@@ -1437,7 +1433,7 @@ local function despawnPuppet(id)
     -- OUT OF THE AVATAR REGISTRY FIRST. Nothing else clears it: a SUPERSEDED reconnect left the
     -- old body registered beside the new one ("avatar registry ... (now 2)"), and guard and
     -- crime checks treat every registered body as a player.
-    if mp.setAvatar then pcall(mp.setAvatar, p.obj, false) end
+    pcall(mp.setAvatar, p.obj, false)
     -- Disabled NOW if refused, removed later: a disabled object leaves the scene and its
     -- collision with it, so the retry can take as long as the teleport does.
     retry.remove(p.obj)
@@ -1878,7 +1874,7 @@ local function start()
             if not (obj and obj:isValid()) then return nil end
             -- The sim peer's player is a parked dummy: a fight on it names nobody, never the
             -- peer's own id (1.7.0). Its avatars are found in puppets below.
-            if not (mp.isSystem and mp.isSystem()) then
+            if not (mp.isSystem()) then
                 for _, pl in ipairs(world.players) do
                     if pl:isValid() and pl.id == obj.id then
                         return net.state == 'Joined' and net.playerId or nil
@@ -1992,7 +1988,7 @@ local function start()
             -- in". A world change REBOOTS the page, so this Lua state is brand new on
             -- arrival; mphome rides every switch.
             if not worldUrls.own then
-                local home = mp.getHomeUrl and mp.getHomeUrl() or ''
+                local home = mp.getHomeUrl() or ''
                 if type(home) == 'string' and home ~= '' then worldUrls.own = home
                 else worldUrls.own = net.currentTarget() end -- pre-mphome boot / standalone
             end
@@ -2088,7 +2084,7 @@ net.onRefusedAway = function(detail)
     -- We never JOINED this page (the refusal came at the door), so worldUrls.own has not been
     -- learned from a welcome yet: read the boot fragment's mphome directly.
     if not worldUrls.own then
-        local home = mp.getHomeUrl and mp.getHomeUrl() or ''
+        local home = mp.getHomeUrl() or ''
         if type(home) == 'string' and home ~= '' then worldUrls.own = home end
     end
     if not worldUrls.own or net.currentTarget() == worldUrls.own then return false end
@@ -2198,7 +2194,7 @@ local eventHandlers = {
     -- avatar and put it at the respawn point so its next bar report is ALIVE (else it keeps
     -- reporting hp 0 and the server re-kills the player -- a death loop).
     MP_AvatarResurrect = function(data)
-        if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
+        if not (mp.isSystem()) or not data or not data.id then return end
         -- The body stands back up in place (backlog 138): mp.resurrect(obj) is the engine's
         -- MechanicsManager::resurrect on THAT actor (#293), which un-deads it and refills
         -- health to base in the same step, so its next bar report is alive and cannot
@@ -2224,7 +2220,7 @@ local eventHandlers = {
     -- are flagged to the player script so identity.lua's owner->avatar diff does not send them
     -- straight back and double them on the avatar.
     MP_SelfSpells = function(data)
-        if mp.isSystem and mp.isSystem() then return end
+        if mp.isSystem() then return end
         local player = playerScript()
         if not player or not data then return end
         for _, sid in ipairs(data.add or {}) do
@@ -2246,7 +2242,7 @@ local eventHandlers = {
         end
     end,
     MP_SelfActiveSpells = function(data)
-        if mp.isSystem and mp.isSystem() then return end
+        if mp.isSystem() then return end
         local player = playerScript()
         if not player or not data then return end
         local spells = types.Actor.activeSpells(player)
@@ -2289,7 +2285,7 @@ local eventHandlers = {
     -- bounty by the increment; quests.lua's diff then sends the CrimeUpdate that every
     -- other screen -- and the peer -- takes as the truth.
     MP_PlayerCrime = function(data)
-        if mp.isSystem and mp.isSystem() then return end
+        if mp.isSystem() then return end
         if not data or type(data.bounty) ~= 'number' then return end
         local player = playerScript()
         if not player then return end
@@ -2310,7 +2306,7 @@ local eventHandlers = {
     end,
 
     MP_PlayerArrest = function(data)
-        if mp.isSystem and mp.isSystem() then return end
+        if mp.isSystem() then return end
         local guard = data and data.guard
         local okv, valid = pcall(function() return guard and guard:isValid() end)
         if not (okv and valid) then return end
@@ -2333,7 +2329,7 @@ local eventHandlers = {
         local p = puppets[data.id]
         if not (p and p.obj and p.obj:isValid()) then return end
         local spells = types.Actor.activeSpells(p.obj)
-        local observer = not (mp.isSystem and mp.isSystem())
+        local observer = not (mp.isSystem())
         ownerActive[data.id] = ownerActive[data.id] or {}
         for _, sp in ipairs(data.add or {}) do
             local localId = sp.id and worldmp.toLocal(sp.id)
@@ -2387,11 +2383,11 @@ local eventHandlers = {
     -- Phase 4A: a client restoration (potion/rest/heal) raised a bar; mirror it onto the
     -- avatar so the peer's next report does not overwrite the heal with the un-restored body.
     MP_AvatarRestore = function(data)
-        if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
+        if not (mp.isSystem()) or not data or not data.id then return end
         local p = puppets[data.id]
         if not p or not p.obj or not p.obj:isValid() then return end
         -- The owner's fall knocked them down (playerstate.ts hp.kd): so is the avatar.
-        if data.kd == true and mp.setKnockedDown then pcall(mp.setKnockedDown, p.obj) end
+        if data.kd == true then pcall(mp.setKnockedDown, p.obj) end
         if not (data.hp or data.mp or data.ft) then return end
         -- Self-gated write (see applyAvatarDoc): the avatar's script applies it. Done from
         -- here it threw inside a pcall, and no potion, rest or self-heal ever reached the
@@ -2417,7 +2413,7 @@ local eventHandlers = {
     -- Phase 2b: the peer's copy of a character (see applyAvatarDoc). Sent only to system
     -- peers by the server; the guard is belt-and-braces against a confused relay.
     MP_AvatarState = function(data)
-        if not (mp.isSystem and mp.isSystem()) then return end
+        if not (mp.isSystem()) then return end
         if not data or not data.id then return end
         avatarDocs[data.id] = data
         avatarDocDirty[data.id] = true -- applied once this frame, by avatarDocTick
@@ -2432,7 +2428,6 @@ local eventHandlers = {
     -- region. A normal client never receives this, and without anchors the engine behaves
     -- exactly as it always has (the player is the only anchor).
     MP_SimAnchors = function(data)
-        if not mp.setSimAnchors then return end
         -- WORLD POSITIONS, not grid coordinates: each anchor is a player's live pose, so the
         -- engine's processing range follows players exactly (a cell-centre anchor reached
         -- only ~3072 units into a neighbour against the 7168 range).
@@ -2485,7 +2480,7 @@ local eventHandlers = {
     -- The server refused one of our declarations (a shape or plausibility bar). Our diff
     -- cache had already marked it sent; forget that kind so the next tick says it again.
     MP_StateRefused = function(data)
-        if mp.isSystem and mp.isSystem() then return end
+        if mp.isSystem() then return end
         if data and type(data.kind) == 'string' then toPlayer('MP_ForgetDeclared', { kind = data.kind }) end
     end,
     MP_SimReady = function(data)
@@ -2493,7 +2488,7 @@ local eventHandlers = {
         mp.set('simReady', lastSimReady and '1' or '0')
         -- A peer that just became ready (the first one, or its replacement after a restart)
         -- built our avatar from the doc alone: re-send the effects on this body.
-        if data and data.ready and not (mp.isSystem and mp.isSystem()) then toPlayer('MP_ResyncActive', {}) end
+        if data and data.ready and not (mp.isSystem()) then toPlayer('MP_ResyncActive', {}) end
     end,
 
     MP_WorldMode = function(data)
@@ -2653,7 +2648,7 @@ local eventHandlers = {
         -- remoteCell so no later MoveBatch could respawn it: the guest never drowned, nothing
         -- reported for #3 until the next cell change. visibleFrom already says every player is
         -- visible on the peer; the sweep has to agree.
-        if mp.isSystem and mp.isSystem() then return end
+        if mp.isSystem() then return end
         despawnPuppet(data.id) -- idempotent; safe for an id we never spawned
         remoteCell[data.id] = nil
         lastPose[data.id] = nil
@@ -2727,7 +2722,7 @@ local eventHandlers = {
                     spawnPuppet(e.id, e)
                 end
                 local p = puppets[e.id]
-                if p and p.obj:isValid() and mp.isSystem and mp.isSystem() and net.flags and net.flags.clientAuthority == true then
+                if p and p.obj:isValid() and mp.isSystem() and net.flags and net.flags.clientAuthority == true then
                     kit.placeAvatar(p.obj, e.id, e)
                 end
                 if p and p.obj:isValid() then
@@ -2799,7 +2794,7 @@ local eventHandlers = {
         -- not simulate -- frozen, yet streaming a pose the server took as canonical -- and
         -- reconciliation pinned a brand-new character to the prison ship's floor. A player in
         -- those cells is client-authoritative until they walk out, like an unheld cell.
-        if mp.isSystem and mp.isSystem() and isChargenCell(data.cellKey) then
+        if mp.isSystem() and isChargenCell(data.cellKey) then
             if puppets[data.id] then despawnPuppet(data.id) end
             return
         end
@@ -2809,7 +2804,7 @@ local eventHandlers = {
                 -- The destination is the MOVER'S cell on the peer (it holds every occupied
                 -- cell); on a client it is our own cell, as before — the two agree whenever
                 -- the mover is genuinely visible.
-                local dest = (mp.isSystem and mp.isSystem()) and inviteCellArg(data.cellKey) or destCellArg()
+                local dest = (mp.isSystem()) and inviteCellArg(data.cellKey) or destCellArg()
                 local from = p.obj.position -- the leader's position BEFORE the move
                 -- AN EXTERIOR BORDER IS NOT A DOOR. The body walked across it on its own; a
                 -- follow-teleport there popped every friend's puppet and zeroed the avatar's
@@ -2833,7 +2828,7 @@ local eventHandlers = {
                 -- units from where the leader stood was not really following.
                 -- Hung on the teleport as onLanded (#294): when the avatar's move is deferred
                 -- to a retry (cold interior load), the followers cross with it, not never.
-                local isSystem = mp.isSystem and mp.isSystem()
+                local isSystem = mp.isSystem()
                 local carryFollowers = isSystem and function()
                     for _, follower in pairs(actors.followersOf(data.id)) do
                         if canFollowThroughDoor(follower.obj, from, dest) then
@@ -2921,7 +2916,7 @@ local eventHandlers = {
         -- corpse. Same answer as the peer's: stand the body back up (#138). Not on the peer
         -- itself, where AvatarResurrect already did exactly this for the avatar.
         local revived = was and was.hp and was.hp.c <= 0 and data.hp and data.hp.c > 0
-        if revived and puppets[data.id] and not (mp.isSystem and mp.isSystem()) then
+        if revived and puppets[data.id] and not (mp.isSystem()) then
             revivePuppet(data.id, destCellArg(), lastPose[data.id])
             return
         end
@@ -3446,7 +3441,7 @@ local eventHandlers = {
             -- On the peer the server names the player it is owed to (forId) and the encounter
             -- is placed beside THEIR avatar, where it is simulated like any other actor.
             local anchor
-            if mp.isSystem and mp.isSystem() then
+            if mp.isSystem() then
                 local p = data.forId ~= nil and puppets[data.forId]
                 anchor = (p and p.obj and p.obj:isValid()) and p.obj or nil
             else
@@ -3464,7 +3459,7 @@ local eventHandlers = {
         end)
         if ok then
             print('[mp] quest spawn replayed: ' .. tostring(data.recordId))
-            if not (mp.isSystem and mp.isSystem()) then notice('Something stirs nearby.') end
+            if not (mp.isSystem()) then notice('Something stirs nearby.') end
         else
             print('[mp] quest spawn failed: ' .. tostring(err))
         end

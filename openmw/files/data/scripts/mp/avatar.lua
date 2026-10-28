@@ -105,7 +105,7 @@ end
 -- flying, over-encumbered or on the floor -- the key alone is not a jump.
 function placedFatigue.jump(sneak)
     local okw, swim = pcall(types.Actor.isSwimming, self)
-    local okk, down = pcall(function() return mp.isKnockedDown and mp.isKnockedDown(self.object) end)
+    local okk, down = pcall(function() return mp.isKnockedDown(self.object) end)
     local enc, over = placedFatigue.encumbrance()
     if sneak or (okw and swim) or placedFatigue.flying() or over or (okk and down) then return end
     placedFatigue.spend(core.getGMST('fFatigueJumpBase') + enc * core.getGMST('fFatigueJumpMult'))
@@ -185,11 +185,11 @@ local function pressProbe(when)
         local want = ownerSlots[types.Actor.EQUIPMENT_SLOT.Ammunition]
         local amTotal = (am or want) and types.Actor.inventory(self):countOf(am and am.recordId or want) or 0
         print(string.format('[mp] avatar use %s: attacking=%s body=%s dead=%s hp=%.0f staggered=%s stance=%s fatigue=%.0f/%.0f weapon=%s ammo=%s x%s of %s',
-            when, tostring(mp.isAttacking and mp.isAttacking(self.object)), tostring(mp.upperBody and mp.upperBody(self.object)),
-            tostring(types.Actor.isDead(self)), hp.current, tostring(mp.isKnockedDown and mp.isKnockedDown(self.object)),
+            when, tostring(mp.isAttacking(self.object)), tostring(mp.upperBody(self.object)),
+            tostring(types.Actor.isDead(self)), hp.current, tostring(mp.isKnockedDown(self.object)),
             tostring(types.Actor.getStance(self)), ft.current, ft.base, w and w.recordId or 'none',
             am and am.recordId or 'none', am and tostring(am.count) or '0', tostring(amTotal))
-            .. ' anim=' .. tostring(mp.animState and mp.animState(self.object)) .. ' owner=' .. tostring(want) .. ' push=' .. lastPushSaid .. ' pack=' .. (function()
+            .. ' anim=' .. tostring(mp.animState(self.object)) .. ' owner=' .. tostring(want) .. ' push=' .. lastPushSaid .. ' pack=' .. (function()
                 local out = {}
                 for _, it in ipairs(types.Actor.inventory(self):getAll()) do
                     if types.Weapon.objectIsInstance(it) then
@@ -218,7 +218,7 @@ local function registerHitVeto()
         -- A SUMMON IS ITS SUMMONER'S HAND. The peer summons for every player now, and a
         -- summon attacks what its master engages: with pvp off another player's scamp could
         -- bite this avatar when the player could not. The engine records who summoned what.
-        if mp.summonerOf then
+        do
             local okm, master = pcall(mp.summonerOf, a)
             local okid, mid = pcall(function() return master and master.id end)
             if okm and okid and mid and avatarObjIds[mid] then return false end
@@ -356,7 +356,7 @@ return {
             -- the world reacted to a real person. Crime pursuit was the visible case: rob a
             -- shop in front of a guard and be ignored, because the guard checked a bounty
             -- belonging to nobody. See mwmp/puppets.hpp.
-            if mp.setAvatar then mp.setAvatar(self.object, true) end
+            mp.setAvatar(self.object, true)
         end,
         -- The policy outlives a script reload (puppet.lua onLoad): the engine unloads an
         -- inactive object's scripts and brings them back through onSave/onLoad, and the policy
@@ -549,7 +549,7 @@ return {
             -- this engine computes the hit natively against the actors it simulates. Safe
             -- now because combat.lua no longer forwards a real swing while the peer holds
             -- the cell -- so a blow lands exactly once, here.
-            local body = mp.upperBody and mp.upperBody(self.object)
+            local body = mp.upperBody(self.object)
             self.controls.use = strike.hold(useLatch or bit(input.flags, 3), body, core.getRealTime()) and 1 or 0
             -- WHAT THE BODY WAS DOING WHEN THE PRESS CAME, and a moment later (#159 s157: every
             -- press reached the controls, 1 of 113 swings reached the hit test). On each rising
@@ -569,7 +569,7 @@ return {
             -- ...BUT NOT WHILE STAGGERED (backlog 309). A body in hit recovery or on the floor
             -- cannot start a swing, so a latch consumed there was a tap lost for good. Hold it
             -- until the body can act; mp.isKnockedDown covers hit recovery too.
-            if not (mp.isKnockedDown and mp.isKnockedDown(self.object)) then useLatch = false end
+            if not (mp.isKnockedDown(self.object)) then useLatch = false end
             -- THE OWNER'S STANCE, OR THE USE BIT IS INERT: an attack only starts from a drawn
             -- weapon (character.cpp, UpperBodyState::WeaponEquipped). Spell stance maps to
             -- Nothing on purpose -- the avatar must never cast; the owner's client casts and

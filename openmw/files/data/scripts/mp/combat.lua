@@ -211,7 +211,7 @@ local function resolveVictim(data)
         -- victim's own stat assertions are ignored while the peer's bar reports are fresh
         -- (4A one-writer rule): damage applied on the victim's client would silently vanish.
         -- Applied to the avatar it lands once, and travels back as AvatarStatsBatch.
-        if mp.isSystem and mp.isSystem() then
+        if mp.isSystem() then
             local obj = deps.puppetObjOf(target.playerId)
             return (obj and obj:isValid()) and obj or nil
         end
@@ -229,7 +229,7 @@ combat.handlers = {}
 
 combat.handlers.MP_CombatHit = function(data)
     local victim = resolveVictim(data)
-    if mp.isSystem and mp.isSystem() then
+    if mp.isSystem() then
         local t = data.target or {}
         -- hp and whether its scripts run (active): "resolved" alone could not tell a hit that
         -- landed from one sent to a body whose Hit handler never runs (s120, #145).
@@ -275,7 +275,7 @@ combat.handlers.MP_CombatSpellHit = function(data)
     local victim = resolveVictim(data)
     -- The peer's side of s59 (#432), like CombatHit's: whether the cast arrived, resolved,
     -- and what the victim's bar did. Nothing else says so, and 14 casts in #105 said nothing.
-    if mp.isSystem and mp.isSystem() then
+    if mp.isSystem() then
         local t = data.target or {}
         local okh, hp = pcall(function() return types.Actor.stats.dynamic.health(victim).current end)
         print(string.format('[mp] CombatSpellHit on peer: spell=%s net=%s ref=%s cell=%s resolved=%s hp=%s',

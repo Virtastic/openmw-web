@@ -172,7 +172,7 @@ function actors.noteCasting(obj, on)
     if obj and obj:isValid() then casting[refKeyOf(obj)] = on == true or nil end
 end
 local function attackingOf(obj)
-    return (mp.isAttacking and mp.isAttacking(obj)) or casting[refKeyOf(obj)] == true
+    return (mp.isAttacking(obj)) or casting[refKeyOf(obj)] == true
 end
 
 -- WHAT THE BODY ACTUALLY DID, per actor: getCurrentSpeed is the formula speed, and a creature
@@ -825,7 +825,7 @@ function actors.noteCombat(obj, target)
         -- NEVER FROM THE PEER (#430): its dummy body talks to nobody, and a slaughterfish that
         -- drifts into the next cell to bite it produced this claim per frame, refused per frame.
         local own = deps.ownIdFn and deps.ownIdFn() or nil
-        if foeId == nil or foeId ~= own or (mp.isSystem and mp.isSystem()) then return end
+        if foeId == nil or foeId ~= own or (mp.isSystem()) then return end
         -- ONLY FROM THE CONVERSATION (s171). The holder's own fight reaches this puppet as
         -- MP_ActorAI and stacks a Combat package on it; companion.lua then read that package
         -- back and claimed it as ours -- refused by the server, every time a creature engaged.
@@ -949,7 +949,7 @@ actors.handlers.MP_ActorSay = function(data)
 end
 
 local function aimAt(obj, target, escort)
-    if mp.isSystem and mp.isSystem() then
+    if mp.isSystem() then
         local okd, d = pcall(function() return (obj.position - target.position):length() end)
         print(string.format('[mp] aimAt %s -> %s at %.0f u (escort=%s)', tostring(obj.recordId), tostring(target.recordId),
             okd and d or -1, tostring(type(escort) == 'table')))
@@ -1012,7 +1012,7 @@ actors.handlers.MP_ActorAI = function(data)
         return
     end
     if data.done == true then
-        if puppetActors[refKeyOf(obj)] and mp.setAiPackageDone then pcall(mp.setAiPackageDone, obj) end
+        if puppetActors[refKeyOf(obj)] then pcall(mp.setAiPackageDone, obj) end
         return
     end
     if data.hold ~= nil then
@@ -1061,7 +1061,7 @@ actors.handlers.MP_ActorAI = function(data)
             pcall(function() obj:sendEvent('StartAIPackage', { type = pursue and 'Pursue' or 'Combat', target = foe }) end)
             -- The provoking shout (#227): AiCombat rolls iVoiceAttackOdds per swing on the
             -- holder, whose engine is headless; rolled once here, at the fight's start.
-            if not pursue and puppetActors[refKeyOf(obj)] and mp.say then
+            if not pursue and puppetActors[refKeyOf(obj)] then
                 pcall(function()
                     if math.random(0, 99) < (tonumber(core.getGMST('iVoiceAttackOdds')) or 0) then mp.say(obj, 'attack') end
                 end)
@@ -1078,7 +1078,7 @@ actors.handlers.MP_ActorAI = function(data)
         followersOf[data.follow][key] = { obj = obj, escort = data.escort }
     end
     local target = deps.playerObjOf and deps.playerObjOf(data.follow) or nil
-    if mp.isSystem and mp.isSystem() then
+    if mp.isSystem() then
         print(string.format('[mp] follow claim: %s -> player %s target=%s holder=%s', tostring(obj.recordId),
             tostring(data.follow), target and 'yes' or 'NO', tostring(actors.isHolderOf(actors.cellKeyOfObj(obj)))))
     end

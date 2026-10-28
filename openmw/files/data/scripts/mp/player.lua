@@ -222,7 +222,7 @@ local simAcc, simFrameDt = 0, 0
 local function inputTick(now)
     -- The PEER's own dummy player has no avatar and the server drops its input
     -- (playerInputDropped{from_peer}); 30 Hz of frames for the bin.
-    if mp.isSystem and mp.isSystem() then
+    if mp.isSystem() then
         -- AND IT CANNOT DIE (#430). It stands where a player stands (global.lua MP_SimAnchors
         -- place), so a drowning player drowned it and a creature on that player bit it; its
         -- PlayerDeath then respawned it at the harness's sea cell, where slaughterfish killed
@@ -236,7 +236,7 @@ local function inputTick(now)
         -- where no client can see it, and its capsule held back the avatars walking there: the
         -- owner was rubber-banded against something that was not on their screen. Re-asserted
         -- every tick (the engine ignores a no-op) because a cell change can rebuild the body.
-        if mp.setSelfCollisionBody then mp.setSelfCollisionBody(false) end
+        mp.setSelfCollisionBody(false)
         simAcc = 0
         return
     end
@@ -292,7 +292,7 @@ local function inputTick(now)
     local stance = types.Actor.getStance(self)
     if stance == types.Actor.STANCE.Weapon then flags = flags + 16 end
     if stance == types.Actor.STANCE.Spell then flags = flags + 32 end
-    if mp.sendInput then
+    do
         mp.sendInput({
             seq = inputSeq,
             move = c.movement or 0,
@@ -474,7 +474,7 @@ local function selfReconcileTick()
         end
         return
     end
-    if mp.correctSelf then
+    do
         -- The engine caps the per-call offset (it is load-bearing: an uncapped correction
         -- pushes through geometry before physics gets a say); the gain keeps the approach
         -- smooth over several frames instead of a visible yank. The same cap is applied here
@@ -1037,7 +1037,7 @@ local function dispatch(cmd)
         if cmd == 'body' then
             local ok, v = pcall(function()
                 local swim = types.Actor.isSwimming and tostring(types.Actor.isSwimming(self)) or '?'
-                local d = mp.drownState and mp.drownState() or {}
+                local d = mp.drownState() or {}
                 return string.format('swim=%s ground=%s z=%.0f hp=%.1f submerged=%s breath=%s god=%s wb=%s', swim,
                     tostring(types.Actor.isOnGround(self)), self.position.z, types.Actor.stats.dynamic.health(self).current,
                     tostring(d.submerged), tostring(d.breath), tostring(d.godmode), tostring(d.waterBreathing))
@@ -1298,7 +1298,7 @@ local function dispatch(cmd)
         -- The engine's rest verdict (bit 4 = enemies nearby): does a fight the peer runs
         -- against us count as one on THIS screen? -1 when the binding is missing.
         if cmd == 'canrest' then
-            local ok, v = pcall(function() return mp.canRest and mp.canRest() or -1 end)
+            local ok, v = pcall(function() return mp.canRest() or -1 end)
             mp.set('canRest', tostring(ok and v or -1))
         end
         local recName = cmd:match('^mkrec:(.+)$')
@@ -1346,7 +1346,7 @@ local function dispatch(cmd)
         if bountyN then core.sendGlobalEvent('mpTestBounty', { n = tonumber(bountyN) }) end
         -- jail: what the guard's "Go to jail" choice does (mp.goToJail = World::goToJail).
         if cmd == 'jail' then
-            if mp.goToJail then mp.goToJail() else print('[mp] jail: this engine has no mp.goToJail') end
+            mp.goToJail()
         end
         local facId, facRank = cmd:match('^faction:([^:]+):(%d+)$')
         if facId then
@@ -1429,7 +1429,7 @@ local function dispatch(cmd)
         -- Test hook (backlog 256): spend a level on three attributes, the level-up dialog's
         -- OK button without the dialog (mp.applyLevelup over MWMechanics::applyLevelup).
         local levelAttrs = cmd:match('^levelup:(.+)$')
-        if levelAttrs and mp.applyLevelup then
+        if levelAttrs then
             local attrs = {}
             for a in levelAttrs:gmatch('[^,]+') do attrs[#attrs + 1] = a end
             mp.applyLevelup(attrs)
@@ -1450,7 +1450,6 @@ local function pollCommands()
     -- that state answers the wire but never reports itself, so it never takes a cell and
     -- nothing drives the NPCs, which reads as "authority is broken" and is nothing of the
     -- kind. An optional convenience must not be able to stop a player reporting movement.
-    if type(mp.pollCommands) ~= 'function' then return end
     local raw = mp.pollCommands()
     if type(raw) ~= 'string' or raw == '' then return end
     local okDecode, list = pcall(json.decode, raw)

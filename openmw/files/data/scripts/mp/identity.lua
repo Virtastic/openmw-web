@@ -238,9 +238,9 @@ local peerBarsAt = nil -- when the peer last reported; past PEER_RULES_S our own
 local fall = { owed = 0, kd = false }
 identity._fall = fall -- test handle
 function identity.fallWatch()
-    local ok, f = pcall(function() return mp.takeFallDamage and mp.takeFallDamage() or 0 end)
+    local ok, f = pcall(function() return mp.takeFallDamage() or 0 end)
     if ok and type(f) == 'number' and f > 0 then fall.owed = fall.owed + f end
-    local okK, kd = pcall(function() return mp.takeFallKnockdown and mp.takeFallKnockdown() end)
+    local okK, kd = pcall(function() return mp.takeFallKnockdown() end)
     if okK and kd == true then fall.kd = true end
 end
 local PEER_RULES_S = 5 -- server/src/core/players.ts INPUT_DRIVING_MS, the same predicate
@@ -313,9 +313,9 @@ local function snapProgression()
         skills[id] = NPC.stats.skills[id](self).base
     end
     -- The Mark spell's spot (backlog 155): NpcStats only, so nothing carried it and Recall did
-    -- nothing after a relog. nil on an engine without the binding.
+    -- nothing after a relog.
     local mark
-    if mp.getMark then
+    do
         local ok, m = pcall(mp.getMark)
         if ok and type(m) == 'table' and m.cell ~= '' then mark = m end
     end
@@ -505,7 +505,6 @@ end
 local talkedTo = {} -- obj.id -> true (own doc's set; the record seeds it)
 local usedBooks = {} -- book record id -> true, already on the server's doc
 local function talkedToTick()
-    if not (mp.talkedTo and mp.setTalkedTo) then return end
     local fresh = {}
     for _, obj in ipairs(require('openmw.nearby').actors) do
         if obj.contentFile and obj.id ~= self.id then
@@ -701,7 +700,7 @@ function identity.tick(now)
             end
         end
         -- Skill books read (OT3-16): only fresh ids go out; the server keeps the union.
-        if mp.usedIds then
+        do
             local ok, ids = pcall(mp.usedIds)
             if ok and type(ids) == 'table' then
                 local fresh = {}
@@ -934,7 +933,7 @@ function identity.applyRecord(record)
             -- restored character keeps the engine default ("player"), which is what the save
             -- screen shows. The doc's appearance name is authoritative; the boot fragment is
             -- the fallback for a session whose record has not arrived yet.
-            name = record.appearance.name or (mp.getName and mp.getName()) or nil,
+            name = record.appearance.name or (mp.getName()) or nil,
         })
     end
     -- Form (werewolf) is restored at the END of phase 2, not here: see applyPhase2.
@@ -996,17 +995,17 @@ local function applyPhase2(record)
             -- both attributes and +225 minutes later -- 7 copies, then 9. The engine re-applies
             -- each ability on the next update, guarded by isSpellActive, so after this the count
             -- is exactly one and cannot climb.
-            if mp.clearActiveSpells then pcall(mp.clearActiveSpells) end
+            pcall(mp.clearActiveSpells)
             for _, id in pairs(record.spells) do
                 pcall(function() spells:add(id) end)
             end
         end
         -- The Mark spot (backlog 155). Its own pcall: an older engine has no setMark.
-        if record.mark and mp.setMark and type(record.mark.cell) == 'string' and record.mark.cell ~= '' then
+        if record.mark and type(record.mark.cell) == 'string' and record.mark.cell ~= '' then
             pcall(mp.setMark, record.mark.cell, record.mark.x or 0, record.mark.y or 0, record.mark.z or 0)
         end
         -- Skill books already read (OT3-16): flagged again so a re-read teaches nothing.
-        if type(record.usedBooks) == 'table' and mp.markUsed then
+        if type(record.usedBooks) == 'table' then
             for _, id in ipairs(record.usedBooks) do
                 if type(id) == 'string' and pcall(mp.markUsed, id) then usedBooks[id] = true end
             end

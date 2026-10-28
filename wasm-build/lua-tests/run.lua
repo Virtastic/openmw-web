@@ -20,6 +20,10 @@ do
   end
 end
 local pass, fail = 0, 0
+-- Every openmw.mp binding exists in browser and peer alike (DC5): the scripts call them
+-- unguarded, so a hand-rolled mp mock answers any binding it does not name with a no-op.
+local function mpStub(t) return setmetatable(t, { __index = function() return function() end end }) end
+
 local function check(name, ok, detail)
   if ok then pass = pass + 1; print('  ok   ' .. name)
   else fail = fail + 1; print('  FAIL ' .. name .. (detail and ('  -- ' .. detail) or '')) end
@@ -630,10 +634,10 @@ do
     g:find('types.NPC.setWerewolf(body, data.isWerewolf == true)', 1, true) ~= nil
     and g:find("{ 'race', 'head', 'hair', 'isMale', 'class', 'birthsign', 'name' }", 1, true) ~= nil
     and g:find('types.Actor.spells(obj):add(app.vampireSpell)', 1, true) ~= nil)
-  check('identity.lua carries the mark both ways, nil-guarded for older engines',
+  check('identity.lua carries the mark both ways',
     idn:find("mp.sendEvent('PlayerMark', prog.mark)", 1, true) ~= nil
-    and idn:find('record.mark and mp.setMark', 1, true) ~= nil
-    and idn:find('if mp.getMark then', 1, true) ~= nil)
+    and idn:find('pcall(mp.setMark, record.mark.cell', 1, true) ~= nil
+    and idn:find('local ok, m = pcall(mp.getMark)', 1, true) ~= nil)
   -- SocialNotice: server-side notices worth surfacing.
   check('global.lua forwards MP_SocialNotice',
     g:find('MP_SocialNotice', 1, true) ~= nil,
@@ -698,7 +702,7 @@ do
   check('identity.lua always sends attribute damage, 0 included, so a cure reaches the avatar',
     io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a'):find("attributes[id .. '_damage'] = st.damage or 0", 1, true) ~= nil)
   check("the sim peer's own dummy player is not a collision body for the avatars",
-    pl:find('if mp.setSelfCollisionBody then mp.setSelfCollisionBody(false) end', 1, true) ~= nil)
+    pl:find('mp.setSelfCollisionBody(false)', 1, true) ~= nil)
   check('avatar.lua latches the jump and use edges until onUpdate consumes them (198)',
     av:find('if bit(data.flags, 2) and not timed then jumpLatch = true end', 1, true) ~= nil
     and av:find('local jump = jumpLatch or bit(input.flags, 2)', 1, true) ~= nil
@@ -1444,8 +1448,8 @@ do
   check('JournalSync replays journalLog with ipairs before the quest map',
     (q:find("for _, e in ipairs(data.journalLog or {})", 1, true) or math.huge)
       < (q:find("for questId, index in pairs(data.quests or {})", 1, true) or 0))
-  check('applyJournalEntry stamps through mp.addJournalEntryAt when present, else addJournalEntry',
-    q:find('if stamp and mp.addJournalEntryAt then', 1, true) ~= nil
+  check('applyJournalEntry stamps through mp.addJournalEntryAt when stamped, else addJournalEntry',
+    q:find('if stamp then', 1, true) ~= nil
       and q:find('mp.addJournalEntryAt(questId, index, stamp.d, stamp.m, stamp.dm)', 1, true) ~= nil
       and q:find('quest:addJournalEntry(index)', 1, true) ~= nil)
   check('a pre-player entry keeps its stamp and order through the retry',
@@ -1537,7 +1541,7 @@ do
     and p:find('pcall(I.SkillProgression.skillUsed, data.skill, { useType = data.useType or 0 })', 1, true) ~= nil)
   -- #309: the use latch survives a stagger.
   check('avatar.lua keeps useLatch armed while the body is knocked down or in hit recovery',
-    av:find('if not (mp.isKnockedDown and mp.isKnockedDown(self.object)) then useLatch = false end', 1, true) ~= nil
+    av:find('if not (mp.isKnockedDown(self.object)) then useLatch = false end', 1, true) ~= nil
     and not av:find('\n            useLatch = false\n', 1, true))
   -- #310: the feel comes from the bar drop, never from the local roll.
   check('puppet.lua no longer plays the local roll (no miss sound at all)',
@@ -1622,7 +1626,7 @@ do
     and g:find("'[mp] avatar #%d landed from z=%d at z=%d (fell %d) hp=%s'", 1, true) ~= nil)
   -- 342: a player puppet is marked as such in the registry.
   check('puppet.lua marks a remote-player puppet with mp.setPlayerPuppet (342)',
-    pp:find('if ok and on and playerId ~= nil and mp.setPlayerPuppet then', 1, true) ~= nil
+    pp:find('if ok and on and playerId ~= nil then', 1, true) ~= nil
     and pp:find('local playerId = nil', 1, true) < pp:find('local function markPuppet(on)', 1, true))
   -- 343: an arrest dialogue never asks for the conversation lock.
   check('player.lua skips mpDialogueForced for the Dialogue mode MP_PlayerArrest opened (343)',
@@ -1688,7 +1692,7 @@ do
     and g:find("k:find('census', 1, true)", 1, true) == nil and ob:find("k:find('census', 1, true)", 1, true) == nil)
   -- #312: a block on the peer reaches the owner as a sound.
   check('the stats report drains mp.takeBlock and the owner plays it',
-    g:find('mp.takeBlock and mp.takeBlock(p.obj)', 1, true) ~= nil
+    g:find('local s = mp.takeBlock(p.obj)', 1, true) ~= nil
     and g:find('if entry.blk or avatarStatsLast[id] ~= key', 1, true) ~= nil
     and p:find("if type(data.blk) == 'string' then pcall(core.sound.playSound3d, data.blk, self) end", 1, true) ~= nil
     and lb:find('return takeBlockFor(ptr.getCellRef().getRefNum());', 1, true) ~= nil)
@@ -1891,7 +1895,7 @@ do
   check('AiSequence completion is noted on the holder and written onto puppets',
     ai:find('{ "aidone", actor.getCellRef().getRefNum()', 1, true) ~= nil
     and ac:find('function actors.noteAiDone(n)', 1, true) ~= nil
-    and ac:find('if puppetActors[refKeyOf(obj)] and mp.setAiPackageDone then pcall(mp.setAiPackageDone, obj) end', 1, true) ~= nil
+    and ac:find('if puppetActors[refKeyOf(obj)] then pcall(mp.setAiPackageDone, obj) end', 1, true) ~= nil
     and lb:find('api["setAiPackageDone"]', 1, true) ~= nil)
   -- #145: disposition toward an avatar reads the avatar; the doc's factions land on it.
   check('getFightTerm reads disposition toward the avatar and AvatarState applies factions',
@@ -1934,7 +1938,7 @@ do
     and p:find('if not dbg.isGodMode() then dbg.toggleGodMode() end', 1, true) ~= nil)
   local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
   check('noteCombat: a non-holder "fights ME" claim never leaves the system peer',
-    ac:find('if foeId == nil or foeId ~= own or (mp.isSystem and mp.isSystem()) then return end', 1, true) ~= nil)
+    ac:find('if foeId == nil or foeId ~= own or (mp.isSystem()) then return end', 1, true) ~= nil)
 end
 
 print('s171 a puppet never echoes the holder\'s fight or travel back as the player\'s own claim')
@@ -2217,7 +2221,7 @@ do
     EQUIPMENT_SLOT = { CarriedRight = 16 }, getEquipment = function() return nil end },
     Creature = { objectIsInstance = function() return false end }, Weapon = { objectIsInstance = function() return false end, TYPE = {} } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 },
     hasGroup = function() return true end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
@@ -2548,7 +2552,7 @@ do
   check('the remove retry has no deadline, on a once-a-second cadence',
     io.open('./openmw/files/data/scripts/mp/retry.lua'):read('*a'):find('if pcall(function() r.obj:remove() end) then removes[id] = nil else r.at = now + 1 end', 1, true) ~= nil)
   check('despawnPuppet takes the body out of the avatar registry',
-    g:find('if mp.setAvatar then pcall(mp.setAvatar, p.obj, false) end', 1, true) ~= nil)
+    g:find('pcall(mp.setAvatar, p.obj, false)', 1, true) ~= nil)
   check('the owner re-sends its active effects when its look (the peer rebuild keys) changes',
     idn:find("for i, k in ipairs({ 'race', 'head', 'hair', 'isMale', 'class', 'birthsign', 'name' }) do look[i] = tostring(app[k]) end", 1, true) ~= nil
     and idn:find('lastLook = look\r?\n%s*identity%.resyncActive%(%)') ~= nil
@@ -2761,7 +2765,7 @@ do
     Creature = { objectIsInstance = function() return true end },
   }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, Hit = 4, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function(_, g) return g == 'attack1' or g == 'hit1' end,
     playBlended = function(_, group, o) played[#played + 1] = group .. ':' .. tostring(o.startKey) .. '>' .. tostring(o.stopKey) end }
   package.loaded['scripts.mp.interp'] = nil
@@ -2804,7 +2808,7 @@ do
     rotation = { getYaw = function() return 0 end, getPitch = function() return 0 end }, enableAI = function(_, on) ai = on end }
   package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 0 end } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   package.loaded['openmw.animation'] = {}
   local pose = function() return { x = 300, y = 0, z = 0, yaw = 0, pitch = 0, flags = 0, t = now } end
   local function reload(pup)
@@ -2862,7 +2866,7 @@ do
     setStance = function() end, getRunSpeed = function() return RUN end, getWalkSpeed = function() return WALK end },
     Creature = { objectIsInstance = function() return true end } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return false end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
@@ -2917,7 +2921,7 @@ do
     EQUIPMENT_SLOT = { CarriedRight = 16 }, getEquipment = function() return nil end },
     Creature = { objectIsInstance = function() return false end }, Weapon = { objectIsInstance = function() return false end, TYPE = {} } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   local P = { Movement = 3, Hit = 4, Weapon = 5, WeaponLowerBody = 1 }
   local legs, clipUntil = 0, -1
   package.loaded['openmw.animation'] = { PRIORITY = P, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 },
@@ -2976,7 +2980,7 @@ do
     Weapon = { objectIsInstance = function() return false end, TYPE = {} },
   }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   -- AS THE ENGINE DOES IT: a group still held (autoDisable = false) is NOT restarted by playing it
   -- again -- Animation::play only updates its priority -- until it is cancelled. With the stub
   -- that played every call, a held wind-up and a blow that never ran looked like a swing here
@@ -3059,7 +3063,7 @@ do
   package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1 }, getStance = function() return 0 end,
     setStance = function() end, inventory = function() return { getAll = function() return {} end } end } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = {}
+  package.loaded['openmw.mp'] = mpStub({})
   package.loaded['openmw.util'] = { vector3 = v3 }
   -- One replay: the owner runs 0.2-2.5 s at 60 fps (a 1 s hitch at t=1 simulating 200 ms);
   -- `jitter` holds every input sent in the first 200 ms of each half second back to its end,
@@ -3174,7 +3178,7 @@ do
     setStance = function() end, getRunSpeed = function() return RUN end, getWalkSpeed = function() return WALK end },
     Creature = { objectIsInstance = function() return false end } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return false end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
@@ -3231,7 +3235,7 @@ do
     setStance = function() end, getRunSpeed = function() return RUN end, getWalkSpeed = function() return WALK end },
     Creature = { objectIsInstance = function() return true end } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   package.loaded['openmw.animation'] = { PRIORITY = { Weapon = 5, WeaponLowerBody = 1 }, BONE_GROUP = { LowerBody = 0, Torso = 1, LeftArm = 2, RightArm = 3 }, hasGroup = function() return false end, playBlended = function() end }
   package.loaded['scripts.mp.interp'] = nil
   local pup = dofile('./openmw/files/data/scripts/mp/puppet.lua')
@@ -3596,6 +3600,9 @@ do
       return anything
     end })
   end
+  -- The stubs answer an unnamed mp binding with nil; here it must be ANYTHING, or start()
+  -- reads mp.isEnabled() as off and half the modules never get their deps.
+  setmetatable(package.loaded['openmw.mp'], nil)
   for _, name in ipairs({ 'openmw.world', 'openmw.core', 'openmw.types', 'openmw.util', 'openmw.interfaces', 'openmw.mp' }) do
     permissive(package.loaded[name])
   end
@@ -3827,7 +3834,7 @@ do
   package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1, Spell = 2 }, getStance = function() return 0 end,
     setStance = function() end, getRunSpeed = function() return 250 end, getWalkSpeed = function() return 150 end } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = { set = function() end }
+  package.loaded['openmw.mp'] = mpStub({ set = function() end })
   package.loaded['openmw.animation'] = {}
   local function friend()
     package.loaded['scripts.mp.interp'] = nil
@@ -4022,7 +4029,7 @@ do
     .. g:sub(a, b) .. '\nreturn kit.placeAvatar')
   check('placeAvatar is where this test expects it', mk ~= nil)
   check('MP_MoveBatch places avatars only on the peer under clientAuthority',
-    g:find("mp.isSystem and mp.isSystem() and net.flags and net.flags.clientAuthority == true then\n                    kit.placeAvatar(p.obj, e.id, e)", 1, true) ~= nil)
+    g:find("mp.isSystem() and net.flags and net.flags.clientAuthority == true then\n                    kit.placeAvatar(p.obj, e.id, e)", 1, true) ~= nil)
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
   check('a placed avatar is not walked from inputs', av:find('\n                moveAxis, sideAxis = 0, 0\n', 1, true) ~= nil)
   check('a placed avatar does not jump from inputs', av:find("if placed then\n                if jumpDue or jumpLatch then placedFatigue.jump(bit(ctl.flags, 1)) end -- a jump the owner's engine made\n                self.controls.jump = false", 1, true) ~= nil)
@@ -4332,7 +4339,7 @@ do
   check('a count-0 actor (expired summon) is gone to the peer', a:find('if obj.count == 0 then', 1, true) ~= nil
     and a:find('if obj and obj:isValid() and obj.count > 0 then', 1, true) ~= nil)
   check('a full cell state drops named-actor copies it lacks (never on the peer)',
-    ob:find('if data.actorsComplete == true and data.cellKey and not (mp.isSystem and mp.isSystem()) then', 1, true) ~= nil)
+    ob:find('if data.actorsComplete == true and data.cellKey and not (mp.isSystem()) then', 1, true) ~= nil)
   local obb = io.open('./openmw/apps/openmw/mwlua/objectbindings.cpp'):read('*a')
   check('a same-cell teleport does not re-add a running local script',
     obb:find('!world->getLocalScripts().isRunning(script, newPtr)', 1, true) ~= nil)
@@ -4414,7 +4421,7 @@ do
   local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
   check('mp.takeFallKnockdown and mp.setKnockedDown are bound', lb:find('api["takeFallKnockdown"]', 1, true) ~= nil and lb:find('api["setKnockedDown"]', 1, true) ~= nil)
   local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
-  check('the peer lays the avatar down on kd', g:find('if data.kd == true and mp.setKnockedDown then pcall(mp.setKnockedDown, p.obj) end', 1, true) ~= nil)
+  check('the peer lays the avatar down on kd', g:find('if data.kd == true then pcall(mp.setKnockedDown, p.obj) end', 1, true) ~= nil)
 end
 
 -- ====================================== the dummy player's rules (1.7.0)
@@ -4565,7 +4572,7 @@ do
   g = src('./openmw/files/data/scripts/mp/global.lua')
   do
     local a = g:find('playerIdOf = function(obj)', 1, true)
-    local guard = a and g:find('if not (mp.isSystem and mp.isSystem()) then', a, true)
+    local guard = a and g:find('if not (mp.isSystem()) then', a, true)
     local loop = a and g:find('for _, pl in ipairs(world.players) do', a, true)
     check('playerIdOf skips world.players on the sim peer', guard and loop and guard < loop and guard - a < 400)
   end
@@ -5015,7 +5022,7 @@ do
   package.loaded['openmw.types'] = { Actor = { STANCE = { Nothing = 0, Weapon = 1 }, getStance = function() return 0 end,
     setStance = function() end, inventory = function() return { getAll = function() return {} end } end } }
   package.loaded['openmw.interfaces'] = {}
-  package.loaded['openmw.mp'] = {}
+  package.loaded['openmw.mp'] = mpStub({})
   package.loaded['openmw.util'] = { vector3 = function(x, y, z) return { x = x, y = y, z = z } end }
   local okA, av = pcall(dofile, './openmw/files/data/scripts/mp/avatar.lua')
   check('avatar.lua loads under the stubs', okA and av and av.engineHandlers, tostring(av))

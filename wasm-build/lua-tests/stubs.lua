@@ -50,6 +50,9 @@ function M.install(opts)
     getBootCharacter = function() return opts.character or '' end,
     isSystem = function() return opts.system == true end,
   }
+  -- The engine defines every openmw.mp binding in browser and peer alike (DC5), so the scripts
+  -- call them unguarded; any binding a test does not care about is a no-op returning nil.
+  setmetatable(mp, { __index = function() return function() end end })
 
   local realTime = 0
   local core = {
@@ -150,6 +153,7 @@ function M.install(opts)
   package.loaded['openmw.core'] = core
   package.loaded['openmw.mp'] = mp
   package.loaded['openmw.self'] = { id = 'self' }
+  package.loaded['openmw.nearby'] = { actors = {} }
   package.loaded['openmw.types'] = types
   package.loaded['openmw.util'] = {
     vector2 = function(a, b) return { a, b } end,

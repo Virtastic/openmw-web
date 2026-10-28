@@ -658,7 +658,7 @@ handlers.MP_WorldMapExplored = function(data)
         if type(key) == 'string' then
             exploredIn[key] = true
             local gx, gy = key:match('^(-?%d+),(-?%d+)$')
-            if gx and mp.setMapExplored then
+            if gx then
                 -- NAMED cells only: vanilla adds a visited location when the player enters
                 -- a named exterior (windowmanagerimp.cpp), never the wilderness. An unnamed
                 -- key fell back to the key itself and painted markers called "3" (backlog 259).

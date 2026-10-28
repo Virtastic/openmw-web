@@ -176,7 +176,7 @@ local function applyJournalEntry(questId, index, stamp, regress)
     -- index-only, every player's journal read blank after a relog while their quests still
     -- gated correctly. Repeats are safe — Topic::addEntry dedupes by info id.
     local ok = pcall(function()
-        if stamp and mp.addJournalEntryAt then
+        if stamp then
             mp.addJournalEntryAt(questId, index, stamp.d, stamp.m, stamp.dm)
         else
             quest:addJournalEntry(index)
@@ -371,7 +371,6 @@ local function topicSet()
     -- AddTopic unlock lands there and nowhere else, so diffing only the journal's asked-about
     -- topics never sent one. The journal set stays for an engine baked before the binding.
     local okKnown, errKnown = pcall(function()
-        if not mp.knownTopics then error('no mp.knownTopics') end
         for _, id in ipairs(mp.knownTopics()) do out[string.lower(id)] = true end
     end)
     -- types.Player.journal(player).topics -- the topic store hangs off the JOURNAL
@@ -536,7 +535,7 @@ local function armCellWatches(cell, now, poll, dialogue)
 end
 
 local function armHeldWatches(now)
-    if now < heldScanAt or not (mp.isSystem and mp.isSystem()) or not deps.heldCellsFn then return end
+    if now < heldScanAt or not (mp.isSystem()) or not deps.heldCellsFn then return end
     heldScanAt = now + SCRIPTED_SCAN_INTERVAL
     for _, cell in ipairs(deps.heldCellsFn()) do armCellWatches(cell, now, HELD_WATCH_POLL) end
 end
@@ -568,7 +567,7 @@ local function armLockWatch(obj)
     -- scripted object in the conversation's cell is watched until the release (1.7.1).
     -- ponytail: an object in a cell this client has not loaded is written on no engine here
     -- and cannot be watched; a result script writing such a far ref still does not travel.
-    if not (mp.isSystem and mp.isSystem()) then
+    if not (mp.isSystem()) then
         local okc, cell = pcall(function() return obj.cell end)
         if okc and cell then armCellWatches(cell, core.getRealTime(), HELD_WATCH_POLL, true) end
     end
@@ -872,7 +871,6 @@ local function scriptIsCampaign(id)
 end
 
 local function diffGlobalScripts()
-    if not mp.runningGlobalScripts then return end
     local ok, list = pcall(mp.runningGlobalScripts)
     if not (ok and type(list) == 'table') then
         if not scriptsReadFailed then
@@ -898,7 +896,7 @@ local function diffGlobalScripts()
 end
 
 handlers.MP_GlobalScriptsSync = function(data)
-    if not mp.startGlobalScript or type(data.running) ~= 'table' then return end
+    if type(data.running) ~= 'table' then return end
     local n = 0
     for _, id in ipairs(data.running) do
         if type(id) == 'string' and scriptIsCampaign(id) then
@@ -978,7 +976,7 @@ handlers.MP_CrimeUpdate = function(data)
     -- reason to arrest. The people who can actually commit crimes here are the avatars, and the
     -- engine's own bounty field is player-only -- hence the MP registry (mwmp/puppets.hpp),
     -- which is what the generalised crime pursuit reads.
-    if mp.isSystem and mp.isSystem() then
+    if mp.isSystem() then
         -- Backlog 140: a drop is a paid fine. Record it so witnesses/guards already pursuing
         -- calm down (actors.cpp compares their crime id with the player's paid id); zeroing
         -- the registry alone left them hunting. Keyed per source so a joiner restoring
@@ -989,7 +987,7 @@ handlers.MP_CrimeUpdate = function(data)
         -- 1.7.0: a player's own fine settles only THEIR crimes (the avatar's paid mark); the
         -- shared record, or a drop nobody can be named for, settles every crime as before.
         local payer = (not data.shared and data.byId ~= nil and deps.avatarObjFn) and deps.avatarObjFn(data.byId) or nil
-        if prev ~= nil and level < prev and mp.recordCrimePaid then
+        if prev ~= nil and level < prev then
             if payer then mp.recordCrimePaid(payer) else mp.recordCrimePaid() end
         end
         -- SHARED CRIME IS ONE RECORD FOR THE PARTY: every client applies it to its own
@@ -998,7 +996,7 @@ handlers.MP_CrimeUpdate = function(data)
         if data.shared and deps.allAvatarsFn then
             local n = 0
             for _, obj in pairs(deps.allAvatarsFn()) do
-                if obj and obj:isValid() and mp.setAvatarBounty then mp.setAvatarBounty(obj, level); n = n + 1 end
+                if obj and obj:isValid() then mp.setAvatarBounty(obj, level); n = n + 1 end
             end
             print(string.format('[mp] peer CrimeUpdate shared level=%d avatars=%d', level, n))
             return
@@ -1006,7 +1004,7 @@ handlers.MP_CrimeUpdate = function(data)
         local obj = (data.byId ~= nil and deps.avatarObjFn) and deps.avatarObjFn(data.byId) or nil
         print(string.format('[mp] peer CrimeUpdate byId=%s level=%d avatar=%s',
             tostring(data.byId), level, obj and 'yes' or 'NO'))
-        if obj and mp.setAvatarBounty then mp.setAvatarBounty(obj, level) end
+        if obj then mp.setAvatarBounty(obj, level) end
         return
     end
     local player = playerObj()
@@ -1189,7 +1187,7 @@ end
 local EXIT_REPAIR_DELAY = 2
 local exitRepairAt = nil -- false = done for this connection
 local function repairChargenExit(player)
-    if mp.allowAllWindows then mp.allowAllWindows() end -- nil on an engine older than the binding
+    mp.allowAllWindows()
     local q = types.Player.quests(player)['a1_1_findspymaster']
     local inv = types.Actor.inventory(player)
     if q and q.stage == 1 and inv:countOf('bk_a1_1_caiuspackage') == 0 then

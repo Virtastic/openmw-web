@@ -59,10 +59,6 @@ handlers.MP_ConsoleCommand = function(data)
     deps.noticeFn('An admin ran a console command on your client')
     -- mp.runConsole is the engine's own console executor (mwmp/luabindings.cpp); there is
     -- no vanilla Lua API for running MWScript console text.
-    if not mp.runConsole then
-        print('[mp] runConsole binding missing: console command NOT executed')
-        return
-    end
     local ok, err = pcall(function() mp.runConsole(data.script) end)
     if not ok then print('[mp] runConsole failed: ' .. tostring(err)) end
 end

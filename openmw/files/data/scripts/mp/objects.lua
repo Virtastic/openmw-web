@@ -733,7 +733,7 @@ function objects.onItemActive(item)
     -- parked far from everyone, so the range test below never passed and every such item
     -- stayed on the peer's engine alone -- you could not pick your arrows back up. Named as
     -- a placement (no owner, no conservation debit) when it appears near any avatar.
-    if mp.isSystem and mp.isSystem() then
+    if mp.isSystem() then
         if not (deps.allAvatarsFn and item.cell) then return end
         for _, av in ipairs(deps.allAvatarsFn()) do
             local okd, d = pcall(function() return (item.position - av.position):length() end)
@@ -1201,7 +1201,7 @@ handlers.MP_WorldCellState = function(data)
     -- else kept a nix-hound or cliff racer nothing streams (npcNoPose, prod 2026-10-23). The full
     -- list (actorsComplete: the server did not trim it) says which of ours are still real.
     -- Never on the peer: its named actors are the originals, not copies.
-    if data.actorsComplete == true and data.cellKey and not (mp.isSystem and mp.isSystem()) then
+    if data.actorsComplete == true and data.cellKey and not (mp.isSystem()) then
         for netId, obj in pairs(netToObj) do
             if not named[netId] and obj:isValid() and netSpawned[obj.id]
                 and types.Actor.objectIsInstance(obj) and cellKeyOfObj(obj) == data.cellKey then
@@ -1378,7 +1378,7 @@ function objects.tick(now)
                     end
                 end
             end
-            local peer = mp.isSystem and mp.isSystem()
+            local peer = mp.isSystem()
             if peer and deps.heldCellsFn then
                 for _, c in ipairs(deps.heldCellsFn()) do addCell(c) end
             end
