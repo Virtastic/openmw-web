@@ -34,6 +34,7 @@ import { Social } from './core/social';
 import { SocialStore } from './core/socialstore';
 import { Trades, TradeLedger } from './core/trade';
 import { Binding } from './core/binding';
+import { AdminAudit } from './core/admin-audit';
 import type { JsLike } from './proto/lser';
 import { WorldM7 } from './core/m7';
 import { Roster, type Player } from './core/players';
@@ -274,6 +275,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       config.server.motd = text; // plugins and Welcome read config.server.motd
     },
     allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
+    audit: new AdminAudit(opts.dataDir),
   });
   const m7 = new WorldM7({
     roster,
@@ -822,7 +824,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         return { ok: false, message: `/${cmd} moves you, so it only works while you are in the world.` };
       }
       const message = await admin.exec(synthetic, cmd, parts);
-      log('info', 'admin.console', { by: actor.accountKey, cmd });
+      log('info', 'admin.console', { by: actor.accountKey, cmd, args: parts.join(' ').slice(0, 200) });
       return { ok: true, message };
     },
     commandCatalog: () => Object.entries(ADMIN_COMMANDS).map(([name, spec]) => ({

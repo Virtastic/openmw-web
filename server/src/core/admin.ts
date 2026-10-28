@@ -16,6 +16,7 @@
 // rather than "unknown command": a moderator who cannot ban should learn that, and hiding
 // the command's existence buys nothing when the command list is in the protocol doc.
 
+import type { AuditRow } from './admin-audit';
 import type { Player, Roster } from './players';
 import type { AccountStore } from './accounts';
 import type { BanStore } from '../persist/banstore';
@@ -54,6 +55,8 @@ interface AdminCtx {
   setMotd(text: string): void;
   // Plugin veto: false = this actor may not run this command (default allow).
   allow(actor: Player, cmd: string): boolean;
+  // OT3-183: the durable audit table (admin-audit.ts). Absent in tests that do not care.
+  audit?: { write(row: AuditRow): void };
 }
 
 /** The commands a rank may run, one line each. The dashboard's catalog is the same table. */
@@ -409,19 +412,28 @@ export class Admin {
   async exec(actor: Player, cmd: string, args: string[]): Promise<string> {
     const spec = ADMIN_COMMANDS[cmd];
     if (!spec) return `Unknown command /${cmd}.`;
+    const row = (outcome: AuditRow['outcome'], result: string): string => {
+      try {
+        this.ctx.audit?.write({ ts: Date.now(), actor: actor.accountKey, actorName: actor.name, cmd,
+          target: args[0] ?? '', args: args.join(' '), reason: args.slice(1).join(' '), outcome, result });
+      } catch (err) {
+        log('error', 'admin.audit_failed', { cmd, error: String(err) });
+      }
+      return result;
+    };
     if (actor.rank < spec.minRank) {
       log('warn', 'admin.refused', { actor: actor.name, cmd, rank: actor.rank, need: spec.minRank });
-      return refusal(cmd, spec.minRank, actor.rank);
+      return row('refused', refusal(cmd, spec.minRank, actor.rank));
     }
     if (!this.ctx.allow(actor, cmd)) {
       log('warn', 'admin.vetoed', { actor: actor.name, cmd });
-      return `/${cmd} is not permitted for you on this server.`;
+      return row('vetoed', `/${cmd} is not permitted for you on this server.`);
     }
     try {
-      return await spec.run(this.ctx, actor, args);
+      return row('ok', await spec.run(this.ctx, actor, args));
     } catch (err) {
       log('error', 'admin.failed', { actor: actor.name, cmd, error: String(err) });
-      return `/${cmd} failed: internal error.`;
+      return row('failed', `/${cmd} failed: internal error.`);
     }
   }
 
