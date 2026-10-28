@@ -25,7 +25,7 @@ const BOTS = {
 async function boot(t: { after(fn: () => unknown): void }, override: unknown) {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    worldMode: 'party', // bots live in the gathering place: a world that booted in party mode
+    // bots live in the gathering place: a world that booted in party mode
     configOverride: override as never,
   });
   t.after(() => server.close());
@@ -97,7 +97,7 @@ test('every bot has a real account and public handle, and a restart reuses it', 
 test('each bot has a completed character standing in the starter village', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'party',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
     configOverride: BOTS as never,
   });
   await server.close(); // write-behind stores: read what they actually hold
@@ -124,7 +124,7 @@ test('each bot has a completed character standing in the starter village', async
 test('without configured content ids a bot is social-only, never half-dressed', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'party',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
     configOverride: { dev: { bots: 1, botPrefix: 'Bot', botNames: ['Bot1'] }, login: { allowHarnessAuth: true } } as never,
   });
   await server.close();
@@ -145,7 +145,7 @@ test('without configured content ids a bot is social-only, never half-dressed', 
 // occupants for the purposes of capacity and lifecycle.
 test('bots do not hold a world open or consume player slots', async (t) => {
   const server = await startServer({
-    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', worldMode: 'party',
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', 
     configOverride: { ...BOTS, server: { maxPlayers: 4 } } as never,
   });
   t.after(() => server.close());
@@ -168,7 +168,7 @@ test('bots do not hold a world open or consume player slots', async (t) => {
 // it should refuse, is worse than no bot: it would "prove" a broken feature works.
 test('bots survive repeat requests, several humans, and refusals', async (t) => {
   const server = await startServer({
-    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', worldMode: 'party',
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', 
     configOverride: { dev: { bots: 4, botPrefix: 'Bot', botNames: ['Bot1', 'Bot2', 'Bot3', 'Bot4'] },
       login: { allowHarnessAuth: true } } as never,
   });
@@ -218,7 +218,7 @@ test('bots survive repeat requests, several humans, and refusals', async (t) => 
 test('bots take real usernames, and a bad one falls back instead of breaking', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'party',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
     configOverride: {
       dev: { bots: 3, botPrefix: 'Bot', botNames: ['Kestrel', 'no', 'Talvyn'] },
       login: { allowHarnessAuth: true },
@@ -236,46 +236,6 @@ test('bots take real usernames, and a bad one falls back instead of breaking', a
   assert.equal(acct?.username, 'Kestrel', 'the handle must reach the account');
 });
 
-// A BOT LIVES IN THE GATHERING PLACE — a world that booted in party mode — and nowhere
-// else. Every world process reads the same shared config, so without the mode gate a copy of
-// every bot appeared in every world: scenery, not a player.
-test('a bot is only in the gathering place, never in a private world', async (t) => {
-  const dataDir = tmpDataDir();
-  const cfg = (mode: string) => ({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
-    configOverride: {
-      dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
-      login: { allowHarnessAuth: true },
-    } as never,
-  });
-
-  const hub = await startServer(cfg('party'));
-  t.after(() => hub.close());
-  const priv = await startServer(cfg('private'));
-  t.after(() => priv.close());
-
-  const inWorld = (s: { api: { players(): { name: string }[] } }): string[] =>
-    s.api.players().map((p) => p.name);
-
-  assert.ok(inWorld(hub).includes('Kestrel'), 'the bot should hang out in the party world');
-  assert.ok(!inWorld(priv).includes('Kestrel'),
-    'the bot is in a world nobody invited it to — that is scenery, not a player');
-});
-
-async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
-  const until = Date.now() + ms;
-  while (Date.now() < until) {
-    if (cond()) return true;
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return cond();
-}
-
-// PRESENCE IS SERVER-WIDE, NOT PER-WORLD. Every world is its own process with its own roster,
-// so asking the local roster answered "is my friend online?" with "is my friend in MY world?".
-// A friend in their own solo world read as offline, a party member elsewhere had no location,
-// and the Players list showed one world's population as if it were the server's — so from solo
-// there was nobody to see or invite.
 test('players in another world are visible and online from here', async (t) => {
   const dataDir = tmpDataDir();
   const cfg = (mode: string) => ({
@@ -306,36 +266,3 @@ test('players in another world are visible and online from here', async (t) => {
     'a player in another world never reached this one — nobody to see or invite from solo');
 });
 
-// ---------------------------------------------------------------- gathering place
-//
-// /status is what the launcher reads; the bots must be visible there too, and ONLY in the
-// gathering place.
-test('bots appear on /status in the gathering place only', async (t) => {
-  const dataDir = tmpDataDir();
-  const cfg = (mode: string) => ({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
-    configOverride: {
-      dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
-      login: { allowHarnessAuth: true },
-    } as never,
-  });
-
-  const party = await startServer(cfg('party'));
-  t.after(() => party.close());
-  const priv = await startServer(cfg('private'));
-  t.after(() => priv.close());
-
-  const namesIn = async (s: { port: number }): Promise<string[]> => {
-    const r = await fetch(`http://127.0.0.1:${s.port}/status`);
-    const body = await r.json() as { players?: { name: string }[] };
-    return (body.players ?? []).map((p) => p.name);
-  };
-
-  await new Promise((r) => setTimeout(r, 3000)); // reconcile ticks every 2s
-  assert.ok((await namesIn(party)).includes('Kestrel'),
-    'the party world is where a bot belongs');
-  // NEGATIVE CONTROL: it must not appear in EVERY world, or a bot stops being a player and
-  // becomes scenery.
-  assert.ok(!(await namesIn(priv)).includes('Kestrel'),
-    'a private world is not a gathering place');
-});

@@ -50,36 +50,3 @@ test('a ticket works exactly once as a credential', async (t) => {
   await assert.rejects(c.waitJson('SessionWelcome'), 'single use: the second attempt fails');
 });
 
-test('a ticket refused by the destination is still usable afterwards', async (t) => {
-  const dataDir = tmpDataDir();
-  // A PRIVATE world owned by somebody else refuses every other account at finishAuth, which
-  // is exactly the refusal that used to happen after the claim.
-  const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    worldMode: 'private', worldOwner: 'someone-else',
-    configOverride: { login: { allowHarnessAuth: true } } as never,
-  });
-  t.after(() => server.close());
-
-  const accounts = new AccountStore(dataDir);
-  const acct = await accounts.register('Traveller', 'hunter22');
-  assert.ok(typeof acct !== 'string');
-  await accounts.flush();
-
-  const tickets = new LoginTicketStore(15 * 60_000, dataDir);
-  const ticket = tickets.mint('traveller', 'Traveller');
-
-  const a = await TestClient.connect(server.port);
-  t.after(() => a.close());
-  a.hello();
-  await a.waitJson('SessionHelloOk');
-  a.sendJson({ t: 'SessionLoginTicket', ticket });
-  const refusal = await a.waitJson('SessionDisconnect');
-  assert.match(String(refusal['detail'] ?? ''), /private/i, 'refused for world access, not the ticket');
-
-  // The ticket survived the refusal: it is still claimable, so the player can go back where
-  // they came from instead of being stranded with a spent credential.
-  assert.ok(tickets.peek(ticket), 'the refusal spent the ticket');
-  assert.ok(tickets.claim(ticket), 'the ticket must still be redeemable');
-  assert.equal(tickets.claim(ticket), undefined, 'and it is single-use once actually spent');
-});

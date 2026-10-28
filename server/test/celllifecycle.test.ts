@@ -89,8 +89,7 @@ test('a reset hands standing players the restored truth instead of kicking them'
     // A CAMPAIGN world: this test is about the reset MECHANISM — a standing player is handed
     // the restored truth rather than kicked — and restocking is what makes that observable.
     // The shared world deliberately does not restock (it resets on a timer and what you carry
-    // follows you home, which together is an item faucet), so it cannot show this.
-    worldMode: 'private',
+    // follows you home, which together is an item faucet), so it cannot show this.
     configOverride: { cellReset: { cells: ['0,0'], intervalSec: 0 } }, // registered, manual only
   });
   t.after(() => server.close());
@@ -132,7 +131,7 @@ test('CellSnapshotReplace carries locks and deaths', async (t) => {
   seed.markDirty('0,0');
   await seed.close();
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
     configOverride: { cellReset: { cells: ['0,0'], intervalSec: 0 } },
   });
   t.after(() => server.close());

@@ -84,14 +84,6 @@ test('MuteRemove lifts a mute: the speaker is heard again', async (t) => {
   await quiet.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'heard again');
 });
 
-test('WorldCreate on a server with no gateway answers, instead of leaving the client waiting', async (t) => {
-  const { server } = await boot(t);
-  const { c } = await player(t, server.port, 'Builder');
-  c.sendEvent('WorldCreate', { id: 'mine', mode: 'party' });
-  const got = (await c.waitEvent('WorldCreate')).value as { ok: boolean; error: string };
-  assert.deepEqual(got, { ok: false, error: 'no_gateway' });
-});
-
 test('PresenceMode takes the mode in either field (the client router sends it as acct), and refuses nonsense', async (t) => {
   const { server } = await boot(t);
   const { c } = await player(t, server.port, 'Hermit');

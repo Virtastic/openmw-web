@@ -22,8 +22,7 @@ async function party(t: T, sharing?: Record<string, unknown>) {
   const dataDir = tmpDataDir();
   new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    worldMode: 'party', worldOwner: 'host',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     configOverride: { server: { password: PEER_PASS }, login: { allowHarnessAuth: true }, ...(sharing ? { sharing } : {}) } as never,
   });
   t.after(() => server.close());
@@ -42,49 +41,6 @@ async function party(t: T, sharing?: Record<string, unknown>) {
   return { server, dataDir, peer, host, hostChar, guest };
 }
 
-// Item 1: an item's OnPCAdd, a lever's OnActivate or an area trigger advances a quest with no
-// conversation open. The guest's write used to be relayed and never saved.
-test("a guest's quest write right after their own scripted activation persists to the campaign", async (t) => {
-  const { server, dataDir, host, hostChar, guest } = await party(t);
-  guest.sendEvent('ObjectActivated', { net: 9, cellKey: '40,40' }); // from afar: not a trace
-  guest.sendEvent('GlobalVarUpdate', { name: 'mp_far_gate', value: 3 });
-  await host.waitEvent('GlobalVarUpdate', gv('mp_far_gate'), 3000);
-  guest.sendEvent('ObjectActivated', { net: 9, cellKey: '0,0' });
-  guest.sendEvent('JournalEntry', { questId: 'mq_lever', index: 10 });
-  guest.sendEvent('GlobalVarUpdate', { name: 'mp_lever_gate', value: 1 });
-  await host.waitEvent('GlobalVarUpdate', gv('mp_lever_gate'), 3000);
-  await server.flush();
-  const doc = readPlayerDoc(dataDir, hostChar) as { journal?: Record<string, number>; globals?: Record<string, number> };
-  assert.equal(doc.journal?.['mq_lever'], 10, 'the activation-backed journal step was not saved');
-  assert.equal(doc.globals?.['mp_lever_gate'], 1, 'the activation-backed global was not saved');
-  assert.equal(doc.globals?.['mp_far_gate'], undefined, 'an activation from afar must not back a write');
-});
-
-// Item 4: the replay guard (backlog 335) holds only in the join-time window after JournalSync.
-test('a regress to a logged stage is a replay just after JournalSync, and a restart after it', async (t) => {
-  const { Quests } = await import('../src/core/quests');
-  const { host, guest } = await party(t);
-  const idx = (e: { value: unknown }) => val(e, 'index') as number;
-  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 10 });
-  assert.equal(idx(await guest.waitEvent('JournalEntry', jq('mq_rep'), 3000)), 10);
-  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 50 });
-  assert.equal(idx(await guest.waitEvent('JournalEntry', jq('mq_rep'), 3000)), 50);
-  guest.inbox.events.length = 0;
-  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 10 }); // inside the window: the replay's echo
-  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 60 }); // fence
-  assert.equal(idx(await guest.waitEvent('JournalEntry', jq('mq_rep'), 3000)), 60);
-  assert.equal(guest.inbox.events.filter((e) => e.name === 'JournalEntry' && idx(e) === 10).length, 0, 'a replay echo was relayed');
-  const windowMs = Quests.REPLAY_WINDOW_MS;
-  Quests.REPLAY_WINDOW_MS = 0;
-  t.after(() => { Quests.REPLAY_WINDOW_MS = windowMs; });
-  host.sendEvent('JournalEntry', { questId: 'mq_rep', index: 10 });
-  const e = await guest.waitEvent('JournalEntry', jq('mq_rep'), 3000);
-  assert.equal(idx(e), 10, 'the restart is relayed');
-  assert.equal(val(e, 'regress'), true);
-});
-
-// Item 5: on a standalone (owner-less) server the peer's advances reach the shared map that
-// JournalSync sends after its log, and a joining peer is seeded from the shared campaign state.
 test("standalone: the peer's journal advance lands in the shared map; a new peer is seeded with globals and scripts", async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',

@@ -91,25 +91,6 @@ assert.equal((avail.value as { ok?: boolean }).ok, true, 'SetAvailability refuse
 c.sendEvent('SetAvailability', { state: 'online' });
 ok('status: availability toggled');
 
-// --- world change -----------------------------------------------------------------------
-// Only the world's OWNER may flip Solo<->Party, and the refusal must be explicit rather than
-// silence. This bot is a guest on somebody else's world, so it must be told 'not_owner'.
-// (There is no public world any more; 'not_flippable' was that mode's refusal and is gone.)
-c.sendEvent('SetWorldMode', { mode: 'party' });
-const flip = await c.waitEvent('SocialResult', (v) =>
-  (v as { op?: string }).op === 'SetWorldMode', 8000);
-assert.equal((flip.value as { ok?: boolean }).ok, false,
-  'a non-owner was allowed to flip the world mode');
-assert.equal((flip.value as { detail?: string }).detail, 'not_owner');
-ok('world: a non-owner is refused a mode flip (not_owner)');
-
-const worlds = await (async () => {
-  c.sendEvent('WorldList', {});
-  return c.waitEvent('WorldList', () => true, 8000).catch(() => null);
-})();
-assert.ok(worlds, 'WorldList returned nothing — the world switcher has no data');
-ok('world: world list returned');
-
 // --- quests: a shared journal entry -------------------------------------------------------
 // The server relays to everyone EXCEPT the author, so proving this needs a second player.
 if (ticket2) {

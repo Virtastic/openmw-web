@@ -34,13 +34,7 @@ interface StatusSnapshot {
   requiresPassword: boolean; // a launcher can prompt before connecting
   allowsRegistration: boolean; // false when registration is off OR invite-only
   pvp: boolean;
-  // THE LIVE MODE. The gateway learns a world's mode when it starts the process and never
-  // asked again, so an owner's flip to Party was invisible to the friend-join check, which
-  // refused every friend with not_open. Reported here; the gateway's poll keeps its copy fresh.
-  mode?: 'private' | 'party';
-  // Is the owner actually here? A Party world in its owner's crash grace is open on paper
-  // and hostless in fact; the launcher must not offer it as "X has their world open".
-  ownerPresent?: boolean;
+  mode?: 'public'; // OT3-31: one world, always public
   uptime: number; // seconds
   version: string;
 }

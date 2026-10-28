@@ -111,37 +111,6 @@ test('availability: bad state is rejected and persists across a reload', () => {
   w.close();
 });
 
-test('JoinFriend authorization: self / non-friend / offline are refused before the gateway', async () => {
-  const w = world(); // no WorldBrowser configured -> anything past auth would be 'no_gateway'
-  const alice = w.add('alice', 'Alice');
-  const bob = w.add('bob', 'Bob');
-
-  await w.social.joinFriend(alice, 'alice');
-  assert.equal(w.last('alice', 'JoinFriend')?.body.error, 'self');
-
-  await w.social.joinFriend(alice, 'bob'); // not friends yet
-  assert.equal(w.last('alice', 'JoinFriend')?.body.error, 'not_friends');
-
-  w.befriend(alice, bob);
-  w.social.setAvailability(bob, 'offline');
-  await w.social.joinFriend(alice, 'bob');
-  assert.equal(w.last('alice', 'JoinFriend')?.body.error, 'not_online',
-    'a solo/offline friend is unjoinable');
-
-  // Available friend, but no gateway wired here -> proves auth passed and it reached routing.
-  w.social.setAvailability(bob, 'online');
-  await w.social.joinFriend(alice, 'bob');
-  assert.equal(w.last('alice', 'JoinFriend')?.body.error, 'no_gateway');
-  w.close();
-});
-
-// THE FIRST STEP OF PLAYING WITH FRIENDS, and it delivered nothing.
-//
-// FriendRequestReceived is pushed to the target only if they are in the SENDER'S world, and
-// every player normally sits in their own game — which is exactly when "add a friend by their
-// username" is the flow you reach for. The request was stored and the recipient was never told,
-// in that session or any later one, because nothing sent pending requests at join and the
-// FriendList snapshot did not carry them.
 test('a friend request reaches someone who was not in the sender\'s world', () => {
   const w = world();
   const a = w.add('ada', 'Ada');
@@ -191,36 +160,6 @@ test('a friend request can be accepted when the sender is in another world', () 
   w.close();
 });
 
-// The other half of "come join me". Invites are stored in the shared table precisely so they
-// can reach a player in another world (drainInvites delivers them on join) — and accepting
-// one only ever meant "teleport to the inviter's coordinates", which no other world process
-// can supply. So every invite that actually needed to cross a world answered 'not_online' and
-// the card could not be accepted at all.
-test('an invite from another world is accepted as a world switch, not refused', () => {
-  const w = world();
-  const bob = w.add('bob', 'Bob');
-  const ada = w.register('ada', 'Ada');
-  // Ada is on the server, in her own game: a presence row naming another world.
-  w.store.setPresence(ada, 'adas-world', 'Ada', '10,10', false, w.clock);
-  w.store.addInvite(ada, 'bob', 'world', w.clock, 60_000);
-
-  w.social.handleEvent(bob, 'InviteAccept', new Map([['acct', ada]]) as never);
-
-  // No gateway is wired here, so the switch cannot complete — but it must have been ATTEMPTED
-  // rather than refused outright, and the invite must be spent either way.
-  const refusal = w.last('bob', 'SocialResult');
-  assert.notEqual(refusal?.body.op, 'InviteAccept',
-    `the invite was refused instead of routed: ${JSON.stringify(refusal?.body)}`);
-  assert.ok(w.last('bob', 'JoinFriend'), 'the accept never reached the world-switch path');
-  assert.equal(w.store.hasInvite(ada, 'bob', w.clock), false, 'the invite was not consumed');
-  w.close();
-});
-
-// "COME AND PLAY WITH ME" HAD TO REACH THEM. InviteReceived is pushed through the local roster
-// and drainInvites runs at JOIN, so an invite to a friend sitting in their own game was stored
-// and never mentioned until they next reconnected — delivered, in the sense that a letter left
-// in a drawer is delivered. The snapshot carries them now, and the presence heartbeat resends
-// it, so it arrives while they are online.
 test('a pending invite from another world is carried in the friend-list snapshot', () => {
   const w = world();
   const bob = w.add('bob', 'Bob');
@@ -309,58 +248,3 @@ test('a friend row is joinable only from another world that is open to friends',
   w.close();
 });
 
-// FOLLOW THEM, NOT THEIR HOUSE. A friend visiting a third player's party is IN that world, and
-// their own was flipped to Solo when they left -- so routing the join to the world they own
-// answered not_open every time. The join follows their presence row, and refuses in place a
-// party whose host is not the joiner's friend (that door admits only its owner's friends).
-test('JoinFriend follows a friend into the party they are visiting', async () => {
-  const store = new SocialStore(':memory:');
-  const clock = 1_700_000_000_000;
-  let t = clock;
-  const box: Sent[] = [];
-  const alice = {
-    id: 1, name: 'Alice', accountKey: 'alice', inWorld: true, cellKey: '0,0', pose: { x: 0, y: 0, z: 0 },
-    peer: { sendEvent: (n: string, b: Record<string, unknown>) => void box.push({ name: n, body: b }) },
-  } as unknown as Player;
-  const worlds = {
-    enabled: true,
-    ownPort: 0,
-    world: async (id: string) => id === 'carol-w'
-      ? { id, mode: 'party', name: 'w', host: '', port: 0, playerCount: 2, maxPlayers: 8, up: true,
-        ownerAccount: 'carol', wsPath: '/w/carol-w' }
-      : undefined,
-    ownerWorld: async () => ({ id: 'bob-w', mode: 'private', name: 'w', host: '', port: 0,
-      playerCount: 0, maxPlayers: 8, up: true, ownerAccount: 'bob' }),
-  };
-  const social = new Social({
-    store, worldId: 'alice-w', worlds: worlds as never,
-    roster: { activeForAccount: (a: string) => (a === 'alice' ? alice : undefined), findByName: () => undefined,
-      inWorld: () => [alice] } as unknown as Roster,
-    displayName: (a) => a, resolveName: () => undefined, now: () => t,
-  });
-  store.addFriend('alice', 'bob', clock);
-  store.setPresence('bob', 'carol-w', 'Bob', '1,1', false, clock, 'party');
-  const last = () => box.filter((e) => e.name === 'JoinFriend').at(-1)?.body;
-
-  await social.joinFriend(alice, 'bob');
-  assert.equal(last()?.error, 'host_not_friend', `routed to: ${JSON.stringify(last())}`);
-
-  store.addFriend('alice', 'carol', clock);
-  await social.joinFriend(alice, 'bob');
-  assert.equal(last()?.ok, true, JSON.stringify(last()));
-  assert.equal(last()?.worldId, 'carol-w', 'the join went to the world Bob owns, not the one he is in');
-  assert.equal(last()?.wsPath, '/w/carol-w');
-
-  // At home: their own world, exactly as before.
-  t += 2000; // past the one-second presence cache
-  store.setPresence('bob', 'bob-w', 'Bob', '1,1', false, t, 'private');
-  await social.joinFriend(alice, 'bob');
-  assert.equal(last()?.error, 'not_open');
-
-  // The host just dropped (crash grace): refused here, not after a reload into a closed door.
-  t += 2000;
-  store.clearPresence('bob', 'bob-w', t);
-  await social.joinFriend(alice, 'bob');
-  assert.equal(last()?.error, 'host_away');
-  social.stop(); store.close();
-});

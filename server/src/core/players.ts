@@ -116,9 +116,9 @@ export interface Player {
   // outbound hard ceiling is not what a healthy client crossing a city gate should die of.
   cellStateBurstAt?: number;
   // THE BOUNTY THE WORLD HOLDS THIS PLAYER TO, live. Not doc.bounty: with [sharing] crime the
-  // party has ONE criminal record (shared.bounty), and a guest's crime is persisted on the
-  // campaign they are visiting (quests.ts journalTarget), so the guest's own doc says 0 while
-  // the owner's says the guest's number. Seeding avatars from the doc hunted the host for the
+  // party has ONE criminal record (shared.bounty), and before OT3-31 a guest's crime was persisted on
+  // the campaign they were visiting, so the guest's own doc said 0 while the owner's said the
+  // guest's number. Seeding avatars from the doc hunted the host for the
   // guest's murder and let the guest walk. Set on join from the world's view, updated on
   // every CrimeUpdate, and what AvatarState carries.
   bounty?: number;

@@ -180,44 +180,10 @@ export interface ServerCtx {
   // exactly as the server restarts is left unable to join, with nothing explaining why.
   track?: (p: Promise<unknown>) => void;
   sessions: SessionIndex;
-  // World access control (F3): may this account be in THIS world at all? Private = owner
-  // only, party = owner + friends of the owner + admins. Checked at auth, after the account
-  // is resolved.
-  // returning: a resume, or a character with a stored position in this world -- not a newcomer.
-  mayJoinWorld(accountKey: string, rank: number, returning?: boolean): boolean;
-  /** Is this account inside a "send home" cooldown here (server.ts kickGuest)? */
-  isSentHome?(accountKey: string): boolean;
-  // Owner-only in-place flip of THIS world between 'private' (solo) and 'party' (joinable
-  // by the owner's friends). Used by the where-am-I switcher.
-  setWorldMode(accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable';
-  /** The owner (or an admin) sends ONE guest home without blocking or unfriending them: the
-   *  ordinary "kick" every co-op lobby has. The guest may come back as long as they are still
-   *  a friend and the world is still open. */
-  kickGuest(byAccountKey: string, rank: number, targetName: string): 'ok' | 'not_owner' | 'no_such_player' | 'self';
-  /** Who hosts this world, for the WorldMode event: the owner's character name (never the
-   *  account) and whether the asking connection IS the owner. */
-  worldHost(accountKey: string): { owner: string; isOwner: boolean; ownerId: number };
-  /** A player left the world. Acts only if they were its OWNER: a guest world with no host
-   *  closes after a grace window (server.ts onPlayerLeftWorld). */
+  /** A player left the world: clears their presence row here. */
   onPlayerLeftWorld?(accountKey: string): void;
-  /** The player is leaving ON PURPOSE (Exit, a character switch, joining a friend). If they
-   *  own this world it closes to guests now instead of after the crash grace. */
-  onPlayerLeaving?(accountKey: string): void;
-  /** Is this character in the wrong PRIVATE world? Private world ids end with the last 8 of
-   *  their character's id, so the owner arriving with any other character is a routing error
-   *  to refuse at the door — not something to diagnose downstream, again. */
-  wrongWorldForCharacter?(accountKey: string, charId: string): boolean;
-  // Spawn a fresh guest at the owner's position (null when it should not apply).
-  guestSpawn(accountKey: string): { cellKey: string; x: number; y: number; z: number } | null;
   // What this world IS, right now. Sent at join so the client never has to infer it.
   worldId: string;
-  worldMode(): string;
-  // F3 chargen gate: true only for a GATEWAY-managed party world (where a separate
-  // private world exists for character creation). A standalone/single-world server is false —
-  // there is no other world to create the character in, so it must admit fresh characters.
-  chargenGate: boolean;
-  // Called when the last player leaves, so a world can forget a runtime mode flip.
-  onWorldEmpty?(): void;
   // Phase 4: one-shot scripted spawns this character is owed on entering a cell.
   questSpawnsOnEntry?(player: Player, cellKey: string): { recordId: string; questId: string }[];
   questRepair?: {
@@ -540,10 +506,9 @@ export class Connection implements Peer {
       // single position field: inventory, stats, journal, appearance, all gone. An ordinary
       // reconnect was enough. Roster.remove guards the same way for the same reason.
       const heldByAnother = this.ctx.roster.activeForAccount(this.player.accountKey);
-      // Owner leaving starts the grace-then-close window (server.ts onPlayerLeftWorld) --
-      // but NOT when this session was superseded by the same account reconnecting (the
-      // owner is already back; guests were told "the host has disconnected" on every
-      // reconnect), and not for a session that never reached the world at all.
+      // Presence is cleared (server.ts onPlayerLeftWorld) -- but NOT when this session was
+      // superseded by the same account reconnecting, and not for a session that never
+      // reached the world at all.
       // IDENTITY, not existence: roster.remove() runs further down, so `heldByAnother` is
       // still THIS session unless somebody else has taken the account.
       const superseded = heldByAnother !== undefined && heldByAnother !== this.player;
@@ -575,7 +540,6 @@ export class Connection implements Peer {
       // never see a flicker.
       this.ctx.social.onLeave(this.player);
       this.ctx.roster.remove(this.player);
-      if (this.ctx.roster.humanCount === 0) this.ctx.onWorldEmpty?.(); // neither the peer nor bots count
       // M6: drop every conversation this player held (same teardown as authority).
       this.ctx.quests.releaseDialogueLocks(this.player.id);
       // M7: relinquish weather authority and settle any dialog we owed this player an
@@ -915,7 +879,6 @@ export class Connection implements Peer {
       return;
     }
     if (name === 'PlayerLeaving') {
-      this.ctx.onPlayerLeaving?.(this.player.accountKey);
       // A DELIBERATE DEPARTURE ENDS THE SESSION NOW. The page sends this on Exit (and on a
       // character switch or a join) and then navigates away, and until now the server waited
       // for the socket to close to take the character out of the world. Behind a proxy that
@@ -991,20 +954,6 @@ export class Connection implements Peer {
       });
       this.ctx.track?.(done);
       void done;
-      return;
-    }
-    if (name === 'WorldKick') {
-      const target = value instanceof Map && typeof value.get('name') === 'string' ? (value.get('name') as string) : '';
-      const r = this.ctx.kickGuest(this.player.accountKey, this.player.rank, target);
-      this.player.peer.sendEvent('SocialResult', { op: 'WorldKick', ok: r === 'ok', detail: r });
-      return;
-    }
-    if (name === 'SetWorldMode') {
-      // The where-am-I switcher's Solo/Party flip for the OWNER of this world. Guests change
-      // worlds by dialling elsewhere (JoinFriend), not by flipping this one.
-      const mode = value instanceof Map && typeof value.get('mode') === 'string' ? (value.get('mode') as string) : '';
-      const r = this.ctx.setWorldMode(this.player.accountKey, this.player.rank, mode);
-      this.player.peer.sendEvent('SocialResult', { op: 'SetWorldMode', ok: r === 'ok', detail: r === 'ok' ? mode : r });
       return;
     }
     if (name !== 'ChatSend') {
@@ -2065,41 +2014,6 @@ export class Connection implements Peer {
   private finishAuth(op: AuthOp, account: Account, doc?: PlayerDoc, forceRecord = false, char?: CharacterSummary): void {
     if (this.state !== 'HELLO_OK') return; // raced a disconnect while hashing
     const accountKey = account.name.toLowerCase();
-    // World access control: knowing the port + valid credentials is NOT an invitation.
-    // A private world admits its owner (and admins); a party world admits the party.
-    // System peers are operator infrastructure and exempt.
-    if (!this.isSystem && !this.ctx.mayJoinWorld(accountKey, account.rank,
-      op === 'resume' || !!doc?.positions?.[this.ctx.worldId])) {
-      // SAY WHICH. A guest the host sent home is told so, not "private" -- the client turns
-      // the detail into the notice on the way home, and "the host has gone solo" is a lie.
-      const detail = this.ctx.isSentHome?.(accountKey) ? 'you were sent home' : 'this world is private';
-      log('info', 'conn.world_refused', { ip: this.ip, account: account.name, detail });
-      this.authFail(op, 'AUTH_FAILED', detail);
-      return;
-    }
-    // THE WRONG CHARACTER IN THE RIGHT ACCOUNT IS STILL THE WRONG WORLD. mayJoinWorld is
-    // owner-scoped, so the owner was admitted to ANY of their private worlds with ANY of
-    // their characters — including a still-running world of a character they had deleted.
-    // Stale caches routed a player exactly there, and everything downstream (the frozen
-    // chargen guard, the unsaved character, the dead Public button) was this one mistake
-    // wearing masks. Causes come and go; the guard is at the door. Refusing loudly beats
-    // playing quietly in a world that belongs to someone who no longer exists.
-    if (!this.isSystem && char && this.ctx.wrongWorldForCharacter?.(accountKey, char.id)) {
-      log('warn', 'conn.wrong_world_for_character', {
-        account: account.name, charId: char.id, world: this.ctx.worldId,
-      });
-      this.authFail(op, 'AUTH_FAILED', 'this world belongs to a different character');
-      return;
-    }
-    // Chargen gate (F3): a gateway party/public world refuses a character that has not finished
-    // creation (no appearance yet). Creation happens in the player's PRIVATE world; only a
-    // fully-created character may go out into shared worlds. System peers are exempt.
-    if (!this.isSystem && this.ctx.chargenGate
-        && !(doc && (doc as { appearance?: unknown }).appearance)) {
-      log('info', 'conn.chargen_required', { ip: this.ip, account: account.name });
-      this.authFail(op, 'AUTH_FAILED', 'finish creating your character in your private world first');
-      return;
-    }
     metrics.auth.inc({ op, result: 'success' });
     // One session per character: the newcomer wins and the sitting session is dropped with
     // SUPERSEDED, which the client turns into "this character was opened elsewhere". Per
@@ -2178,11 +2092,9 @@ export class Connection implements Peer {
     // offered pay-or-jail by every guard here while the peer's guards ignored them -- and a
     // guest who was clean at home walked past guards the peer had hunting them.
     this.ctx.quests.seedBounty(this.player);
-    // Same for faction ranks when they are shared (backlog 141): a guest gets the campaign's.
-    const factions = this.ctx.quests.guestFactions(this.player);
     const explored = this.ctx.m7.exploredFor(this.player); // backlog 260: own map, or the campaign's when shared
     const record = doc && (doc.appearance || forceRecord)
-      ? { ...doc, bounty: this.player.bounty ?? 0, ...(factions ? { factions } : {}), ...(explored ? { explored } : {}) }
+      ? { ...doc, bounty: this.player.bounty ?? 0, ...(explored ? { explored } : {}) }
       : null;
     // serverSeq = binary seq already consumed for this connection (0: none yet).
     this.sendText(
@@ -2220,12 +2132,6 @@ export class Connection implements Peer {
     metrics.joinLatency.observe({}, (Date.now() - this.openedAt) / 1000);
     this.ctx.roster.joinWorld(this.player);
     this.ctx.onPlayerJoined?.(this.player);
-    // Spawn-near-owner: a fresh (non-resume) guest lands next to the world's owner.
-    // Reuses the invite-teleport client path (global.lua MP_InviteAccepted -> teleport).
-    if (!this.resumed) {
-      const near = this.ctx.guestSpawn(this.player.accountKey);
-      if (near) this.player.peer.sendEvent('InviteAccepted', near);
-    }
     // CHAT SCROLLBACK. The feed lives in the page and a world change now RELOADS the page, so
     // every switch wiped the conversation and a player arriving anywhere saw an empty box with
     // no idea what was being discussed. Replayed as ordinary ChatMessage events, oldest first,
@@ -2308,14 +2214,6 @@ export class Connection implements Peer {
       // single-player) means nothing will ever simulate for them: say ready and let them
       // play, rather than holding a screen forever for something that is not coming.
       this.player.peer.sendEvent('SimReady', { ready: this.ctx.simReady?.() ?? true });
-    }
-    this.player.peer.sendEvent('WorldMode', { mode: this.ctx.worldMode(), ...this.ctx.worldHost(this.player.accountKey) });
-    // THE OWNER ARRIVING (or returning) changes the answer for everyone already here: the
-    // host's name on every guest's panel, and the owner id the peer scales the world to.
-    if (this.ctx.worldHost(this.player.accountKey).isOwner) {
-      for (const other of this.ctx.roster.inWorld()) {
-        if (other.id !== this.player.id) other.peer.sendEvent('WorldMode', { mode: this.ctx.worldMode(), ...this.ctx.worldHost(other.accountKey) });
-      }
     }
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }

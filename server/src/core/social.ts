@@ -11,7 +11,6 @@
 import type { Player, Roster } from './players';
 import { SocialStore, type AccountKey, type PresenceRow } from './socialstore';
 import type { LValue, LTable, JsLike } from '../proto/lser';
-import type { WorldBrowser } from './worldbrowser';
 import { log } from '../log';
 
 interface SocialTuning {
@@ -74,29 +73,17 @@ interface SocialDeps {
   roster: Roster;
   /** This world's id, so shared presence can name where a player actually is. */
   worldId?: string;
-  /** This world's live solo/party mode, written into its occupants' presence rows. */
-  worldMode?: () => string;
   // Display name for an account that may be offline. Returns undefined for an unknown one.
   displayName(acct: AccountKey): string | undefined;
   // Resolve a typed-in display name to an account key (case-insensitive).
   resolveName(name: string): AccountKey | undefined;
   now(): number;
-  // F3: absent when no gateway is configured, in which case the Worlds tab says so rather
-  // than pretending there is nothing to see.
-  worlds?: WorldBrowser;
   // A4/3.8: file a report into the moderation queue (the same store /report writes).
   report?(doc: {
     reporter: { id: number; account: string; name: string };
     target: { id: number | null; account: string | null; name: string; cellKey: string | null };
     reason: string;
   }): Promise<unknown>;
-  /** The friendship that admitted a guest to this world is over (unfriend or block, from
-   *  either side): send that guest home now. The friends list is the only door in
-   *  (server.ts mayJoinWorld); without this it only barred the NEXT join, and someone the
-   *  host had just blocked stayed in their world until the host went solo. */
-  friendshipEnded?(a: AccountKey, b: AccountKey): void;
-  /** The host invited someone: a standing "send home" cooldown for them is lifted. */
-  invited?(from: AccountKey, to: AccountKey): void;
 }
 
 export class Social {
@@ -117,10 +104,8 @@ export class Social {
   constructor(deps: SocialDeps, tuning: SocialTuning = socialTuning) {
     this.d = deps;
     this.tuning = tuning;
-    this.worlds = deps.worlds;
   }
 
-  private readonly worlds?: WorldBrowser;
   // Reports are retained by TIME, not count, so one player could file thousands inside the
   // window. A real report takes longer than this to write. Keyed per reporter AND target:
   // two griefers in one minute is two reports, the same one twice is spam.
@@ -141,7 +126,7 @@ export class Social {
    *  shared presence table for everyone else. */
   private presenceOf(acct: AccountKey): { online: boolean; cellKey?: string; world?: string; mode?: string } {
     const local = this.onlinePlayer(acct);
-    if (local) return { online: true, cellKey: local.cellKey, world: this.d.worldId, mode: this.d.worldMode?.() };
+    if (local) return { online: true, cellKey: local.cellKey, world: this.d.worldId, mode: 'public' };
     const row = this.presentRows().find((r) => r.account === acct);
     return row ? { online: true, cellKey: row.cellKey, world: row.world, mode: row.mode } : { online: false };
   }
@@ -398,7 +383,6 @@ export class Social {
 
   removeFriend(player: Player, other: AccountKey): void {
     this.d.store.removeFriend(player.accountKey, other);
-    this.d.friendshipEnded?.(player.accountKey, other);
     // Both sides get a fresh list: an unfriend that only updates the initiator leaves the
     // other player believing they still have a friend they cannot see.
     for (const acct of [player.accountKey, other]) {
@@ -418,7 +402,6 @@ export class Social {
     // Blocking implies unfriending and drops any pending requests either way — otherwise a
     // blocked person remains in the friends list, still leaking presence and location.
     this.d.store.removeFriend(player.accountKey, target);
-    this.d.friendshipEnded?.(player.accountKey, target);
     this.d.store.removeRequest(player.accountKey, target);
     this.d.store.removeRequest(target, player.accountKey);
     this.dropInvitesBetween(player.accountKey, target);
@@ -475,7 +458,6 @@ export class Social {
     // could only reach someone already standing next to you. One row per sender, so
     // re-inviting refreshes rather than stacking.
     this.d.store.addInvite(from, targetAcct, 'world', now, this.tuning.inviteTtlMs);
-    this.d.invited?.(from, targetAcct);
     this.deliverInvite(targetAcct, from, player.name);
     return 'ok';
   }
@@ -641,62 +623,6 @@ export class Social {
         this.reply(player, 'InviteSend', r === 'ok', r);
         return true;
       }
-      // F3 world browser. Async, unlike every other case here: it calls out to the gateway.
-      // The handler still returns true immediately — the reply arrives as its own event when
-      // the gateway answers, so a slow directory can never stall the player's session.
-      case 'WorldList': {
-        // ALWAYS reply. `this.worlds` is undefined when no gateway is configured, and an
-        // optional-chained call there would silently send nothing — leaving the client
-        // waiting forever on a request that was received and understood. A player staring
-        // at "Loading worlds..." with no explanation is the worst of both worlds.
-        if (!this.worlds) {
-          player.peer.sendEvent('WorldList', { error: 'no_gateway', worlds: [], myPort: 0 });
-          return true;
-        }
-        void this.worlds.list(player).then((r) => {
-          // The Public switch has died silently at four different layers. This is the one the
-          // server can see: whether the list was asked for, and what came back.
-          log('info', 'world.list_served', {
-            account: player.name, error: r.error ?? '', count: r.worlds.length,
-            publicUp: r.worlds.filter((w) => w.mode === 'public' && w.up).length,
-          });
-          // Mapped field by field rather than forwarded wholesale: the gateway's record
-          // carries ownerAccount, and echoing another player's account key into a client
-          // would leak identity the lobby has no business showing.
-          player.peer.sendEvent('WorldList', {
-            error: r.error ?? '',
-            // So the UI can mark the world the player is standing in rather than offering
-            // a "join" that reconnects them to where they already are.
-            myPort: this.worlds?.ownPort ?? 0,
-            worlds: r.worlds.map((w) => ({
-              id: w.id, mode: w.mode, name: w.name, host: w.host, port: w.port,
-              ...(w.wsPath ? { wsPath: w.wsPath } : {}),
-              playerCount: w.playerCount, maxPlayers: w.maxPlayers, up: w.up,
-            })),
-          });
-        });
-        return true;
-      }
-      case 'WorldCreate': {
-        if (!this.worlds) {
-          player.peer.sendEvent('WorldCreate', { ok: false, error: 'no_gateway' });
-          return true;
-        }
-        void this.worlds.create(player, str('id'), str('mode')).then((r) => {
-          player.peer.sendEvent('WorldCreate', {
-            ok: r.world !== undefined,
-            error: r.error ?? '',
-            ...(r.world ? {
-              world: {
-                id: r.world.id, mode: r.world.mode, name: r.world.name,
-                host: r.world.host, port: r.world.port,
-                ...(r.world.wsPath ? { wsPath: r.world.wsPath } : {}),
-              },
-            } : {}),
-          });
-        });
-        return true;
-      }
       case 'PresenceMode': {
         // The client's generic social:<Op>:<arg> router puts the argument in `acct`, so accept
         // either. Reading only `mode` meant every privacy change was refused with
@@ -710,10 +636,6 @@ export class Social {
         const state = str('state') || str('acct');
         const r = this.setAvailability(player, state);
         this.reply(player, 'SetAvailability', r === 'ok', r === 'ok' ? state : r);
-        return true;
-      }
-      case 'JoinFriend': {
-        void this.joinFriend(player, str('acct'));
         return true;
       }
       // Phase 3.8: report from the player context menu. Same store and the same bounded
@@ -779,16 +701,6 @@ export class Social {
         if (r.ok) {
           player.lastDoorAt = Date.now(); // #394: the teleport this asks for is explained (#361)
           player.peer.sendEvent('InviteAccepted', { cellKey: r.cellKey, x: r.x, y: r.y, z: r.z });
-        } else if (r.reason === 'not_online' && this.presenceOf(from).online) {
-          // They ARE on the server, just not in this world — the ordinary case, since invites
-          // are stored precisely so they can reach another world (see drainInvites). Accepting
-          // one only ever meant "teleport to their coordinates", which nothing in this process
-          // knows for someone elsewhere, so every cross-world invite answered 'not_online' and
-          // the card sat there refusing to be accepted. "Come join me" across worlds is the
-          // world switch — the same one the friend row's join button asks for, with the same
-          // authorisation checks inside it.
-          this.d.store.removeInvite(from, player.accountKey);
-          void this.joinFriend(player, from);
         } else {
           this.reply(player, 'InviteAccept', false, r.reason);
         }
@@ -801,64 +713,6 @@ export class Social {
 
   private reply(player: Player, op: string, ok: boolean, detail: string): void {
     player.peer.sendEvent('SocialResult', { op, ok, detail });
-  }
-
-  // "Join a friend": go to THEIR world. This is the one and only door into someone else's
-  // game — there is no public world and no party to route through. The friend's own world
-  // decides whether to admit the caller (mayJoinWorld: Solo refuses, Party admits friends up
-  // to the cap), which is the correct place for that call, not here.
-  // Friendship is required both ways — you cannot chase a stranger across worlds.
-  async joinFriend(player: Player, targetAcct: AccountKey): Promise<void> {
-    const me = player.accountKey;
-    const fail = (detail: string): void => {
-      // Logged: a refusal here is invisible from every other screen (the guest stays put), and
-      // the reason is the whole diagnosis when "join my friend" does nothing.
-      log('info', 'social.join_refused', { player: player.name, target: targetAcct, why: detail });
-      player.peer.sendEvent('JoinFriend', { ok: false, error: detail });
-    };
-    if (targetAcct === '' || targetAcct === me) return fail('self');
-    // Mid-creation there is nothing to bring: the destination refuses at its door (the chargen
-    // gate) and the reboot threw the unfinished character away. Refuse here, in place.
-    if (player.inChargen === true) return fail('in_chargen');
-    if (!this.d.store.areFriends(me, targetAcct)) return fail('not_friends');
-    if (this.d.store.blockedEitherWay(me, targetAcct)) return fail('blocked');
-    if (!this.isAvailable(targetAcct)) return fail('not_online');
-    if (!this.worlds || !this.worlds.enabled) return fail('no_gateway');
-    const friendName = this.d.displayName(targetAcct) ?? targetAcct;
-    // FOLLOW THEM, NOT THEIR HOUSE. A friend visiting a third player's party is IN that world;
-    // their own was flipped to Solo when they left, so routing there always answered not_open.
-    // The visited world admits only its OWNER's friends, so say so here rather than reboot
-    // the page into a door that refuses.
-    const where = this.presenceOf(targetAcct);
-    if (where.world && where.world !== this.d.worldId) {
-      const there = await this.worlds.world(where.world);
-      if (there && there.up && there.ownerAccount && there.ownerAccount !== targetAcct) {
-        if (there.mode !== 'party') return fail('not_open');
-        if (there.ownerAccount !== me && !this.d.store.areFriends(me, there.ownerAccount)) return fail('host_not_friend');
-        player.peer.sendEvent('JoinFriend', {
-          ok: true, worldId: there.id, mode: there.mode, host: there.host, port: there.port, friendName,
-          ...(there.wsPath ? { wsPath: there.wsPath } : {}),
-        });
-        return;
-      }
-    }
-    // NO HOST, NO DOOR. A host who just dropped has no presence row, and their world refuses
-    // newcomers through its crash grace (server.ts mayJoinWorld) -- so this used to answer ok,
-    // the page rebooted into the friend's world, the door refused it, and a second reboot took
-    // the player home. Refused here, in place, for the price of one lookup.
-    if (!where.online) return fail('host_away');
-    const own = await this.worlds.ownerWorld(targetAcct);
-    if (!own) return fail('not_online');
-    // ASK THE MODE HERE, where the answer costs nothing. A world admits the party only when its
-    // owner has flipped it to 'party'; the default is 'private'. Without this check the reply
-    // was ok, the client RELOADED THE PAGE into the friend's world, the door refused it, and the
-    // player was left in a terminal Failed modal outside the game they had been in -- for the
-    // ordinary case of a friend who had not opened their world yet. Refused now, in place.
-    if (own.mode !== 'party') return fail('not_open');
-    player.peer.sendEvent('JoinFriend', {
-      ok: true, worldId: own.id, mode: own.mode, host: own.host, port: own.port, friendName,
-      ...(own.wsPath ? { wsPath: own.wsPath } : {}),
-    });
   }
 
   // Returns the inviter's live position for the client to travel to, or a failure.

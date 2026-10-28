@@ -31,7 +31,7 @@ const WARP = 60_000;
 /** A character created in its own world, so the lobby's chargen gate admits it later. */
 async function makeCharacter(dataDir: string, name: string): Promise<void> {
   const solo = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
   });
   const a = await TestClient.connect(solo.port);
   await a.joinAsNew(name);
@@ -59,8 +59,7 @@ async function warpsSeenByPeer(
   await makeCharacter(dataDir, 'Watcher');
 
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    worldMode: 'private',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     // ISOLATE THE ONE MECHANISM. A warp far enough to be implausible is also far enough to be
     // culled (interestRadius) AND to be dropped to the far LOD tier, either of which would stop
     // the relay by itself and let this pass — or fail — for entirely the wrong reason. Culling
@@ -143,7 +142,7 @@ test('a burst delivered after a stall is not mistaken for a warp', async (t) => 
   await makeCharacter(dataDir, 'Stally');
   await makeCharacter(dataDir, 'Watcher2');
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
   });
   t.after(() => server.close());
 
@@ -195,7 +194,7 @@ test('travelling between cells is never mistaken for a warp', async (t) => {
   await makeCharacter(dataDir, 'Traveller');
   await makeCharacter(dataDir, 'Watcher3');
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
     configOverride: {
       limits: { interestRadius: 0, lodNearRadius: 1_000_000_000, lodMidRadius: 1_000_000_000 },
     },

@@ -35,8 +35,9 @@ Corrections, each checked against the validator or handler named:
   `SelfSkillUse`, `AvatarEffectsBatch`, `AvatarSkillUse`, `StateRefused`, `ChargenComplete`,
   `PlayerLeaving`, `ObjectEnabled`, `ObjectTakeRequest`, `ActorDisposition`, `ActorEffects`,
   `ActorCellChange`, `ActorRevive`, `ActorStripLoot`, `TopicsLearned`, `GlobalVarSync`,
-  `PlayerCrime`, `PlayerArrest`, `WorldList`/`WorldCreate` (C→S), `JoinFriend`,
-  `SetAvailability`, `SetWorldMode`, `WorldKick`, `ReportPlayer` without `voice` (#402).
+  `PlayerCrime`, `PlayerArrest`, `SetAvailability`, `ReportPlayer` without `voice` (#402).
+- OT3-31 (one world): `WorldList`, `WorldCreate`, `JoinFriend`, `SetWorldMode`, `WorldKick`,
+  `WorldMode` and `WorldClosed` are gone. There is one public world and no owner.
 
 ## Transport (M0)
 
@@ -382,7 +383,7 @@ Event-body conventions: arrays = 1-based integer-keyed tables; nil fields = omit
 | `PlayerJoinWorld` | S→C | `{id=u16, name=string}` |
 | `PlayerLeaveWorld` | S→C | `{id=u16}` |
 | `PlayerList` | S→C | `{players={{id=u16, name=string}, …}}` — humans only (system peers are omitted) |
-| `PlayerLeaving` | C→S | `{}` — the client is about to dial elsewhere (JoinFriend / home). From the OWNER of a party world it closes the world at once (`WorldMode{mode="private"}` to all, guests sent home) instead of after the disconnect grace |
+| `PlayerLeaving` | C→S | `{}` — the client is leaving (Exit, character switch). The session ends at once instead of after the disconnect grace |
 | `ChargenComplete` | C→S | `{}` — the engine reports `CharGenState == -1`; the provisional character slot is adopted and named from the chargen `PlayerAppearance.name`, and saves are enabled. Idempotent; re-sent on every login |
 | `StateRefused` | S→C | `{kind=string}` — an M2 `Player*` declaration the server would not store (shape, cap, rate). The client forgets its diff cache for that kind and re-sends on its next tick, at most 3 times per unchanged value (backlog 336) |
 
@@ -640,8 +641,8 @@ factions, crime. Sharing is operator-configurable per family (`[sharing]`).
 
 | name | dir | body |
 |---|---|---|
-| `JournalEntry` | C→S; relayed to all when `[sharing] journal` | `{questId=string, index=number, actorRefId=string?}` — server arbitrates **monotonic max per questId** (a lagging client can never regress a shared quest); a regression is dropped unless the writer is the world owner or the sim peer, or `questId` is in the operator's `regressAllowlist`; a stage the dated log already holds is a replay (no write, no relay). Written to the CAMPAIGN doc (`journalTarget`: the world owner's character; a guest keeps nothing from a visit) |
-| `JournalSync` | S→C at join | `{quests={[questId]=index, …}, borrowed=bool, journalLog={{q=questId, i=index, d=daysPassed, m=month, dm=day}, …}}` — the shared journal (shared mode, seeded as max(shared, owner's own) at boot) or the player's own (individual mode). `borrowed=true` tells a GUEST this is a campaign that is not their character's: set your own journal aside for the visit and put it back on the way home (sent on every join, so a missed transition self-repairs). `journalLog` is the dated list in the order earned, newest `MAX_JOURNAL_LOG` = 5000 entries (#321) |
+| `JournalEntry` | C→S; relayed to all when `[sharing] journal` | `{questId=string, index=number, actorRefId=string?}` — server arbitrates **monotonic max per questId** (a lagging client can never regress a shared quest); a regression is dropped unless the writer is the sim peer, or `questId` is in the operator's `regressAllowlist`; a stage the dated log already holds is a replay (no write, no relay). Written to the writer's own character (OT3-31: no world owner); the sim peer's writes go to every human |
+| `JournalSync` | S→C at join | `{quests={[questId]=index, …}, borrowed=bool, journalLog={{q=questId, i=index, d=daysPassed, m=month, dm=day}, …}}` — the shared journal (shared mode, seeded as max(shared, owner's own) at boot) or the player's own (individual mode). `borrowed` is always `false` since OT3-31 (one world, no owner); kept for the client. `journalLog` is the dated list in the order earned, newest `MAX_JOURNAL_LOG` = 5000 entries (#321) |
 | `GlobalVarUpdate` | C→S; relayed to all when `[sharing] questVars` | `{name=string, value=number, seq=number?}` — MWScript globals; **last-write-wins with a per-variable sequence**; the time globals (`GameHour/Day/Month/Year/DaysPassed`) are EXCLUDED here and owned by M7. Character globals (player-state flags, werewolf…) are stored on the writer's own doc and relayed live without a seq (backlog 224); a human write within 5 s of the peer's write to the same name is dropped (Phase 4E) |
 | `GlobalVarSync` | S→C at join | `{globals={[name]=number, …}}` — the campaign's stored world globals plus this character's own character globals; the client applies them before its scripts run |
 | `MemberVarUpdate` | C→S; relayed cell-scoped (the cell's HOLDER hears it wherever it stands) | `{ref|net, name=string, value=number}` — per-object MWScript locals, piggybacked on object interaction and on the dialogue lock (watched for the whole conversation, last diff on release); stored on the cell doc (2000 per cell) and replayed in `WorldCellState.memberVars`. Same 5 s peer-owned rule as globals |
@@ -651,7 +652,7 @@ factions, crime. Sharing is operator-configurable per family (`[sharing]`).
 | `PlayerCrime` | PEER→S→owner | `{id=u16, bounty=number (|n| ≤ 100 000), kind=string?, faction=string?}` — the avatar committed a crime on the peer (assault, murder); the owner's client receives `{bounty, kind?, faction?}`, applies the increment and its own `CrimeUpdate` then carries the total; `faction` = the victim's faction to expel itself from (backlog 144). World peer only |
 | `PlayerArrest` | PEER→S→owner | `{id=u16, guard=<RefNum>}` — a guard reached the wanted avatar on the peer; the owner's client receives `{guard}` and opens the arrest dialogue with its copy of that guard. World peer only |
 | `DialogueLock` | C→S | `{ref|net, cellKey=, want=bool}` → `DialogueLockResult {ref, granted=bool, holderId=u16?}` — one player may converse with an NPC at a time. Gates: `want=true` is refused with `holderId` while another IN-WORLD player holds it, refused (`lock from afar`) when `cellKey` is not visible to the sender, and taking a lock releases the sender's others (one conversation at a time); `want=false` always answers `granted=false`. Released on close, cell change, or disconnect. Either edge stamps the sender as "talked" for 5 s (#361/#366), and a released lock keeps its holder for 5 s for the M4 claims |
-| `GlobalScriptsUpdate` | C→S | `{started=[scriptId…]?, stopped=[scriptId…]?}` (≤256 each, lowercased) — the running GLOBAL scripts (Sleepers, VampireCheck, MoveMehra…) diffed every few seconds; stored as `scripts` on the campaign doc (`journalTarget`) so a relog keeps them running. `GlobalScriptsSync {running=[…]}` S→C at join: the client starts any it lacks |
+| `GlobalScriptsUpdate` | C→S | `{started=[scriptId…]?, stopped=[scriptId…]?}` (≤256 each, lowercased) — the running GLOBAL scripts (Sleepers, VampireCheck, MoveMehra…) diffed every few seconds; stored as `scripts` on the player's own doc so a relog keeps them running. `GlobalScriptsSync {running=[…]}` S→C at join: the client starts any it lacks |
 
 Kill counts ride M4's `WorldKillCount`. Applying a received journal/faction/var update MUST
 NOT re-broadcast it (echo guard) — clients seed their diff caches from applied state.
@@ -668,9 +669,7 @@ are untouched, so dialogue-driven quest state is exactly as before. And **charac
 writes are relayed live to every client in the world whoever wrote them (the peer's from
 Phase 4E; a human's since backlog 224 — one campaign per instance, and the other human's
 journal had already advanced with it), so local script copies stop holding a stale value
-until the next login's `GlobalVarSync`. Persistence is unchanged: `journalTarget` already
-routes a system sender to the world owner's doc (standalone stacks and an offline owner
-persist nothing for the peer, as they did for guests — live relay still happens).
+until the next login's `GlobalVarSync`. Persistence: a human's write lands on their own doc; the sim peer's on every human's (OT3-31).
 
 ## World state (M7)
 
@@ -784,10 +783,8 @@ returned by a previous `FriendList`:
   sender's NAME from the panel (the account key is not on the wire) and resolves it against
   the shared account index, so a request from someone in their own world can be accepted.
 - `BlockAdd{name}` · `BlockRemove{acct}`
-- `InviteSend{acct}` · `InviteAccept{acct}` — travel-to invite. Invites are stored shared
-  so they reach a player in another world; accepting one from someone who is NOT in this
-  world therefore answers with `JoinFriend` (the world switch) instead of `InviteAccepted`,
-  since no coordinate in this world would mean anything.
+- `InviteSend{acct}` · `InviteAccept{acct}` — travel-to invite, answered by `InviteAccepted`
+  (or `SocialResult{op="InviteAccept", ok=false}` when the inviter is gone).
 - `PresenceMode{mode}` — one of `public` `friends` `private`
 - `SetAvailability{state}` — `online` | `offline`: the where-am-I switcher's "appear
   offline"; friends get a `PresenceUpdate`.
@@ -798,17 +795,6 @@ returned by a previous `FriendList`:
   griefer who logs off the moment they are done is the ordinary case). This is the only way
   to report; there is no typed command. (A `voice` flag used to ride here; nothing ever set
   it — dropped, #402.)
-- `WorldList{}` → S→C `WorldList` · `WorldCreate{id, mode}` → S→C `WorldCreate` — the
-  gateway's world browser (bodies in §Server-to-client replies).
-- `JoinFriend{acct}` — dial into a friend's party world: refused with
-  `JoinFriend{ok=false, error="self"|"in_chargen"|"not_friends"|"blocked"|"not_online"|"no_gateway"|"not_open"}`,
-  else `JoinFriend{ok=true, worldId, mode, host, port, wsPath?, friendName}` and the client
-  reconnects there (sending `PlayerLeaving` first).
-- `SetWorldMode{mode}` — the OWNER flips this world `private` (solo) / `party`; answered by
-  `SocialResult{op="SetWorldMode", ok, detail=mode|"not_owner"|"bad_mode"|"not_flippable"}`.
-  Flipping to solo sends every guest `WorldClosed` and home.
-- `WorldKick{name}` — the owner sends one guest home; `SocialResult{op="WorldKick", ok,
-  detail="ok"|"not_owner"|"no_such_player"|"self"}`.
 
 Server → client:
 
@@ -874,10 +860,6 @@ silently skipped every one of them.
 | `ObjectTakeResult` | S→C | `{opId=number, ok=bool, reason=string?}` — the paired answer to `ObjectTakeRequest`; always sent, so a client never waits |
 | `CellSnapshotReplace` | S→C | `{cellKey=string, placed={…}, deleted={…}}` — the restored cell truth pushed straight after a `WorldCellReset`, so a reset is transparent rather than a kick |
 | `QuestSpawn` | S→C on cell entry, or on a client's actor spawn request | `{recordId=string, questId=string?, cellKey=string, forId=u16?, x=, y=, z=, count=?}` — the operator's quest-repair rules replacing an object the character still needs; or (backlog 214) a client's `ObjectSpawnRequest{actor=true, …}` (a `PlaceAtPC` its engine declined to build) forwarded to the cell's holder with its spot, 10/min per player, refused with `ObjectSpawnRefused{reason='rate'}` past that |
-| `WorldList` | S→C, answering the C→S `WorldList` | `{error=string, myPort=number, worlds={{id, mode, name, host, port, wsPath?, playerCount, maxPlayers, up}, …}}` — mapped field by field: the gateway's record carries `ownerAccount` and it must never reach a client |
-| `WorldCreate` | S→C, answering the C→S `WorldCreate` | `{ok=bool, error=string, world={id, mode, name, host, port, wsPath?}?}` |
-| `WorldMode` | S→C at join and on change | `{mode=string, owner=string, isOwner=bool, ownerId=u16}` — this world's mode, for the where-am-I switcher; `ownerId` (0 when absent) is what the sim peer rolls levelled lists against |
-| `WorldClosed` | S→C | `{reason=string, by=string}` — the owner took the world solo; guests are told before they are disconnected |
 | `SimReady` | S→C | `{ready=bool}` — whether a world peer is simulating yet |
 | `SimAnchors` | S→PEER | `{anchors={{x,y,z}, …}, interiors={cellKey, …}, place={cellKey, x,y,z}?}` — the cells the peer is to simulate (exterior anchor points + interior names) and where its dummy stands |
 | `AvatarRestore` | S→PEER | `{id=int, hp?, mp?, ft?}` — restore an avatar's bars from the stored doc |

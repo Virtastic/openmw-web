@@ -112,10 +112,8 @@ interface M7Ctx {
   records: RecordStore;
   // M6 sharing policy, asked per relay (the `sharing` plugin answers from [sharing]).
   isMapShared(): boolean;
-  // Backlog 260: where exploration persists. The explorer's own doc always; the campaign
-  // owner's too when the map is shared, so a guest's discoveries outlive their visit.
+  // Backlog 260: exploration persists to the explorer's own doc.
   players?: PlayerStore;
-  ownerCharId?(): string | undefined;
   // Phase 3.7: set after construction (WorldState and WorldM7 are mutually referential).
   // Used to push the restored cell truth to occupants right after a reset.
   world?: { sendCellSnapshot(cellKey: string, doc: CellDoc): void };
@@ -391,17 +389,12 @@ export class WorldM7 {
     // Persist BEFORE the sharing gate: an individual map is still this character's map
     // (backlog 260: nothing was kept, and a returning host had a blank world map).
     const exterior = cellKeys.filter((k) => /^-?\d+,-?\d+$/.test(k));
-    const targets = new Set([player.charId]);
-    const owner = this.ctx.ownerCharId?.();
-    if (owner !== undefined && this.ctx.isMapShared()) targets.add(owner);
     if (exterior.length > 0 && !player.system) {
-      for (const charId of targets) {
-        this.ctx.players?.update(charId, (doc) => {
-          const set = new Set(doc.explored ?? []);
-          for (const k of exterior) set.add(k);
-          doc.explored = [...set].slice(-MAX_EXPLORED);
-        });
-      }
+      this.ctx.players?.update(player.charId, (doc) => {
+        const set = new Set(doc.explored ?? []);
+        for (const k of exterior) set.add(k);
+        doc.explored = [...set].slice(-MAX_EXPLORED);
+      });
     }
     if (!this.ctx.isMapShared()) return; // individual mode: never relayed
     for (const p of this.ctx.roster.inWorld()) {
@@ -412,8 +405,6 @@ export class WorldM7 {
   // The keys a joining client replays through MP_WorldMapExplored: the campaign's when the
   // map is shared and this is a guest, else the character's own (backlog 260).
   exploredFor(player: Player): string[] | undefined {
-    const owner = this.ctx.ownerCharId?.();
-    const source = owner !== undefined && this.ctx.isMapShared() ? owner : player.charId;
-    return this.ctx.players?.getCached(source)?.explored;
+    return this.ctx.players?.getCached(player.charId)?.explored;
   }
 }

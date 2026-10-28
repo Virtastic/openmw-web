@@ -1,13 +1,7 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// INSTANCE-OWNED QUEST LOGS. One log per instance and it belongs to the owner: guests see
-// the owner's campaign while visiting, advance it with their deeds, and keep NOTHING of
-// their own. In your own Solo world you ARE the owner, so it is the same rule, not a case.
-//
-// This file used to test Phase 4 "party credit", which advanced co-present members' OWN
-// journals. That is deleted — under instance ownership a guest's doc is frozen for the whole
-// visit, so two systems advancing journals would only disagree. The assertions below are the
-// replacement contract, not a thinner version of the old one.
+// ONE WORLD, OWN CAMPAIGNS (OT3-31). There is no world owner: every player's deeds advance
+// their OWN journal and globals, and nobody is ever shown a borrowed campaign.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,9 +13,7 @@ import { tmpDataDir } from './helpers';
 
 type Sent = { name: string; body: Record<string, unknown> };
 
-// `owner` is the account whose campaign this instance is. undefined = unowned (the shared
-// world), which persists nothing.
-function harness(opts: { owner?: string; shareJournal?: boolean; worldGlobals?: string[] } = {}) {
+function harness(opts: { shareJournal?: boolean; worldGlobals?: string[] } = {}) {
   const dir = tmpDataDir();
   const players = new PlayerStore(dir, 'w1');
   const cells = new CellStore(dir);
@@ -55,9 +47,6 @@ function harness(opts: { owner?: string; shareJournal?: boolean; worldGlobals?: 
     players,
     isShared: (f) => (f === 'journal' ? opts.shareJournal !== false : f === 'questVars'),
     regressAllowed: () => false,
-    // Owned instance -> the owner's doc; unowned -> nothing (the shared-lobby case).
-    journalTarget: () => opts.owner,
-    ownerCharId: () => opts.owner,
     ...(opts.worldGlobals ? { worldGlobals: opts.worldGlobals } : {}),
   });
 
@@ -74,159 +63,70 @@ function harness(opts: { owner?: string; shareJournal?: boolean; worldGlobals?: 
 
 const entry = (questId: string, index: number) =>
   new Map<string, unknown>([['questId', questId], ['index', index]]) as never;
-// #366: a GUEST's journal/global write persists only out of a conversation -- a dialogue lock
-// held (or released within 10 s). The tests below model the guest talking to an NPC first.
-const talk = (w: ReturnType<typeof harness>, p: Player) =>
-  w.quests.handleEvent(p, 'DialogueLock', new Map<string, unknown>([['net', 7], ['cellKey', '0,0'], ['want', true]]) as never);
 
-test("a guest's deed advances the OWNER's log and never their own", async () => {
-  const w = harness({ owner: 'alice' });
+test("a player's deed advances their own log, and nobody else's", async () => {
+  const w = harness();
   w.add('alice');
-  const bob = w.add('bob'); // a guest in alice's world
-  w.setJournal('bob', 'MQ', 10); // bob's own campaign, mid-quest
-
-  w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 20)); // #366: no conversation -> relayed, not persisted
-  assert.equal(w.journalOf('alice').MQ, undefined, "a guest's bare write must not land in the owner's campaign (#366)");
-  assert.equal(w.events('alice', 'JournalEntry').length, 1, 'but it is relayed live');
-  talk(w, bob);
-  w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 20));
-
-  assert.equal(w.journalOf('alice').MQ, 20, "the owner's campaign advanced");
-  assert.equal(w.sharedJournal().MQ, 20, 'the instance log advanced');
-  assert.equal(w.journalOf('bob').MQ, 10,
-    "the guest's OWN journal moved — a visit must never touch their campaign");
-  await w.close();
-});
-
-test('the owner advancing their own world writes their own log (solo is the same rule)', async () => {
-  const w = harness({ owner: 'alice' });
-  const alice = w.add('alice');
-  w.quests.handleEvent(alice, 'JournalEntry', entry('MQ', 20));
-  assert.equal(w.journalOf('alice').MQ, 20, 'in your own world you are the owner');
-  assert.equal(w.sharedJournal().MQ, 20);
-  await w.close();
-});
-
-test('an unowned instance (the shared world) persists to no character at all', async () => {
-  const w = harness({ owner: undefined });
   const bob = w.add('bob');
-  w.setJournal('bob', 'MQ', 10);
+  w.setJournal('alice', 'MQ', 10);
   w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 20));
-  assert.equal(w.journalOf('bob').MQ, 10, 'the shared world must not write to a character');
-  assert.equal(w.sharedJournal().MQ, 20, 'but the live instance log still moves');
+  assert.equal(w.journalOf('bob').MQ, 20, "bob's own campaign advanced");
+  assert.equal(w.journalOf('alice').MQ, 10, "alice's campaign is untouched by bob's deed");
+  assert.equal(w.events('alice', 'JournalEntry').length, 1, 'but it is relayed live');
   await w.close();
 });
 
-// Backlog 335: an owner's relog replays the whole journalLog through the engine, and every
-// stage the client misread as a local change came back as an "authoritative regress". A
-// regress to a stage the log already holds is a replay: no doc write, no relay.
-test('an owner replaying a 3-stage log after a relog writes nothing and relays nothing', async () => {
-  const w = harness({ owner: 'alice' });
+// Backlog 335: a relog replays the whole journalLog through the engine. A regress to a stage
+// the log already holds is a replay: no doc write, no relay.
+test('replaying a 3-stage log after a relog writes nothing and relays nothing', async () => {
+  const w = harness();
   const alice = w.add('alice');
   w.add('bob');
   for (const i of [10, 20, 30]) w.quests.handleEvent(alice, 'JournalEntry', entry('MQ', i));
   assert.equal(w.journalOf('alice').MQ, 30);
   const before = JSON.stringify(w.players.getCached('alice'));
   const relayed = w.events('bob', 'JournalEntry').length;
-  // The relog: JournalSync replayed 10, 20, 30 into the engine; the echoes 10 and 20 arrive.
   w.quests.sendJournalSync(alice); // the relog's sync opens the replay window (1.7.1)
   for (const i of [10, 20]) w.quests.handleEvent(alice, 'JournalEntry', entry('MQ', i));
   assert.equal(JSON.stringify(w.players.getCached('alice')), before, 'zero JournalEntry writes');
   assert.equal(w.journalOf('alice').MQ, 30, 'the campaign did not rewind');
-  assert.equal(w.sharedJournal().MQ, 30);
-  assert.equal(w.events('bob', 'JournalEntry').length, relayed, 'guests do not see the index bounce');
+  assert.equal(w.events('bob', 'JournalEntry').length, relayed, 'others do not see the index bounce');
   await w.close();
 });
 
-test('a guest is SHOWN the owner\'s log on join, without adopting it into their save', async () => {
-  const w = harness({ owner: 'alice' });
-  const alice = w.add('alice');
-  w.setJournal('alice', 'MQ', 30);
-  w.quests.sendJournalSync(alice); // owner arrives first: seeds the instance from their campaign
-  assert.equal(w.sharedJournal().MQ, 30, "a fresh instance seeds from the owner's campaign");
-
+test('a lagging client cannot rewind its own campaign', async () => {
+  const w = harness();
   const bob = w.add('bob');
-  w.setJournal('bob', 'SIDE', 5);
-  w.quests.sendJournalSync(bob);
-  const shown = w.events('bob', 'JournalSync')[0]?.body.quests as Record<string, number>;
-  assert.equal(shown.MQ, 30, 'the guest is shown the campaign they are visiting');
-  assert.deepEqual(w.journalOf('bob'), { SIDE: 5 },
-    "the guest's own save is untouched by being shown someone else's log");
-  await w.close();
-});
-
-test('a lagging guest cannot rewind the owner\'s campaign', async () => {
-  const w = harness({ owner: 'alice' });
-  w.add('alice');
-  const bob = w.add('bob');
-  talk(w, bob); // #366
   w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 40));
   w.quests.handleEvent(bob, 'JournalEntry', entry('MQ', 20)); // stale client
-  assert.equal(w.sharedJournal().MQ, 40, 'monotonic-max still guards the instance log');
-  assert.equal(w.journalOf('alice').MQ, 40);
+  assert.equal(w.journalOf('bob').MQ, 40);
   await w.close();
 });
 
-// Morrowind gates most quests on GLOBALS, not the journal index. Shadowing globals to the
-// guest while the journal went to the owner advanced a guest's gates without their log —
-// they went home with globals saying "done" and a journal saying stage 10, which can leave a
-// quest ungiveable in their own campaign. Both halves freeze together or neither does.
 const gvar = (name: string, value: number) =>
   new Map<string, unknown>([['name', name], ['value', value]]) as never;
 
-test('a guest\'s quest GLOBALS follow the journal, not their own character', async () => {
-  const w = harness({ owner: 'alice' });
+test("a player's quest GLOBALS land on their own character", async () => {
+  const w = harness();
   w.add('alice');
   const bob = w.add('bob');
-  talk(w, bob); // #366
-
   w.quests.handleEvent(bob, 'GlobalVarUpdate', gvar('FreedSlavesCounter', 7));
-
-  assert.equal(w.players.getCached('alice')?.globals?.FreedSlavesCounter, 7,
-    "the owner's campaign records the gate the guest moved");
-  assert.equal(w.players.getCached('bob')?.globals?.FreedSlavesCounter, undefined,
-    "the guest's own gates moved — their journal is frozen but their quest state was not");
+  assert.equal(w.players.getCached('bob')?.globals?.FreedSlavesCounter, 7);
+  assert.equal(w.players.getCached('alice')?.globals?.FreedSlavesCounter, undefined);
   await w.close();
 });
 
-test('in your own world the gate is yours, and the shared world stores none', async () => {
-  const mine = harness({ owner: 'alice' });
-  const alice = mine.add('alice');
-  mine.quests.handleEvent(alice, 'GlobalVarUpdate', gvar('FreedSlavesCounter', 3));
-  assert.equal(mine.players.getCached('alice')?.globals?.FreedSlavesCounter, 3);
-  await mine.close();
-
-  const lobby = harness({ owner: undefined });
-  const bob = lobby.add('bob');
-  lobby.quests.handleEvent(bob, 'GlobalVarUpdate', gvar('FreedSlavesCounter', 9));
-  assert.equal(lobby.players.getCached('bob')?.globals?.FreedSlavesCounter, undefined,
-    'the shared world must not write quest state to any character');
-  await lobby.close();
-});
-
-// The client cannot tell whose instance it is in, so the sync must say. Driven off the sync
-// rather than a "leaving" event because sendJournalSync runs on EVERY join (connection.ts
-// handleReady) — a missed transition then repairs itself on the next one instead of leaving
-// a guest holding someone else's campaign.
-test('JournalSync tells the client whether the campaign is borrowed', async () => {
-  const w = harness({ owner: 'alice' });
+test('JournalSync shows each player their own log and never a borrowed one', async () => {
+  const w = harness();
   const alice = w.add('alice');
   const bob = w.add('bob');
-
+  w.setJournal('alice', 'MQ', 30);
+  w.setJournal('bob', 'SIDE', 5);
   w.quests.sendJournalSync(alice);
-  assert.equal(w.events('alice', 'JournalSync')[0]?.body.borrowed, false,
-    'the owner is never borrowing their own campaign');
-
   w.quests.sendJournalSync(bob);
-  assert.equal(w.events('bob', 'JournalSync')[0]?.body.borrowed, true,
-    'a guest must be told to set their own journal aside');
+  const shown = w.events('bob', 'JournalSync')[0]?.body;
+  assert.equal(shown?.borrowed, false);
+  assert.equal((shown?.quests as Record<string, number>).MQ, undefined, "bob is not shown alice's campaign");
+  assert.equal(w.events('alice', 'JournalSync')[0]?.body.borrowed, false);
   await w.close();
-
-  // An unowned instance (the shared world) is not a campaign at all.
-  const lobby = harness({ owner: undefined });
-  const carol = lobby.add('carol');
-  lobby.quests.sendJournalSync(carol);
-  assert.equal(lobby.events('carol', 'JournalSync')[0]?.body.borrowed, false,
-    'the shared world must not make anyone stash their journal');
-  await lobby.close();
 });

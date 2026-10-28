@@ -93,8 +93,7 @@ test('quest items never deplete: two players can each take the Puzzle Box', asyn
 test('public no-drop: a unique NPC corpse is stripped for the whole cell', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false,
-    dataDir, port: 0, host: '127.0.0.1',
-    worldMode: 'public',
+    dataDir, port: 0, host: '127.0.0.1',
     configOverride: { economy: { noDrop: true }, server: { password: PEER_PASS } },
   });
   t.after(() => server.close());

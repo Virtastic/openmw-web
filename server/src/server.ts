@@ -71,7 +71,6 @@ import { log, logHistory } from './log';
 import { startTestBots } from './dev/testbots';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
-import { WorldBrowser } from './core/worldbrowser';
 import { parseExterior, isChargenCell } from './core/movement';
 import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings, hashContentFiles, type GameData } from './core/gamedata';
 
@@ -119,12 +118,6 @@ export interface StartOptions {
   // options take precedence so tests can run several differently-shaped worlds in one
   // process without fighting over process.env.
   worldId?: string;
-  worldMode?: string; // 'private' | 'party'
-  worldOwner?: string; // accountKey; '' only on a standalone (non-gateway) stack
-  /** Test seam: how long a party world stays open after its owner disconnects. */
-  ownerGraceMs?: number;
-  /** Test seam: how long a guest told to go home gets before being dropped. */
-  guestKickGraceMs?: number;
   presenceMs?: number; // social heartbeat period (tests shorten it)
   configOverride?: DeepPartial<Config>; // tests
 }
@@ -165,29 +158,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Character docs live in the SHARED dir so a character follows its player across worlds;
   // positions inside the doc are scoped by world id.
   const worldId = opts.worldId ?? process.env.OMW_WORLD_ID ?? 'default';
-  // Runtime-mutable: a character's Solo world flips to Party IN PLACE (the owner stays put,
-  // their world simply starts admitting party members) rather than the owner travelling to a
-  // separate party world. Only ever flips between 'private' and 'party'; a public world never
-  // flips. See SetWorldMode below and mayJoinWorld.
-  // There is no public world. A gateway world boots private (the owner's own game) and the
-  // owner flips it to 'party' to admit friends; a standalone stack has no gateway and the
-  // account system is its door.
-  let worldBrowserRef: WorldBrowser | undefined; // assigned when the gateway is configured (below)
-  let worldMode = opts.worldMode ?? process.env.OMW_WORLD_MODE ?? 'private';
-  if (worldMode === 'public') {
-    // A stale env or config asking for the deleted mode must not quietly become admit-all.
-    log('warn', 'world.public_mode_removed', { requested: 'public', using: 'private' });
-    worldMode = 'private';
-  }
-  const worldModeAtBoot = worldMode;
-  // A REVIVED PARTY (#30). The gateway remembers the last observed mode in the world dir and
-  // hands it over as a resume, never as the boot mode: the chargen gate, the empty-world
-  // revert and the public flag all read worldModeAtBoot (private) as before (#9).
-  if (worldModeAtBoot === 'private' && process.env.OMW_WORLD_LAST_MODE === 'party') {
-    worldMode = 'party';
-    log('info', 'world.mode_resumed', { mode: worldMode });
-  }
-
   // Background writes still in flight. close() drains these BEFORE shutting the stores, so a
   // fire-and-forget write can never land on a closed database — which both throws an unhandled
   // rejection and LOSES the write. ChargenComplete is the one that hurts: the flag it sets is
@@ -199,10 +169,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     inFlight.add(p);
     void p.catch(() => undefined).finally(() => inFlight.delete(p));
   };
-  const worldOwner = (opts.worldOwner ?? process.env.OMW_WORLD_OWNER ?? '').toLowerCase();
-  // NO OWNER = THE PUBLIC WORLD (OT3-28). The gateway runs one world, vvardenfell, and
-  // starts it without an owner; the account system is its door. The owner/mode machinery
-  // below is dead on that path and goes in OT3-31.
   const playerStore = new PlayerStore(sharedDir, worldId);
   const cellStore = new CellStore(opts.dataDir, true);
   // SHARED, not per world (backlog 315): the player doc carries custom-record ids across
@@ -293,18 +259,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     records: recordStore,
     isMapShared: () => hooks.shareFamily('map'),
     players: playerStore,
-    ownerCharId: () => (worldOwner === '' ? undefined : roster.activeForAccount(worldOwner)?.charId),
-    // Owner-only time skip: the one surviving group rule. Your world, your clock — a guest
-    // must not fast-forward the host's game. A standalone stack has no owner, so the owner
-    // rule there admits anyone (it is the operator's own game).
-    maySkipTime: (player) => {
-      const policy = config.rules.timeSkip;
-      if (policy === 'anyone') return { may: true, why: '' };
-      if (policy === 'off') return { may: false, why: 'time does not skip in this world' };
-      return worldOwner === '' || player.accountKey === worldOwner
-        ? { may: true, why: '' }
-        : { may: false, why: 'only the world owner can rest for everyone' };
-    },
+    // One world, no owner (OT3-31): 'owner' admits anyone until OT3-53 gates it on staff rank.
+    maySkipTime: () => (config.rules.timeSkip === 'off'
+      ? { may: false, why: 'time does not skip in this world' }
+      : { may: true, why: '' }),
     // Phase 3.7: a reset hands the restored cell truth straight to whoever is standing
     // there, so it never needs the TES3MP kick-everyone workaround.
     world,
@@ -365,29 +323,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   // How much scrollback a newcomer is handed. Enough to see what the room is talking about,
   // short enough that a join is not a wall of text.
-  // Long enough to cover a host crash or page reload (engine boot is tens of seconds on a
-  // cold cache) and short enough that a genuine quit does not strand guests in a dead world.
-  const OWNER_DISCONNECT_GRACE_MS = opts.ownerGraceMs ?? 90_000;
-  // #395: a guest position flushed this recently is the auth rescue re-booting the same
-  // session, not a return visit. The disconnect flush stamps it; a reload takes seconds.
-  const GUEST_REBOOT_MS = 60_000;
-  // ONE CAP, ENFORCED AND ADVERTISED — and it is the OPERATOR'S number, [server] maxPlayers.
-  //
-  // The ceiling used to sit inside mayJoinWorld, which answers a question about ACCESS, so a
-  // party world that was merely FULL refused its owner's 33rd friend with "this world is
-  // private": untrue, and invisible to the host, who sees a working world and no error. That
-  // check is gone from there (below), which is the fix.
-  //
-  // It was briefly replaced by clamping the configured cap to a hard 32 at boot. That over-
-  // reached. The 32 was only ever a PARTY-ADMISSION rule; SERVER_FULL has always been the
-  // operator's configured number, which ships at 256. Clamping turned a party rule into a
-  // global connection cap and silently gave an operator who asked for 256 a world that took
-  // 32 — and it capped the scale ramp (s43) at half its smallest interesting step, since soak
-  // bots connect as ordinary clients and are not the `bot`-flagged dev kind humanCount skips.
-  //
-  // So there is no clamp. Capacity is enforced once, in connection.ts, against the same
-  // config.server.maxPlayers that /status and the dashboard advertise, which is what makes
-  // the advertised number and the enforced number the same number.
+  // Capacity is enforced once, in connection.ts (SERVER_FULL), against [server] maxPlayers:
+  // the number /status and the dashboard advertise.
   const CHAT_HISTORY_KEEP = 200;
   const CHAT_HISTORY_REPLAY = 60;
   const chatCtx: ChatContext = {
@@ -489,63 +426,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   world.setModerationNote((accountKey, kind) => moderation.noteAnomaly(accountKey, kind));
 
-  // Close this world to everyone who is not its owner: tell each guest to go home (their
-  // client knows its own world and dials it), then drop anyone still here after a grace. The
-  // grace is for the trip to happen cleanly, not for them to keep playing.
-  //
-  // NEVER THE SIM PEER. "Guests" means people; the peer is this world's own simulator, and
-  // evicting it threw away authority over every cell the owner was standing in — so going
-  // Solo froze the NPCs and rubber-banded the player when it came back. It is not in the
-  // party, so no door is being closed on it.
-  const sendGuestHome = (conn: Connection, reason: string): void => {
-    const p = conn.player;
-    if (!p || p.accountKey === worldOwner || p.rank >= 1) return;
-    if (p.system === true) return;
-    // The owner's CHARACTER name, off the live roster — never the account display name,
-    // which carries the signed-in person's real name.
-    p.peer.sendEvent('WorldClosed',
-      { reason, by: roster.activeForAccount(worldOwner)?.name ?? '' });
-    // Long enough for the trip: the client answers WorldClosed by minting a home ticket
-    // and rebooting, and a slow mint lost the race to the old 5 s -- "you were kicked" in
-    // place of going home (backlog 281); it is 30 s now. A guest who has left is no longer
-    // in `connections`.
-    const t = setTimeout(() => {
-      if (connections.has(conn)) conn.disconnect('KICKED', 'this world is no longer open to your party');
-    }, opts.guestKickGraceMs ?? 30_000);
-    t.unref();
-  };
-  const closeToGuests = (reason: string): void => {
-    for (const conn of [...connections]) sendGuestHome(conn, reason);
-  };
-  // Guests the crash grace sent home while the owner was away (#29): told to the owner ONCE,
-  // on the first WorldMode they receive after coming back, then forgotten.
-  let guestsSentHome: { at: number; names: string[] } | undefined;
-  const hostOf = (accountKey: string): { owner: string; isOwner: boolean; ownerId: number; timeSkip: string; sentHome?: string[] } => {
-    const isOwner = worldOwner !== '' && accountKey === worldOwner;
-    const sentHome = isOwner && guestsSentHome ? guestsSentHome.names : undefined;
-    if (sentHome) guestsSentHome = undefined;
-    return {
-      owner: roster.activeForAccount(worldOwner)?.name ?? '',
-      isOwner,
-      // The owner's connection id, for the sim peer: levelled lists roll against the LEADER's
-      // level (mwmp/puppets.hpp setPartyLevel), and the peer keys its avatar docs by id. 0 when
-      // the owner is not in the world (or the world has none).
-      ownerId: roster.activeForAccount(worldOwner)?.id ?? 0,
-      // [rules] timeSkip as m7.maySkipTime applies it (#262): a guest's client refuses the
-      // Rest before the bed animation instead of after. A world with no owner admits anyone.
-      timeSkip: worldOwner === '' && config.rules.timeSkip !== 'off' ? 'anyone' : config.rules.timeSkip,
-      ...(sentHome ? { sentHome } : {}),
-    };
-  };
-  // ONE guest, when the friendship that let them in ends (Social.friendshipEnded). Either
-  // side may end it; the guest is the one who goes home, and the owner never moves.
-  const closeToGuest = (accountKey: string, reason: string): void => {
-    if (worldOwner === '' || accountKey === worldOwner) return;
-    for (const conn of [...connections]) {
-      if (conn.player?.accountKey === accountKey) sendGuestHome(conn, reason);
-    }
-  };
-
   // THE world peer, one resolver for every caller (input, avatar batches, bar/item reports,
   // AvatarState, PvP, anchors/authority). Assigned once simPeers exists (below); until then
   // it answers undefined. The supervisor's own spawn wins; else the LOWEST-id system peer --
@@ -610,25 +490,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // here because the world is built before the combat relay and neither should import the other.
   world.onHolderGained = (cellKey) => combat.flushCell(cellKey);
 
-  // The owner ALWAYS enters first, so by the time a guest or the peer writes anything the
-  // latch is set; it follows a character switch because every join of theirs rewrites it.
-  let ownerCharLatch: string | undefined;
-  const ownerCharId = (): string | undefined =>
-    (worldOwner === '' ? undefined : (roster.activeForAccount(worldOwner)?.charId ?? ownerCharLatch));
   const quests = new Quests({
     roster,
     cells: cellStore,
     players: playerStore,
     isShared: (family) => hooks.shareFamily(family),
     regressAllowed: (questId) => hooks.journalRegress(questId),
-    // Where a journal advance is persisted: the world owner's character (guests keep loot,
-    // not quests), or the player's own on a standalone stack with no owner. The roster
-    // answers while the owner is present; the latch (set on every join of theirs) answers
-    // through the 90 s crash grace, when the roster has no owner but the campaign still
-    // does (backlog 316: peer writes landed in every guest's home doc meanwhile).
-    journalTarget: (player) =>
-      (worldOwner !== '' ? ownerCharId() : player.charId),
-    ownerCharId,
     worldGlobals: config.sharing.worldGlobals,
     worldPeer: () => worldPeerImpl(),
     holderOf: (cellKey) => world.holderOf(cellKey),
@@ -727,19 +594,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     if (maintenance.on) log('warn', 'server.maintenance_restored', { message: maintenance.message });
   } catch { /* no marker: not in maintenance, the common case */ }
   let socialRef: Social | undefined; // read by mute checks and presence (built above)
-  // Armed when the owner of a party world disconnects; cleared on close(). See onPlayerLeftWorld.
-  let ownerGraceTimer: NodeJS.Timeout | undefined;
-  // "Send home" cooldown per account (kickGuest / mayJoinWorld). Ten minutes: long enough
-  // that the launcher's "Friends playing now" cannot walk them straight back in, short
-  // enough that a change of heart needs no admin.
-  const kickedUntil = new Map<string, number>();
-  const KICK_COOLDOWN_MS = 10 * 60_000;
   const socialStore = new SocialStore(sharedDir);
   const social = new Social({
     store: socialStore,
     roster,
     worldId: worldId ?? 'default',
-    worldMode: () => worldMode,
     // The USERNAME is the public handle (accounts.ts: "shown everywhere in-game — nametags,
     // chat, friends, admin views"). account.name is the LOGIN IDENTIFIER, and for an SSO
     // account it is the provider's name claim, i.e. the person's real name. Every social
@@ -758,19 +617,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Resolution must accept what players SEE, which is now the username.
     resolveName: (name) => accounts.keyForUsername(name) ?? (accounts.existsNow(name) ? name.toLowerCase() : undefined),
     now: () => Date.now(),
-    friendshipEnded: (a, b) => {
-      if (a === worldOwner) closeToGuest(b, 'unfriended');
-      else if (b === worldOwner) closeToGuest(a, 'unfriended');
-    },
-    // "Send home" holds until the host changes their mind, and an invite IS that. And an
-    // invite from a Solo world is "come in": without the flip the invitee's accept dialled a
-    // world that admits nobody and ended in not_open (backlog 354). Same path as the O-panel
-    // flip, so the directory and every panel hear it.
-    invited: (from, to) => {
-      if (from !== worldOwner) return;
-      kickedUntil.delete(to);
-      if (worldMode !== 'party') ctx.setWorldMode(from, 0, 'party');
-    },
     // A4/3.8: the context-menu report writes to the same queue as /report.
     report: (doc) => moderation.reports.write({
       ts: new Date().toISOString(),
@@ -781,12 +627,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // queue has an accusation and nothing to weigh it against.
       context: moderation.chat.context(),
     }),
-    // F3: only when a gateway is configured. Without one the Worlds tab reports that this
-    // is a standalone world, which is an honest answer and a valid setup.
-    ...(config.gateway.url
-      ? { worlds: (worldBrowserRef = new WorldBrowser({ gatewayUrl: config.gateway.url,
-          serverToken: config.gateway.serverToken, ownPort: () => port })) }
-      : {}),
   });
   socialRef = social;
 
@@ -823,81 +663,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Phase 4: one-shot scripted encounters replayed for a character who was not there.
     questSpawnsOnEntry: (player, cellKey) => questRepair.onCellEntry(player, cellKey),
     questRepair,
-    // THE AUTHORIZATION. No owner = the public world: every signed-in account. Admins always
-    // (moderation must be able to enter anywhere).
-    isSentHome: (accountKey: string): boolean => (kickedUntil.get(accountKey) ?? 0) > Date.now(),
-    mayJoinWorld: (accountKey: string, rank: number, returning = false): boolean => {
-      if (rank >= 1) return true;
-      if (worldOwner === '') return true;
-      if (accountKey === worldOwner) return true;
-      if (worldMode !== 'party') return false;
-      if ((kickedUntil.get(accountKey) ?? 0) > Date.now()) return false;
-      // NO HOST, NO NEWCOMERS -- while the host's crash grace runs. A newcomer used to be
-      // admitted into a world whose host had just dropped (no guestSpawn, the host's own
-      // controls on their panel) and evicted a minute later. A world the host is still
-      // booting into has no grace armed and admits friends as before. A RETURNING guest is
-      // not a newcomer (backlog 352): a shared wifi blip drops both, and the guest's resume
-      // beat the host's -- refusing it sent them home "this world is private" from a world
-      // that was about to reopen. Same test guestSpawn uses: a resume, or a doc that holds
-      // a position here.
-      if (ownerGraceTimer && !returning && !roster.activeForAccount(worldOwner)) return false;
-      return socialStore.areFriends(worldOwner, accountKey);
-      // NO CAPACITY CHECK HERE. "May this account be in this world" and "is there room" are
-      // different questions with different answers, and answering the second one here made a
-      // full world claim to be a private one. Capacity is enforced where it can say so: the
-      // SERVER_FULL disconnect in connection.ts, against the clamped cap above.
-    },
-    // A world that empties reverts to how it booted. Without this, flipping your world to
-    // party once left it party FOREVER: the gateway reuses a running world as-is, so the next
-    // session silently rejoined a joinable world instead of the solo one it asked for.
-    onWorldEmpty: () => {
-      // NOT WHILE THE HOST'S GRACE RUNS. Both callbacks fire on the same cleanup, this one
-      // second: a host alone in a Party world who reloaded (or whose whole party dropped in
-      // one edge blip) had the grace armed and the mode reverted to Solo in the same frame,
-      // so they came back to Solo with no notice and a co-dropped guest's resume was refused
-      // as "this world is private". The grace timer owns the revert until it expires.
-      if (ownerGraceTimer) return;
-      if (worldMode !== worldModeAtBoot) {
-        log('info', 'world.mode_reverted', { from: worldMode, to: worldModeAtBoot });
-        worldMode = worldModeAtBoot;
-      }
-    },
-    // Owner-only: flip this world between private (solo) and party (joinable by the owner's
-    // party) without respawning it. Admins may flip too. Public worlds never flip.
     worldId,
-    worldMode: (): string => worldMode,
-    setWorldMode: (accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable' => {
-      if (rank < 1 && accountKey !== worldOwner) return 'not_owner';
-      if (mode !== 'private' && mode !== 'party') return 'bad_mode';
-      worldMode = mode;
-      log('info', 'world.mode_flip', { world: worldId, owner: worldOwner, mode });
-      // The directory is what a friend's join consults (social.ts joinFriend reads the
-      // owner's world mode from it); it must hear this before the owner can say "come in".
-      void worldBrowserRef?.reportMode(worldId, worldOwner, mode);
-      // The UI must never GUESS which world it is in. It used to render Solo/Party/Public from
-      // a localStorage note of what the player last clicked, which survived reloads and
-      // reconnects and so could claim you were somewhere you were not. The server owns this.
-      for (const conn of connections) {
-        if (conn.player) conn.player.peer.sendEvent('WorldMode', { mode, ...hostOf(conn.player.accountKey) });
-      }
-      // mayJoinWorld only gates ARRIVAL. Flipping back to Solo therefore closed the door
-      // while leaving every guest standing inside. Closing means closing: tell each guest
-      // to go home (their client knows its own world and dials it), then drop anyone still
-      // here. The grace is for the switch to happen cleanly, not for them to keep playing.
-      if (mode === 'private') closeToGuests('owner_went_solo');
-      return 'ok';
-    },
-    // A guest world with no host is nobody's world. Called when a player leaves; acts only if
-    // that player was the owner.
-    wrongWorldForCharacter: (accountKey: string, charId: string): boolean => {
-      // Only gateway-spawned character worlds have the suffix contract; standalone servers
-      // and GUESTS (who bring their own characters into a host's world by design) are
-      // exempt. The owner's own character must match the world made for it.
-      if (!process.env.OMW_WORLD_ID) return false;
-      if (accountKey !== worldOwner) return false;
-      const m = /-([0-9a-f]{8})$/.exec(worldId);
-      return m !== null && !charId.endsWith(m[1]!);
-    },
     // Scrollback on arrival: the server-wide conversation, plus this player's own party.
     // Ordinary ChatMessage events in the order they were said, so the client needs no new
     // handling — history is the same messages, earlier.
@@ -921,108 +687,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         });
       }
     },
-    worldHost: hostOf,
-    // "Send home": the host's ordinary kick. Not a block (the friendship stands, the door
-    // stays open), not a flip (the other guests stay). The guest gets the same WorldClosed
-    // notice with its own reason, and the 30 s drop behind it.
-    kickGuest: (byAccountKey: string, rank: number, targetName: string): 'ok' | 'not_owner' | 'no_such_player' | 'self' => {
-      if (rank < 1 && (worldOwner === '' || byAccountKey !== worldOwner)) return 'not_owner';
-      const wanted = targetName.trim().toLowerCase();
-      const target = roster.inWorld().find((p) => !p.system && p.name.toLowerCase() === wanted);
-      if (!target) return 'no_such_player';
-      if (target.accountKey === byAccountKey || target.accountKey === worldOwner) return 'self';
-      log('info', 'world.guest_kicked', { world: worldId, by: byAccountKey, guest: target.accountKey });
-      // STICKY. Without this the guest was back beside the host a minute later from the
-      // launcher's "Friends playing now" -- the host's only real tool was Block, which also
-      // ends the friendship. A kick shuts the door for a while; the friendship stands.
-      kickedUntil.set(target.accountKey, Date.now() + KICK_COOLDOWN_MS);
-      closeToGuest(target.accountKey, 'kicked');
-      return 'ok';
-    },
-    // DELIBERATE DEPARTURE. Exit, a character switch, "join a friend": the client says so
-    // (PlayerLeaving) and the world closes to guests now, with the same notice the grace
-    // would have given them ninety seconds later -- the grace is for crashes.
-    onPlayerLeaving: (accountKey: string): void => {
-      if (worldOwner === '' || accountKey !== worldOwner || worldMode !== 'party') return;
-      log('info', 'world.owner_leaving', { world: worldId, owner: worldOwner });
-      if (ownerGraceTimer) { clearTimeout(ownerGraceTimer); ownerGraceTimer = undefined; }
-      worldMode = 'private';
-      for (const conn of connections) {
-        if (conn.player) conn.player.peer.sendEvent('WorldMode', { mode: 'private', ...hostOf(conn.player.accountKey) });
-      }
-      closeToGuests('owner_left');
-    },
     onPlayerLeftWorld: (accountKey: string): void => {
       // Only OUR row: a player who moved to another world has already written a row naming
       // that world, and deleting theirs from the world they left would blink them offline.
       socialStore.clearPresence(accountKey, worldId ?? 'default', Date.now());
-      if (worldOwner === '' || accountKey !== worldOwner) return;
-      if (worldMode !== 'party') return;
-      // GRACE, THEN CLOSE. A host who crashes or reloads should come back to their guests,
-      // not to an empty world — so guests keep playing through the window and the world
-      // closes only if the owner does not return. The timer re-checks the roster on expiry,
-      // which is what makes a rejoin cancel the close without needing a rejoin hook.
-      log('info', 'world.owner_left', { world: worldId, owner: worldOwner, graceMs: OWNER_DISCONNECT_GRACE_MS });
-      broadcastChat(roster, {
-        channel: 'server',
-        text: 'the host has disconnected — the world stays open a moment for them to return',
-      });
-      if (ownerGraceTimer) clearTimeout(ownerGraceTimer);
-      ownerGraceTimer = setTimeout(() => {
-        ownerGraceTimer = undefined;
-        if (roster.activeForAccount(worldOwner)) return; // the host is back; nothing closes
-        log('info', 'world.owner_gone', { world: worldId, owner: worldOwner });
-        const names = roster.inWorld().filter((p) => !p.system && p.accountKey !== worldOwner).map((p) => p.name);
-        if (names.length > 0) guestsSentHome = { at: Date.now(), names };
-        worldMode = 'private';
-        for (const conn of connections) {
-          if (conn.player) conn.player.peer.sendEvent('WorldMode', { mode: 'private', ...hostOf(conn.player.accountKey) });
-        }
-        closeToGuests('owner_left');
-      }, OWNER_DISCONNECT_GRACE_MS);
-      ownerGraceTimer.unref();
     },
-    // Spawn-near-leader: when a NON-owner freshly joins a party world (a friend/party member
-    // dialling in — never the owner, never a resume-in-place), place them at the owner's live
-    // position so they land next to the leader rather than at some default corner. Returns null
-    // when it should not apply (not party, is the owner, owner not present/located yet).
-    //
-    // TWICE FIXED HERE (backlog 280). A guest whose host had no pose yet (still loading, a
-    // peer restart) got nothing and stood at the engine's default start for good: the
-    // teleport is now DEFERRED until the host's next pose. And a guest booted again by the
-    // auth rescue is not a fresh arrival: they hold a position in this world already, and
-    // being yanked back beside the host threw away where they had walked to.
-    guestSpawn: (accountKey: string): { cellKey: string; x: number; y: number; z: number } | null => {
-      if (worldMode !== 'party' || worldOwner === '' || accountKey === worldOwner) return null;
-      const guest = roster.activeForAccount(accountKey);
-      // #395: only a position written MOMENTS ago is a reboot (the auth rescue); a guest who
-      // stood here yesterday is a returning guest and lands beside the host (s154).
-      const at = guest && playerStore.getCached(guest.charId)?.positions?.[worldId]?.at;
-      if (at && Date.now() - Date.parse(at) < GUEST_REBOOT_MS) return null;
-      const owner = roster.activeForAccount(worldOwner);
-      if (!owner) return null;
-      if (owner.cellKey && owner.pose) {
-        return { cellKey: owner.cellKey, x: owner.pose.x, y: owner.pose.y, z: owner.pose.z };
-      }
-      // ponytail: a 1 s poll for the host's first pose rather than a hook in connection.ts's
-      // pose path; one timer per waiting guest, bounded by the peer start timeout.
-      const until = Date.now() + config.simPeer.startTimeoutMs;
-      const t = setInterval(() => {
-        const host = roster.activeForAccount(worldOwner);
-        const g = roster.activeForAccount(accountKey);
-        if (!g || !g.inWorld || Date.now() > until) { clearInterval(t); return; }
-        if (!host || !host.cellKey || !host.pose) return;
-        clearInterval(t);
-        g.lastDoorAt = Date.now(); // #394: the teleport this asks for is explained (#361)
-        g.peer.sendEvent('InviteAccepted', { cellKey: host.cellKey, x: host.pose.x, y: host.pose.y, z: host.pose.z });
-      }, 1000);
-      t.unref();
-      return null;
-    },
-    // Chargen gate only when this world is spawned by a gateway (OMW_WORLD_ID set) and is not
-    // the private world at boot — a standalone server has no other world to create the
-    // character in, and a later flip to party must not retroactively force chargen on members.
-    chargenGate: !!process.env.OMW_WORLD_ID && worldModeAtBoot !== 'private',
     motd: () => motd,
   };
 
@@ -1144,7 +813,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
 
     overview: async () => ({
-      world: { id: worldId, mode: worldMode },
+      world: { id: worldId, mode: 'public' },
       maxPlayers: config.server.maxPlayers,
       uptime: Math.round((Date.now() - startedAt) / 1000),
       system: await sysInfo(),
@@ -1264,8 +933,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // the whole world now, so this is normally 0 or 1.
     peerCount: simPeers.running,
     pvp: config.rules.pvp,
-    mode: worldMode === 'party' ? 'party' : 'private',
-    ownerPresent: worldOwner !== '' && roster.activeForAccount(worldOwner) !== undefined,
+    mode: 'public',
     players: roster.humansInWorld().map((p) => ({
       id: p.id,
       name: p.name,
@@ -1807,9 +1475,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // session in evicts that session on ITS next beat, and the write is what it keys on.
   ctx.onPlayerJoined = (p) => {
     if (p.system || p.bot) return;
-    if (worldOwner !== '' && p.accountKey === worldOwner) ownerCharLatch = p.charId;
     markPlayed();
-    try { socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, false, Date.now(), worldMode, p.charId); }
+    try { socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, false, Date.now(), 'public', p.charId); }
     catch (err) { log('warn', 'presence.join_write_failed', { error: String(err) }); }
   };
   simPeerTick.unref();
@@ -1928,7 +1595,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         p.peer.disconnect('SUPERSEDED', 'this character was opened in another world');
         continue;
       }
-      socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now, worldMode, p.charId);
+      socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now, 'public', p.charId);
     }
   };
   // THE PLAYERS LIST IS THE SERVER'S, NOT THIS WORLD'S. Roster.joinWorld sends a PlayerList
@@ -2019,10 +1686,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const devBots = config.dev.bots > 0
     ? await startTestBots({
       roster, social, accounts, players: playerStore,
-      // WHERE BOTS HANG OUT. There is no public world; the gathering place is a world that
-      // booted in party mode. Each world process decides for itself from its own boot mode,
-      // with no cross-process messaging.
-      isPublic: worldModeAtBoot === 'party',
+      isPublic: true, // the one world is where bots hang out (OT3-31)
       count: Math.min(config.dev.bots, 16), // a sanity ceiling; this is a dev aid, not a load test
       names: config.dev.botNames,
       prefix: config.dev.botPrefix,
@@ -2074,7 +1738,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // would keep a closed server's config alive and fire on the next server's log lines.
       unhookNotifier();
       clearInterval(simPeerTick);
-      if (ownerGraceTimer) clearTimeout(ownerGraceTimer);
       simPeers.stopAll(); // never leave an engine running after the server it fed is gone
       moveBroadcaster.stop();
       await m7.stop();

@@ -17,7 +17,7 @@ import { TestClient, tmpDataDir } from './helpers';
 
 async function makeCharacter(dataDir: string, name: string): Promise<void> {
   const solo = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
   });
   const a = await TestClient.connect(solo.port);
   await a.joinAsNew(name);
@@ -48,7 +48,7 @@ async function hop(server: { port: number; api: { cellOfPlayer?: (id: number) =>
 test('a private world follows every hop, and only counts them', async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    worldMode: 'private', configOverride: { limits: { farTravelPerMin: 3 }, admin: { dashboardToken: 'hop-dash' } },
+    configOverride: { limits: { farTravelPerMin: 3 }, admin: { dashboardToken: 'hop-dash' } },
   });
   t.after(() => server.close());
   const c = await TestClient.connect(server.port);
@@ -70,7 +70,7 @@ test('walking across many adjacent cells is never limited', async (t) => {
   const dataDir = tmpDataDir();
   await makeCharacter(dataDir, 'Walker');
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
     configOverride: { limits: { farTravelPerMin: 3 } },
   });
   t.after(() => server.close());
@@ -99,7 +99,7 @@ test('going in and out of doors is never limited', async (t) => {
   const dataDir = tmpDataDir();
   await makeCharacter(dataDir, 'Doorman');
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', 
     configOverride: { limits: { farTravelPerMin: 3 } },
   });
   t.after(() => server.close());

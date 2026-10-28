@@ -109,20 +109,6 @@ export interface QuestCtx {
   isShared(family: ShareFamily): boolean;
   // Quest ids permitted to regress (operator config, surfaced via the plugin).
   regressAllowed(questId: string): boolean;
-  // Which character doc a journal advance is written to, or undefined for "persist nothing".
-  // Three cases, all decided in server.ts where world identity lives:
-  //   owned instance     -> the OWNER's doc. One log per instance; guests advance the
-  //                         campaign they are visiting and keep nothing of their own.
-  //   gateway-run public -> undefined. The lobby persists position and nothing else.
-  //   standalone server  -> the SENDER's own doc. No owner exists, but this IS the player's
-  //                         real game, so vanilla per-character journals apply.
-  // Read through a function because the owner may not be connected when an entry arrives.
-  journalTarget(player: Player): string | undefined;
-  // The OWNER's character doc when this instance is owned, else undefined. Used only to seed
-  // a fresh instance's log. Deliberately NOT journalTarget: on a standalone server that
-  // returns the sender's own doc for everyone, and seeding from it would inject the first
-  // joiner's history into the shared log the rest of the server then adopts.
-  ownerCharId(): string | undefined;
   // Operator additions to the world-shared global set (total conversions).
   worldGlobals?: string[];
   worldPeer?(): Player | undefined;
@@ -149,40 +135,12 @@ export class Quests {
     log('warn', 'quest.dropped', { from: player.name, name, why });
   }
 
-  // #366: A GUEST'S QUEST WRITE PERSISTS ONLY OUT OF A CONVERSATION. The host's campaign is
-  // the doc every journal/global write lands in, and a guest's modified client could set any
-  // stage or global in it. What a legitimate guest write always has: a dialogue lock held on
-  // some NPC, or one released in the last ten seconds (the result script runs on "Goodbye").
-  // Otherwise the write is relayed live (the other clients' scripts stay in step for the
-  // session) but not persisted, and counted. The host's own writes are unchanged.
+  // A bounty DROP stands only within this long of the player's own dialogue (crime()).
   private static readonly GUEST_WRITE_GRACE_MS = 10_000;
-  // ...OR OUT OF A TRIGGER THE SERVER SAW (1.7.1). Quests also advance outside dialogue: an
-  // item's OnPCAdd, a lever's OnActivate, an area trigger on entering a cell. Those writes were
-  // relayed and never saved, so the step was soft-locked after the host relogged. Each has a
-  // server-validated trace stamped on player.questTriggerAt -- a pickup or container take the
-  // server granted, a door, a reach-checked ObjectActivated, an accepted cell change -- and a
-  // write within a few seconds of the guest's OWN trace persists. The anti-forgery shape is
-  // unchanged: a bare write with nothing behind it is still relayed, not saved, and counted.
-  // ponytail: an area trigger keyed on distance inside one cell (GetDistance player) has no
-  // server trace; if that soft-locks a real quest, stamp on the peer's proximity report.
-  private static readonly GUEST_TRIGGER_GRACE_MS = 5_000;
   holdsDialogue(playerId: number): boolean {
     for (const held of this.dialogueLocks.values()) if (held.playerId === playerId) return true;
     return false;
   }
-  private guestWriteUnbacked(player: Player, name: string): boolean {
-    if (player.system === true) return false;
-    const owner = this.ctx.ownerCharId();
-    if (owner === undefined || owner === player.charId) return false;
-    const nowMs = Date.now();
-    if (player.lastDialogueAt !== undefined && nowMs - player.lastDialogueAt <= Quests.GUEST_WRITE_GRACE_MS) return false;
-    if (player.questTriggerAt !== undefined && nowMs - player.questTriggerAt <= Quests.GUEST_TRIGGER_GRACE_MS) return false;
-    if (this.holdsDialogue(player.id)) return false;
-    log('warn', 'quest.guest_write_unbacked', { from: player.name, name });
-    this.ctx.noteAnomaly?.(player.accountKey, 'guest_quest_write');
-    return true;
-  }
-
   // Relays exclude the sender: it already applied the change locally, and clients seed
   // their diff caches from applied state (the §M6 echo guard).
   private relayAll(exceptId: number, name: string, body: JsLike): void {
@@ -223,8 +181,7 @@ export class Quests {
   }
 
   // A client activated an object that runs a local MWScript (quests.lua onActivate). Nothing
-  // is relayed or stored: it is the trace a guest's OnActivate quest write is judged against
-  // (guestWriteUnbacked), so it is reach-gated like every object edit -- you activate what you
+  // is relayed or stored: it stamps questTriggerAt, so it is reach-gated like every object edit -- you activate what you
   // can see.
   private activated(player: Player, body: LTable): void {
     const ref = parseObjRef(body);
@@ -260,8 +217,6 @@ export class Quests {
       this.drop(player, 'GlobalScriptsUpdate', 'invalid shape');
       return;
     }
-    const target = this.ctx.journalTarget(player);
-    if (target === undefined) return; // the shared world persists no campaign
     const apply = (list: string[] | undefined): string[] => {
       const set = new Set(list ?? []);
       for (const s of stopped) set.delete(s);
@@ -270,25 +225,22 @@ export class Quests {
     };
     // STANDALONE (1.7.1): like its globals, the peer's scripts persist to every human, and the
     // union is kept on the shared state the peer is seeded from (its own doc is throwaway).
-    if (this.ctx.ownerCharId() === undefined) {
-      const shared = this.ctx.cells.sharedQuest();
-      shared.scripts = apply(shared.scripts);
-      this.ctx.cells.saveShared();
-      if (player.system === true) {
-        for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
-          this.ctx.players.update(h.charId, (doc) => { doc.scripts = apply(doc.scripts); });
-        }
-        return;
+    const shared = this.ctx.cells.sharedQuest();
+    shared.scripts = apply(shared.scripts);
+    this.ctx.cells.saveShared();
+    if (player.system === true) {
+      for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
+        this.ctx.players.update(h.charId, (doc) => { doc.scripts = apply(doc.scripts); });
       }
+      return;
     }
-    this.ctx.players.update(target, (doc) => { doc.scripts = apply(doc.scripts); });
+    this.ctx.players.update(player.charId, (doc) => { doc.scripts = apply(doc.scripts); });
   }
 
   sendScriptsSync(player: Player): void {
-    const source = this.ctx.journalTarget(player);
-    const running = player.system === true && this.ctx.ownerCharId() === undefined
+    const running = player.system === true
       ? (this.ctx.cells.sharedQuest().scripts ?? [])
-      : source === undefined ? [] : (this.ctx.players.getCached(source)?.scripts ?? []);
+      : (this.ctx.players.getCached(player.charId)?.scripts ?? []);
     if (running.length === 0) return;
     player.peer.sendEvent('GlobalScriptsSync', { running: [...running] });
   }
@@ -325,15 +277,14 @@ export class Quests {
     // The doc write happens AFTER arbitration, never before: writing first let a stale
     // client put 20 into the owner's save while the instance log correctly kept 40, and the
     // two then disagreed permanently.
-    // STANDALONE: the same rule the globals half uses. journalTarget(peer) on an owner-less
-    // stack resolves to the peer's own ephemeral doc, so a peer-advanced journal entry was
+    // THE PEER: the same rule the globals half uses. The peer's own doc is ephemeral, so a peer-advanced journal entry was
     // relayed live and then lost -- leaving globals saying "done" and the journal saying
     // stage 10, the exact split the comment above forbids. Persist to every human instead.
     // ...AND THE SHARED MAP (1.7.1). JournalSync sends shared.journal as the map AFTER the log,
     // and the map is the current stage: left stale, every join lowered what the peer advanced.
     // The peer's restart is authoritative here as in an owned world -- outside its own
     // join-time replay window, where a lower stage is the echo of its JournalSync.
-    if (player.system === true && this.ctx.ownerCharId() === undefined) {
+    if (player.system === true) {
       const shared = this.ctx.isShared('journal') ? this.ctx.cells.sharedQuest() : undefined;
       const current = shared?.journal[questId];
       if (current === idx) return;
@@ -355,8 +306,7 @@ export class Quests {
     }
     // INDIVIDUAL MODE IS THE PLAYER'S OWN LOG (backlog 320): it used to write to the host's
     // doc while the map came from the player's, a hybrid nobody asked for.
-    const ownerChar = this.ctx.isShared('journal') || player.system === true
-      ? this.ctx.journalTarget(player) : player.charId;
+    const ownerChar = player.charId;
     // Phase 3.7: journal advances flush AT THE WRITE, not on the 45 s sweep. A verified
     // TES3MP failure is a disconnect mid-quest permanently corrupting progression
     // (Tribunal MQ, issue #268 — open since 2017): the stage was in memory and the crash
@@ -364,7 +314,6 @@ export class Quests {
     // Max unless this is an authorised regression (1.7.1): the doc never moves down on a write
     // the arbitration below did not explicitly allow to.
     const record = (regress: boolean): void => {
-      if (ownerChar === undefined) return;
       this.ctx.players.update(ownerChar, (doc) => {
         const log = (doc.journal ??= {});
         log[questId] = regress ? idx : Math.max(log[questId] ?? -1, idx);
@@ -379,14 +328,9 @@ export class Quests {
     const current = shared.journal[questId];
     const advances = current === undefined || idx > current;
     const regressing = !advances && idx < current;
-    // THE CAMPAIGN'S OWNER MAY RESTART A QUEST. Monotonic-max was written against a LAGGING
-    // client, and a guest still cannot rewind the log -- but a SetJournalIndex to a lower
-    // stage from the owner's own dialogue, or from the peer's scripts, is the campaign
-    // itself moving (backlog 225). Dropped, it came back on the next login and every later
-    // advance below the old maximum was silently lost too.
-    const authoritative = player.system === true
-      || (this.ctx.ownerCharId() !== undefined && this.ctx.ownerCharId() === player.charId);
-    if (regressing && !authoritative && !this.ctx.regressAllowed(questId)) {
+    // Only the peer may restart a quest (its branch above, backlog 225); a human client's
+    // lower stage is a lagging client unless the operator allows the regression.
+    if (regressing && !this.ctx.regressAllowed(questId)) {
       // Monotonic-max arbitration: a lagging client cannot rewind the instance's campaign.
       log('debug', 'quest.journal_regress_blocked', { questId, have: current, got: idx, from: player.name });
       return;
@@ -396,7 +340,7 @@ export class Quests {
     // stage the log already holds is a replay, not the campaign moving: no write, no relay.
     // ONLY IN THE REPLAY WINDOW (1.7.1). Applied all session, it ate every restart to a stage
     // the log already held -- a repeatable quest's first step, every time.
-    if (regressing && ownerChar !== undefined && this.inReplayWindow(player)
+    if (regressing && this.inReplayWindow(player)
       && (this.ctx.players.getCached(ownerChar)?.journalLog ?? []).some((e) => e.q === questId && e.i === idx)) {
       log('debug', 'quest.journal_regress_replay', { questId, have: current, got: idx, from: player.name });
       return;
@@ -405,7 +349,6 @@ export class Quests {
     // `regress` tells every receiver this lower stage is authorised (quests.lua applies max
     // otherwise, so a lagging entry can never walk its quest back).
     const out: JsLike = { questId, index: idx, ...(regressing ? { regress: true } : {}), ...(typeof actorRefId === 'string' ? { actorRefId } : {}) };
-    if (this.guestWriteUnbacked(player, 'JournalEntry')) { this.relayAll(player.id, 'JournalEntry', out); return; } // #366
     shared.journal[questId] = idx;
     this.ctx.cells.saveShared();
     record(regressing);
@@ -448,57 +391,23 @@ export class Quests {
     player.bounty = this.ctx.players.getCached(player.charId)?.bounty ?? 0;
   }
 
-  // Backlog 141: the faction ranks a GUEST arrives with. With factions shared, a guest's
-  // join/promotion is written to the host's doc and shared.factions (faction() below), but
-  // the welcome record came from the guest's own doc: they arrived with their HOME ranks and
-  // a relog lost the rank earned here. Host doc first (the persisted campaign), shared map
-  // over it (what changed here). undefined = keep the player's own doc.
-  guestFactions(player: Player): Record<string, FactionState> | undefined {
-    const owner = this.ctx.ownerCharId();
-    if (!this.ctx.isShared('factions') || owner === undefined || owner === player.charId) return undefined;
-    return { ...(this.ctx.players.getCached(owner)?.factions ?? {}), ...this.ctx.cells.sharedQuest().factions };
-  }
-
   sendJournalSync(player: Player): void {
     this.seedBounty(player);
-    if (this.ctx.isShared('journal')) {
-      const shared = this.ctx.cells.sharedQuest();
-      // Seed the instance from the owner's campaign, ALWAYS as max(shared, own) (backlog
-      // 320). Seeding only an empty map meant a shared->individual->shared flip replayed the
-      // stale shared map over stages the owner earned in individual mode, every login.
-      // Max can never regress progress made here; it only lifts stages the owner's doc is
-      // ahead on.
-      const ownerChar = this.ctx.ownerCharId();
-      if (ownerChar !== undefined && player.charId === ownerChar) {
-        const own = this.ctx.players.getCached(ownerChar)?.journal ?? {};
-        let lifted = 0;
-        for (const [q, i] of Object.entries(own)) {
-          if ((shared.journal[q] ?? -1) < i) { shared.journal[q] = i; lifted++; }
-        }
-        if (lifted > 0) {
-          this.ctx.cells.saveShared();
-          log('info', 'quest.journal_seeded', { from: ownerChar, quests: lifted });
-        }
-      }
-    }
     // Everyone in the instance reads the SAME log — the owner's. A guest is shown the
     // campaign they are visiting; nothing here touches their own character doc.
     const quests = this.ctx.isShared('journal')
       ? { ...this.ctx.cells.sharedQuest().journal }
       : { ...(this.ctx.players.getCached(player.charId)?.journal ?? {}) };
-    // The dated log lives on the doc the entries were recorded to (journalTarget), in order;
-    // in individual mode that is the player's own doc, and nothing is borrowed (backlog 320).
-    const logChar = this.ctx.isShared('journal') ? this.ctx.journalTarget(player) : player.charId;
-    const journalLog = (logChar === undefined ? [] : (this.ctx.players.getCached(logChar)?.journalLog ?? []))
-      .map((e) => ({ ...e }));
+    // The dated log lives on the player's own doc (OT3-31: one world, no owner).
+    const journalLog = (this.ctx.players.getCached(player.charId)?.journalLog ?? []).map((e) => ({ ...e }));
     // BORROWED: this sync carries a campaign that is not this character's own, so the client
     // must set its own journal aside for the visit and put it back on the way home. The
     // client cannot work this out for itself — it does not know who owns the instance.
     // Driving it off the sync (rather than a "leaving" event) makes it self-correcting: this
     // message is sent on EVERY join, so a missed transition repairs itself on the next one.
-    const owner = this.ctx.ownerCharId();
-    const borrowed = this.ctx.isShared('journal') && owner !== undefined && owner !== player.charId;
-    const topics = [...(logChar === undefined ? [] : (this.ctx.players.getCached(logChar)?.topics ?? []))];
+    // One world, no owner (OT3-31): nothing is ever borrowed; the field stays for the client.
+    const borrowed = false;
+    const topics = [...(this.ctx.players.getCached(player.charId)?.topics ?? [])];
     player.journalSyncAt = Date.now(); // opens the replay window (journal() backlog 335)
     player.peer.sendEvent('JournalSync', { quests, borrowed, journalLog, topics });
   }
@@ -584,7 +493,7 @@ export class Quests {
       // ephemeral doc, so every quest global the peer's scripts advanced was relayed live
       // and then lost on relog. Every human in the world got the relay, so every human's
       // doc is the campaign: persist to all of them and return.
-      if (player.system === true && this.ctx.ownerCharId() === undefined) {
+      if (player.system === true) {
         // Humans only -- a bot's doc is not a campaign. The journal half does the same (and
         // keeps shared.journal), and the shared campaign map seeds the peer itself (1.7.1).
         for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
@@ -594,7 +503,6 @@ export class Quests {
         this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
         return;
       }
-      const target = this.ctx.journalTarget(player);
       // Phase 4E: the peer's write is the campaign's authoritative state, so every client
       // in the world receives it LIVE (their local script copies would otherwise hold a
       // stale value until the next login's GlobalVarSync). Relayed even where nothing
@@ -607,12 +515,10 @@ export class Quests {
       // guest's Global filters and local script copies sat on the stale value until relog.
       // The ping-pong the old rule feared is what the peer-owned window above is for.
       this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
-      if (target === undefined) return; // unowned instance: persists nothing
-      if (this.guestWriteUnbacked(player, 'GlobalVarUpdate')) return; // #366: relayed, not persisted
-      this.ctx.players.update(target, (doc) => {
+      this.ctx.players.update(player.charId, (doc) => {
         (doc.globals ??= {})[name] = value;
       });
-      if (this.ctx.ownerCharId() === undefined) this.noteCampaignGlobal(name, value); // standalone: the peer's seed
+      this.noteCampaignGlobal(name, value); // the peer's seed
       return;
     }
     if (!this.ctx.isShared('questVars')) return; // world global, but sharing is off
@@ -629,7 +535,6 @@ export class Quests {
     }
     // Absent seq = plain last-write-wins; keep the stored seq monotonic regardless.
     const nextSeq = seq ?? (prev ? prev.seq + 1 : 1);
-    if (this.guestWriteUnbacked(player, 'GlobalVarUpdate')) { this.relayAll(player.id, 'GlobalVarUpdate', { name, value, seq: nextSeq }); return; } // #366
     shared.globals[name] = { value, seq: nextSeq };
     this.ctx.cells.saveShared();
     this.relayAll(player.id, 'GlobalVarUpdate', { name, value, seq: nextSeq });
@@ -657,9 +562,9 @@ export class Quests {
   // and the peer's empty ephemeral doc -- so a script gated on a global the host had set
   // ran the other way on the very engine that simulates it.
   sendGlobalSync(player: Player): void {
-    const source = this.ctx.journalTarget(player) ?? player.charId;
-    // Standalone: the peer's own doc is throwaway; the shared campaign map is its seed (1.7.1).
-    const globals = player.system === true && this.ctx.ownerCharId() === undefined
+    const source = player.charId;
+    // The peer's own doc is throwaway; the shared campaign map is its seed (1.7.1).
+    const globals = player.system === true
       ? { ...(this.ctx.cells.sharedQuest().campaignGlobals ?? {}) }
       : { ...(this.ctx.players.getCached(source)?.globals ?? {}) };
     // Filter on the way OUT too, not just on the way in: characters saved before
@@ -788,18 +693,9 @@ export class Quests {
     // A visit either changes your character or it does not; it cannot be half of each.
     // Unless factions are NOT shared (backlog 319): then a guest's rank is their own, and
     // writing it to the host's doc demoted the host on their next login.
-    const target = this.ctx.isShared('factions') ? this.ctx.journalTarget(player) : player.charId;
-    if (target !== undefined) {
-      this.ctx.players.update(target, (doc) => {
-        (doc.factions ??= {})[factionId] = state;
-      });
-    } else if (this.ctx.ownerCharId?.() !== undefined || player.charId !== undefined) {
-      // Nowhere to put it: the shared world persists no campaign progress (correct), or an
-      // owned world's host is offline. The relay below still applies it on every client, so
-      // saying nothing leaves the world and the disk disagreeing for the rest of the session
-      // with no way to notice.
-      log('info', 'quest.standing_not_persisted', { player: player.name, factionId, rank });
-    }
+    this.ctx.players.update(player.charId, (doc) => {
+      (doc.factions ??= {})[factionId] = state;
+    });
     if (!this.ctx.isShared('factions')) return;
     const shared = this.ctx.cells.sharedQuest();
     shared.factions[factionId] = state;
@@ -836,12 +732,7 @@ export class Quests {
     // doc (last-writer-wins) and the host inherited it on relog; then it was persisted
     // nowhere, so a guest who stole and relogged came back clean (backlog 353). Personal
     // means the visitor's number stays the visitor's -- and survives their relog.
-    const crimeTarget = this.ctx.isShared('crime') ? this.ctx.journalTarget(player) : player.charId;
-    if (crimeTarget !== undefined) {
-      this.ctx.players.update(crimeTarget, (doc) => (doc.bounty = bounty));
-    } else {
-      log('info', 'quest.standing_not_persisted', { player: player.name, bounty });
-    }
+    this.ctx.players.update(player.charId, (doc) => (doc.bounty = bounty));
     player.bounty = bounty;
     if (!this.ctx.isShared('crime')) {
       // Personal: nobody else's number moves, but the PEER still has to hunt this avatar.
@@ -884,14 +775,11 @@ export class Quests {
     }
     // Persisted with the journal (backlog 51): relayed live and then forgotten, so a relog
     // greeted every NPC with the topics this character had already learned missing.
-    const target = this.ctx.isShared('journal') ? this.ctx.journalTarget(player) : player.charId;
-    if (target !== undefined) {
-      this.ctx.players.update(target, (doc) => {
-        const set = new Set(doc.topics ?? []);
-        for (const t of topics) set.add(t);
-        doc.topics = [...set].slice(-MAX_TOPICS);
-      });
-    }
+    this.ctx.players.update(player.charId, (doc) => {
+      const set = new Set(doc.topics ?? []);
+      for (const t of topics) set.add(t);
+      doc.topics = [...set].slice(-MAX_TOPICS);
+    });
     if (!this.ctx.isShared('journal')) return; // topics follow the journal's sharing rule
     this.relayAll(player.id, 'TopicsLearned', { topics, byId: player.id });
   }
