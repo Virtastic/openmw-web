@@ -13,6 +13,7 @@ interface Sent { name: string; body: Record<string, unknown> }
 function world(store = new SocialStore(':memory:')) {
   const players = new Map<string, Player>();
   const sent = new Map<string, Sent[]>();
+  const journals = new Map<string, Record<string, number>>();
   const add = (acct: string): Player => {
     const box: Sent[] = [];
     sent.set(acct, box);
@@ -33,9 +34,10 @@ function world(store = new SocialStore(':memory:')) {
     displayName: (a) => a,
     resolveName: (n) => (players.has(n) ? n : undefined),
     now: () => 1_700_000_000_000,
+    journalOf: (p) => journals.get(p.accountKey) ?? {},
   });
   const lastParty = (a: string) => (sent.get(a) ?? []).filter((e) => e.name === 'PartyState').at(-1)?.body;
-  return { store, social, add, players, sent, lastParty, stop: () => social.stop() };
+  return { store, social, add, players, sent, journals, lastParty, stop: () => social.stop() };
 }
 
 function join(w: ReturnType<typeof world>, leader: Player, who: Player): void {
@@ -173,5 +175,37 @@ test('group travel: the leader takes the strider; members in the cell are offere
   w.social.handleEvent(c, 'PartyFollowDecline', new Map([['acct', 'a']]));
   assert.equal(w.social.partyFollow(c, 'a'), 'no_request');
   assert.equal(w.social.partyFollow(far, 'a'), 'no_request');
+  w.stop(); w.store.close();
+});
+
+test('party phase: lined up on the leader; out-of-phase members get a hint; sync moves everyone (OT3-84)', () => {
+  const w = world();
+  const a = w.add('a'); const b = w.add('b'); const c = w.add('c');
+  w.journals.set('a', { a1_1_findspymaster: 10 });
+  w.journals.set('b', { a1_1_findspymaster: 10 });
+  w.journals.set('c', { a1_1_findspymaster: 1, ms_fargothring: 100 });
+  join(w, a, b); join(w, a, c);
+  const phase = (x: string) => w.lastParty(x)?.phase as { anchor: string; youAnchor: boolean; offBy?: number; quests?: string[] };
+  assert.equal(phase('b').anchor, 'a', 'default: the leader');
+  assert.equal(phase('a').youAnchor, true);
+  assert.equal(phase('b').offBy, 0);
+  assert.equal(phase('c').offBy, 2);
+  assert.deepEqual(phase('c').quests, ['a1_1_findspymaster', 'ms_fargothring']);
+  // Only the leader syncs, and only to a member.
+  assert.equal(w.social.partySync(b, 'c'), 'not_leader');
+  assert.equal(w.social.partySync(a, 'nobody'), 'not_in_party');
+  w.social.handleEvent(a, 'PartySync', new Map([['acct', 'c']]));
+  for (const x of ['a', 'b', 'c']) assert.equal(phase(x).anchor, 'c', 'everyone moves to c');
+  assert.equal(phase('c').offBy, 0);
+  assert.equal(phase('a').offBy, 2);
+  // Syncing back to self, passing lead, or the anchor leaving all fall back to the leader.
+  assert.equal(w.social.partySync(a, 'a'), 'ok');
+  assert.equal(phase('b').anchor, 'a');
+  w.social.partySync(a, 'c');
+  assert.equal(w.social.partyLeave('c'), 'ok');
+  assert.equal(phase('b').anchor, 'a');
+  w.social.partySync(a, 'b');
+  assert.equal(w.social.partyLead(a, 'b'), 'ok');
+  assert.equal(phase('a').anchor, 'b');
   w.stop(); w.store.close();
 });

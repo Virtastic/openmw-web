@@ -139,6 +139,7 @@ local SOCIAL_OK = {
     PartyLeave    = 'You left the party.',
     PartyKick     = 'Removed from the party.',
     PartyLead     = 'Party lead passed.',
+    PartySync     = 'Party synced.',
     SetLfg        = 'Looking-for-group updated.',
     PartyFollowDecline = 'You stay here.',
 }
@@ -394,7 +395,7 @@ return {
         -- OT3-106: the whole party view, pushed on every change and on join.
         MP_PartyState = function(data)
             party = { id = data.id or 0, leader = data.leader or '', youLead = data.youLead == true,
-                members = data.members or {} }
+                members = data.members or {}, phase = data.phase }
             if party.id ~= 0 then partyInvites = {} end -- in a party: other invites are moot
             mirror()
         end,

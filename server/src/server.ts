@@ -649,6 +649,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     resolveName: (name) => accounts.keyForUsername(name) ?? (accounts.existsNow(name) ? name.toLowerCase() : undefined),
     now: () => Date.now(),
     levelOf,
+    journalOf: (p) => playerStore.getCached(p.charId)?.journal ?? {},
     // A4/3.8: the context-menu report writes to the same queue as /report.
     report: (doc) => moderation.reports.write({
       ts: new Date().toISOString(),

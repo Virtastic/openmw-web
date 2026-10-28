@@ -95,6 +95,8 @@ interface SocialDeps {
   now(): number;
   // OT3-67: the character's level, for the Novice channel and the mentor opt-in. Absent = 1.
   levelOf?(player: Player): number;
+  // OT3-84: the character's journal (questId -> stage), for the party's out-of-phase hint.
+  journalOf?(player: Player): Record<string, number>;
   // A4/3.8: file a report into the moderation queue (the same store /report writes).
   report?(doc: {
     reporter: { id: number; account: string; name: string };
@@ -773,6 +775,7 @@ export class Social {
       case 'PartyDecline':
       case 'PartyKick':
       case 'PartyLead':
+      case 'PartySync':
       case 'PartyLeave': {
         // By name from the Players tab, by acct from party/invite rows; targetAcct takes either.
         const who = this.targetAcct(body) ?? str('acct');
@@ -783,6 +786,7 @@ export class Social {
           case 'PartyDecline': this.d.store.removePartyInvite(who, player.accountKey); r = 'ok'; break;
           case 'PartyKick': r = this.partyKick(player, who); break;
           case 'PartyLead': r = this.partyLead(player, who); break;
+          case 'PartySync': r = this.partySync(player, who); break;
           default: r = this.partyLeave(player.accountKey);
         }
         // A decline echoes the inviter so the client can drop that card.
@@ -891,8 +895,46 @@ export class Social {
     if (party.leader !== player.accountKey) return 'not_leader';
     if (!party.members.includes(targetAcct)) return 'not_in_party';
     this.d.store.setPartyLeader(party.id, targetAcct);
+    this.phaseAnchor.delete(party.id); // a new leader brings the party to their own phase
     this.pushParty(targetAcct);
     return 'ok';
+  }
+
+  // ------------------------------------------------------------ party phase (OT3-84)
+  // Whose progress the party is lined up on: the leader's, unless the leader synced to a
+  // member. In memory on purpose: it is a "right now" choice, and the leader re-picks it.
+  private phaseAnchor = new Map<number, AccountKey>();
+
+  /** The leader lines the party up on `targetAcct`'s progress (their own acct resets it). */
+  partySync(player: Player, targetAcct: AccountKey): SocialFailure | 'ok' {
+    const party = this.d.store.partyOf(player.accountKey);
+    if (!party) return 'not_in_party';
+    if (party.leader !== player.accountKey) return 'not_leader';
+    if (!party.members.includes(targetAcct)) return 'not_in_party';
+    if (targetAcct === party.leader) this.phaseAnchor.delete(party.id);
+    else this.phaseAnchor.set(party.id, targetAcct);
+    this.pushParty(targetAcct);
+    return 'ok';
+  }
+
+  /** The party's phase anchor: the synced member while they are still in it, else the leader. */
+  phaseAnchorOf(party: { id: number; leader: AccountKey; members: AccountKey[] }): AccountKey {
+    const a = this.phaseAnchor.get(party.id);
+    return a !== undefined && party.members.includes(a) ? a : party.leader;
+  }
+
+  /** Quests where `acct` and the anchor stand at different stages. Undefined when either is
+   *  offline (no journal to read): the hint then says nothing rather than guessing. */
+  private phaseDiff(acct: AccountKey, anchor: AccountKey): string[] | undefined {
+    if (acct === anchor || !this.d.journalOf) return [];
+    const me = this.onlinePlayer(acct), them = this.onlinePlayer(anchor);
+    if (!me || !them) return undefined;
+    const a = this.d.journalOf(me), b = this.d.journalOf(them);
+    const out: string[] = [];
+    for (const q of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if ((a[q] ?? 0) !== (b[q] ?? 0)) out.push(q);
+    }
+    return out.sort();
   }
 
   // ------------------------------------------------------------ party finder (OT3-73)
@@ -999,10 +1041,19 @@ export class Social {
       p.peer.sendEvent('PartyState', { id: 0, leader: '', members: [] });
       return;
     }
+    const anchor = this.phaseAnchorOf(party);
+    const diff = this.phaseDiff(acct, anchor);
     p.peer.sendEvent('PartyState', {
       id: party.id,
       leader: party.leader,
       youLead: party.leader === acct, // the client does not know its own account key
+      // OT3-84: whose progress the party is lined up on, and how far this member is from it.
+      phase: {
+        anchor,
+        anchorName: this.d.displayName(anchor) ?? anchor,
+        youAnchor: anchor === acct,
+        ...(diff !== undefined ? { offBy: diff.length, quests: diff.slice(0, 5) } : {}),
+      } as unknown as never,
       members: party.members.map((m) => {
         const local = this.onlinePlayer(m);
         return {

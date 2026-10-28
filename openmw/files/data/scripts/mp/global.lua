@@ -2503,7 +2503,7 @@ local eventHandlers = {
             MentorOptIn = true,
             -- OT3-106 parties.
             PartyInvite = true, PartyAccept = true, PartyDecline = true,
-            PartyLeave = true, PartyKick = true, PartyLead = true,
+            PartyLeave = true, PartyKick = true, PartyLead = true, PartySync = true,
             -- OT3-73 party finder.
             SetLfg = true, LfgQuery = true,
             -- OT3-79 group travel.

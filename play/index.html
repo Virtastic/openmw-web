@@ -4697,13 +4697,18 @@ window.omw = (function(){
         sec.appendChild(c); });
       if (party.id){
         sec.appendChild(el('h3',null,'Party <span class="n">'+partyMembers.length+'/6</span>'));
+        // OT3-84: whose progress the party is lined up on, and a hint when you are not on it.
+        var ph = party.phase || {};
+        if (ph.offBy > 0) sec.appendChild(el('div','empty','Out of phase with '+esc(ph.anchorName)+' on '+ph.offBy+' quest'+(ph.offBy>1?'s':'')
+          +' ('+(ph.quests||[]).map(esc).join(', ')+(ph.offBy>5?', …':'')+'). People and doors they see may differ from yours.'));
         partyMembers.forEach(function(pm){
-          var acts = [], isLead = pm.acct === party.leader;
+          var acts = [], isLead = pm.acct === party.leader, isAnchor = pm.acct === ph.anchor;
+          if (party.youLead && !isAnchor && pm.online) acts.push(['sync to', function(){ cmd('social:PartySync:'+pm.acct); }]);
           if (party.youLead && !isLead){
             acts.push(['make leader', function(){ cmd('social:PartyLead:'+pm.acct); }]);
             acts.push(['kick', function(){ cmd('social:PartyKick:'+pm.acct); }]);
           }
-          sec.appendChild(personRow(pm.name, (isLead ? 'Leader · ' : '') + (pm.online ? 'Online' : 'Offline'), pm.online, acts));
+          sec.appendChild(personRow(pm.name, (isLead ? 'Leader · ' : '') + (isAnchor && ph.anchor ? 'Party phase · ' : '') + (pm.online ? 'Online' : 'Offline'), pm.online, acts));
         });
         var lv = el('button','btn','Leave party'); lv.onclick = function(){ lv.disabled = true; cmd('social:PartyLeave:'); };
         sec.appendChild(lv);
