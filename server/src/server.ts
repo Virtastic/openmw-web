@@ -225,6 +225,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // vanilla defaults, never a boot failure.
   const contentTable = await ContentTable.load(sharedDir);
   world.setQuestItems(contentTable.questItems);
+  world.setStashes(contentTable.stashes); // OT3-179
   // OT3-178: the party standing in the looter's cell shares a notable item's trade window.
   const binding = new Binding(contentTable.questItems, contentTable.notableItems);
   world.setBinding(binding, (p) => (socialStore.partyOf(p.accountKey)?.members ?? [])

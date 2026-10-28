@@ -304,6 +304,7 @@ export class WorldState {
   // Phase 4: lowercased record ids of quest-critical items that must never deplete from a
   // container (see containerOp). Loaded from the content table; empty = vanilla behaviour.
   private questItems: ReadonlySet<string> = new Set();
+  private stashes: ReadonlySet<string> = new Set();
   // Phase 3 public economy: named/unique actors whose corpses drop nothing in a world
   // that respawns everything, and whether this world enforces that rule at all.
   private uniqueActors: ReadonlySet<string> = new Set();
@@ -317,6 +318,11 @@ export class WorldState {
   setBinding(b: WorldState['binding'], lootParty: (player: Player) => string[]): void {
     this.binding = b;
     this.lootParty = lootParty;
+  }
+
+  /** OT3-179: personal stash containers, as lower-cased "<cellKey>|<refKey>". */
+  setStashes(keys: ReadonlySet<string>): void {
+    this.stashes = keys;
   }
 
   setQuestItems(ids: Iterable<string>): void {
@@ -1732,7 +1738,13 @@ export class WorldState {
     if (!got) return;
     const { doc, ref, cellKey } = got;
     let cont = doc.containers[ref.key];
-    if (!cont || isUnseededContainer(cont, doc.actorDeaths?.[ref.key] !== undefined)) {
+    // OT3-179: a stash starts empty whatever the opener declares; each character's first put
+    // makes their own copy (containerView), so nobody sees anyone else's.
+    if (!cont && this.stashes.has(`${cellKey}|${ref.key}`.toLowerCase())) {
+      cont = doc.containers[ref.key] = { items: [], stateSeq: 1, stash: true };
+      this.cells.markDirty(cellKey);
+    }
+    if (!cont || (!cont.stash && isUnseededContainer(cont, doc.actorDeaths?.[ref.key] !== undefined))) {
       // First opener's contents are the leveled-loot roll and become canonical; an
       // absent list captures an empty container. Later opens never overwrite -- except an
       // untouched empty row (isUnseededContainer), which a non-empty open re-seeds.

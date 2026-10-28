@@ -40,6 +40,9 @@ interface ContentTableDoc {
   // actor takes no damage from a player unless they (or a party member online) have started
   // one of its quests. [] = nobody may hurt it.
   storyActors?: Record<string, string[]>;
+  // OT3-179: personal stashes, as "<cellKey>|<refKey>" (e.g. "balmora, south wall cornerclub|c:1234:0").
+  // Each character sees only what they put in; the content's own items never appear.
+  stashes?: string[];
 }
 
 // ESM skill order; a skill's specialization is index / 9 (combat, magic, stealth).
@@ -101,6 +104,7 @@ export class ContentTable {
   readonly notableItems: ReadonlySet<string>;
   readonly items: ReadonlySet<string> | undefined;
   readonly storyActors: ReadonlyMap<string, string[]>;
+  readonly stashes: ReadonlySet<string>;
   private readonly doc: ContentTableDoc;
 
   private constructor(doc: ContentTableDoc) {
@@ -110,6 +114,7 @@ export class ContentTable {
     this.uniqueActors = lower(doc.uniqueActors ?? DEFAULT_UNIQUE_ACTORS);
     this.notableItems = lower(doc.notableItems ?? DEFAULT_NOTABLE_ITEMS);
     this.items = doc.items ? lower(doc.items) : undefined;
+    this.stashes = lower(doc.stashes ?? []);
     this.storyActors = new Map(Object.entries(doc.storyActors ?? DEFAULT_STORY_ACTORS)
       .map(([id, qs]) => [id.toLowerCase(), qs.map((q) => q.toLowerCase())]));
   }

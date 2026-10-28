@@ -94,6 +94,8 @@ export interface CellDoc {
     // OT3-82: each character's own copy, made on its first take/put (charId -> view).
     // `items` above stays the shared roll a character without a view sees.
     views?: Record<string, { items: ContainerItems; stateSeq: number }>;
+    // OT3-179: a personal stash -- shared `items` stay empty, a reset never touches it.
+    stash?: true;
   }>;
   // M4: last actor snapshot folded when the cell went dormant ({actors:[...]}, JSON-safe),
   // and per-actor highest processed deathNo (dedup + death persistence) with the ABSOLUTE
@@ -415,7 +417,7 @@ export class CellStore {
     const before = this.cache.get(cellKey) ?? (await this.get(cellKey));
     const doc = emptyCellDoc();
     for (const [key, cont] of Object.entries(before.containers)) {
-      if (!this.restockOnReset) {
+      if (!this.restockOnReset || cont.stash) {
         // Shared world: CARRY THE ROW FORWARD, looted as it stands. Dropping it looked the
         // same from outside but re-armed the faucet: containerOpen treats a missing row as
         // "first open" and adopts the opener's client-declared contents as canonical, so the
@@ -429,6 +431,7 @@ export class CellStore {
           ...(cont.gold !== undefined ? { gold: cont.gold } : {}),
           ...(cont.goldOrigin !== undefined ? { goldOrigin: cont.goldOrigin } : {}),
           ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}),
+          ...(cont.stash ? { stash: true as const } : {}),
           ...(cont.views ? { views: Object.fromEntries(Object.entries(cont.views).map(([c, v]) =>
             [c, { items: v.items.map((i) => ({ ...i })), stateSeq: v.stateSeq + 1 }])) } : {}) };
         continue;
