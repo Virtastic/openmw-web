@@ -322,6 +322,7 @@ export class PlayerStore {
     await Promise.resolve();
     try {
       this.db.prepare('DELETE FROM players WHERE key = ?').run(key);
+      this.db.prepare('DELETE FROM snapshots WHERE key = ?').run(key); // OT3-184: erasure means the history too
       this.db.prepare('INSERT OR REPLACE INTO erased (key, at) VALUES (?, ?)').run(key, Date.now());
     } catch (err) {
       log('warn', 'playerstore.erase_failed', { key, error: String(err) });

@@ -149,6 +149,8 @@ function erasePlayerDocs(dataDir: string, key: string): boolean {
     let erased = false;
     for (const k of charIds) {
       if (Number(db.prepare('DELETE FROM players WHERE key = ?').run(k).changes) > 0) erased = true;
+      // OT3-184: the restore history is the character too. Pre-004 databases have no table.
+      try { db.prepare('DELETE FROM snapshots WHERE key = ?').run(k); } catch { /* pre-004 */ }
       // THE TOMBSTONE. A world that still has this doc cached writes it straight back at its
       // next flush unless the `erased` table says not to (playerstore.ts flushKey). The
       // in-process eraser wrote it; this one did not, so a dashboard delete on a gateway
