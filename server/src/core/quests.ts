@@ -820,6 +820,16 @@ export class Quests {
     this.relayAll(player.id, 'FactionUpdate', { factionId, ...state });
   }
 
+  // OT3-115: a crime the PEER saw raises the criminal's bounty server-side, so a client that
+  // never reports its own CrimeUpdate is still wanted. Personal crime only (a shared record
+  // is raised by the client's CrimeUpdate, which every party member relays).
+  raiseBounty(player: Player, delta: number): void {
+    if (this.ctx.isShared('crime') || delta <= 0) return;
+    const bounty = (player.bounty ?? 0) + delta;
+    player.bounty = bounty;
+    if (player.charId !== undefined) this.ctx.players.update(player.charId, (doc) => (doc.bounty = bounty));
+  }
+
   private crime(player: Player, body: LTable): void {
     const bounty = finite(body.get('bounty'));
     const kind = body.get('kind');
@@ -834,13 +844,16 @@ export class Quests {
     // correlation is the conversation itself: a drop within 10 s of this player's own
     // DialogueLock traffic (pay the fine / go to jail) stands, any other is refused.
     const talked = player.lastDialogueAt !== undefined && Date.now() - player.lastDialogueAt <= Quests.GUEST_WRITE_GRACE_MS;
-    if (player.system !== true && !talked && this.ctx.isShared('crime') && bounty < (this.ctx.cells.sharedQuest().bounty ?? 0)) {
-      const have = this.ctx.cells.sharedQuest().bounty ?? 0;
+    // OT3-115: the same rule for a PERSONAL record, against the server's own number: a patched
+    // client clearing its own bounty outside a guard's dialogue is refused too.
+    const sharedCrime = this.ctx.isShared('crime');
+    const have = sharedCrime ? this.ctx.cells.sharedQuest().bounty ?? 0 : player.bounty ?? 0;
+    if (player.system !== true && !talked && bounty < have) {
       log('warn', 'quest.crime_drop_refused', { from: player.name, have, got: bounty });
       this.ctx.noteAnomaly?.(player.accountKey, 'crime_drop');
       // The refusal is not silent (backlog 386): a script pardon on the host is the honest
       // case, and its client would otherwise keep 0 while the peer keeps hunting.
-      player.peer.sendEvent('CrimeUpdate', { bounty: have, shared: true });
+      player.peer.sendEvent('CrimeUpdate', { bounty: have, ...(sharedCrime ? { shared: true } : {}) });
       return;
     }
     // Shared: routed like the journal — see factionUpdate above — a bounty earned in someone
