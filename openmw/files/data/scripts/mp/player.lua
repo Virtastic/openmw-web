@@ -16,6 +16,7 @@ local nearby = require('openmw.nearby')
 
 local json = require('scripts.mp.json')
 local identity = require('scripts.mp.identity')
+local shared = require('scripts.mp.shared')
 
 local HISTORY_MAX = 8
 
@@ -121,12 +122,7 @@ local jumpFrames = 0 -- harness 'jump': frames left holding the jump control (an
 local pressUntil = 0
 local pendingTestEquip = nil -- harness 'equip:<id>:<slot>': equip once the grant lands
 
-local function cellKey()
-    local cell = self.cell
-    if not cell then return nil end
-    if cell.isExterior then return cell.gridX .. ',' .. cell.gridY end
-    return string.lower(cell.name)
-end
+local function cellKey() return shared.cellKeyOf(self.cell) end
 
 local function poseFlags()
     local flags = 0

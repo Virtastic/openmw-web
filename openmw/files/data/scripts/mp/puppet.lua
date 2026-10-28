@@ -16,6 +16,7 @@ local I = require('openmw.interfaces')
 local mp = require('openmw.mp')
 
 local Interp = require('scripts.mp.interp')
+local shared = require('scripts.mp.shared')
 
 -- G2 render LOD. tier arrives stamped on each MP_Pose by global.lua (which knows where the
 -- local player is); 0 = near, 1 = mid, 2 = far.
@@ -296,15 +297,7 @@ local function zeroControls()
     self.controls.jump = false
 end
 
-local function shortestArc(a)
-    while a > math.pi do a = a - 2 * math.pi end
-    while a < -math.pi do a = a + 2 * math.pi end
-    return a
-end
-
-local function bit(flags, n) -- flags arrive as LSER doubles; pure-arithmetic bit test
-    return math.floor((flags or 0) / 2 ^ n) % 2 >= 1
-end
+local bit, shortestArc = shared.bit, shared.shortestArc
 
 local function requestSnap(target, why, force)
     local now = core.getRealTime()
@@ -321,21 +314,9 @@ local function requestSnap(target, why, force)
         { id = playerId, actorKey = actorKey, obj = self.object, x = target.x, y = target.y, z = target.z, yaw = target.yaw, why = why })
 end
 
--- M2: setEquipment only works once the items granted by global.lua exist in our inventory
--- (createObject+moveInto lands a frame or more later) — retry briefly, then best-effort.
+-- M2: equip once the items granted by global.lua land (shared.equipWhenReady).
 local function equipTick(now)
-    if not pendingEquip then return end
-    local have = {}
-    for _, item in ipairs(types.Actor.inventory(self):getAll()) do
-        have[item.recordId] = true
-    end
-    local ready = true
-    for _, id in pairs(pendingEquip) do
-        if not have[id] then ready = false end
-    end
-    if ready or now > equipRetryUntil then
-        local ok, err = pcall(types.Actor.setEquipment, self, pendingEquip)
-        if not ok then print('[mp] puppet equip failed: ' .. tostring(err)) end
+    if pendingEquip and shared.equipWhenReady(types, self, pendingEquip, equipRetryUntil, now, 'puppet') then
         pendingEquip = nil
     end
 end

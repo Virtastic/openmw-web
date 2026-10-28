@@ -20,6 +20,7 @@ local core = require('openmw.core')
 local I = require('openmw.interfaces')
 local mp = require('openmw.mp')
 local util = require('openmw.util')
+local shared = require('scripts.mp.shared')
 
 -- PvP POLICY, pushed by global.lua (mpAvatarPolicy) on spawn and whenever it changes.
 -- The peer resolves avatar-vs-avatar melee NATIVELY, so with pvp off the server's
@@ -226,15 +227,7 @@ local function registerHitVeto()
     end)
 end
 
-local function bit(flags, n)
-    return math.floor((flags or 0) / (2 ^ n)) % 2 == 1
-end
-
-local function shortestArc(a)
-    while a > math.pi do a = a - 2 * math.pi end
-    while a < -math.pi do a = a + 2 * math.pi end
-    return a
-end
+local bit, shortestArc = shared.bit, shared.shortestArc
 
 local function stop()
     self.controls.movement = 0
@@ -289,28 +282,7 @@ local function rebindAmmo(now)
 end
 local function equipTick(now)
     rebindAmmo(now)
-    if not pendingEquip then return end
-    local have = {}
-    for _, item in ipairs(types.Actor.inventory(self):getAll()) do have[item.recordId] = true end
-    local ready = true
-    for _, id in pairs(pendingEquip) do
-        if not have[id] then ready = false end
-    end
-    if ready or now > equipRetryUntil then
-        -- BY OBJECT, THE LARGEST STACK. A record id equips the first matching stack, and the
-        -- pack can hold two of the same record: the single item the equipment push fabricated
-        -- before the inventory doc arrived, and the real stack the doc granted beside it. A
-        -- quiver bound to the lone arrow loosed one shot and the avatar stood there with the
-        -- other twenty-three in the pack.
-        local best = {}
-        for _, item in ipairs(types.Actor.inventory(self):getAll()) do
-            local b = best[item.recordId]
-            if not b or (item.count or 1) > (b.count or 1) then best[item.recordId] = item end
-        end
-        local slots = {}
-        for slot, id in pairs(pendingEquip) do slots[slot] = best[id] or id end
-        local ok, err = pcall(types.Actor.setEquipment, self, slots)
-        if not ok then print('[mp] avatar equip failed: ' .. tostring(err)) end
+    if pendingEquip and shared.equipWhenReady(types, self, pendingEquip, equipRetryUntil, now, 'avatar') then
         pendingEquip = nil
     end
 end

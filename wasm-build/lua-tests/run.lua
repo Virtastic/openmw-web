@@ -614,7 +614,7 @@ do
   -- too, or every avatar fights bare-handed (it did, until s138 tried to draw a bow).
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
   check('avatar.lua applies MP_Equip on the avatar body (setEquipment is Self-gated)',
-    av:find('MP_Equip = function', 1, true) ~= nil and av:find('pcall(types.Actor.setEquipment, self, slots)', 1, true) ~= nil)
+    av:find('MP_Equip = function', 1, true) ~= nil and av:find("shared.equipWhenReady(types, self, pendingEquip, equipRetryUntil, now, 'avatar')", 1, true) ~= nil)
   check('social.lua tells the player why time did not pass',
     s:find('MP_WorldTimeRefused = function', 1, true) ~= nil)
   -- ...and world.lua hands the adopted hours back, or the refused player lives ahead of
@@ -1686,10 +1686,34 @@ do
   check('MP_ActorAI combat rolls iVoiceAttackOdds into mp.say(obj, attack)',
     ac:find("mp.say(obj, 'attack')", 1, true) ~= nil and lb:find('api["say"]', 1, true) ~= nil)
   -- #385: the chargen sanctuary is the two vanilla cells by exact name, not any 'census'.
-  check('isChargenCell exact-matches the two vanilla chargen cells in global.lua and objects.lua',
-    g:find("return k == 'seyda neen, census and excise office' or k == 'imperial prison ship'", 1, true) ~= nil
-    and ob:find("return k == 'seyda neen, census and excise office' or k == 'imperial prison ship'", 1, true) ~= nil
-    and g:find("k:find('census', 1, true)", 1, true) == nil and ob:find("k:find('census', 1, true)", 1, true) == nil)
+  do -- OT3-237: one copy of the shared helpers, in scripts/mp/shared.lua
+    package.loaded['scripts.mp.shared'] = nil
+    local sh = require('scripts.mp.shared')
+    check('isChargenCell exact-matches the two vanilla chargen cells, and global/objects use the shared one',
+      sh.isChargenCell('Seyda Neen, Census and Excise Office') and sh.isChargenCell('imperial prison ship')
+      and not sh.isChargenCell('Vivec, Census and Excise Office') and not sh.isChargenCell(nil)
+      and g:find('local isChargenCell = shared.isChargenCell', 1, true) ~= nil
+      and ob:find('local isChargenCell = shared.isChargenCell', 1, true) ~= nil)
+    check('shared.cellKeyOf: grid for an exterior, lowercased name inside, nil for no cell',
+      sh.cellKeyOf({ isExterior = true, gridX = -2, gridY = 3 }) == '-2,3'
+      and sh.cellKeyOf({ isExterior = false, name = 'Balmora, Guild of Mages' }) == 'balmora, guild of mages'
+      and sh.cellKeyOf(nil) == nil)
+    check('shared.bit and shortestArc',
+      sh.bit(5, 0) and not sh.bit(5, 1) and sh.bit(5, 2) and not sh.bit(nil, 0)
+      and math.abs(sh.shortestArc(3 * math.pi / 2) + math.pi / 2) < 1e-9)
+    local inv, equipped = {}, nil
+    local T = { Actor = { inventory = function() return { getAll = function() return inv end } end,
+                          setEquipment = function(_, slots) equipped = slots end } }
+    local pend = { [1] = 'arrow' }
+    local waited = sh.equipWhenReady(T, {}, pend, 10, 5, 't') == false and equipped == nil
+    local lone, stack = { recordId = 'arrow', count = 1 }, { recordId = 'arrow', count = 23 }
+    inv = { lone, stack }
+    check('shared.equipWhenReady waits for the grant, then equips the largest stack by object',
+      waited and sh.equipWhenReady(T, {}, pend, 10, 6, 't') == true and equipped[1] == stack)
+    inv, equipped = {}, nil
+    check('shared.equipWhenReady gives up waiting at the deadline and equips by record id',
+      sh.equipWhenReady(T, {}, pend, 10, 11, 't') == true and equipped[1] == 'arrow')
+  end
   -- #312: a block on the peer reaches the owner as a sound.
   check('the stats report drains mp.takeBlock and the owner plays it',
     g:find('local s = mp.takeBlock(p.obj)', 1, true) ~= nil

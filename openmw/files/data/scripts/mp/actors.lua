@@ -13,6 +13,7 @@ local mp = require('openmw.mp')
 local json = require('scripts.mp.json')
 -- teleports refused while another is in flight land on a later frame (latest wins)
 local retry = require('scripts.mp.retry')
+local shared = require('scripts.mp.shared')
 
 local actors = {}
 
@@ -125,11 +126,7 @@ end
 -- Runtime actors the holder has asked the server to name (netId pending).
 local netPending = {}
 
-local function cellKeyOf(cell)
-    if not cell then return nil end
-    if cell.isExterior then return cell.gridX .. ',' .. cell.gridY end
-    return string.lower(cell.name)
-end
+local cellKeyOf = shared.cellKeyOf
 
 -- Live NPCs/creatures bucketed by cell key, excluding the player and any MP puppets
 -- (remote-player avatars we spawned — those are driven by player move frames, and

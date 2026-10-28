@@ -145,6 +145,7 @@ set(BUILTIN_DATA_FILES
     scripts/mp/reconcile.lua
     scripts/mp/retry.lua
     scripts/mp/social.lua
+    scripts/mp/shared.lua
     scripts/mp/selfkill.lua
     scripts/mp/world.lua
 

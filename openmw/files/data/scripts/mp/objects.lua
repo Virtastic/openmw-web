@@ -19,6 +19,7 @@ local json = require('scripts.mp.json')
 local worldmp = require('scripts.mp.world')
 -- remove/teleport that survive an in-flight teleport (count 0 until the end of the frame)
 local retry = require('scripts.mp.retry')
+local shared = require('scripts.mp.shared')
 
 local objects = {}
 
@@ -180,8 +181,7 @@ end
 local function cellKeyOfObj(obj)
     local cell = obj.cell
     if not cell then return deps.ownCellKeyFn() end
-    if cell.isExterior then return cell.gridX .. ',' .. cell.gridY end
-    return string.lower(cell.name)
+    return shared.cellKeyOf(cell)
 end
 
 -- Chargen sanctuary: the tutorial cells are LOCAL-ONLY. The prison ship and census office
@@ -190,12 +190,7 @@ end
 -- character taking the papers would otherwise delete them for every later character in the
 -- same world ("the papers never appear"). Nothing in these cells is reported out either: a
 -- tutorial prop has no business in shared world state.
-local function isChargenCell(cellKey)
-    -- Exact names (backlog 385): a substring on 'census' made every Tamriel Rebuilt Census
-    -- and Excise office a sanctuary.
-    local k = string.lower(tostring(cellKey or ''))
-    return k == 'seyda neen, census and excise office' or k == 'imperial prison ship'
-end
+local isChargenCell = shared.isChargenCell
 
 local function sendAddressed(eventName, obj, extra)
     local addr = addrOf(obj)

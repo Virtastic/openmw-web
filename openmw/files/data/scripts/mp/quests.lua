@@ -22,6 +22,7 @@ local mp = require('openmw.mp')
 local I = require('openmw.interfaces')
 
 local json = require('scripts.mp.json')
+local shared = require('scripts.mp.shared')
 
 local quests = {}
 
@@ -128,7 +129,7 @@ end
 -- The server's cell key for a cell: "x,y" for an exterior, the lowercased name otherwise.
 local function cellKeyOf(cell)
     if not cell then return deps.ownCellKeyFn and deps.ownCellKeyFn() or nil end
-    return cell.isExterior and (cell.gridX .. ',' .. cell.gridY) or string.lower(cell.name)
+    return shared.cellKeyOf(cell)
 end
 
 -- ================================================================== journal

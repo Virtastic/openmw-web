@@ -13,6 +13,7 @@ local world = require('openmw.world')
 
 local json = require('scripts.mp.json')
 local net = require('scripts.mp.net')
+local shared = require('scripts.mp.shared')
 
 -- Where-am-I switcher state. `worldUrls.own` = this character's own world (Solo/Party — the
 -- same instance, mode-flipped in place). `pendingFlip` defers a Solo<->Party flip until we
@@ -326,15 +327,7 @@ local wasJoined = false
 -- (and force-includes a pose when someone enters the bubble), so the authoritative spawn
 -- trigger is simply "first MP_MoveBatch entry for a rostered id"; PlayerCellChange handles
 -- teleports and despawns.
--- Same sanctuary objects.lua and the server apply: the opening is driven by Morrowind's own
--- scripts on the actors in these cells, so nothing of ours belongs in them. Kept in step with
--- isChargenCell in scripts/mp/objects.lua and server/src/core/movement.ts.
-local function isChargenCell(cellKey)
-    -- Exact names (backlog 385): a substring on 'census' made every Tamriel Rebuilt Census
-    -- and Excise office a sanctuary.
-    local k = string.lower(tostring(cellKey or ''))
-    return k == 'seyda neen, census and excise office' or k == 'imperial prison ship'
-end
+local isChargenCell = shared.isChargenCell -- the sanctuary objects.lua and the server apply
 
 local PUPPET_TEMPLATE_ID = 'villager_00' -- demo NPC record (race "Imperial"), neutral kit
 
@@ -368,12 +361,6 @@ local function droppedInboundTick(now)
     if dropped == lastDroppedInbound then return end
     lastDroppedInbound = dropped
     if ownCellKeyCache then mp.sendEvent('ResyncRequest', { cellKey = ownCellKeyCache }) end
-end
-
-local function toCellKey(cell)
-    if not cell then return nil end
-    if cell.isExterior then return cell.gridX .. ',' .. cell.gridY end
-    return string.lower(cell.name)
 end
 
 local function parseExteriorKey(key)
@@ -1792,7 +1779,7 @@ local function puppetTick()
     local now = core.getRealTime()
     local player = playerScript()
     if player then
-        local key = toCellKey(player.cell)
+        local key = shared.cellKeyOf(player.cell)
         if key ~= ownCellKeyCache then
             ownCellKeyCache = key
             pcall(function() mp.set('cell', tostring(key)) end) -- scenario mirror
