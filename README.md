@@ -116,8 +116,7 @@ in a browser tab is written up in [`WASM_ADAPTATIONS.md`](WASM_ADAPTATIONS.md).
 Every [release](https://github.com/Virtastic/openmw-web/releases) ships two archives:
 
 - **`openmw-web-<tag>.zip`** - the prebuilt engine and web front-end. It feeds the Docker
-  quick start (unzip into `play/`) and also runs standalone: unzip anywhere and double-click
-  `Start openmw-web` for a dashboard-less static server.
+  quick start (unzip into `play/`).
 - **`openmw-web-src-<tag>.tar.gz`** - the exact source snapshot (GPLv3 Corresponding
   Source).
 

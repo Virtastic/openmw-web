@@ -37,14 +37,13 @@ play/openmw.js
 .env
 .env.*
 !.env.example
-!play/.env.example
 *.tfstate
 *.tfstate.*
 
 # === Preserved upstream OpenMW git dir (local backup, not for this repo) ===
 openmw/.git-upstream/
 
-# === Local launcher feature-flag config (copy play/.env.example -> play/.env) ===
+# === Local play/server.py env overrides ===
 play/.env
 
 # === Terraform local state & secrets (infra/) — commit .terraform.lock.hcl, not these ===

@@ -30,7 +30,7 @@ test('an in-game read failure becomes EIO; a boot one still throws for the reloa
   assert.match(read[0], /throw new FS\.ErrnoError\(29/);
 });
 
-test('the warm-up rests in proportion to its fetches, and only prod runs it at full share', { skip }, () => {
+test('the warm-up rests in proportion to its fetches, at a quarter share on every v2 server', { skip }, () => {
   const sfs = readFileSync(SFS, 'utf8');
   const rest = /const rest = \(ms\) => nap\((.*)\);/.exec(sfs);
   assert.ok(rest, 'rest() not found');
@@ -40,6 +40,6 @@ test('the warm-up rests in proportion to its fetches, and only prod runs it at f
   assert.equal(fn(1, id, 1000), 30, 'full share keeps the old 30 ms');
   assert.equal(fn(undefined, id, 1000), 30);
   const page = readFileSync(PAGE, 'utf8');
-  assert.match(page, /virtastic\\\.app\$\/\.test\(location\.hostname\) \? 1 : 0\.25/);
+  assert.match(page, /var share = 0.25;/); // CL10: every v2 server is a self-deployment
   assert.match(page, /StreamFS\.warm\(WARM_RE, WARM_FIRST, share\)/);
 });

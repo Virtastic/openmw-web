@@ -24,7 +24,7 @@ def _load_dotenv(path):
 _load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
 PORT = 8910
-# Bind localhost by default. This is a LOCAL self-host dev server: it serves the current directory
+# Bind localhost by default. This is a LOCAL dev/harness server (never shipped: v2 serves play/ from Node or Caddy): it serves the current directory
 # with directory listing and no auth, so it should not be exposed on a network. Set OPENMW_HOST=0.0.0.0
 # (and firewall the port) only if you deliberately want it reachable from other machines.
 HOST = os.environ.get('OPENMW_HOST', '127.0.0.1').strip() or '127.0.0.1'
