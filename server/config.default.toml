@@ -224,6 +224,9 @@ loginPerMinPerIp = 5              # auth attempts (Register+Login) per IP per mi
 # H2: a new account's first hours. It cannot hand items to anyone (no drops, no container
 # puts in the shared world) and chats at most one line per 5 s. 0 = no probation.
 probationHours = 24
+# Global chat reaches every player, so each account may post one global line per this many
+# seconds (and never while on probation). 0 = no cooldown.
+globalChatCooldownSec = 10
 # HARNESS ONLY. The browser scenarios drive things a real client never sends -- a relayed
 # CombatHit under a simulator, a same-cell snap over 1024 u, a +100 skill, a level step of 4 --
 # and the anti-cheat refusals (#361 #362 #369) are right to drop them. testhost.ts sets this

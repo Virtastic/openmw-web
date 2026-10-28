@@ -350,6 +350,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Opt-in per deployment: a crowded public world wants proximity say, a co-op session
     // very much does not (friends spread across the map must still be able to talk).
     sayProximity: config.rules.sayScope === 'proximity',
+    globalCooldownMs: config.limits.globalChatCooldownSec * 1000,
     // SCROLLBACK. Only the channels a newcomer may legitimately replay: 'global' and 'server'
     // are the server-wide conversation, and world chat ('party' on the wire) is the one
     // world's. History is scoped by channel only (OT3-46).

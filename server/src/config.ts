@@ -223,6 +223,8 @@ export interface Config {
     loginPerMinPerIp: number;
     // H2: a new account's first N hours: no drops or container puts in the shared world, slower chat. 0 = off.
     probationHours: number;
+    // OT3-23: one global chat line per account per N seconds. 0 = off.
+    globalChatCooldownSec: number;
     maxHitDamage: number;
     // M9 interest management + LOD. Tunable, not constants: a crowded public world and a
     // 4-player co-op session want very different answers and neither should need a rebuild.
@@ -650,6 +652,7 @@ function validate(t: Tree): Config {
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
       loginPerMinPerIp: reqNum(t, 'limits', 'loginPerMinPerIp'),
       probationHours: optNum(t, 'limits', 'probationHours', 24),
+      globalChatCooldownSec: optNum(t, 'limits', 'globalChatCooldownSec', 10),
       maxHitDamage: reqNum(t, 'limits', 'maxHitDamage'),
       interestRadius: reqNum(t, 'limits', 'interestRadius'),
       interestHysteresis: reqNum(t, 'limits', 'interestHysteresis'),
@@ -834,7 +837,6 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
   const layers = dashboardLayers(dataDir);
   for (const [i, layer] of layers.entries()) {
     let tree = deepMerge(base, layer.tree);
-    if (override) tree = deepMerge(tree, override as Tree);
     // Worlds spawned by the gateway have no config.toml of their own, so the one flag the
     // browser harness must be able to set on them travels in the environment it already
     // controls. Deliberately env-only and single-purpose: production sets neither.
@@ -844,7 +846,12 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
     }
     // Same for the server test suite (test/helpers.ts sets it): its fresh accounts stand in
     // for established players.
-    if (process.env.OMW_NO_PROBATION === '1') tree = deepMerge(tree, { limits: { probationHours: 0 } } as Tree);
+    // The suite also uses a global line as a delivery fence, so the global cooldown goes too.
+    if (process.env.OMW_NO_PROBATION === '1') {
+      tree = deepMerge(tree, { limits: { probationHours: 0, globalChatCooldownSec: 0 } } as Tree);
+    }
+    // An explicit override is applied last, so a test can turn either of these back on.
+    if (override) tree = deepMerge(tree, override as Tree);
     try {
       cfg = validate(tree);
     } catch (err) {

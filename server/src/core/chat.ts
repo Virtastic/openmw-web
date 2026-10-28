@@ -21,6 +21,7 @@ export interface ChatContext {
   sayProximity?: boolean;
   // OT3-23: accountKey -> when it last spoke on global. Per server, created on first use.
   lastGlobalAt?: Map<string, number>;
+  globalCooldownMs?: number;
 }
 import { cellsVisible } from './movement';
 import { log } from '../log';
@@ -30,18 +31,17 @@ const MAX_CHAT_CHARS = 1024;
 // world chat (OT3-23): a shorter line, one line per account per cooldown -- keyed on the
 // ACCOUNT, so reconnecting does not reset it -- and nothing at all while on probation.
 const MAX_GLOBAL_CHARS = 256;
-const GLOBAL_COOLDOWN_MS = 10_000;
 
 // Returns the refusal to whisper back, or null when the line may go out.
-function globalRefusal(lastGlobalAt: Map<string, number>, player: Player, now: number): string | null {
+function globalRefusal(lastGlobalAt: Map<string, number>, cooldownMs: number, player: Player, now: number): string | null {
   if ((player.probationUntil ?? 0) > now) return 'New accounts cannot use global chat for their first day.';
   const last = lastGlobalAt.get(player.accountKey) ?? 0;
-  if (now - last < GLOBAL_COOLDOWN_MS) {
-    return `Global chat: wait ${Math.ceil((GLOBAL_COOLDOWN_MS - (now - last)) / 1000)} s before the next line.`;
+  if (now - last < cooldownMs) {
+    return `Global chat: wait ${Math.ceil((cooldownMs - (now - last)) / 1000)} s before the next line.`;
   }
   // ponytail: one entry per account that ever spoke globally; prune when it passes 10k.
   if (lastGlobalAt.size > 10_000) {
-    for (const [k, t] of lastGlobalAt) if (now - t >= GLOBAL_COOLDOWN_MS) lastGlobalAt.delete(k);
+    for (const [k, t] of lastGlobalAt) if (now - t >= cooldownMs) lastGlobalAt.delete(k);
   }
   lastGlobalAt.set(player.accountKey, now);
   return null;
@@ -186,7 +186,7 @@ export function handleChatSend(
   }
   if (line === '') return; // a bare prefix is a typo, not a message
   if (channel === 'global') {
-    const refused = globalRefusal(ctx.lastGlobalAt ??= new Map(), player, Date.now());
+    const refused = globalRefusal(ctx.lastGlobalAt ??= new Map(), ctx.globalCooldownMs ?? 0, player, Date.now());
     if (refused !== null) {
       serverWhisper(player, refused);
       log('info', 'chat.global_refused', { from: player.name });

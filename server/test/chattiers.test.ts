@@ -77,7 +77,7 @@ test('a bare tier prefix is treated as a typo, not an empty message', async (t) 
 });
 
 test('global chat: one line per account per cooldown, and a shorter cap (OT3-23)', async (t) => {
-  const world = await two(t);
+  const world = await two(t, { limits: { maxConnsPerIp: 16, globalChatCooldownSec: 10 } });
   world.a.sendEvent('ChatSend', { channel: 'global', text: 'x'.repeat(600) });
   const first = await world.b.waitEvent('ChatMessage', (v) => (v as { channel?: string }).channel === 'global');
   assert.equal((first.value as { text: string }).text.length, 256, 'a global line is capped at 256 chars');
