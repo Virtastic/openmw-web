@@ -691,8 +691,7 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     if (had === undefined) newIds++;
     // #358: gold is no longer exempt. Selling one expensive thing to a 10k-purse merchant is
     // +10k in one declaration; a modified client's `{gold_001: 100000000}` is refused whole
-    // (the doc stands, the connection lives). Record-id whitelisting is a follow-up: the
-    // server ships no game data, so there is no cheap item-record set to check against.
+    // (the doc stands, the connection lives). Invented ids are dropped above (isKnownItem).
     if (id === GOLD && n - (had ?? 0) > GOLD_DELTA_MAX) {
       noteGain(ctx, player, 'inventory_gold', { from: had ?? 0, to: n });
       return false;
