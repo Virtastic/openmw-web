@@ -6,7 +6,6 @@
 //   POST /locker/authorize-upload  -> presigned PUT for one recognized file, or a refusal
 //   POST /locker/uploaded          confirm a file landed (records it in the manifest)
 //   GET  /locker/files             list this account's stored files
-//   GET  /locker/media-manifest    the media paths a pack may contain (wizard filters on it)
 //   GET  /locker/download?name=    -> presigned GET (owner only)
 //   POST /locker/erase             delete-my-data
 //
@@ -36,12 +35,9 @@ export interface LockerRouteDeps {
   requiredContent?: () => string[];
   /** Delete-my-data must take the savegames with it; supplied where saveRoutes is mounted. */
   eraseSaves?: (accountKey: string) => Promise<number>;
-  /** Does THIS server hand the game out itself ([setup] deliveryModel = "serve")? When it
-   *  does, a player has nothing to upload and must not be asked to. */
-  servesGameData?: () => boolean;
 }
 
-// deliveryModel "esm" streams the server's own copy through /mwdata/*. Those reads come from
+// The server streams the server's own copy through /mwdata/*. Those reads come from
 // the engine's StreamFS worker as plain same-origin Range fetches that cannot carry a Bearer
 // header, so sign-in also drops the locker token into this HttpOnly cookie (auth/routes.ts).
 export const MWDATA_COOKIE = 'omw_mw';
@@ -154,56 +150,26 @@ export function lockerRoutes(deps: LockerRouteDeps) {
       }
 
       if (req.method === 'GET' && url.pathname === '/locker/files') {
-        // mediaPack rides along so a client that finds media.tar missing can say WHY it is
-        // missing. The pack is verified after the upload is confirmed, so "you uploaded it
-        // and it is gone" is a state only the server can explain.
-        const mediaPack = deps.locker.mediaStatusOf(accountKey);
-        json(res, 200, {
-          files: await deps.locker.filesOf(accountKey),
-          ...(mediaPack ? { mediaPack } : {}),
-        });
+        json(res, 200, { files: await deps.locker.filesOf(accountKey) });
         return true;
       }
 
       // The upload wizard's checklist: which files the server expects, required vs optional.
       if (req.method === 'GET' && url.pathname === '/locker/needed') {
-        // NOTHING IS NEEDED FROM THE PLAYER WHEN THE SERVER SUPPLIES THE GAME.
-        //
-        // requiredManifest() answers "which files does this world load", built from the
-        // operator's own install. The launcher's boot gate reads it as "which files must be in
-        // MY locker" and opens the upload wizard for every one the account has not uploaded.
-        // Those are the same list only when the player is the one supplying the game.
-        //
-        // With deliveryModel = "serve" the operator installed Morrowind once for everybody and
-        // /mwdata/* streams it. The player still got the full six-file checklist -- "Add your
-        // Morrowind files ... it uploads to your private locker" -- on a server that had
-        // already provided them. Serving the files was wired; the list telling the player to
-        // upload them was not, which is the same one-half-of-two-programs shape as the rest.
-        //
-        // `content` is unrelated and still sent: it is what the world LOADS, and a client whose
-        // content does not match is refused at the door whoever supplied the bytes.
-        const serves = deps.servesGameData?.() === true;
-        // esm: the checklist is the three ESMs; `hosted` tells the page to boot the server's
-        // data once `owned` (verified, not merely uploaded) is true.
-        const esm = deps.locker.esmMode;
-        // Re-issued here too, so a page restored from a saved token (F5, a new tab) still
-        // gets the cookie the hosted-file reads need.
-        if (esm) setMwdataCookie(req, res, token);
+        // The checklist is the three ESMs; `hosted` tells the page to boot the server's data
+        // once `owned` (verified, not merely uploaded) is true. `content` is what the world
+        // LOADS, and a client whose content does not match is refused at the door.
+        // The cookie is re-issued here too, so a page restored from a saved token (F5, a new
+        // tab) still gets the cookie the hosted-file reads need.
+        setMwdataCookie(req, res, token);
         json(res, 200, {
-          files: serves ? [] : deps.locker.requiredManifest(),
-          ...(esm ? { hosted: true, owned: await deps.locker.ownsGame(accountKey) } : {}),
+          files: deps.locker.requiredManifest(),
+          hosted: true,
+          owned: await deps.locker.ownsGame(accountKey),
           // What the world runs. A client missing any of these cannot join it, so the
           // launcher refuses to start rather than letting them find out three screens later.
           content: deps.requiredContent?.() ?? [],
         });
-        return true;
-      }
-
-      // The paths the media pack may contain. The wizard fetches this before packing and
-      // drops anything absent, so a player whose retail copy has loose media this manifest
-      // does not know keeps their voices instead of losing the whole pack to one file.
-      if (req.method === 'GET' && url.pathname === '/locker/media-manifest') {
-        json(res, 200, { files: deps.locker.packableMedia() });
         return true;
       }
 

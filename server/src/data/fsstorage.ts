@@ -18,7 +18,7 @@
 // front door and every world process must verify each other's URLs.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readSync, closeSync, writeFileSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm, mkdir, rename, stat } from 'node:fs/promises';
 import { join, resolve, sep, dirname } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -84,17 +84,6 @@ export class FsStorage {
 
   async presignGet(key: string): Promise<string> {
     return this.url('GET', key, 0);
-  }
-
-  async getHead(key: string, length: number): Promise<Buffer> {
-    const buf = Buffer.alloc(Math.max(0, length));
-    const fd = openSync(this.pathFor(key), 'r');
-    try {
-      const n = readSync(fd, buf, 0, buf.length, 0);
-      return buf.subarray(0, n);
-    } finally {
-      closeSync(fd);
-    }
   }
 
   /** Size of a stored object, or undefined when it is absent. */

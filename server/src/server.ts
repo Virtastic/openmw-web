@@ -677,11 +677,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // of them left a world process configured with vanilla:0 whenever it won the race, which
   // refuses every upload while the front door looks correctly configured.
   await ensureVanillaManifest(sharedDir, gameDataDir(sharedDir));
-  locker.configureAccepted(await loadVanillaManifest(sharedDir), [], {
-    acceptByNameAndSize: config.locker.acceptByNameAndSize,
-    esmOnly: () => config.setup.deliveryModel === 'esm',
-    esmHashes: config.locker.esmHashes,
-  });
+  locker.configureAccepted(await loadVanillaManifest(sharedDir), { esmHashes: config.locker.esmHashes });
   // Persisted for the same reason as the gateway's: a restart must not sign a playing
   // player out (see LockerSessionStore).
   const lockerSessions = new LockerSessionStore(24 * 60 * 60 * 1000, sharedDir, (k) => !!bans.isAccountBanned(k));
@@ -1322,7 +1318,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // without a restart.
     mwDataRoutes({
       gameDataDir: gameDataDir(sharedDir),
-      deliveryModel: () => config.setup.deliveryModel,
       // Re-read per request, like the delivery answer above: enabling a mod in the dashboard
       // should reach the next player to load the page, not the next restart.
       modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
@@ -1335,7 +1330,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     }),
     lockerRoutes({
       locker, sessions: lockerSessions,
-      servesGameData: () => config.setup.deliveryModel === 'serve',
       eraseSaves: (acct) => eraseSaves(sharedDir, acct, lockerStorage),
     }),
     // Last: the player app, for any path nothing above claimed (issue #203).

@@ -339,12 +339,12 @@ test('a gateway world serves the shared mod stack and boots on the shared dashbo
   ] });
   writeFileSync(join(shared, DASHBOARD_FILE), '[sharing]\njournal = false\n');
 
-  const server = await startServer({ requireGameData: false, dataDir: world, sharedDir: shared, port: 0, host: '127.0.0.1',
-    configOverride: { setup: { deliveryModel: 'serve' } } });
+  const server = await startServer({ requireGameData: false, dataDir: world, sharedDir: shared, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
+  // CL2: hosted files go only to a verified ESM owner (locker-esm.test.ts); anonymous is a 404.
   const r = await fetch(`http://127.0.0.1:${server.port}/mwdata-mods.json`);
-  assert.equal(r.status, 200, 'the world found the shared modlist');
-  assert.deepEqual((await r.json() as { content: string[] }).content, ['TR_Mainland.esm']);
+  assert.equal(r.status, 404);
+  assert.deepEqual(presentMods(gd, readModDoc(shared)).mods.map((m) => m.slug), ['tr'], 'the shared modlist is found');
   assert.equal(server.config.sharing.journal, false, 'the shared dashboard layer reached the world');
 });
 

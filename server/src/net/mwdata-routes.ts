@@ -67,14 +67,12 @@ async function walk(root: string, dir = root, out: Entry[] = [], skip?: string):
 export interface MwDataDeps {
   /** The folder the dashboard uploads into. */
   gameDataDir: string;
-  /** The operator's stored answer. Only 'serve' publishes anything. */
-  deliveryModel(): string;
   /** Installed mods, in order. Read per request so a change lands without a restart. */
   modDoc?(): ModDoc;
   /** `[content] allowStockSwap`. Read per request. Absent = off. */
   allowStockSwap?(): boolean;
-  /** deliveryModel 'esm': may THIS request have the files (a signed-in account that proved it
-   *  owns the game)? Absent = never, so 'esm' fails closed. */
+  /** May THIS request have the files (a signed-in account that proved it owns the game)?
+   *  Absent = never, so the routes fail closed. */
   mayServe?(req: IncomingMessage): boolean | Promise<boolean>;
 }
 
@@ -95,15 +93,13 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     if (!isManifest && !isMods && !isFile) return false;
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return true; }
 
-    // Not serving? Then this path does not exist, and says so the same way for both routes:
-    // a 403 would confirm there is a library here to be had.
-    // 'esm': the same files, but only to an account with verified ownership — and never
-    // cacheable by a shared cache (an edge that kept one would hand it to anybody).
-    const gated = deps.deliveryModel() === 'esm';
-    if (!(deps.deliveryModel() === 'serve' || (gated && deps.mayServe && await deps.mayServe(req)))) {
+    // Only to an account with verified ownership; to anyone else this path does not exist (a
+    // 403 would confirm there is a library here to be had). Never cacheable by a shared cache:
+    // an edge that kept one would hand it to anybody.
+    if (!(deps.mayServe && await deps.mayServe(req))) {
       res.writeHead(404, { 'cache-control': 'no-store' }); res.end('not found'); return true;
     }
-    const noCache = gated ? 'private, no-cache' : 'no-cache';
+    const noCache = 'private, no-cache';
 
     if (isManifest) {
       // BOTH directories. Creating gamedata/mods bumps gamedata's mtime once, when the folder
@@ -233,7 +229,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     const head: Record<string, string> = {
       'accept-ranges': 'bytes',
       'content-type': 'application/octet-stream',
-      'cache-control': isModFile ? noCache : `${gated ? 'private' : 'public'}, max-age=31536000, immutable`,
+      'cache-control': isModFile ? noCache : `private, max-age=31536000, immutable`,
       etag,
     };
     if (req.headers['if-none-match'] === etag) { res.writeHead(304, head); res.end(); return true; }

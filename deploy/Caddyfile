@@ -102,8 +102,8 @@
 	#             Without them the static site answered the launcher's HEAD 404, so every prod
 	#             player booted on the LOCKER path -- which refuses non-retail files, so a
 	#             Tamriel Rebuilt peer refused every prod client BAD_CONTENT. The gateway still
-	#             answers 404 (= "not hosted", locker fallback) unless prod's config.toml sets
-	#             [setup] deliveryModel = "serve"; prod MUST set that for hosted data.
+	#             answers 404 to any account without verified ESM ownership
+	#             ([setup] deliveryModel = "esm", the only v2 value).
 	# /admin: the operator dashboard. Reachable from the internet on purpose (2026-10-12): it enforces its
 	# own sign-in and a dashboard owner role. It is in this matcher so the address-header rules below apply to it
 	# too. /metrics, /healthz and /status stay unreachable.

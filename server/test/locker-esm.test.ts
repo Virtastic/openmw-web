@@ -50,7 +50,6 @@ async function liveStorage() {
     async presignPut(key: string) { return `${base}${encodeURIComponent(key)}?put`; },
     async presignGet(key: string) { return `${base}${encodeURIComponent(key)}`; },
     async delete(key: string) { deletes.push(key); blobs.delete(key); },
-    async getHead(): Promise<Buffer> { throw new Error('esm mode must not sniff, it hashes'); },
   };
 }
 
@@ -60,7 +59,7 @@ async function mk(esmHashes: string[] = [`Bloodmoon.esm:${sha(BYTES['Bloodmoon.e
   // The server's own copies (its vanilla manifest) hold two of the three; the third comes from
   // [locker] esmHashes, the "other genuine releases" list.
   const vanilla = { files: [rec('Morrowind.esm'), rec('Tribunal.esm'), { name: 'Morrowind.bsa', size: 5, sha256: sha('bsa') }] };
-  locker.configureAccepted(vanilla, [], { esmOnly: () => true, esmHashes });
+  locker.configureAccepted(vanilla, { esmHashes });
   return { locker, storage, vanilla };
 }
 
@@ -76,7 +75,6 @@ async function upload(locker: Locker, storage: Awaited<ReturnType<typeof liveSto
 test('esm: the checklist is exactly the three ESMs, all required', async () => {
   const { locker, storage } = await mk();
   try {
-    assert.equal(locker.esmMode, true);
     assert.deepEqual(locker.requiredManifest().map((n) => [n.name, n.required]),
       [['Morrowind.esm', true], ['Tribunal.esm', true], ['Bloodmoon.esm', true]]);
   } finally { await storage.stop(); }
@@ -158,7 +156,7 @@ test('esm: dropping a hash from the accepted set revokes ownership built on it',
     await locker.attest('alice', [], 'ip');
     for (const n of Object.keys(BYTES) as EsmName[]) await upload(locker, storage, 'alice', n);
     assert.equal(await locker.ownsGame('alice'), true);
-    locker.configureAccepted(vanilla, [], { esmOnly: () => true, esmHashes: [] });
+    locker.configureAccepted(vanilla, { esmHashes: [] });
     assert.equal(await locker.ownsGame('alice'), false);
   } finally { await storage.stop(); }
 });
@@ -170,9 +168,9 @@ test('esm: hosted files go only to a verified owner, never cached by a shared ca
   const sessions = { resolve: (t: string) => ({ 'tok-alice': 'alice', 'tok-bob': 'bob' } as Record<string, string>)[t] };
   const gate = esmOwnerGate(locker, sessions);
   const routes = {
-    gated: mwDataRoutes({ gameDataDir: dir, deliveryModel: () => 'esm', mayServe: gate }),
-    // 'esm' without a gate wired fails closed.
-    ungated: mwDataRoutes({ gameDataDir: dir, deliveryModel: () => 'esm' }),
+    gated: mwDataRoutes({ gameDataDir: dir, mayServe: gate }),
+    // No gate wired fails closed.
+    ungated: mwDataRoutes({ gameDataDir: dir }),
   };
   const srv: Server = createServer((req: IncomingMessage, res) => {
     const route = req.url?.startsWith('/ungated/') ? routes.ungated : routes.gated;

@@ -275,7 +275,7 @@ export interface FrontDoor {
   /** Mint a locker session for an account. BROWSER HARNESS ONLY -- main.ts wires it only
    *  when harness auth is already enabled, so production never has a caller. */
   mintSession(accountKey: string): string;
-  /** deliveryModel "esm": may this request read /mwdata/* (a verified owner)? */
+  /** May this request read /mwdata/* (a verified owner)? */
   mwdataGate(req: IncomingMessage): Promise<boolean>;
   /** Flush anything queued for outbound integrations before the process exits. */
   close(): Promise<void>;
@@ -383,11 +383,7 @@ export async function buildFrontDoor(
   // manifest configured yet", and the only clue is a log line reading vanilla:0 — an
   // operator-only step that nothing prompted for and nothing checked.
   await ensureVanillaManifest(sharedDir, gameDataDir(sharedDir));
-  locker.configureAccepted(await loadVanillaManifest(sharedDir), [], {
-    acceptByNameAndSize: config.locker.acceptByNameAndSize,
-    esmOnly: () => config.setup.deliveryModel === 'esm',
-    esmHashes: config.locker.esmHashes,
-  });
+  locker.configureAccepted(await loadVanillaManifest(sharedDir), { esmHashes: config.locker.esmHashes });
 
   const providers = ['google', 'discord', 'microsoft'].filter(
     (p) => (config.auth as unknown as Record<string, { enabled?: boolean }>)[p]?.enabled,
@@ -431,7 +427,6 @@ export async function buildFrontDoor(
     orderedContent(gameDataDir(sharedDir), sharedDir));
   const locker2 = lockerRoutes({
     locker, sessions: lockerSessions,
-    servesGameData: () => config.setup.deliveryModel === 'serve',
     requiredContent: () => (worldContent.ok ? worldContent.contentFiles : []),
     eraseSaves: (acct) => eraseSaves(sharedDir, acct, storage),
   });
@@ -478,7 +473,7 @@ export async function buildFrontDoor(
     // in main.ts only when the operator has already opted into harness auth, so in production
     // the route below simply does not exist rather than existing and checking a flag.
     mintSession: (accountKey: string) => lockerSessions.mint(accountKey),
-    /** deliveryModel "esm": who may read /mwdata/* (verified owners only). */
+    /** Who may read /mwdata/* (verified owners only). */
     mwdataGate: esmOwnerGate(locker, lockerSessions),
     // The private-world id, derived HERE from the character rather than trusted from the
     // launcher. A stale tab computed it from a character list that no longer matched reality,

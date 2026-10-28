@@ -399,7 +399,7 @@ test('the multiplayer server hands out the game files the operator uploaded', as
   const h = await harness();
   const dir2 = await startDirectory({
     worlds: h.worlds, host: '127.0.0.1', port: 0, maxPerOwner: 2, worldsDir: shared,
-    mwdata: mwDataRoutes({ gameDataDir: join(shared, 'gamedata'), deliveryModel: () => delivery }),
+    mwdata: mwDataRoutes({ gameDataDir: join(shared, 'gamedata'), mayServe: () => delivery === 'serve' }),
   });
   try {
     const base = `http://127.0.0.1:${dir2.port}`;

@@ -124,9 +124,8 @@ export interface Config {
   // Phase 3.5 storage locker, on this server's disk (CL9: v2 has no S3 backend; endpoint,
   // region, bucket and the keys are still parsed for the frozen dashboard, and ignored).
   // maxBytesPerAccount caps one player's library.
-  // acceptByNameAndSize (default true): also accept a known game file by name + plausible
-  // size when its exact hash is unknown, so Steam/GOG/disc/localized copies from different
-  // players all upload. Set false for a strict hash-only gate.
+  // acceptByNameAndSize: ignored since CL2 (v2 accepts only the three ESMs, by exact hash);
+  // still parsed because the frozen dashboard writes it.
   // publicBase: the origin the browser reaches this server on, used to build blob URLs.
   // Empty = localhost, which works
   // for a single-machine dev run and nothing else.
@@ -695,7 +694,9 @@ function validate(t: Tree): Config {
       hosting: reqStr(t, 'setup', 'hosting'),
       deploymentMode: reqStr(t, 'setup', 'deploymentMode'),
       httpPort: optNum(t, 'setup', 'httpPort', 80),
-      deliveryModel: reqStr(t, 'setup', 'deliveryModel'),
+      // CL2: v2 delivers by esm only. The frozen wizard still writes "serve" (CL14); whatever is
+      // stored, esm is what runs, so nothing is ever served ungated.
+      deliveryModel: 'esm',
       storage: reqStr(t, 'setup', 'storage'),
       loginMethods: reqStrArray(t, 'setup', 'loginMethods'),
       domain: reqStr(t, 'setup', 'domain'),

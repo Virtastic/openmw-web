@@ -297,7 +297,7 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     // game page is a different origin and a cookie could not be sent on its cross-origin
     // fetch. The browser reads it and sends it as a Bearer header.
     const lockerToken = lockerSessions ? lockerSessions.mint(resolved.accountKey) : '';
-    if (config.setup.deliveryModel === 'esm') setMwdataCookie(req, res, lockerToken);
+    setMwdataCookie(req, res, lockerToken);
     log('info', 'auth.sso_ok', { provider, account: resolved.accountName, created: resolved.created, ip });
     metrics.auth.inc({ op: 'sso', result: 'success' });
     // Target resolved at /auth/start from the caller's own origin (see resolveReturn).
@@ -369,7 +369,7 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       }
       const ticket = tickets.mint(key, account.name);
       const locker = lockerSessions ? lockerSessions.mint(key) : '';
-      if (config.setup.deliveryModel === 'esm') setMwdataCookie(req, res, locker);
+      setMwdataCookie(req, res, locker);
       log('info', 'auth.password_ok', { account: account.name, ip });
       metrics.auth.inc({ op: 'password', result: 'success' });
       sendJson(res, 200, { ticket, account: key, name: account.name, locker });

@@ -260,7 +260,6 @@ const directory = await startDirectory({
   // page rather than the next restart.
   mwdata: mwDataRoutes({
     gameDataDir: gameDataDir(sharedDir),
-    deliveryModel: () => config.setup.deliveryModel,
     modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
     allowStockSwap: () => config.content.allowStockSwap,
     mayServe: frontDoor.mwdataGate,

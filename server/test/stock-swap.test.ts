@@ -200,7 +200,7 @@ async function sidecar(doc: ModDoc, allow: boolean | undefined): Promise<{ statu
   mkdirSync(join(dir, 'mods', 'community'), { recursive: true });
   writeFileSync(join(dir, 'mods', 'community', 'Morrowind.esm'), 'y');
   const route = mwDataRoutes({
-    gameDataDir: dir, deliveryModel: () => 'serve', modDoc: () => doc,
+    gameDataDir: dir, mayServe: () => true, modDoc: () => doc,
     ...(allow === undefined ? {} : { allowStockSwap: () => allow }),
   });
   const srv: Server = createServer((req, res) => {

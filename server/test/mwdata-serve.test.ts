@@ -26,7 +26,7 @@ function fixture(): string {
 async function serve(
   dir: string, model: string, modDoc?: () => import('../src/core/mods').ModDoc,
 ): Promise<{ base: string; stop(): Promise<void> }> {
-  const route = mwDataRoutes({ gameDataDir: dir, deliveryModel: () => model, ...(modDoc ? { modDoc } : {}) });
+  const route = mwDataRoutes({ gameDataDir: dir, mayServe: () => model === 'serve', ...(modDoc ? { modDoc } : {}) });
   const srv: Server = createServer((req, res) => {
     void (async () => {
       if (!(await route(req, res, new URL(req.url ?? '/', 'http://x')))) { res.writeHead(404); res.end(); }
@@ -190,7 +190,7 @@ test('a mod file revalidates by ETag; retail stays immutable; ranges survive', a
     assert.match(retail.headers.get('cache-control') ?? '', /immutable/);
 
     const v1 = await fetch(`${s.base}/mwdata/mods/a-mod/A.esp`);
-    assert.equal(v1.headers.get('cache-control'), 'no-cache');
+    assert.equal(v1.headers.get('cache-control'), 'private, no-cache');
     const tag = v1.headers.get('etag') ?? '';
     assert.ok(tag, 'mod files carry an ETag');
     assert.equal((await fetch(`${s.base}/mwdata/mods/a-mod/A.esp`,
