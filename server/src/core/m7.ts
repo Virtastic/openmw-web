@@ -14,6 +14,7 @@ import { lToJs } from '../proto/lser';
 import type { Player, Roster } from './players';
 import { WorldClock } from './worldtime';
 import { WeatherRegions } from './weather';
+import { serverWhisper } from './chat';
 import type { CellStore, CellDoc } from '../persist/cellstore';
 import type { PlayerStore } from '../persist/playerstore';
 import { RecordStore, RECORD_KINDS, type RecordKind, type CustomRecord } from '../persist/recordstore';
@@ -176,6 +177,27 @@ export class WorldM7 {
     for (const p of this.ctx.roster.inWorld()) p.peer.sendEvent(name, body);
   }
 
+  // OT3-112: JAIL IS A SERVER TIMER, NOT A REST. One player's sentence never moves the shared
+  // clock: the server holds it for the sentence's game hours at the world's time scale (scale 0
+  // = served at once), then tells the player they are free. Skill loss stays on the client.
+  // ponytail: release is a server chat line until the client has a JailRelease handler.
+  private readonly sentences = new Map<number, NodeJS.Timeout>();
+  private jail(player: Player, hours: LValue | undefined): void {
+    if (typeof hours !== 'number' || !Number.isFinite(hours) || hours <= 0 || hours > 30 * 24 || this.sentences.has(player.id)) {
+      log('warn', 'time.jail_dropped', { from: player.name, hours: String(hours) });
+      return;
+    }
+    const scale = this.ctx.cells.worldM7().time.timeScale;
+    const ms = scale > 0 ? (hours * 3600 / scale) * 1000 : 0;
+    log('info', 'time.jailed', { from: player.name, hours, ms });
+    const timer = setTimeout(() => {
+      this.sentences.delete(player.id);
+      if (this.ctx.roster.get(player.id)) serverWhisper(player, 'You have served your sentence.');
+    }, ms);
+    timer.unref();
+    this.sentences.set(player.id, timer);
+  }
+
   // Router, mirroring Quests/WorldState: returns true when `name` belongs to M7.
   handleEvent(player: Player, name: string, value: LValue | undefined): boolean {
     if (!M7_EVENTS.has(name)) return false;
@@ -186,6 +208,7 @@ export class WorldM7 {
     }
     switch (name) {
       case 'WorldTimeRequest': {
+        if (body.get('reason') === 'jail') { this.jail(player, body.get('advanceHours')); break; }
         // Phase 2.5: sleeping advances the clock for EVERYONE, so who may do it is a
         // world rule. Public worlds refuse outright (one stranger must not fast-forward a
         // hundred people into the night); party worlds let the leader decide for the
