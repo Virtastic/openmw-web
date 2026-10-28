@@ -74,6 +74,10 @@ import { SimPeerSupervisor } from './core/simpeer';
 import { parseExterior, isChargenCell } from './core/movement';
 import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings, hashContentFiles, type GameData } from './core/gamedata';
 
+// [rules] timeSkip="owner": the one world has no owning player, so moving the shared clock is a
+// staff power (OT3-53). 2 = admin.
+const TIME_SKIP_RANK = 2;
+
 // The version is in ./version (shared with the multiplayer server); re-exported so
 // existing importers keep working.
 export { VERSION };
@@ -259,10 +263,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     records: recordStore,
     isMapShared: () => hooks.shareFamily('map'),
     players: playerStore,
-    // One world, no owner (OT3-31): 'owner' admits anyone until OT3-53 gates it on staff rank.
-    maySkipTime: () => (config.rules.timeSkip === 'off'
-      ? { may: false, why: 'time does not skip in this world' }
-      : { may: true, why: '' }),
+    // One world, no owner (OT3-53): 'owner' means the operator's staff, so it keys on rank.
+    maySkipTime: (player) => {
+      if (config.rules.timeSkip === 'off') return { may: false, why: 'time does not skip in this world' };
+      if (config.rules.timeSkip === 'owner' && player.rank < TIME_SKIP_RANK) {
+        return { may: false, why: 'only staff can move the world clock' };
+      }
+      return { may: true, why: '' };
+    },
     // Phase 3.7: a reset hands the restored cell truth straight to whoever is standing
     // there, so it never needs the TES3MP kick-everyone workaround.
     world,

@@ -91,9 +91,9 @@ safeCells = []
 # makes the chat box unreadable. "!" always sends global, "@" always sends to your world.
 sayScope = "world"
 # Resting advances the shared clock for EVERYONE, so who may do it is a world rule.
-# "owner" (default: the world is the host's game and guests must not fast-forward it; a
-# standalone stack has no owner, so there it admits anyone), "anyone" (any rest moves the
-# clock for all), "off" (time flows continuously). A refused rest is told to the player.
+# "owner" (default: only staff of rank admin or above may skip it; the one world has no
+# owning player), "anyone" (any rest moves the clock for all), "off" (time flows
+# continuously). A refused rest is told to the player.
 timeSkip = "owner"
 # Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
 # own combat pipeline (the server never computes damage). Morrowind scale: -100..100.

@@ -27,6 +27,9 @@ const SERVER_DAY = 16;
 const timeOf = async (c) => JSON.parse(await c.eval('window.omw.state.gameTime||"{}"'));
 const num = async (c, key) => Number(await c.eval(`window.omw.state.${key}||"0"`));
 
+// OT3-53: the default timeSkip="owner" is staff-only; this scenario rests as a plain player.
+export const serverRules = 'timeSkip = "anyone"';
+
 export default async function run(ctx) {
   const [a, b] = await Promise.all([ctx.launchClient('bot-a'), ctx.launchClient('bot-b')]);
 

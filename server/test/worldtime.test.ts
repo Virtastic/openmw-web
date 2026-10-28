@@ -22,6 +22,8 @@ async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartia
   const configOverride: DeepPartial<Config> = {
     ...override,
     time: { scale: 0, ...override?.time },
+    // Most tests here rest as plain players; the staff gate (OT3-53) has its own test.
+    rules: { timeSkip: 'anyone', ...override?.rules },
     // Every test client dials from 127.0.0.1; a starved limiter fails later subtests
     // for reasons that have nothing to do with what they assert.
     limits: { maxConnsPerIp: 16, loginPerMinPerIp: 60, ...override?.limits },
@@ -284,6 +286,33 @@ test('a world where time does not skip refuses a rest, and says so', async (t) =
   b.close();
   await a.closed;
   await b.closed;
+});
+
+// OT3-53: the one world has no owning player, so the default timeSkip="owner" keys on staff
+// rank. A plain player is refused and told; an admin moves the clock for everyone.
+test('on the ownerless world only staff may skip time', async (t) => {
+  const { server } = await boot(t, { rules: { timeSkip: 'owner' } });
+  const { c: a } = await join(server, 'PlainSleeper');
+  const { c: s } = await join(server, 'StaffSleeper');
+  await a.waitEvent('WorldTime');
+  await s.waitEvent('WorldTime');
+  const before = server.api.world.time();
+
+  a.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
+  const refusal = (await a.waitEvent('WorldTimeRefused')).value as { reason: string };
+  assert.match(refusal.reason, /staff/);
+  await fence(a, s);
+  assert.deepEqual(server.api.world.time(), before, 'a plain player must not move the shared clock');
+
+  server.accounts.setRank('StaffSleeper', 2);
+  server.roster.findByName('StaffSleeper')!.rank = 2;
+  s.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
+  await a.waitEvent('WorldTime');
+  assert.notDeepEqual(server.api.world.time(), before, 'an admin moves it for everyone');
+  a.close();
+  s.close();
+  await a.closed;
+  await s.closed;
 });
 
 test('a client cannot invent an unlimited number of weather regions', async (t) => {

@@ -470,7 +470,7 @@ test('running global scripts persist on the campaign doc and come back at join',
 // Backlog 257: doc.journal is questId->index, so a relog rebuilt one entry per quest, in hash
 // order, all dated today. The ordered, dated log rides JournalSync beside it.
 test('the journal sync carries the entries in the order they were earned, with their days', async (t) => {
-  const { server } = await boot(t);
+  const { server } = await boot(t, { rules: { timeSkip: 'anyone' } });
   const a = await TestClient.connect(server.port);
   await a.joinAsNew('Alice');
   await a.waitEvent('PlayerList');
