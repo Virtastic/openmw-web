@@ -7,6 +7,7 @@
 // Cardinality is the only real hazard here, so every label value is drawn from a closed
 // set defined in this file — never from client input.
 
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { log } from './log';
 
 type Labels = Record<string, string>;
@@ -361,7 +362,19 @@ export const metrics = {
   outboundBuffered: reg(
     new Gauge('omwmp_outbound_buffered_bytes', 'Bytes queued for delivery across all live sockets.'),
   ),
+  // OT3-140: a page fires when this stays above 100 ms. p99 since the previous scrape.
+  eventLoopP99: reg(
+    new Gauge('omwmp_event_loop_delay_p99_seconds', 'Event-loop delay p99 since the last scrape.'),
+  ),
 };
+
+const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+loopDelay.enable();
+metrics.eventLoopP99.addCollector(() => {
+  const p99 = loopDelay.count > 0 ? loopDelay.percentile(99) / 1e9 : 0;
+  loopDelay.reset();
+  return p99;
+});
 
 // Times fn and files it under the store's histogram. Never swallows: the error is
 // re-thrown after being tallied, so existing failure handling still runs.

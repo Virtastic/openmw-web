@@ -1,0 +1,77 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# OT3-140: page rules, Prometheus/Alertmanager format, vendor-neutral. Assumed scrape jobs:
+#   omwmp      the server's /metrics            (OT3-133)
+#   node       node_exporter on the same box    (OT3-133)
+#   probe      blackbox_exporter http/ws probes (OT3-136)
+# Every rule is severity=page and links its RUNBOOK.md section.
+groups:
+  - name: omwmp-page
+    rules:
+      - alert: ServerDown
+        expr: up{job="omwmp"} == 0 or absent(up{job="omwmp"})
+        for: 1m
+        labels: { severity: page }
+        annotations:
+          summary: The game server is not answering /metrics scrapes.
+          runbook_url: deploy/monitoring/RUNBOOK.md#serverdown
+
+      - alert: EventLoopStalled
+        expr: omwmp_event_loop_delay_p99_seconds > 0.1
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: Event-loop p99 {{ $value | humanizeDuration }} for 5 min; every player feels it.
+          runbook_url: deploy/monitoring/RUNBOOK.md#eventloopstalled
+
+      - alert: PersistFlushFailed
+        expr: increase(omwmp_persist_flush_failed_total[5m]) > 0
+        labels: { severity: page }
+        annotations:
+          summary: A persistence flush threw (store {{ $labels.store }}); progress may not be saving.
+          runbook_url: deploy/monitoring/RUNBOOK.md#persistflushfailed
+
+      - alert: SessionsCollapsed
+        # More than half the players gone in a minute, from a base big enough to mean it.
+        expr: |
+          omwmp_sessions_in_world < 0.5 * (omwmp_sessions_in_world offset 1m)
+          and (omwmp_sessions_in_world offset 1m) >= 6
+        labels: { severity: page }
+        annotations:
+          summary: In-world sessions fell by half in one minute.
+          runbook_url: deploy/monitoring/RUNBOOK.md#sessionscollapsed
+
+      - alert: ProbeDown
+        expr: probe_success{job="probe"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.instance }} failed its outside probe for 2 min.'
+          runbook_url: deploy/monitoring/RUNBOOK.md#probedown
+
+      - alert: DiskLow
+        # Prod filled to 0 bytes on 2026-10-23 and every deploy died.
+        expr: |
+          node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay"}
+            / node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay"} < 0.15
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: '{{ $labels.mountpoint }} below 15% free.'
+          runbook_url: deploy/monitoring/RUNBOOK.md#disklow
+
+      - alert: BackupStale
+        expr: omwmp_backup_age_seconds > 7200
+        labels: { severity: page }
+        annotations:
+          summary: No good SQLite backup for over 2 h.
+          runbook_url: deploy/monitoring/RUNBOOK.md#backupstale
+
+      - alert: BackupNeverRan
+        # -1 = no good backup since the process started; a fresh process gets 2 h.
+        expr: omwmp_backup_age_seconds == -1
+        for: 2h
+        labels: { severity: page }
+        annotations:
+          summary: No good SQLite backup for over 2 h.
+          runbook_url: deploy/monitoring/RUNBOOK.md#backupstale
