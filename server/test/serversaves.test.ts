@@ -119,6 +119,26 @@ test('an upload past its signed length is cut off and leaves no file', async () 
   }
 });
 
+test('OT3-17: an upload abandoned mid-body leaves no temp behind', async () => {
+  const dir = tmpDataDir();
+  const h = await harness(dir);
+  try {
+    const url = new URL(h.fix(await h.storage.presignPut('saves/alice/Gone.omwsave', 4096)));
+    const { request } = await import('node:http');
+    const req = request(url, { method: 'PUT', headers: { 'content-length': '4096' } });
+    req.on('error', () => {});
+    req.write(Buffer.alloc(100, 1));
+    await new Promise((r) => setTimeout(r, 100));
+    req.destroy();
+    const slot = join(dir, 'locker-blobs', 'saves', 'alice');
+    const left = () => (existsSync(slot) ? readdirSync(slot) : []);
+    for (let i = 0; i < 40 && left().length > 0; i++) await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(left(), []);
+  } finally {
+    await h.close();
+  }
+});
+
 // Both of these took the whole process down under a pressure run, and neither is exotic: a
 // mirror retrying while its previous upload is still in flight produces the first, and any
 // client that ignores the refusal produces the second.
