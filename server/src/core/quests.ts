@@ -114,7 +114,12 @@ export interface QuestCtx {
   holderOf?(cellKey: string): number | undefined;
   // #366: anomaly sink (moderation), same contract as movement/playerstate.
   noteAnomaly?(accountKey: string, kind: string): void;
+  // OT3-90: party accounts for an account, itself included (social.ts partyMembers).
+  partyMembers?(accountKey: string): string[];
 }
+
+/** OT3-90: a party member who has not pressed anything for this long earns no party credit. */
+export const PARTY_CREDIT_AFK_MS = 5 * 60_000;
 
 type JournalLogEntry = NonNullable<PlayerDoc['journalLog']>[number];
 
@@ -336,6 +341,34 @@ export class Quests {
       (doc.journal ??= {})[questId] = idx;
       this.logEntry(doc, questId, idx);
     }, 'now');
+    if (!regressing) this.creditParty(player, questId, idx);
+  }
+
+  // OT3-90: party credit. A member gets the stage the writer just reached when they are
+  // online, co-present (same or visible cell), not AFK, already on the quest (eligibility:
+  // a quest they never started, e.g. another faction's, gives nothing) and behind it. Only
+  // ever forward: a member at or past the stage keeps theirs, so a branch they already took
+  // is never overwritten. Each write is to the member's OWN journal (OT3-51), and their
+  // client hears it as the peer-credit path does; its echo then matches and writes nothing.
+  // ponytail: "behind on the same quest id" stands in for exclusive-branch detection and the
+  // skipped stages' catch-up effects, which need the quest tables (OT3 step 3).
+  private creditParty(player: Player, questId: string, idx: number): void {
+    const members = this.ctx.partyMembers?.(player.accountKey) ?? [];
+    const now = Date.now();
+    for (const acct of members) {
+      if (acct === player.accountKey) continue;
+      const m = this.ctx.roster.activeForAccount(acct);
+      if (!m || m.system || !m.inWorld || !cellsVisible(player.cellKey, m.cellKey)) continue;
+      if (m.lastInputAt === undefined || now - m.lastInputAt > PARTY_CREDIT_AFK_MS) continue;
+      const have = this.ctx.players.getCached(m.charId)?.journal?.[questId];
+      if (have === undefined || have >= idx) continue;
+      this.ctx.players.update(m.charId, (doc) => {
+        (doc.journal ??= {})[questId] = idx;
+        this.logEntry(doc, questId, idx);
+      }, 'now');
+      m.peer.sendEvent('JournalEntry', { questId, index: idx });
+      log('info', 'quest.party_credit', { questId, index: idx, from: player.name, to: m.name });
+    }
   }
 
   // The join-time replay window: JournalSync was sent this long ago at most. Echoes of its
@@ -355,10 +388,8 @@ export class Quests {
     if (logList.length > MAX_JOURNAL_LOG) logList.splice(0, logList.length - MAX_JOURNAL_LOG);
   }
 
-  // creditParty lived here and is GONE. It advanced co-present party members' OWN journals,
-  // which the instance-owned model forbids outright: a guest keeps nothing from a visit. Two
-  // systems advancing journals is how they end up disagreeing, so it is deleted rather than
-  // left switched off next to the new path.
+  // The old creditParty (instance-owned model) is gone; OT3-90's creditParty above writes
+  // only members' own journals, under the one-world model (OT3-31/51).
 
   // Full journal state for a joining client: the shared map, or their own in individual
   // mode. Always sent (an empty map is a valid, meaningful answer).

@@ -13,7 +13,7 @@ import { tmpDataDir } from './helpers';
 
 type Sent = { name: string; body: Record<string, unknown> };
 
-function harness(opts: { worldGlobals?: string[] } = {}) {
+function harness(opts: { worldGlobals?: string[]; party?: string[] } = {}) {
   const dir = tmpDataDir();
   const players = new PlayerStore(dir, 'w1');
   const cells = new CellStore(dir);
@@ -46,6 +46,7 @@ function harness(opts: { worldGlobals?: string[] } = {}) {
     cells,
     players,
     regressAllowed: () => false,
+    ...(opts.party ? { partyMembers: (a: string) => (opts.party!.includes(a) ? opts.party! : [a]) } : {}),
     ...(opts.worldGlobals ? { worldGlobals: opts.worldGlobals } : {}),
   });
 
@@ -126,5 +127,33 @@ test('JournalSync shows each player their own log and never a borrowed one', asy
   assert.equal(shown?.borrowed, false);
   assert.equal((shown?.quests as Record<string, number>).MQ, undefined, "bob is not shown alice's campaign");
   assert.equal(w.events('alice', 'JournalSync')[0]?.body.borrowed, false);
+  await w.close();
+});
+
+// OT3-90: party credit. Co-present, active, already-on-the-quest, behind: those members advance.
+test('party credit reaches co-present active members on the quest, and only forward (OT3-90)', async () => {
+  const w = harness({ party: ['lead', 'near', 'afk', 'far', 'fresh', 'ahead'] });
+  const now = Date.now();
+  const lead = w.add('lead', '0,0');
+  const near = w.add('near', '1,0');
+  const afk = w.add('afk', '0,0');
+  const far = w.add('far', '5,5');
+  const fresh = w.add('fresh', '0,0');
+  const ahead = w.add('ahead', '0,0');
+  for (const p of [near, far, fresh, ahead]) (p as { lastInputAt?: number }).lastInputAt = now;
+  (afk as { lastInputAt?: number }).lastInputAt = now - 10 * 60_000;
+  for (const a of ['lead', 'near', 'afk', 'far']) w.setJournal(a, 'MQ', 10);
+  w.setJournal('ahead', 'MQ', 40);
+  w.quests.handleEvent(lead, 'JournalEntry', entry('MQ', 20));
+  assert.equal(w.journalOf('lead').MQ, 20);
+  assert.equal(w.journalOf('near').MQ, 20, 'co-present (visible cell) member credited');
+  assert.equal(w.events('near', 'JournalEntry').length, 1, 'and their client hears it');
+  assert.equal(w.journalOf('afk').MQ, 10, 'AFK member not credited');
+  assert.equal(w.journalOf('far').MQ, 10, 'far member not credited');
+  assert.equal(w.journalOf('fresh').MQ, undefined, 'never started the quest: not eligible');
+  assert.equal(w.journalOf('ahead').MQ, 40, 'a member past the stage keeps theirs');
+  // near's client echoes the relayed entry: a no-op, and no ping-pong back to lead.
+  w.quests.handleEvent(near, 'JournalEntry', entry('MQ', 20));
+  assert.equal(w.events('lead', 'JournalEntry').length, 0);
   await w.close();
 });

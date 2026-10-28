@@ -531,6 +531,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     worldPeer: () => worldPeerImpl(),
     holderOf: (cellKey) => world.holderOf(cellKey),
     noteAnomaly: (accountKey, kind) => moderation.noteAnomaly(accountKey, kind), // #366
+    partyMembers: (acct) => social.partyMembers(acct), // OT3-90; social is built below, called later
   });
   world.dialogueHolder = (refKey) => quests.dialogueHolder(refKey);
 
