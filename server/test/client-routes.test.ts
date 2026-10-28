@@ -26,8 +26,8 @@ function fixture(): string {
   return dir;
 }
 
-async function serve(dir: string, launcher = false): Promise<{ base: string; port: number; stop(): Promise<void> }> {
-  const route = clientRoutes({ clientDir: dir, launcher: () => launcher });
+async function serve(dir: string): Promise<{ base: string; port: number; stop(): Promise<void> }> {
+  const route = clientRoutes({ clientDir: dir });
   const srv: Server = createServer((req, res) => {
     void (async () => {
       if (!(await route(req, res, new URL(req.url ?? '/', 'http://x')))) { res.writeHead(404); res.end(); }
@@ -61,21 +61,16 @@ test('the game page is served cross-origin isolated, and revalidates', async () 
   } finally { await s.stop(); }
 });
 
-test('/join is the launcher under its own path; /launcher.html follows the switch', async () => {
-  const dir = fixture();
-  const off = await serve(dir, false);
+test('/join is the launcher under its own path; /launcher.html redirects to it', async () => {
+  const s = await serve(fixture());
   try {
-    const j = await fetch(`${off.base}/join`);
+    const j = await fetch(`${s.base}/join`);
     assert.equal(j.status, 200);
     assert.equal(await j.text(), '<!doctype html>launcher');
-    const l = await fetch(`${off.base}/launcher.html`, { redirect: 'manual' });
+    const l = await fetch(`${s.base}/launcher.html`, { redirect: 'manual' });
     assert.equal(l.status, 302);
-    assert.equal(l.headers.get('location'), '/');
-  } finally { await off.stop(); }
-  const on = await serve(dir, true);
-  try {
-    assert.equal((await fetch(`${on.base}/launcher.html`, { redirect: 'manual' })).status, 200);
-  } finally { await on.stop(); }
+    assert.equal(l.headers.get('location'), '/join');
+  } finally { await s.stop(); }
 });
 
 test('operator files, dotfiles, mwdata and traversal are not part of the site', async () => {

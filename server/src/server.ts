@@ -14,7 +14,7 @@ import { ContentTable } from './core/content-table';
 import { QuestRepair } from './core/quest-repair';
 import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
-import { writeCaddyfile, launcherEnabled } from './net/admin/caddy-config';
+import { writeCaddyfile } from './net/admin/caddy-config';
 import { clientRoutes, defaultClientDir } from './net/client-routes';
 import { saveSection } from './net/admin/settings-store';
 import { orderedContent } from './net/admin/api-mods';
@@ -1342,7 +1342,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Last: the player app, for any path nothing above claimed (issue #203).
     ...(clientDir ? [clientRoutes({
       clientDir,
-      launcher: () => launcherEnabled() || config.setup.deploymentMode === 'multiplayer',
     })] : []),
   )), () => (setupMode ? blockers : []));
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.

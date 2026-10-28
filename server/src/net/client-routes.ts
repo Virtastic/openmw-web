@@ -30,8 +30,6 @@ export const defaultClientDir = (): string => process.env.OMW_CLIENT || '/client
 export interface ClientDeps {
   /** The folder holding index.html, launcher.html and e/<hash>/. */
   clientDir: string;
-  /** The launcher chooser is reachable (OMW_ENABLE_LAUNCHER, or a multiplayer server). Per request. */
-  launcher(): boolean;
 }
 
 export const ISOLATION: Record<string, string> = {
@@ -64,9 +62,12 @@ export function clientRoutes(deps: ClientDeps): HttpRoute {
     let rel: string;
     try { rel = decodeURIComponent(url.pathname); } catch { return false; }
 
+    // One door (CL1): / signs in, /join (the launcher in door mode) picks name, character and
+    // world. The chooser at /launcher.html is gone; old links land on /join, which keeps the
+    // fragment (an SSO ticket) or sends a signed-out player back to /.
     if (rel === '/join') rel = '/launcher.html';
-    else if (rel === '/launcher.html' && !deps.launcher()) {
-      res.writeHead(302, { location: '/', ...ISOLATION }); res.end(); return true;
+    else if (rel === '/launcher.html') {
+      res.writeHead(302, { location: '/join', ...ISOLATION }); res.end(); return true;
     }
 
     const segs = rel.slice(1).split('/');

@@ -26,7 +26,7 @@ import { metrics } from '../metrics';
 import { mwDataRoutes } from '../net/mwdata-routes';
 import { clientRoutes, defaultClientDir } from '../net/client-routes';
 import { lockerPublicBase } from '../data/fsstorage';
-import { writeCaddyfile, launcherEnabled } from '../net/admin/caddy-config';
+import { writeCaddyfile } from '../net/admin/caddy-config';
 import { gameDataDir } from '../core/gamedata';
 import { presentMods, readModDoc } from '../core/mods';
 import { SocialStore } from '../core/socialstore';
@@ -268,7 +268,6 @@ const directory = await startDirectory({
   // The player app (./play mounted at /client), served here so Caddy is optional (#203).
   ...(existsSync(defaultClientDir()) ? { client: clientRoutes({
     clientDir: defaultClientDir(),
-    launcher: () => launcherEnabled() || config.setup.deploymentMode === 'multiplayer',
   }) } : {}),
   resolveAccount: frontDoor.resolveAccount,
   // Constant-time-ish compare on a fixed-length secret, and an empty token NEVER matches --
