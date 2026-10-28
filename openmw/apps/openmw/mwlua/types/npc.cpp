@@ -61,8 +61,16 @@ namespace
         // Basic fields
         if (rec["name"] != sol::nil)
             npc.mName = rec["name"];
+        // model '' = no model of its own (the race and sex pick the skeleton). meshPathForESM3
+        // throws on it, and that failed every multiplayer puppet build from 1.7.0 on.
         if (rec["model"] != sol::nil)
-            npc.mModel = Misc::ResourceHelpers::meshPathForESM3(rec["model"].get<std::string_view>());
+        {
+            std::string_view model = rec["model"].get<std::string_view>();
+            if (model.empty())
+                npc.mModel.clear();
+            else
+                npc.mModel = Misc::ResourceHelpers::meshPathForESM3(model);
+        }
         if (rec["mwscript"] != sol::nil)
             npc.mScript = ESM::RefId::deserializeText(rec["mwscript"].get<std::string_view>());
         if (rec["race"] != sol::nil)
