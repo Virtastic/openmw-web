@@ -606,6 +606,15 @@ test('one account, several providers', async (t) => {
     assert.equal(fragment(inUrl.headers.get('location')).get('mperror'), 'not_signed_in', 'a session in the URL is not a credential');
   });
 
+  await t.test("a new link ticket replaces the account's previous one (OT3-33)", async () => {
+    const older = await linkPath(h, sessionToken);
+    const newer = await linkPath(h, sessionToken);
+    const stale = await fetch(h.base + older, { redirect: 'manual' });
+    assert.equal(fragment(stale.headers.get('location')).get('mperror'), 'not_signed_in', 'the older ticket died');
+    const live = await fetch(h.base + newer, { redirect: 'manual' });
+    assert.equal(live.status, 302, 'the newest ticket still works');
+  });
+
   await t.test('a second provider links to the same account and then logs into it', async () => {
     const start = await fetch(`${h.base}${await linkPath(h, sessionToken)}`, { redirect: 'manual' });
     assert.equal(start.status, 302);

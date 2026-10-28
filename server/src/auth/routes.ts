@@ -371,10 +371,18 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     if (req.method === 'POST' && seg.length === 4 && seg[1] === 'link' && seg[3] === 'ticket') {
       const provider = seg[2] ?? '';
       if (!isProviderId(provider)) { sendJson(res, 400, { error: 'unknown_provider' }); return true; }
+      // OT3-33: the session lookup sits behind the shared per-IP auth budget, like every login.
+      if (!limiter.allow(clientIp(req))) {
+        metrics.rateLimited.inc({ budget: 'login' });
+        sendJson(res, 429, { error: 'rate' });
+        return true;
+      }
       const auth = String(req.headers.authorization ?? '');
       const who = auth.startsWith('Bearer ') ? sessions.get(auth.slice(7)) : undefined;
       if (!who) { sendJson(res, 401, { error: 'not_signed_in' }); return true; }
       pruneLinkTickets();
+      // One outstanding ticket per account: a new one replaces the last, so the map is bounded.
+      for (const [k, v] of linkTickets) if (v.who.accountKey === who.accountKey) linkTickets.delete(k);
       const ticket = randomBytes(24).toString('base64url');
       linkTickets.set(ticket, { who, provider, exp: Date.now() + LINK_TICKET_MS });
       sendJson(res, 200, { path: '/auth/link/' + provider + '?ticket=' + ticket, expiresInSeconds: LINK_TICKET_MS / 1000 });

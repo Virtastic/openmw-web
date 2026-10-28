@@ -14,7 +14,7 @@
 
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDb } from '../persist/sqlite';
 import { validAccountName, validEmail, type AccountStore } from '../core/accounts';
@@ -546,28 +546,24 @@ function sessionId(token: string): string {
   return createHash('sha256').update(token).digest('base64url').slice(0, 16);
 }
 
+// OT3-33: keyed by a sha256 of the token, so a lookup is one Map get (it used to scan every live
+// session per /auth/link call) and the raw bearer credential is never compared byte by byte.
+const tokenKey = (token: string): string => createHash('sha256').update(token).digest('base64url');
+
 export class SessionIndex {
   private readonly byToken = new Map<string, { accountKey: string; accountName: string; charId?: string }>();
 
   // charId: which character the socket plays (backlog 333) — resume-over-live must find THAT
   // session, not whichever of the account's characters the roster lists last.
   add(token: string, accountKey: string, accountName: string, charId?: string): void {
-    if (token !== '') this.byToken.set(token, { accountKey, accountName, ...(charId !== undefined ? { charId } : {}) });
+    if (token !== '') this.byToken.set(tokenKey(token), { accountKey, accountName, ...(charId !== undefined ? { charId } : {}) });
   }
 
   remove(token: string): void {
-    this.byToken.delete(token);
+    this.byToken.delete(tokenKey(token));
   }
 
-  // Constant-time over the candidate set is overkill for a Map lookup, but the token is a
-  // bearer credential, so at least do not leak its prefix through an early-exit compare.
   get(token: string): { accountKey: string; accountName: string; charId?: string } | undefined {
-    if (token === '') return undefined;
-    const want = Buffer.from(token);
-    for (const [known, value] of this.byToken) {
-      const got = Buffer.from(known);
-      if (got.length === want.length && timingSafeEqual(got, want)) return value;
-    }
-    return undefined;
+    return token === '' ? undefined : this.byToken.get(tokenKey(token));
   }
 }
