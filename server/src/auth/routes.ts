@@ -138,7 +138,7 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     if (!oidc.enabled(provider)) return fail(req, res, 'provider_disabled', `provider ${provider} is not enabled`, ip);
     let started;
     try {
-      started = await oidc.start(provider, link);
+      started = await oidc.start(provider, link, requestOrigin(req)); // OT3-96: per-domain callback
     } catch (err) {
       // Discovery/JWKS reachability problems are the operator's, not the player's.
       log('error', 'auth.start_failed', { provider, error: String(err) });

@@ -499,6 +499,9 @@ allowPasswordLogin = true
 returnUrl = ""
 
 # Per provider: register `redirectUri` with the provider EXACTLY as written here.
+# Serving several domains: list one callback per domain, space separated, and register each
+# ("https://a.example/auth/callback/google https://b.example/auth/callback/google"). The one
+# on the domain the player came from is used; returnUrl = "" keeps them on that domain.
 #   discord   -> https://discord.com/developers/applications  (OAuth2 -> Redirects)
 #   google    -> https://console.cloud.google.com/apis/credentials  (OAuth client, type "Web")
 # Google and Discord are the only providers. `issuer` stays "" (it exists for the test suite).

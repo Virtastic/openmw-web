@@ -124,6 +124,17 @@ interface Pending {
   // the origin the browser actually used, so one build serves any hostname; carried here
   // because the callback arrives from the provider and cannot re-derive the caller's intent.
   returnUrl?: string;
+  // OT3-96: the redirect_uri this round trip was started with; the token exchange must
+  // repeat it byte for byte.
+  redirectUri: string;
+}
+
+/** OT3-96: `redirectUri` may list one callback per domain (whitespace or comma separated).
+ *  The one on the origin the browser used is picked, so the callback lands on the host that
+ *  holds the host-only state cookie; an unknown origin gets the first. */
+export function pickRedirectUri(configured: string, origin: string): string {
+  const all = configured.split(/[\s,]+/).filter((u) => u !== '');
+  return all.find((u) => { try { return new URL(u).origin === origin; } catch { return false; } }) ?? all[0] ?? '';
 }
 
 function b64url(buf: Buffer): string {
@@ -246,7 +257,7 @@ export class OidcService {
   // caller sets the cookie; the callback requires BOTH the server-side entry and a
   // matching cookie, so a pasted callback URL cannot log the victim into the attacker's
   // account (login CSRF).
-  async start(id: ProviderId, link?: { accountKey: string; accountName: string }): Promise<{ url: string; state: string }> {
+  async start(id: ProviderId, link?: { accountKey: string; accountName: string }, origin = ''): Promise<{ url: string; state: string }> {
     if (!this.enabled(id)) throw new OidcError('disabled', `provider ${id} is not enabled`);
     if (this.pending.size >= MAX_PENDING) {
       this.sweep();
@@ -258,7 +269,9 @@ export class OidcService {
     const challenge = b64url(createHash('sha256').update(verifier).digest());
     const state = b64url(randomBytes(32));
     const nonce = b64url(randomBytes(16));
+    const redirectUri = pickRedirectUri(p.redirectUri, origin);
     this.pending.set(state, {
+      redirectUri,
       provider: id,
       verifier,
       nonce,
@@ -268,7 +281,7 @@ export class OidcService {
     const url = new URL(ep.authorizeUrl);
     url.searchParams.set('response_type', 'code'); // never "token"/"id_token": RFC 9700 §2.1.2
     url.searchParams.set('client_id', p.clientId);
-    url.searchParams.set('redirect_uri', p.redirectUri);
+    url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('scope', p.scope || DEFAULTS[id].scope);
     url.searchParams.set('state', state);
     url.searchParams.set('code_challenge', challenge);
@@ -306,7 +319,7 @@ export class OidcService {
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
       code,
-      redirect_uri: p.redirectUri,
+      redirect_uri: pending.redirectUri,
       client_id: p.clientId,
       client_secret: p.clientSecret, // BFF: the secret lives here, never in the browser
       code_verifier: pending.verifier,

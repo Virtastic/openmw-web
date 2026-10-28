@@ -984,3 +984,13 @@ test('an enabled provider other than Google or Discord refuses to boot', () => {
   assert.doesNotThrow(() => loadConfig(dir, { auth: { microsoft: { enabled: false } } } as never));
   assert.throws(() => loadConfig(dir, { auth: { microsoft: { enabled: true } } } as never), /\[auth\.microsoft\]\.enabled/);
 });
+
+// OT3-96: one callback per domain; the one on the browser's origin wins, else the first.
+test('redirectUri lists one callback per domain and the request origin picks it (OT3-96)', async () => {
+  const { pickRedirectUri } = await import('../src/auth/oidc');
+  const both = 'https://a.example/auth/google/callback https://opentes3.com/auth/google/callback';
+  assert.equal(pickRedirectUri(both, 'https://opentes3.com'), 'https://opentes3.com/auth/google/callback');
+  assert.equal(pickRedirectUri(both, 'https://a.example'), 'https://a.example/auth/google/callback');
+  assert.equal(pickRedirectUri(both, 'https://evil.example'), 'https://a.example/auth/google/callback');
+  assert.equal(pickRedirectUri('https://x/cb', ''), 'https://x/cb', 'a single URI behaves as before');
+});
