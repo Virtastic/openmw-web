@@ -32,7 +32,7 @@ import type { Config } from '../config';
 import { defaultClientDir } from '../net/client-routes';
 import { roleAtLeast, type AccountStore } from '../core/accounts';
 import type { AdminSessionStore } from '../auth/identities';
-import { Moderation } from '../core/moderation';
+import { Moderation, reportView } from '../core/moderation';
 import { gameDataDir } from '../core/gamedata';
 import { deleteAccount } from '../persist/erase';
 import { BanStore } from '../persist/banstore';
@@ -179,12 +179,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
       };
     },
     reports: async (limit) => ({
-      reports: (await moderation.reports.list(Math.min(Math.max(1, limit || 20), 100))).map(({ doc }) => ({
-        ts: doc.ts,
-        reporter: doc.reporter.name,
-        target: doc.target.name,
-        reason: doc.reason,
-      })),
+      reports: (await moderation.reports.list(Math.min(Math.max(1, limit || 20), 100))).map(reportView),
     }),
     // Bans live in the SHARED bans.db, so lifting one needs no game: a fresh store reads
     // the db as it is now (a long-lived one would only know the bans it booted with).

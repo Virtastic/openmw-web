@@ -45,7 +45,19 @@ const MIGRATIONS = [
       db.exec('CREATE INDEX reports_ts ON reports (tsMs)');
     },
   },
+  {
+    // OT3-188: a report is a work item (open -> assigned -> closed, with who has it), and
+    // its context is read per person, so the account index carries the time too.
+    name: '002-report-status',
+    up: (db: DatabaseSync) => {
+      db.exec("ALTER TABLE reports ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
+      db.exec('ALTER TABLE reports ADD COLUMN assignee TEXT');
+      db.exec('CREATE INDEX chat_lines_account_ts ON chat_lines (account, tsMs)');
+    },
+  },
 ];
+
+export type ReportStatus = 'open' | 'assigned' | 'closed';
 
 export interface ChatLine {
   ts: string; // ISO 8601, UTC
@@ -56,12 +68,20 @@ export interface ChatLine {
   text: string;
 }
 
+export interface ReportRow {
+  id: number;
+  file: string;
+  doc: ReportDoc;
+  status: ReportStatus;
+  assignee: string | null;
+}
+
 export interface ReportDoc {
   ts: string;
   reporter: { id: number; name: string; account: string };
   target: { id: number | null; name: string; account: string | null; cellKey: string | null };
   reason: string;
-  context: ChatLine[]; // the lines immediately before the report was filed
+  context: ChatLine[]; // what the reporter and target said in the minutes before the report
 }
 
 interface ModerationConfig {
@@ -72,6 +92,7 @@ interface ModerationConfig {
 
 const MAX_CONTEXT_SCAN_DAYS = 31; // bounds /chatlog work no matter what minutes it is given
 const DAY_MS = 86_400_000;
+const RING_DEPTH = 500;
 
 function dayKey(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
@@ -135,15 +156,33 @@ export class ChatLog {
   // /report that follows it in the same tick can read the ring.
   record(line: ChatLine): void {
     this.ring.push(line);
-    if (this.ring.length > this.cfg.contextLines) this.ring.shift();
+    // OT3-188: deeper than contextLines so a per-person filter still finds their lines
+    // when the durable log is off.
+    if (this.ring.length > Math.max(this.cfg.contextLines, RING_DEPTH)) this.ring.shift();
     if (!this.cfg.chatLog) return;
     this.enqueue(async () => this.insert(line));
   }
 
-  // Last N lines seen by THIS process. Used for report context: it is the cheapest correct
-  // answer and it cannot race a pending write.
+  // Last N lines seen by THIS process.
   context(): ChatLine[] {
-    return [...this.ring];
+    return this.ring.slice(-this.cfg.contextLines);
+  }
+
+  // OT3-188: report context is what THESE people said (reporter and target), on every
+  // channel, over the last `minutes` -- not whoever happened to be talking in the ring.
+  // The ring answers when the durable log is off (or for lines this process has not
+  // flushed yet; drain() covers those when it is on).
+  async contextFor(accounts: readonly string[], minutes = 30): Promise<ChatLine[]> {
+    const want = [...new Set(accounts.map((a) => a.toLowerCase()))];
+    const n = this.cfg.contextLines;
+    if (!this.cfg.chatLog) return this.ring.filter((l) => want.includes(l.account)).slice(-n);
+    await this.drain();
+    const rows = this.db
+      .prepare(`SELECT ts, playerId, account, name, channel, text FROM chat_lines
+                WHERE account IN (${want.map(() => '?').join(',')}) AND tsMs >= ?
+                ORDER BY id DESC LIMIT ?`)
+      .all(...want, Date.now() - minutes * 60_000, n) as unknown as ChatLine[];
+    return rows.reverse();
   }
 
   // Lets a caller (tests, /chatlog) observe everything recorded so far.
@@ -209,16 +248,19 @@ export class ReportStore {
   }
 
   // Newest first. A single unreadable report must not hide every other one, so a bad row is
-  // logged and skipped rather than failing the whole listing.
-  async list(limit = 20): Promise<{ file: string; doc: ReportDoc }[]> {
+  // logged and skipped rather than failing the whole listing. `id` is the short handle staff
+  // type (/triage 12 close); `file` stays for callers that already key on it.
+  async list(limit = 20, status?: ReportStatus): Promise<ReportRow[]> {
     const capped = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : -1;
     const rows = this.db
-      .prepare('SELECT file, doc FROM reports ORDER BY file DESC LIMIT ?')
-      .all(capped === -1 ? -1 : capped) as { file: string; doc: string }[];
-    const out: { file: string; doc: ReportDoc }[] = [];
+      .prepare(`SELECT rowid AS id, file, doc, status, assignee FROM reports
+                ${status ? 'WHERE status = ?' : ''} ORDER BY file DESC LIMIT ?`)
+      .all(...(status ? [status] : []), capped === -1 ? -1 : capped) as
+        { id: number; file: string; doc: string; status: ReportStatus; assignee: string | null }[];
+    const out: ReportRow[] = [];
     for (const r of rows) {
       try {
-        out.push({ file: r.file, doc: JSON.parse(r.doc) as ReportDoc });
+        out.push({ id: r.id, file: r.file, doc: JSON.parse(r.doc) as ReportDoc, status: r.status, assignee: r.assignee });
       } catch (err) {
         log('warn', 'reports.unreadable', { file: r.file, error: String(err) });
       }
@@ -226,11 +268,33 @@ export class ReportStore {
     return out;
   }
 
+  // OT3-188: false when there is no such report. Closing keeps the assignee: "who closed it".
+  setStatus(id: number, status: ReportStatus, assignee?: string): boolean {
+    const r = status === 'open'
+      ? this.db.prepare("UPDATE reports SET status = 'open', assignee = NULL WHERE rowid = ?").run(id)
+      : this.db.prepare('UPDATE reports SET status = ?, assignee = COALESCE(?, assignee) WHERE rowid = ?')
+        .run(status, assignee ?? null, id);
+    return Number(r.changes) > 0;
+  }
+
   async prune(): Promise<void> {
     const cutoff = Date.now() - this.retentionDays * DAY_MS;
     const r = this.db.prepare('DELETE FROM reports WHERE tsMs < ?').run(cutoff);
     if (Number(r.changes) > 0) log('info', 'reports.pruned', { reports: Number(r.changes) });
   }
+}
+
+// OT3-188: the dashboard's row. The original four fields keep their shape; id, status,
+// assignee and context are additive (the old mapping dropped the context entirely).
+export function reportView(r: ReportRow): {
+  id: number; ts: string; reporter: string; target: string; reason: string;
+  status: ReportStatus; assignee: string | null; context: { ts: string; name: string; channel: string; text: string }[];
+} {
+  return {
+    id: r.id, ts: r.doc.ts, reporter: r.doc.reporter.name, target: r.doc.target.name, reason: r.doc.reason,
+    status: r.status, assignee: r.assignee,
+    context: (r.doc.context ?? []).map(({ ts, name, channel, text }) => ({ ts, name, channel, text })),
+  };
 }
 
 export class Moderation {

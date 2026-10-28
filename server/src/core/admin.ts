@@ -6,7 +6,7 @@
 //
 // Ranks (stored on the account, 0-3):
 //   0 player     nothing privileged
-//   1 moderator  kick, tp, tpto, reports, chatlog  (crowd control + evidence)
+//   1 moderator  kick, tp, tpto, reports, triage, chatlog, mute  (crowd control + evidence)
 //   2 admin      ban, unban, ipban, give, motd  (state + access control)
 //   3 owner      setrank, console                (privilege escalation + remote code)
 //
@@ -149,10 +149,30 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       const found = await ctx.moderation.reports.list(n);
       if (found.length === 0) return 'No reports on file.';
       return found
-        .map(({ file, doc }) =>
-          `${doc.ts} ${doc.reporter.name} -> ${doc.target.name}` +
-          ` @${doc.target.cellKey ?? '?'}: ${doc.reason.slice(0, 120)}  [${file}]`)
+        .map(({ id, doc, status, assignee }) =>
+          `#${id} [${status}${assignee ? ` ${assignee}` : ''}] ${doc.ts} ${doc.reporter.name} -> ${doc.target.name}` +
+          ` @${doc.target.cellKey ?? '?'}: ${doc.reason.slice(0, 120)}` +
+          (doc.context ?? []).slice(-5).map((l) => `\n    ${l.name} (${l.channel}): ${l.text.slice(0, 120)}`).join(''))
         .join('\n');
+    },
+  },
+  // OT3-188: work a report. claim = assigned to you (or to [staff]); close keeps who had it.
+  triage: {
+    minRank: 1,
+    usage: '/triage <report#> <claim|close|open> [staff]',
+    help: 'claim, close or reopen a player report (moderator)',
+    async run(ctx, actor, args) {
+      const id = Number(String(args[0] ?? '').replace(/^#/, ''));
+      const verb = args[1];
+      const to = { claim: 'assigned', close: 'closed', open: 'open' } as const;
+      if (!Number.isInteger(id) || id < 1 || !(verb === 'claim' || verb === 'close' || verb === 'open')) {
+        return 'usage: /triage <report#> <claim|close|open> [staff]';
+      }
+      const who = verb === 'claim' ? (arg(args, 2) ?? actor.name) : verb === 'close' ? actor.name : undefined;
+      // Close names the closer only when nobody had claimed it (COALESCE keeps a claimant).
+      if (!ctx.moderation.reports.setStatus(id, to[verb], who)) return `No report #${id}.`;
+      audit(actor, 'triage', { report: id, status: to[verb], assignee: who });
+      return `Report #${id} is ${to[verb]}${who && verb === 'claim' ? ` (${who})` : ''}.`;
     },
   },
   // Phase 4: the quest-unstick tool. Stuck quests are inevitable in a system covering

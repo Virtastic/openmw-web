@@ -40,7 +40,7 @@ import { WorldM7 } from './core/m7';
 import { Roster, type Player } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
 import type { ChatContext } from './core/chat';
-import { Moderation } from './core/moderation';
+import { Moderation, reportView } from './core/moderation';
 import { Admin, ADMIN_COMMANDS } from './core/admin';
 import { ResumeStore } from './core/resume';
 import { broadcastChat, makeChatFilter, noviceEligible, type ChatMessageBody } from './core/chat';
@@ -690,14 +690,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     levelOf,
     journalOf: (p) => playerStore.getCached(p.charId)?.journal ?? {},
     // A4/3.8: the context-menu report writes to the same queue as /report.
-    report: (doc) => moderation.reports.write({
+    report: async (doc) => moderation.reports.write({
       ts: new Date().toISOString(),
       reporter: doc.reporter,
       target: doc.target,
       reason: doc.reason,
-      // The lines immediately before the report: without them a moderator reading the
-      // queue has an accusation and nothing to weigh it against.
-      context: moderation.chat.context(),
+      // What the two of them said: without it a moderator reading the queue has an
+      // accusation and nothing to weigh it against. OT3-188: theirs, not the global ring.
+      context: await moderation.chat.contextFor([doc.reporter.account, ...(doc.target.account ? [doc.target.account] : [])]),
     }),
   });
   socialRef = social;
@@ -923,12 +923,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       })),
     }),
     reports: async (limit) => ({
-      reports: (await moderation.reports.list(Math.min(Math.max(1, limit || 20), 100))).map(({ doc }) => ({
-        ts: doc.ts,
-        reporter: doc.reporter.name,
-        target: doc.target.name,
-        reason: doc.reason,
-      })),
+      reports: (await moderation.reports.list(Math.min(Math.max(1, limit || 20), 100))).map(reportView),
     }),
     action: async (kind, target, detail, by) => {
       const online = target === '' ? undefined : roster.activeForAccount(target.toLowerCase());
