@@ -276,6 +276,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
     allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
     audit: new AdminAudit(opts.dataDir),
+    restore: (charKey, at) => playerStore.restoreTo(charKey, at), // OT3-184
   });
   const m7 = new WorldM7({
     roster,

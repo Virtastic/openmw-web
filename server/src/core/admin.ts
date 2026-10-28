@@ -57,6 +57,8 @@ interface AdminCtx {
   allow(actor: Player, cmd: string): boolean;
   // OT3-183: the durable audit table (admin-audit.ts). Absent in tests that do not care.
   audit?: { write(row: AuditRow): void };
+  // OT3-184: point-in-time character restore (PlayerStore.restoreTo).
+  restore?(charKey: string, at: number): number | undefined;
 }
 
 /** The commands a rank may run, one line each. The dashboard's catalog is the same table. */
@@ -276,6 +278,34 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       target.peer.sendEvent('AdminGive', { recordId, count });
       audit(actor, 'give', { target: target.name, recordId, count });
       return `Gave ${count}x ${recordId} to ${target.name}.`;
+    },
+  },
+  // OT3-184: put one character back to how it was N minutes ago. Online targets are
+  // disconnected first (a live client would write its state straight back); the rejoin
+  // loads the restored doc. Offline characters go by character key.
+  restore: {
+    minRank: 2,
+    usage: '/restore <player|charKey> <minutesAgo> [reason]',
+    help: 'restore one character to a snapshot from N minutes ago',
+    run(ctx, actor, args) {
+      const who = arg(args, 0);
+      const minutes = Number(args[1]);
+      if (!who || !Number.isInteger(minutes) || minutes < 1 || minutes > 7 * 24 * 60) {
+        return 'usage: /restore <player|charKey> <minutesAgo 1-10080> [reason]';
+      }
+      if (!ctx.restore) return 'Restore is not available on this world.';
+      const online = ctx.roster.findByName(who);
+      if (online && online.rank > actor.rank) return `${online.name} outranks you.`;
+      const charKey = online?.charId ?? who;
+      if (online) {
+        // Synchronous: the logout flush lands now, so the restore below is the last write.
+        online.peer.disconnect('KICKED', `Your character was restored by ${actor.name}; rejoin to continue.`);
+        ctx.resume.revokeAccount(online.accountKey); // after: teardown parks a resume ticket
+      }
+      const ts = ctx.restore(charKey, Date.now() - minutes * 60_000);
+      if (ts === undefined) return `No snapshot of ${online?.name ?? who} from ${minutes} min ago or earlier.`;
+      audit(actor, 'restore', { target: charKey, minutes, snapshot: new Date(ts).toISOString() });
+      return `Restored ${online?.name ?? who} to ${new Date(ts).toISOString()}.`;
     },
   },
   ban: {

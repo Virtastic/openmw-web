@@ -54,6 +54,15 @@ const PLAYER_MIGRATIONS = [
       log('info', 'players.positions_migrated', { docs: rows.length, before, after });
     },
   },
+  {
+    // OT3-184: point-in-time restore. A copy of the doc as flushed, at most one per character
+    // per SNAPSHOT_EVERY_MS, kept SNAPSHOT_TTL_MS.
+    name: '004-snapshots',
+    up: (db: DatabaseSync) => {
+      db.exec(`CREATE TABLE snapshots (key TEXT NOT NULL, ts INTEGER NOT NULL, doc TEXT NOT NULL,
+        PRIMARY KEY (key, ts))`);
+    },
+  },
 ];
 import { WORLD_ID } from '../gateway/worlds';
 import { log } from '../log';
@@ -163,6 +172,8 @@ type LivePosition = { cellKey: string; x: number; y: number; z: number };
 const SWEEP_MS = 45_000;
 const ERASED_TTL_MS = 90 * 24 * 3_600_000; // backlog 196: erased tombstones older than this are dropped at boot
 const EQUIP_DEBOUNCE_MS = 10_000;
+const SNAPSHOT_EVERY_MS = 10 * 60_000; // OT3-184: restore granularity
+const SNAPSHOT_TTL_MS = 7 * 24 * 3_600_000;
 
 /** The player's latest known position across all worlds — by `at` when the entries carry it,
  *  else the last one written. Seeds a world they have never visited; see materializePosition. */
@@ -289,6 +300,8 @@ export class PlayerStore {
     // Backlog 196: a tombstone only has to outlive any sweep that could still rewrite the
     // row (seconds); 90 days is generous, and without this the table grows forever.
     try { this.db.prepare('DELETE FROM erased WHERE at < ?').run(Date.now() - ERASED_TTL_MS); } catch { /* best effort */ }
+    // ponytail: pruned at boot only; a server up for weeks keeps older rows until it restarts.
+    try { this.db.prepare('DELETE FROM snapshots WHERE ts < ?').run(Date.now() - SNAPSHOT_TTL_MS); } catch { /* best effort */ }
     this.sweepTimer = setInterval(() => {
       void this.flushAll();
     }, SWEEP_MS);
@@ -449,14 +462,57 @@ export class PlayerStore {
       doc.positions = { [this.worldId]: { ...doc.position, at: new Date().toISOString() } };
     }
     try {
+      const json = JSON.stringify(doc);
       await timeFlush('players', async () =>
-        this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)')
-          .run(key, JSON.stringify(doc)),
+        this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)').run(key, json),
       );
+      this.maybeSnapshot(key, json);
     } catch (err) {
       this.dirty.add(key); // retry on the next flush point
       log('error', 'players.flush_failed', { player: key, error: String(err) });
     }
+  }
+
+  // OT3-184: one snapshot per character per SNAPSHOT_EVERY_MS, taken from what was just flushed.
+  private lastSnapshot = new Map<string, number>();
+  private maybeSnapshot(key: string, json: string, now = this.now()): void {
+    let last = this.lastSnapshot.get(key);
+    if (last === undefined) {
+      const row = this.db.prepare('SELECT MAX(ts) AS ts FROM snapshots WHERE key = ?').get(key) as { ts: number | null };
+      last = row.ts ?? 0;
+    }
+    if (now - last < SNAPSHOT_EVERY_MS) return;
+    try {
+      this.db.prepare('INSERT OR REPLACE INTO snapshots (key, ts, doc) VALUES (?, ?, ?)').run(key, now, json);
+      this.lastSnapshot.set(key, now);
+    } catch (err) {
+      log('warn', 'players.snapshot_failed', { player: key, error: String(err) });
+    }
+  }
+  /** Test seam for the snapshot clock. */
+  now: () => number = Date.now;
+
+  /** Replace a character with its newest snapshot at or before `at`. The current doc is
+   *  snapshotted first, so a restore can itself be undone. The caller disconnects the
+   *  character BEFORE this: a live client would write its state straight back.
+   *  Returns the snapshot's time, or undefined when there is none that old. */
+  restoreTo(key: string, at: number): number | undefined {
+    const row = this.db.prepare('SELECT ts, doc FROM snapshots WHERE key = ? AND ts <= ? ORDER BY ts DESC LIMIT 1')
+      .get(key, at) as { ts: number; doc: string } | undefined;
+    if (!row) return undefined;
+    const current = this.db.prepare('SELECT doc FROM players WHERE key = ?').get(key) as { doc: string } | undefined;
+    if (current) {
+      this.db.prepare('INSERT OR REPLACE INTO snapshots (key, ts, doc) VALUES (?, ?, ?)').run(key, this.now(), current.doc);
+      this.lastSnapshot.set(key, this.now());
+    }
+    this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)').run(key, row.doc);
+    // Drop what this process held, so the next read (the rejoin) comes off disk.
+    this.cache.delete(key);
+    this.dirty.delete(key);
+    const pending = this.debounce.get(key);
+    if (pending) { clearTimeout(pending); this.debounce.delete(key); }
+    this.loadSync(key);
+    return row.ts;
   }
 
   private erased(key: string): boolean {
