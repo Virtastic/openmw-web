@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { PlayerStore, type PlayerDoc } from '../src/persist/playerstore';
 import { startServer } from '../src/server';
+import { characterNameProblem } from '../src/core/accounts';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
 const APPEARANCE = { race: 'dark elf', head: 'h1', hair: 'a1', isMale: true, class: 'thief', name: 'Drelas' };
@@ -111,15 +112,43 @@ test('CharacterCreate: adds a slot, enforces name rules and the cap; new slot is
   await c3.waitJson('SessionHelloOk');
   c3.login('Alice', 'hunter22');
   await c3.waitJson('SessionWelcome');
-  for (let i = 3; i <= 8; i++) {
-    c3.sendJson({ t: 'CharacterCreate', name: `Alt ${i}` });
+  for (const [i, alt] of ['Ald', 'Bal', 'Cal', 'Dal', 'Eld', 'Fal'].entries()) {
+    c3.sendJson({ t: 'CharacterCreate', name: `Alt ${alt}` });
     const ri = await c3.waitJson('CharacterResult');
-    assert.equal(ri['ok'], true, `slot ${i} should fit`);
+    assert.equal(ri['ok'], true, `slot ${i + 3} should fit`);
   }
   c3.sendJson({ t: 'CharacterCreate', name: 'One Too Many' });
   const rf = await c3.waitJson('CharacterResult');
   assert.deepEqual([rf['ok'], rf['error']], [false, 'full']);
   c3.close();
+
+  // OT3-32: another account cannot take a name already in use, and is told so in words.
+  const b = await TestClient.connect(server.port);
+  b.hello();
+  await b.waitJson('SessionHelloOk');
+  b.register('Bob', 'hunter22');
+  await b.waitJson('SessionWelcome');
+  b.sendJson({ t: 'CharacterCreate', name: 'drelas arano' });
+  const rt = await b.waitJson('CharacterResult');
+  assert.deepEqual([rt['ok'], rt['error'], rt['reason']], [false, 'badname', 'Another character already has that name.']);
+  b.close();
+});
+
+test('character-name rules (OT3-32)', () => {
+  const ok = (n: string): void => assert.equal(characterNameProblem(n), null, n);
+  const bad = (n: string, re: RegExp): void => assert.match(characterNameProblem(n) ?? 'accepted', re, n);
+  ok("M'aiq"); ok('Jo-Ann Telvanni'); ok('Drelas Arano');
+  bad('A', /2-24 characters/);
+  bad('A'.repeat(25), /2-24 characters/);
+  bad('Alt 3', /letters only/);
+  bad('Two  Spaces', /letters only/);
+  bad('Ålmsivi', /letters only/);
+  bad("Trailing'", /letters only/);
+  bad('Vivec', /someone in the game/);
+  bad('dagoth ur', /someone in the game/);
+  bad('Adventurer', /someone in the game/);
+  bad('Admin Bob', /staff or the server/);
+  bad('Gm', /staff or the server/);
 });
 
 // `at` is a flush timestamp (see playerstore); these tests are about WHERE, so drop it.

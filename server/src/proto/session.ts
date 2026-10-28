@@ -316,8 +316,9 @@ export function welcome(
 // 'cooldown').
 // Character slots: answer to CharacterCreate — the refreshed slot list on success so the
 // select screen re-renders without a reconnect.
-export function characterResult(ok: boolean, characters: WelcomeCharacter[], error?: string): string {
-  return JSON.stringify({ t: 'CharacterResult', ok, characters, ...(error !== undefined ? { error } : {}) });
+// `reason` is player-readable copy (OT3-32); `error` stays the machine code.
+export function characterResult(ok: boolean, characters: WelcomeCharacter[], error?: string, reason?: string): string {
+  return JSON.stringify({ t: 'CharacterResult', ok, characters, ...(error !== undefined ? { error } : {}), ...(reason !== undefined ? { reason } : {}) });
 }
 
 export function profileResult(ok: boolean, error?: string): string {

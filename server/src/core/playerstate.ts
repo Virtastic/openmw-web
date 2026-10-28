@@ -12,6 +12,7 @@ import type { PlayerStore, PlayerAppearanceDoc, PlayerDoc, DynamicStatDoc, ItemS
 import { cellsVisible } from './movement';
 import { parseObjRef } from '../proto/ref';
 import { log } from '../log';
+import { serverWhisper } from './chat';
 import { metrics } from '../metrics';
 
 const MAX_RECORD_ID = 64;
@@ -69,6 +70,8 @@ export interface StateCtx {
   // appearance. Without this the slot keeps its placeholder forever and the character screen
   // shows "Adventurer" next to a character the player named something else.
   onCharacterNamed?(player: Player, name: string): void;
+  // OT3-32: why a chargen name may not be shown on the public world (null = fine). Absent = no rules.
+  characterNameRefusal?(player: Player, name: string): string | null;
   // Anti-cheat telemetry, same contract movement uses: the client authors its own character,
   // so this is the SIGNAL moderation acts on, never a rejection.
   noteAnomaly?(accountKey: string, kind: string): void;
@@ -144,6 +147,14 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
   if (missing.length > 0) {
     log('warn', 'state.appearance_incomplete', { from: player.name, missing: missing.join(',') });
     return false;
+  }
+  // OT3-32: chargen cannot be stalled from here, so a refused name is swapped for the session
+  // name (a placeholder or the vetted handle) and the player is told why. Bots and the peer skip it.
+  const refused = player.system || player.bot ? null : ctx.characterNameRefusal?.(player, appearance.name) ?? null;
+  if (refused !== null) {
+    log('info', 'state.character_name_refused', { from: player.name, name: appearance.name });
+    appearance.name = player.name;
+    serverWhisper(player, `${refused} You appear as ${player.name} for now.`);
   }
   ctx.store.update(player.charId, (doc) => (doc.appearance = appearance));
   ctx.onCharacterNamed?.(player, appearance.name);

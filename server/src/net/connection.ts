@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { Config } from '../config';
 import { isLoopback } from './http';
-import { validEmail, validAccountName, DEFAULT_CHARACTER_NAME, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
+import { validEmail, DEFAULT_CHARACTER_NAME, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
 import { INPUT_DRIVING_MS, PEER_POSE_FRESH_MS } from '../core/players';
@@ -723,8 +723,9 @@ export class Connection implements Peer {
     if (!this.account || this.isSystem) return;
     const slots = (): WelcomeCharacter[] =>
       (this.account?.characters ?? []).map(({ id, name, lastPlayedAt }) => ({ id, name, lastPlayedAt }));
-    if (!validAccountName(msg.name)) {
-      this.sendText(characterResult(false, slots(), 'badname'));
+    const refused = this.ctx.accounts.characterNameRefusal(msg.name, this.account.name);
+    if (refused !== null) {
+      this.sendText(characterResult(false, slots(), 'badname', refused));
       return;
     }
     const created = this.ctx.accounts.createCharacter(this.account, msg.name);

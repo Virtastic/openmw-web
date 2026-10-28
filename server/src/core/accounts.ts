@@ -118,6 +118,36 @@ const USERNAME_BLOCKLIST = new Set([
   'admin', 'administrator', 'moderator', 'mod', 'staff', 'gm', 'gamemaster',
   'system', 'server', 'owner', 'operator', 'support', 'virtastic', 'openmw',
 ]);
+// Character names (OT3-32): what other players read over a head on the one public world. Words
+// of letters joined by single spaces, apostrophes or hyphens ("M'aiq", "Jo-Ann Telvanni"),
+// ASCII only so nobody can wear a look-alike of someone else's name.
+const CHARACTER_NAME_RE = /^[A-Za-z]+(?:[ '-][A-Za-z]+)*$/;
+const CHARACTER_NAME_MIN = 2;
+const CHARACTER_NAME_MAX = 24;
+// Names that would read as a god, a quest-critical NPC or the game itself. Whole-name match.
+// ponytail: a short hand list, not the ESM's NPC table; feed it from the content table if
+// players start impersonating lesser NPCs.
+const RESERVED_CHARACTER_NAMES = new Set([
+  'vivec', 'almalexia', 'sotha sil', 'dagoth ur', 'azura', 'nerevar', 'nerevarine', 'indoril nerevar',
+  'caius cosades', 'fargoth', 'jiub', 'yagrum bagarn', 'divayth fyr', 'uriel septim', 'hasphat antabolis',
+  'sixth house', 'tribunal', 'lord vivec', 'lord nerevar', 'the nerevarine',
+]);
+
+/** Why a character name is refused, as a sentence the player can act on; null when it is fine. */
+export function characterNameProblem(name: string): string | null {
+  const n = name.trim();
+  if (n.length < CHARACTER_NAME_MIN || n.length > CHARACTER_NAME_MAX) {
+    return `Character names are ${CHARACTER_NAME_MIN}-${CHARACTER_NAME_MAX} characters long.`;
+  }
+  if (!CHARACTER_NAME_RE.test(n)) {
+    return 'Character names use letters only, with single spaces, apostrophes or hyphens between words.';
+  }
+  const lower = n.toLowerCase();
+  if (PLACEHOLDER_NAMES.has(lower) || RESERVED_CHARACTER_NAMES.has(lower)) return 'That name belongs to someone in the game.';
+  if (lower.split(/[ '-]/).some((w) => USERNAME_BLOCKLIST.has(w))) return 'Character names cannot read as staff or the server.';
+  return null;
+}
+
 // Deliberately loose: the point is catching typos ("a@b"), not RFC 5322 conformance.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export const USERNAME_RENAME_COOLDOWN_MS = 7 * 24 * 3600 * 1000;
@@ -553,6 +583,21 @@ export class AccountStore {
       c.name = name;
       return true as const;
     });
+  }
+
+  /** OT3-32: another account already has a character by this name (case-insensitive). The
+   *  accounts row is written through on every mutate, so the table is current.
+   *  ponytail: a JSON scan of every account; add a names table if chargen gets hot. */
+  characterNameTaken(name: string, exceptAccountKey: string): boolean {
+    return this.db.prepare(
+      `SELECT 1 FROM accounts, json_each(accounts.doc, '$.characters') c
+        WHERE accounts.key <> ? AND lower(json_extract(c.value, '$.name')) = ? LIMIT 1`,
+    ).get(exceptAccountKey.toLowerCase(), name.trim().toLowerCase()) !== undefined;
+  }
+
+  /** The refusal for a character name, rules then uniqueness; null when it may be used. */
+  characterNameRefusal(name: string, accountKey: string): string | null {
+    return characterNameProblem(name) ?? (this.characterNameTaken(name, accountKey) ? 'Another character already has that name.' : null);
   }
 
   touchCharacter(account: Account, charId: string): void {

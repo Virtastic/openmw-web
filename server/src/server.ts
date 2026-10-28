@@ -454,6 +454,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // left alone.
     // Same sink the movement envelope feeds: anomalies are what moderation acts on.
     noteAnomaly: (accountKey, kind) => moderation.noteAnomaly(accountKey, kind),
+    characterNameRefusal: (player, name) => accounts.characterNameRefusal(name, player.accountKey),
     onCharacterNamed: (player, name) => {
       // TRACKED: this writes the name the player typed in chargen onto their slot. Untracked,
       // a shutdown landing between the read and the write both loses the name and throws from

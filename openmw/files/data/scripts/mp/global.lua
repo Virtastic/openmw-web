@@ -1249,6 +1249,7 @@ net.onCharacters = function(msg)
         active = net.characterId or '',
         ok = msg and msg.ok or nil,
         error = msg and msg.error or nil,
+        reason = msg and msg.reason or nil, -- OT3-32: the server's readable refusal
     })
 end
 net.onProfileResult = function(msg)

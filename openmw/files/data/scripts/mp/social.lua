@@ -309,6 +309,7 @@ return {
             if data.ok == true then status = 'Character created.'
             elseif data.ok == false then
                 status = data.error == 'full' and 'All character slots are used.'
+                    or type(data.reason) == 'string' and data.reason
                     or data.error == 'badname' and 'That name cannot be used.'
                     or 'Could not create the character.'
             end
