@@ -33,6 +33,7 @@ import { Quests } from './core/quests';
 import { Social } from './core/social';
 import { SocialStore } from './core/socialstore';
 import { Trades, TradeLedger } from './core/trade';
+import { Binding } from './core/binding';
 import type { JsLike } from './proto/lser';
 import { WorldM7 } from './core/m7';
 import { Roster, type Player } from './core/players';
@@ -220,6 +221,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // vanilla defaults, never a boot failure.
   const contentTable = await ContentTable.load(sharedDir);
   world.setQuestItems(contentTable.questItems);
+  // OT3-178: the party standing in the looter's cell shares a notable item's trade window.
+  const binding = new Binding(contentTable.questItems, contentTable.notableItems);
+  world.setBinding(binding, (p) => (socialStore.partyOf(p.accountKey)?.members ?? [])
+    .map((a) => roster.activeForAccount(a))
+    .filter((m): m is Player => m !== undefined && m.inWorld && m.cellKey === p.cellKey)
+    .map((m) => m.charId));
   world.setCharacterKills({
     bump: (charId, refId) => {
       let n = 0;
@@ -699,6 +706,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     send: (p, event, body) => p.peer.sendEvent(event, body as JsLike),
     ledger: (e) => tradeLedger.write(e),
     noteAnomaly: (acct, kind) => moderation.noteAnomaly(acct, kind),
+    binding,
     now: () => Date.now(),
   });
 

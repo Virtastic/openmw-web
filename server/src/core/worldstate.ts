@@ -303,6 +303,16 @@ export class WorldState {
   private uniqueActors: ReadonlySet<string> = new Set();
   private noDrop = false;
 
+  // OT3-178: bound items may not reach the ground or a container; `lootParty` names who
+  // shares a notable item's 2 h trade window (binding.ts).
+  private binding?: { isBound(id: string): boolean; noteLoot(charId: string, id: string, party: string[]): void };
+  private lootParty?: (player: Player) => string[];
+
+  setBinding(b: WorldState['binding'], lootParty: (player: Player) => string[]): void {
+    this.binding = b;
+    this.lootParty = lootParty;
+  }
+
   setQuestItems(ids: Iterable<string>): void {
     this.questItems = new Set([...ids].map((s) => s.toLowerCase()));
   }
@@ -1307,6 +1317,11 @@ export class WorldState {
         return;
       }
     }
+    if (fromInventory && !player.system && this.binding?.isBound(recordId)) {
+      log('info', 'world.bound_drop_refused', { player: player.name, recordId });
+      reply(false, 'bound');
+      return;
+    }
     if (this.contained(player)) {
       metrics.containedActions.inc({ action: 'drop' });
       log('warn', 'contain.drop_refused', { player: player.name, account: player.accountKey, recordId });
@@ -1823,6 +1838,10 @@ export class WorldState {
       reply(false, 'contained', cont.stateSeq); // a container is how an item reaches someone else
       return;
     }
+    if (op === 'put' && !player.system && this.binding?.isBound(itemId)) {
+      reply(false, 'bound', cont.stateSeq); // OT3-178: a merchant's stock is a container too
+      return;
+    }
     // OT3-82: take/put land on this character's own copy (shared for merchants and the peer).
     const view = containerView(cont, player.charId, player.system === true, true);
     const shared = view === cont;
@@ -1857,6 +1876,7 @@ export class WorldState {
       // went with the party concept.
       item.n -= n;
       if (item.n === 0) view.items.splice(view.items.indexOf(item), 1);
+      if (player.charId && !player.system) this.binding?.noteLoot(player.charId, itemId, this.lootParty?.(player) ?? []);
     } else {
       // put: always accepted except hard caps (conservation guard, not gameplay).
       if (item && item.n + n > (itemId === GOLD ? MAX_GOLD : MAX_COUNT)) {

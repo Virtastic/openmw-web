@@ -33,6 +33,9 @@ Corrections, each checked against the validator or handler named:
   client: `TradeAsk {fromName}`, `TradeState {id, with, mine, theirs, myStage, theirStage}`,
   `TradeApply {id, remove, add}` (docs already swapped and ledgered in trades.db; the client's
   inventory declarations are held until it acks), `TradeEnd {ok, why?}`.
+- Bound items (OT3-178): a quest or notable item in a drop (`fromInventory`) or a container
+  `put` is refused with reason `bound`; a trade offer with one gets `TradeEnd {why:
+  "bound:<id>"}` unless it is notable loot inside its 2 h party window.
 - `ContainerOpen` first-open caps and the `op="gold"` purse op; `ContainerState.gold`.
 - `DialogueLock` gates (reach, contention, one lock per player) and the 5 s "recently held"
   grace the M4 claims use.
