@@ -36,7 +36,7 @@ import { Trades, TradeLedger } from './core/trade';
 import { PvpConsent } from './core/pvp-consent';
 import { serverWhisper } from './core/chat';
 import { Binding } from './core/binding';
-import { AdminAudit } from './core/admin-audit';
+import { AdminAudit, LoginLog } from './core/admin-audit';
 import type { JsLike } from './proto/lser';
 import { WorldM7 } from './core/m7';
 import { Roster, type Player } from './core/players';
@@ -278,6 +278,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
     allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
     audit: new AdminAudit(opts.dataDir),
+    logins: new LoginLog(sharedDir), // OT3-186
     restore: (charKey, at) => playerStore.restoreTo(charKey, at), // OT3-184
     setMuted: (acct, muted, until, reason) => socialRef?.setServerMuted(acct, muted, until, reason), // OT3-185
   });

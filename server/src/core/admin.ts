@@ -16,7 +16,7 @@
 // rather than "unknown command": a moderator who cannot ban should learn that, and hiding
 // the command's existence buys nothing when the command list is in the protocol doc.
 
-import type { AuditRow } from './admin-audit';
+import type { AuditRow, LoginLog } from './admin-audit';
 import type { Player, Roster } from './players';
 import type { AccountStore, DashboardRole } from './accounts';
 import type { BanStore } from '../persist/banstore';
@@ -89,6 +89,8 @@ interface AdminCtx {
   restore?(charKey: string, at: number): number | undefined;
   // OT3-185: the moderator mute (Social.setServerMuted); until = epoch ms, absent = permanent.
   setMuted?(accountKey: string, muted: boolean, until?: number, reason?: string): void;
+  // OT3-186: login history (admin-audit.ts LoginLog). Absent = /logins reports it is off.
+  logins?: LoginLog;
 }
 
 const MAX_MUTE_MINUTES = 60 * 24 * 30;
@@ -435,6 +437,27 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       return `Banned ${account.name}${forSpan(until)}: ${reason}`;
     },
   },
+  logins: {
+    minRank: 2,
+    usage: '/logins <account>',
+    help: 'recent logins (time, character, address) and other accounts seen on the same addresses',
+    async run(ctx, _actor, args) {
+      const name = arg(args, 0);
+      if (!name) return 'usage: /logins <account>';
+      if (!ctx.logins) return 'Login history is not kept on this server.';
+      const key = ctx.accounts.keyForUsername(name) ?? name.toLowerCase();
+      const account = await ctx.accounts.get(key);
+      if (!account) return `No account named "${name}".`;
+      const rows = ctx.logins.recent(key);
+      if (rows.length === 0) return `No logins recorded for ${account.name}.`;
+      const when = (ts: number) => new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
+      const lines = [`Recent logins for ${account.name}:`, ...rows.map((r) => `  ${when(r.ts)} UTC  ${r.character}  ${r.ip}`)];
+      const alts = ctx.logins.sharingIp(key);
+      lines.push(alts.length ? 'Same address as:' : 'No other account seen on these addresses.');
+      for (const a of alts) lines.push(`  ${a.account} (${a.ip})`);
+      return lines.join('\n');
+    },
+  },
   unban: {
     minRank: 2,
     usage: '/unban <account|ip>',
@@ -558,6 +581,16 @@ export class Admin {
 
   helpLines(rank: number): string[] {
     return adminHelpLines(rank);
+  }
+
+  /** OT3-186: one login-history row per authed human session. Never throws. */
+  recordLogin(p: Player): void {
+    if (p.system === true || !p.ip) return;
+    try {
+      this.ctx.logins?.record(p.accountKey, p.name, p.ip);
+    } catch (err) {
+      log('error', 'admin.login_record_failed', { error: String(err) });
+    }
   }
 
   // THE ONE GATE. Operator commands enter only through the dashboard (server.ts runCommand,

@@ -45,3 +45,47 @@ export class AdminAudit {
       FROM admin_audit ORDER BY rowid DESC LIMIT ?`).all(limit) as unknown as AuditRow[]);
   }
 }
+
+// OT3-186: who logged in when, as which character, from where. Shared dir (one table for
+// every world) so an alt on another world still shows up. Rows older than LOGIN_RETENTION_MS
+// are pruned on write, at most once an hour.
+export const LOGIN_RETENTION_MS = 90 * 86_400_000;
+const PRUNE_EVERY_MS = 3_600_000;
+
+export interface LoginRow { ts: number; account: string; character: string; ip: string }
+
+export class LoginLog {
+  private readonly db: DatabaseSync;
+  private prunedAt = 0;
+  constructor(dir: string) {
+    this.db = openDb(join(dir, 'logins.db'), [{
+      name: '001-logins',
+      up: (db: DatabaseSync) => db.exec(`CREATE TABLE logins (
+        ts INTEGER NOT NULL, account TEXT NOT NULL, character TEXT NOT NULL, ip TEXT NOT NULL);
+        CREATE INDEX logins_account ON logins (account, ts);
+        CREATE INDEX logins_ip ON logins (ip);
+        CREATE INDEX logins_ts ON logins (ts)`),
+    }]);
+  }
+
+  record(account: string, character: string, ip: string, now = Date.now()): void {
+    this.db.prepare('INSERT INTO logins (ts, account, character, ip) VALUES (?, ?, ?, ?)')
+      .run(now, account.toLowerCase(), character, ip);
+    if (now - this.prunedAt >= PRUNE_EVERY_MS) {
+      this.prunedAt = now;
+      this.db.prepare('DELETE FROM logins WHERE ts < ?').run(now - LOGIN_RETENTION_MS);
+    }
+  }
+
+  recent(account: string, limit = 10): LoginRow[] {
+    return this.db.prepare('SELECT ts, account, character, ip FROM logins WHERE account = ? ORDER BY ts DESC LIMIT ?')
+      .all(account.toLowerCase(), limit) as unknown as LoginRow[];
+  }
+
+  /** Other accounts seen on any address this account used, with the shared address. */
+  sharingIp(account: string, limit = 20): { account: string; ip: string }[] {
+    return this.db.prepare(`SELECT DISTINCT o.account AS account, o.ip AS ip FROM logins o
+      WHERE o.ip IN (SELECT ip FROM logins WHERE account = ?) AND o.account <> ? LIMIT ?`)
+      .all(account.toLowerCase(), account.toLowerCase(), limit) as unknown as { account: string; ip: string }[];
+  }
+}

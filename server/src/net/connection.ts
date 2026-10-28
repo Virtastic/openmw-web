@@ -2161,6 +2161,7 @@ export class Connection implements Peer {
     );
     this.ctx.hooks.playerAuthed({ id: this.player.id, name: this.player.name, rank: this.player.rank });
     log('info', 'player.authed', { id: this.player.id, name: this.player.name, ip: this.ip });
+    this.ctx.admin.recordLogin(this.player); // OT3-186
   }
 
   private handleReady(): void {
