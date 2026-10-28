@@ -80,6 +80,11 @@ export interface StateCtx {
   recordOf?(id: string): { data: unknown; byAccount?: string } | undefined;
   // P4: the content's item records (ContentTable.isKnownItem). Absent = every id passes.
   isKnownItem?(id: string): boolean;
+  // OT3-9: the content's spell records (ContentTable.isKnownSpell). Absent = every id passes.
+  isKnownSpell?(id: string): boolean;
+  // OT3-9: the most base attributes/skills chargen can give this pick (ContentTable). Absent or
+  // undefined = unchecked.
+  chargenCeiling?(appearance: PlayerAppearanceDoc): { attributes: Record<string, number>; skills: Record<string, number> } | undefined;
   // #393: limits.harness -- the scenarios declare +100 skills and level steps of 4. The rate
   // windows are skipped; the caps (100, 255, the jump limit) stand.
   harness?: boolean;
@@ -456,6 +461,32 @@ function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'at
   return true;
 }
 
+// OT3-9: CREATION IS OVER, so the stored stats must be ones creation can make. Clamped, not
+// refused: the client already shows them, and a refused diff is never re-sent. Not checked
+// mid-creation because the race and class can still change there. Returns what was cut.
+export function clampToChargenCeiling(ctx: StateCtx, player: Player): string[] {
+  const doc = ctx.store.getCached(player.charId);
+  const ceil = doc?.appearance ? ctx.chargenCeiling?.(doc.appearance) : undefined;
+  if (!ceil || ctx.harness || player.system) return [];
+  const cut: string[] = [];
+  const clamp = (field: 'attributes' | 'skills') => {
+    const m = doc?.stats?.[field];
+    if (!m) return m;
+    const out = { ...m };
+    for (const [k, max] of Object.entries(ceil[field])) {
+      if ((out[k] ?? 0) > max) { cut.push(`${field}:${k}=${out[k]}>${max}`); out[k] = max; }
+    }
+    return out;
+  };
+  const attributes = clamp('attributes'), skills = clamp('skills');
+  if (cut.length === 0) return cut;
+  noteGain(ctx, player, 'chargen_over', { cut });
+  ctx.store.update(player.charId, (d) => {
+    d.stats = { ...d.stats, ...(attributes ? { attributes } : {}), ...(skills ? { skills } : {}) };
+  });
+  return cut;
+}
+
 // The Mark spot (backlog 155): a cell id and three finite numbers, nothing else stored.
 function handleMark(ctx: StateCtx, player: Player, body: LTable): boolean {
   const cell = recordId(body.get('cell'));
@@ -571,6 +602,12 @@ function handleSpellbook(ctx: StateCtx, player: Player, body: LTable): boolean {
     const rec = ctx.recordOf?.(id);
     if (rec && rec.byAccount !== undefined && rec.byAccount !== player.accountKey) {
       noteGain(ctx, player, 'spellbook_foreign_record', { id });
+      return false;
+    }
+    // OT3-9: a retail id no loaded content defines is invented (the content table has every
+    // SPEL record). A custom record is the RecordStore's, checked above.
+    if (!rec && ctx.isKnownSpell && !ctx.isKnownSpell(id)) {
+      noteGain(ctx, player, 'spellbook_unknown_spell', { id });
       return false;
     }
   }

@@ -325,3 +325,66 @@ test('invented record ids are dropped and gold per minute is capped', async (t) 
     'a third 19k inside the same minute must be refused');
   c.close();
 });
+
+// OT3-9: chargen closed server-side, the spellbook limited to content spells, and a spell hit
+// bounded by its record. The table is what tools/gen-content-table.mjs writes (vanilla values).
+const OT39_TABLE = {
+  spells: { fireball: { mag: 20, dur: 1 } },
+  races: { 'dark elf': {
+    male: { strength: 40, intelligence: 40, willpower: 30, agility: 40, speed: 50, endurance: 40, personality: 30, luck: 40 },
+    female: { strength: 40, intelligence: 40, willpower: 30, agility: 40, speed: 50, endurance: 30, personality: 40, luck: 40 },
+    skills: { destruction: 10, shortblade: 10, longblade: 5 } } },
+  classes: { warrior: { attributes: ['strength', 'endurance'], specialization: 0,
+    major: ['longblade', 'mediumarmor', 'heavyarmor', 'athletics', 'block'],
+    minor: ['armorer', 'spear', 'marksman', 'axe', 'bluntweapon'] } },
+};
+
+test('OT3-9: the chargen ceiling is race + class, and unknown spells are flagged', async () => {
+  const { ContentTable } = await import('../src/core/content-table');
+  const dir = tmpDataDir();
+  writeFileSync(join(dir, 'content-table.json'), JSON.stringify(OT39_TABLE));
+  const t = await ContentTable.load(dir);
+  const c = t.chargenCeiling({ race: 'Dark Elf', isMale: true, class: 'Warrior' })!;
+  assert.equal(c.attributes['strength'], 50, 'race 40 + favoured 10');
+  assert.equal(c.attributes['speed'], 50);
+  assert.equal(c.skills['longblade'], 30 + 5 + 5, 'major + combat specialization + race');
+  assert.equal(c.skills['destruction'], 5 + 10, 'misc + race');
+  assert.equal(c.skills['spear'], 15 + 5, 'minor + combat specialization');
+  const custom = t.chargenCeiling({ race: 'dark elf', isMale: false, class: 'Generated:0x1',
+    classSpec: { specialization: 'magic', attributes: ['willpower', 'luck'], majorSkills: ['destruction'], minorSkills: [] } })!;
+  assert.equal(custom.attributes['willpower'], 40);
+  assert.equal(custom.skills['destruction'], 30 + 5 + 10);
+  assert.equal(t.chargenCeiling({ race: 'nord', isMale: true, class: 'warrior' }), undefined, 'unknown race: no check');
+  assert.ok(t.isKnownSpell('Fireball') && !t.isKnownSpell('godmode') && t.isKnownSpell('Generated:0x2'));
+  assert.ok(ContentTable.defaults().isKnownSpell('godmode'), 'no table: permissive');
+});
+
+test('OT3-9: ChargenComplete clamps stats to the ceiling; the book refuses invented spells', async (t) => {
+  const dataDir = tmpDataDir();
+  writeFileSync(join(dataDir, 'content-table.json'), JSON.stringify(OT39_TABLE));
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  c.hello();
+  await c.waitJson('SessionHelloOk');
+  const charId = 'c' + 'cd'.repeat(12);
+  c.register('Creator', 'hunter22', { characterId: charId }); // provisional = in creation
+  await c.waitJson('SessionWelcome');
+  c.sendJson({ t: 'SessionReady' });
+  c.sendEvent('PlayerAppearance', { race: 'dark elf', head: 'h', hair: 'h', isMale: true, class: 'warrior', name: 'Creator' });
+  c.sendEvent('PlayerAttributes', { strength: 100, speed: 50 });
+  c.sendEvent('PlayerSkills', { longblade: 100, destruction: 15 });
+  c.sendEvent('PlayerSpellbook', { add: ['fireball', 'godmode'], remove: [] }); // one invented id refuses the add
+  c.sendEvent('PlayerSpellbook', { add: ['Fireball'], remove: [] });
+  c.sendEvent('ChargenComplete', {});
+  c.sendEvent('ChatSend', { text: 'fence' });
+  await c.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'fence');
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId) as { spells?: string[]; stats?: { attributes?: Record<string, number>; skills?: Record<string, number> } };
+  assert.deepEqual(doc.spells, ['Fireball']);
+  assert.equal(doc.stats?.attributes?.['strength'], 50, 'clamped to race + favoured');
+  assert.equal(doc.stats?.attributes?.['speed'], 50, 'a stat within the ceiling is untouched');
+  assert.equal(doc.stats?.skills?.['longblade'], 40);
+  assert.equal(doc.stats?.skills?.['destruction'], 15);
+});

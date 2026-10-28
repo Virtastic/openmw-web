@@ -450,6 +450,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     holderOf: (cellKey) => world.holderOf(cellKey), // bars only from an avatar the peer simulates
     recordOf: (id) => recordStore.get(id), // #359: active-effect adds budgeted by real magnitude
     isKnownItem: (id) => contentTable.isKnownItem(id), // P4: invented record ids are dropped
+    isKnownSpell: (id) => contentTable.isKnownSpell(id), // OT3-9: invented spell ids are refused
+    chargenCeiling: (a) => contentTable.chargenCeiling(a), // OT3-9: creation's stats, clamped at ChargenComplete
     // Chargen named the character: put that name on the slot, replacing the placeholder the
     // slot was auto-created with. Only ever an upgrade — a slot the player already named is
     // left alone.
@@ -487,6 +489,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     epochOf: (cellKey) => world.epochOf(cellKey),
     allowPlayerHit: (attacker, victimId, name) =>
       hooks.playerHit({ id: attacker.id, name: attacker.name, rank: attacker.rank }, victimId, name),
+    spellBounds: (id) => {
+      const known = contentTable.spellBounds(id);
+      if (known) return known;
+      // A spellmaker record carries its own effects (RecordStore, #359).
+      const fx = (recordStore.get(id)?.data as { effects?: { magnitudeMax?: unknown; duration?: unknown }[] } | undefined)?.effects;
+      if (!Array.isArray(fx)) return undefined;
+      const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+      return { mag: Math.max(0, ...fx.map((e) => num(e.magnitudeMax))), dur: Math.max(0, ...fx.map((e) => num(e.duration))) };
+    },
     knowsSource: (caster, id) => {
       const doc = playerStore.getCached(caster.charId);
       // Case-blind: engine record ids are, and a spell the client names "Fireball" is the doc's "fireball".

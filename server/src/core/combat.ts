@@ -49,6 +49,9 @@ interface CombatCtx {
   // retail spell on anyone in a neighbouring cell with no magicka at all (backlog 252).
   // Which of the two it is matters: a spell must also have been cast (OT3-8).
   knowsSource(caster: Player, id: string): 'spell' | 'item' | false;
+  // OT3-9: the spell record's largest magnitude and duration (content table, or a custom
+  // record's own). undefined = unknown record (an item's enchantment): maxHitDamage bounds it.
+  spellBounds?(id: string): { mag: number; dur: number } | undefined;
 }
 
 function coord(v: LValue | undefined): number | undefined {
@@ -378,6 +381,11 @@ export class Combat {
       return;
     }
     const cap = this.ctx.maxHitDamage;
+    // OT3-9: a hit claims no more than its record can roll. The owner re-rolls by id anyway;
+    // this keeps an inflated claim off the wire instead of trusting it as far as the cap.
+    const bounds = this.ctx.spellBounds?.(spellId);
+    const magCap = bounds ? Math.min(cap, Math.max(1, bounds.mag)) : cap; // a magnitude-less effect rolls 1
+    const durCap = bounds ? Math.min(cap, Math.max(1, bounds.dur)) : cap;
     // A beneficial spell (a helper's heal) is not an attack: it crosses the PvP veto, which
     // exists to stop players harming each other, not helping. Everything else about the route
     // (proximity, the input-driving avatar redirect) is unchanged. The word is EVERY hit's:
@@ -387,8 +395,8 @@ export class Combat {
     for (const [, entry] of effects) {
       const e = tbl(entry);
       const id = e ? str(e.get('id')) : undefined;
-      const magnitude = e ? checkedMagnitude(e.get('magnitude'), cap) : undefined;
-      const duration = e ? checkedMagnitude(e.get('duration'), cap) : undefined;
+      const magnitude = e ? checkedMagnitude(e.get('magnitude'), magCap) : undefined;
+      const duration = e ? checkedMagnitude(e.get('duration'), durCap) : undefined;
       if (!id || magnitude === undefined || duration === undefined) {
         this.drop(player, 'CombatSpellHit', 'invalid effect entry or over cap');
         return;

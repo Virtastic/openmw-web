@@ -86,7 +86,7 @@ export function mergeLossy(older: Buffer, newer: Buffer): Buffer {
   out[h - 1] = n;
   return out;
 }
-import { handleAvatarEffectsBatch, handleAvatarItemStatesBatch, handleAvatarSkillUse, handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
+import { handleAvatarEffectsBatch, handleAvatarItemStatesBatch, handleAvatarSkillUse, handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, type StateCtx, clampToChargenCeiling } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
 import type { Quests } from '../core/quests';
@@ -925,6 +925,10 @@ export class Connection implements Peer {
       // at auth is what re-enables persistence — without it the first real session after
       // chargen would also be discarded.
       if (this.player) this.ctx.players.allowSaves(this.player.charId);
+      // OT3-9: closed server-side -- the stats creation left must be ones creation can make.
+      // Only on the edge out of creation: a finished character re-reports this every login
+      // and has levelled past the ceiling legitimately.
+      if (this.player?.inChargen === true) clampToChargenCeiling(this.ctx.stateCtx, this.player);
       // Creation finished, so the character exists from here on. Until this point no slot was
       // written at all — nothing to reap if the player had quit instead.
       if (this.provisionalCharId !== undefined && this.player) {

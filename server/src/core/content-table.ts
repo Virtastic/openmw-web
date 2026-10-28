@@ -30,6 +30,27 @@ interface ContentTableDoc {
   // Every carryable item record id in the deployment's content (tools/gen-content-table.mjs).
   // Absent = no whitelist: inventory ids are taken as declared, as before.
   items?: string[];
+  // OT3-9 (same tool): spell id -> its record's largest magnitude and duration; race base
+  // attributes per sex and skill bonuses; class favoured attributes, specialization (0 combat,
+  // 1 magic, 2 stealth) and skills. Keys are OpenMW Lua ids. Absent = unchecked, as items.
+  spells?: Record<string, { mag: number; dur: number }>;
+  races?: Record<string, { male: Record<string, number>; female: Record<string, number>; skills: Record<string, number> }>;
+  classes?: Record<string, { attributes: string[]; specialization: number; major: string[]; minor: string[] }>;
+}
+
+// ESM skill order; a skill's specialization is index / 9 (combat, magic, stealth).
+const SKILLS = ['block', 'armorer', 'mediumarmor', 'heavyarmor', 'bluntweapon', 'longblade', 'axe', 'spear', 'athletics',
+  'enchant', 'destruction', 'alteration', 'illusion', 'conjuration', 'mysticism', 'restoration', 'alchemy', 'unarmored',
+  'security', 'sneak', 'acrobatics', 'lightarmor', 'shortblade', 'marksman', 'mercantile', 'speechcraft', 'handtohand'];
+const SPECS = ['combat', 'magic', 'stealth'];
+
+// What chargen alone can make, for the ceiling check: the stat a character may have when
+// creation ends. A custom class arrives as its spec (PlayerAppearanceDoc.classSpec).
+export interface ChargenPick {
+  race: string;
+  isMale: boolean;
+  class: string;
+  classSpec?: { specialization: string; attributes: string[]; majorSkills: string[]; minorSkills: string[] };
 }
 
 // Vanilla defaults. Deliberately small and high-confidence: these are the records the
@@ -67,8 +88,10 @@ export class ContentTable {
   readonly uniqueActors: ReadonlySet<string>;
   readonly notableItems: ReadonlySet<string>;
   readonly items: ReadonlySet<string> | undefined;
+  private readonly doc: ContentTableDoc;
 
   private constructor(doc: ContentTableDoc) {
+    this.doc = doc;
     const lower = (xs: string[]) => new Set(xs.map((s) => s.toLowerCase()));
     this.questItems = lower(doc.questItems ?? DEFAULT_QUEST_ITEMS);
     this.uniqueActors = lower(doc.uniqueActors ?? DEFAULT_UNIQUE_ACTORS);
@@ -81,6 +104,38 @@ export class ContentTable {
   isKnownItem(recordId: string): boolean {
     if (!this.items || recordId.startsWith('$') || recordId.startsWith('Generated:')) return true;
     return this.items.has(recordId.toLowerCase());
+  }
+
+  // A content spell's bounds; undefined for an id the table does not have (or no table).
+  spellBounds(id: string): { mag: number; dur: number } | undefined {
+    return this.doc.spells?.[id.toLowerCase()];
+  }
+
+  // Engine-minted ids pass, as for items; a custom (spellmaker) record is the RecordStore's to judge.
+  isKnownSpell(id: string): boolean {
+    if (!this.doc.spells || id.startsWith('$') || id.startsWith('Generated:')) return true;
+    return id.toLowerCase() in this.doc.spells;
+  }
+
+  // The highest base attributes and skills chargen can produce for this race/sex/class:
+  // race base +10 per favoured attribute; skill 5 misc, 15 minor, 30 major, +5 in the class's
+  // specialization, plus the race bonus. undefined = race or class unknown (no check).
+  // ponytail: birthsigns change no BASE stat in vanilla (theirs are abilities), so none counted.
+  chargenCeiling(pick: ChargenPick): { attributes: Record<string, number>; skills: Record<string, number> } | undefined {
+    const race = this.doc.races?.[pick.race.toLowerCase()];
+    const cls = pick.classSpec
+      ? { attributes: pick.classSpec.attributes, specialization: SPECS.indexOf(pick.classSpec.specialization),
+          major: pick.classSpec.majorSkills, minor: pick.classSpec.minorSkills }
+      : this.doc.classes?.[pick.class.toLowerCase()];
+    if (!race || !cls) return undefined;
+    const attributes = { ...(pick.isMale ? race.male : race.female) };
+    for (const a of cls.attributes) if (attributes[a] !== undefined) attributes[a] = attributes[a]! + 10;
+    const skills: Record<string, number> = {};
+    SKILLS.forEach((s, i) => {
+      const base = cls.major.includes(s) ? 30 : cls.minor.includes(s) ? 15 : 5;
+      skills[s] = base + (Math.floor(i / 9) === cls.specialization ? 5 : 0) + (race.skills[s] ?? 0);
+    });
+    return { attributes, skills };
   }
 
   isQuestItem(recordId: string): boolean {
@@ -108,6 +163,8 @@ export class ContentTable {
         uniqueActors: table.uniqueActors.size,
         notableItems: table.notableItems.size,
         items: table.items?.size ?? 'unchecked',
+        spells: doc.spells ? Object.keys(doc.spells).length : 'unchecked',
+        races: doc.races ? Object.keys(doc.races).length : 'unchecked',
       });
       return table;
     } catch (err) {
