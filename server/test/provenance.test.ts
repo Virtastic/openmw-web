@@ -24,10 +24,11 @@ async function joined(server: { port: number }, name: string): Promise<TestClien
   return c;
 }
 
-async function serverWith(t: { after: (fn: () => unknown) => void }, refuse: boolean) {
+// refuse undefined = the shipped config, no override.
+async function serverWith(t: { after: (fn: () => unknown) => void }, refuse?: boolean) {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { economy: { refuseUnownedDrops: refuse } },
+    ...(refuse === undefined ? {} : { configOverride: { economy: { refuseUnownedDrops: refuse } } }),
   });
   t.after(() => server.close());
   return server;
@@ -51,6 +52,16 @@ async function tryDrop(c: TestClient, recordId: string, n: number, tempId: numbe
   ]);
   return outcome === 'ack';
 }
+
+// OT3-38: containment is ON by default in the one public world.
+test('the shipped default refuses a drop of something never declared', async (t) => {
+  const server = await serverWith(t);
+  const c = await joined(server, 'Shipped');
+  c.sendEvent('PlayerInventory', { items: [{ id: 'iron_dagger', n: 1 }] });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(await tryDrop(c, 'daedric_claymore', 1, 1), false, 'the default let a forged drop through');
+  c.close();
+});
 
 test('a drop of something never declared is refused when enforcement is on', async (t) => {
   const server = await serverWith(t, true);
@@ -94,8 +105,8 @@ test('credit is cleared by the snapshot that includes it', async (t) => {
   c.close();
 });
 
-// NEGATIVE CONTROL. With enforcement off — the shipped default — the SAME forged drop is
-// allowed through and merely counted, which is the behaviour every existing scenario relies on.
+// NEGATIVE CONTROL. With enforcement turned off by the operator, the SAME forged drop is
+// allowed through and merely counted.
 // Proves the refusals above are the new gate rather than something else dropping the frames.
 test('with enforcement off the forged drop is allowed, and only counted', async (t) => {
   const server = await serverWith(t, false);
@@ -103,7 +114,7 @@ test('with enforcement off the forged drop is allowed, and only counted', async 
   c.sendEvent('PlayerInventory', { items: [{ id: 'iron_dagger', n: 1 }] });
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(await tryDrop(c, 'daedric_claymore', 1, 6), true,
-    'the default must stay permissive until the scenarios have proven the credit path');
+    'enforcement off must stay permissive');
   c.close();
 });
 

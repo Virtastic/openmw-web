@@ -335,8 +335,8 @@ export class WorldState {
   // hand anything to anyone else in the SHARED world. They may still cheat their own
   // campaign, which harms nobody.
   //
-  // Per-item provenance now EXISTS (PlayerItemAcquired + refuseUnownedDrops), but it is off by
-  // default and covers drops only. Containment stays: it is the backstop for every acquisition
+  // Per-item provenance now EXISTS (PlayerItemAcquired + refuseUnownedDrops, on by default
+  // since OT3-38), but it covers drops only. Containment stays: it is the backstop for every acquisition
   // path the ledger does not see, and for the case where the ledger is switched off.
   private quarantined?: (accountKey: string) => boolean;
 
