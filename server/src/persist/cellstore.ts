@@ -29,6 +29,18 @@ const CELL_MIGRATIONS = [
       )`);
     },
   },
+  {
+    // OT3-89: kill tallies get their own row per record (UPSERT), so a kill no longer
+    // rewrites the whole world_global doc. Existing tallies are copied over; the old
+    // doc.kills is left in place (never dropped) and simply no longer read.
+    name: '002-kill-table',
+    up: (db: DatabaseSync) => {
+      db.exec('CREATE TABLE kill (ref_id TEXT PRIMARY KEY, n INTEGER NOT NULL)');
+      db.exec(`INSERT OR IGNORE INTO kill (ref_id, n)
+        SELECT j.key, j.value FROM world_global g, json_each(json_extract(g.doc, '$.kills')) j
+        WHERE json_type(g.doc, '$.kills') = 'object' AND j.type = 'integer'`);
+    },
+  },
 ];
 import { log } from '../log';
 import { timeFlush } from '../metrics';
@@ -180,7 +192,7 @@ function emptyWorldM7State(): WorldM7State {
 
 interface GlobalDoc {
   nextNetIdCeiling: number;
-  kills?: Record<string, number>; // M4 shared kill tally, per base recordId
+  // (M4 kill tallies moved to the `kill` table, OT3-89; legacy doc.kills is only migrated.)
   quest?: WorldSharedState; // M6 (OT3-51: world part only)
   m7?: WorldM7State; // M7 clock / weather / cell-reset schedule
   // Backlog 298: the content list (file names, load order) every c:<index>:<contentFile>
@@ -252,12 +264,12 @@ export class CellStore {
     this.db = openDb(join(dataDir, 'world', 'world.db'), CELL_MIGRATIONS);
     this.sweepTimer = setInterval(() => void this.flushAll(), SWEEP_MS);
     this.sweepTimer.unref();
+    for (const r of this.db.prepare('SELECT ref_id, n FROM kill').all() as { ref_id: string; n: number }[]) this.kills.set(r.ref_id, r.n);
     this.globalLoaded = Promise.resolve(this.loadGlobal()).then((g) => {
       if (g && Number.isInteger(g.nextNetIdCeiling) && g.nextNetIdCeiling > 0) {
         this.nextNetId = g.nextNetIdCeiling;
         this.netIdCeiling = g.nextNetIdCeiling;
       }
-      if (g?.kills) for (const [k, v] of Object.entries(g.kills)) this.kills.set(k, v);
       if (g?.quest) this.quest = { globals: g.quest.globals ?? {}, ...(g.quest.campaignGlobals ? { campaignGlobals: g.quest.campaignGlobals } : {}), ...(g.quest.scripts ? { scripts: g.quest.scripts } : {}) };
       if (Array.isArray(g?.content)) this.content = g.content.map(String);
       if (g?.m7) {
@@ -287,7 +299,6 @@ export class CellStore {
     try {
       const doc: GlobalDoc = {
         nextNetIdCeiling: this.netIdCeiling,
-        kills: Object.fromEntries(this.kills),
         quest: this.quest,
         m7: this.m7,
         ...(this.content ? { content: this.content } : {}),
@@ -324,7 +335,11 @@ export class CellStore {
   bumpKill(refId: string): number {
     const n = (this.kills.get(refId) ?? 0) + 1;
     this.kills.set(refId, n);
-    this.writeGlobal();
+    try {
+      this.db.prepare('INSERT INTO kill (ref_id, n) VALUES (?, ?) ON CONFLICT(ref_id) DO UPDATE SET n = excluded.n').run(refId, n);
+    } catch (err) {
+      log('error', 'world.kill_write_failed', { refId, error: String(err) });
+    }
     return n;
   }
 
