@@ -7,7 +7,7 @@ import { VERSION } from './version';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { WebSocket } from 'ws';
-import { loadConfig, type Config, type DeepPartial } from './config';
+import { loadConfig, assertMultiplayer, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
 import { AttioHook } from './integrations/attio';
 import { ContentTable } from './core/content-table';
@@ -63,7 +63,7 @@ type SaveStorageLike = {
   objectSize?(k: string): Promise<number | undefined>;
 };
 import { presentMods, readModDoc, resolveMods } from './core/mods';
-import { saveRoutes, eraseSaves } from './data/save-routes';
+import { eraseSaves } from './data/save-routes';
 import { lockerRoutes, esmOwnerGate } from './data/locker-routes';
 import { LockerSessionStore, AdminSessionStore } from './auth/identities';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
@@ -156,6 +156,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // both live in the SHARED dir. loadConfig merges shared/config.toml; gamedata is resolved
   // from the shared dir too (below) so 500MB of Morrowind is not copied per world.
   const config = loadConfig(opts.dataDir, opts.configOverride, sharedDir);
+  assertMultiplayer(config);
   // Read live by core/authority.ts, which WorldState builds without ever seeing the config.
   configureAuthority({
     reviewMs: config.authority.reviewSec * 1000,
@@ -1324,10 +1325,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       allowStockSwap: () => config.content.allowStockSwap,
       mayServe: esmOwnerGate(locker, lockerSessions),
     }),
-    saveRoutes({
-      storage: lockerStorage, sessions: lockerSessions, dataDir: sharedDir,
-      maxBytesPerAccount: config.locker.maxSaveBytesPerAccount,
-    }),
     lockerRoutes({
       locker, sessions: lockerSessions,
       eraseSaves: (acct) => eraseSaves(sharedDir, acct, lockerStorage),
@@ -1421,19 +1418,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // healthy locker into setup mode, refusing the player it was set up for and reporting
   // itself unhealthy for a job it was never asked to do.
   //
-  // Read from the wizard's stored answer, which until now nothing outside the dashboard UI
-  // ever consulted. Absent (an upgrade, or setup never finished) means multiplayer, so an
-  // existing deployment keeps every guard it had.
-  const singlePlayerOnly = config.setup.deploymentMode === 'single';
-  if (singlePlayerOnly && blockers.length > 0) {
-    log('info', 'server.single_player_mode', {
-      skipped: blockers,
-      note: 'Single player: the engine runs in the player\'s browser against their own '
-        + 'uploaded files, so this server needs neither game data nor a sim peer. It serves '
-        + 'accounts, the file locker and saves.',
-    });
-  }
-  const setupMode = blockers.length > 0 && opts.requireGameData !== false && !singlePlayerOnly;
+  const setupMode = blockers.length > 0 && opts.requireGameData !== false;
   if (setupMode) {
     log('error', 'server.setup_mode', {
       blockers,

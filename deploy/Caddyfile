@@ -91,7 +91,6 @@
 	#   /auth/*   SSO.  /locker/*  S3-backed game-data upload.  /worlds  world directory.
 	# /admin, /metrics, /healthz and /status stay unreachable from the internet.
 	# Upstream is overridable because the container is named per environment.
-	#   /saves/*  server-side savegames (same auth and storage as the locker).
 	#   /clientlog the page's error reporter (play/index.html __omwShipLog). Bounded and
 	#             rate-limited in server/src/net/http.ts. Without this route the static site
 	#             answered it 404 and every client-side failure report was thrown away --
@@ -107,7 +106,7 @@
 	# /admin: the operator dashboard. Reachable from the internet on purpose (2026-10-12): it enforces its
 	# own sign-in and a dashboard owner role. It is in this matcher so the address-header rules below apply to it
 	# too. /metrics, /healthz and /status stay unreachable.
-	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/* /clientlog /mwdata/* /mwdata-manifest.json /mwdata-mods.json /admin /admin/* / /play
+	@gateway path /w/* /ws /auth/* /locker/* /worlds /worlds/* /clientlog /mwdata/* /mwdata-manifest.json /mwdata-mods.json /admin /admin/* / /play
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080} {
 		# STRIP CLIENT-SUPPLIED ADDRESS HEADERS. The gateway trusts these because its peer is
 		# this proxy, on a private network — but "the peer is private" only means the header

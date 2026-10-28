@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Server-side savegames and the filesystem storage backend.
+// The filesystem storage backend, and the save index left behind by the /saves routes (CL6).
 //
 // The interesting cases are all boundary cases: with S3 a key is an opaque string, but the
 // filesystem backend turns it into a real path, so traversal, the byte cap and cross-account
@@ -13,26 +13,18 @@ import { createServer, type Server } from 'node:http';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { FsStorage, fsStorageFrom, blobRoutes, parseRange } from '../src/data/fsstorage';
-import { saveRoutes } from '../src/data/save-routes';
 import { tmpDataDir } from './helpers';
 import { SaveStore, saveKey } from '../src/data/save-routes';
 
-// A server carrying both route groups, exactly as the front door chains them.
-async function harness(dir: string, sessions: Record<string, string>) {
+// A server carrying the blob routes, exactly as the front door mounts them.
+async function harness(dir: string) {
   let base = '';
   const storage = fsStorageFrom(dir, 'http://127.0.0.1:0');
   const blobs = blobRoutes(storage);
-  const saves = saveRoutes({
-    storage,
-    sessions: { resolve: (t) => sessions[t] },
-    dataDir: dir,
-    maxBytesPerAccount: 1024,
-  });
   const server: Server = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? '/', base || 'http://x');
       if (await blobs(req, res, url)) return;
-      if (await saves(req, res, url)) return;
       res.writeHead(404); res.end();
     })();
   });
@@ -84,89 +76,22 @@ test('parseRange covers the three forms and refuses the impossible', () => {
   assert.equal(parseRange('items=1-2', 100), undefined);
 });
 
-test('a save round-trips, and a Range read comes back as 206', async () => {
+test('a blob round-trips, and a Range read comes back as 206', async () => {
   const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice' });
+  const h = await harness(dir);
   try {
-    const body = Buffer.from('OMWSAVE-BYTES-0123456789');
-    const au = await (await fetch(`${h.base}/saves/authorize-upload`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-a' },
-      body: JSON.stringify({ name: 'Hero - Save 1.omwsave', size: body.length }),
-    })).json() as { ok: boolean; url: string };
-    assert.equal(au.ok, true);
+    const body = Buffer.from('ESM-BYTES-0123456789');
+    const key = 'gamedata/alice/Morrowind.esm';
+    assert.equal((await fetch(h.fix(await h.storage.presignPut(key, body.length)), { method: 'PUT', body })).status, 200);
 
-    assert.equal((await fetch(h.fix(au.url), { method: 'PUT', body })).status, 200);
-    await fetch(`${h.base}/saves/uploaded`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-a' },
-      body: JSON.stringify({ name: 'Hero - Save 1.omwsave', size: body.length, mtime: 42 }),
-    });
-
-    const list = await (await fetch(`${h.base}/saves`, { headers: { authorization: 'Bearer tok-a' } }))
-      .json() as { files: { name: string; size: number; mtime: number }[] };
-    assert.deepEqual(list.files, [{ name: 'Hero - Save 1.omwsave', size: body.length, mtime: 42 }]);
-
-    const dl = await (await fetch(`${h.base}/saves/download?name=${encodeURIComponent('Hero - Save 1.omwsave')}`,
-      { headers: { authorization: 'Bearer tok-a' } })).json() as { url: string };
-    const whole = await fetch(h.fix(dl.url));
+    const url = h.fix(await h.storage.presignGet(key));
+    const whole = await fetch(url);
     assert.equal(Buffer.from(await whole.arrayBuffer()).toString(), body.toString());
 
-    const partial = await fetch(h.fix(dl.url), { headers: { Range: 'bytes=8-12' } });
+    const partial = await fetch(url, { headers: { Range: 'bytes=4-8' } });
     assert.equal(partial.status, 206);
-    assert.equal(partial.headers.get('content-range'), `bytes 8-12/${body.length}`);
-    assert.equal(Buffer.from(await partial.arrayBuffer()).toString(), body.subarray(8, 13).toString());
-  } finally {
-    await h.close();
-  }
-});
-
-test('one account cannot read, list or delete another account\'s save', async () => {
-  const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice', 'tok-b': 'bob' });
-  try {
-    const body = Buffer.from('mine');
-    const au = await (await fetch(`${h.base}/saves/authorize-upload`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-a' },
-      body: JSON.stringify({ name: 'Alice.omwsave', size: body.length }),
-    })).json() as { url: string };
-    await fetch(h.fix(au.url), { method: 'PUT', body });
-    await fetch(`${h.base}/saves/uploaded`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-a' },
-      body: JSON.stringify({ name: 'Alice.omwsave', size: body.length }),
-    });
-
-    // 404, not 403: the answer must not reveal that somebody else has this save.
-    const asBob = await fetch(`${h.base}/saves/download?name=Alice.omwsave`,
-      { headers: { authorization: 'Bearer tok-b' } });
-    assert.equal(asBob.status, 404);
-    const delBob = await fetch(`${h.base}/saves/delete`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-b' },
-      body: JSON.stringify({ name: 'Alice.omwsave' }),
-    });
-    assert.equal(delBob.status, 404);
-    const bobList = await (await fetch(`${h.base}/saves`, { headers: { authorization: 'Bearer tok-b' } }))
-      .json() as { files: unknown[] };
-    assert.deepEqual(bobList.files, []);
-    // ...and alice still has it after bob's attempts.
-    assert.equal((await fetch(`${h.base}/saves/download?name=Alice.omwsave`,
-      { headers: { authorization: 'Bearer tok-a' } })).status, 200);
-
-    assert.equal((await fetch(`${h.base}/saves`)).status, 401, 'no token');
-  } finally {
-    await h.close();
-  }
-});
-
-test('a name that is not a plain .omwsave filename is refused', async () => {
-  const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice' });
-  try {
-    for (const name of ['../../escape.omwsave', '/etc/passwd', 'x.omwsave/../y.omwsave', 'shell.sh', '']) {
-      const r = await fetch(`${h.base}/saves/authorize-upload`, {
-        method: 'POST', headers: { authorization: 'Bearer tok-a' },
-        body: JSON.stringify({ name, size: 1 }),
-      });
-      assert.equal(r.status, 400, `accepted ${JSON.stringify(name)}`);
-    }
+    assert.equal(partial.headers.get('content-range'), `bytes 4-8/${body.length}`);
+    assert.equal(Buffer.from(await partial.arrayBuffer()).toString(), body.subarray(4, 9).toString());
   } finally {
     await h.close();
   }
@@ -174,7 +99,7 @@ test('a name that is not a plain .omwsave filename is refused', async () => {
 
 test('an upload past its signed length is cut off and leaves no file', async () => {
   const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice' });
+  const h = await harness(dir);
   try {
     const url = h.fix(await h.storage.presignPut('saves/alice/Small.omwsave', 8));
     // 413, or a reset the client sees as a network error — the connection is cut mid-body.
@@ -199,7 +124,7 @@ test('an upload past its signed length is cut off and leaves no file', async () 
 // client that ignores the refusal produces the second.
 test('concurrent uploads of one slot do not tear the file or crash the server', async () => {
   const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice' });
+  const h = await harness(dir);
   try {
     const bodies = [...Array(8).keys()].map((i) => Buffer.alloc(64, 65 + i));
     await Promise.all(bodies.map(async (body) => {
@@ -218,7 +143,7 @@ test('concurrent uploads of one slot do not tear the file or crash the server', 
 
 test('a client that keeps sending past the cap is refused without killing the server', async () => {
   const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice' });
+  const h = await harness(dir);
   try {
     for (let i = 0; i < 3; i++) {
       const url = h.fix(await h.storage.presignPut(`saves/alice/Cap${i}.omwsave`, 512));
@@ -227,65 +152,12 @@ test('a client that keeps sending past the cap is refused without killing the se
       assert.notEqual(status, 200);
     }
     // Still serving afterwards: the refusals must not have taken the process with them.
-    assert.equal((await fetch(`${h.base}/saves`, { headers: { authorization: 'Bearer tok-a' } })).status, 200);
+    assert.equal((await fetch(`${h.base}/nothing-here`)).status, 404);
     // Only the FINAL names. Cleanup of the temp is asynchronous by design (the 413 goes out
     // first), so asserting on its timing measures the CI box's load, not the server.
     const landed = readdirSync(join(dir, 'locker-blobs', 'saves', 'alice'))
       .filter((f) => /^Cap\d+\.omwsave$/.test(f));
     assert.deepEqual(landed, [], 'refused bytes were kept');
-  } finally {
-    await h.close();
-  }
-});
-
-test('the quota counts a replaced slot only once', async () => {
-  const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice' }); // maxBytesPerAccount = 1024
-  try {
-    const put = async (name: string, size: number) =>
-      await (await fetch(`${h.base}/saves/authorize-upload`, {
-        method: 'POST', headers: { authorization: 'Bearer tok-a' },
-        body: JSON.stringify({ name, size }),
-      })).json() as { ok: boolean; reason?: string };
-    const record = async (name: string, size: number) =>
-      fetch(`${h.base}/saves/uploaded`, {
-        method: 'POST', headers: { authorization: 'Bearer tok-a' },
-        body: JSON.stringify({ name, size }),
-      });
-
-    assert.equal((await put('A.omwsave', 900)).ok, true);
-    await record('A.omwsave', 900);
-    // A second slot does not fit...
-    assert.deepEqual(await put('B.omwsave', 900), { ok: false, reason: 'quota' });
-    // ...but overwriting the first one does, because its old bytes go away.
-    assert.equal((await put('A.omwsave', 1000)).ok, true);
-  } finally {
-    await h.close();
-  }
-});
-
-test('deleting a save removes the bytes as well as the row', async () => {
-  const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice' });
-  try {
-    const body = Buffer.from('bytes');
-    const au = await (await fetch(`${h.base}/saves/authorize-upload`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-a' },
-      body: JSON.stringify({ name: 'Gone.omwsave', size: body.length }),
-    })).json() as { url: string };
-    await fetch(h.fix(au.url), { method: 'PUT', body });
-    await fetch(`${h.base}/saves/uploaded`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-a' },
-      body: JSON.stringify({ name: 'Gone.omwsave', size: body.length }),
-    });
-    const path = join(dir, 'locker-blobs', 'saves', 'alice', 'Gone.omwsave');
-    assert.equal(readFileSync(path).toString(), 'bytes');
-
-    assert.equal((await fetch(`${h.base}/saves/delete`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-a' },
-      body: JSON.stringify({ name: 'Gone.omwsave' }),
-    })).status, 200);
-    assert.equal(existsSync(path), false, 'delete left the bytes on disk');
   } finally {
     await h.close();
   }
@@ -325,35 +197,4 @@ test('a solo save and a multiplayer save of the same name never meet', async (t)
 test('multiplayer keeps the original storage layout', async () => {
   assert.equal(saveKey('ann', 'mp', 'S.omwsave'), 'saves/ann/S.omwsave');
   assert.equal(saveKey('ann', 'solo', 'S.omwsave'), 'saves/ann/solo/S.omwsave');
-});
-
-// AN AUTHORISATION IS FREE UNTIL IT IS BOUNDED.
-//
-// A reservation is bounded by a five-minute TTL (how long) and by the quota (how many BYTES),
-// and neither of those bounds how MANY there are. A size-0 authorisation costs nothing against
-// a quota measured in megabytes, so a signed-in player could ask for one in a loop: the array
-// grew without limit, and because reserve() rebuilt it with a spread every call, N requests
-// cost O(N^2) work as well as O(N) memory — on a path with no rate limiter in front of it.
-test('one account cannot hold unlimited outstanding upload authorisations', async () => {
-  const dir = tmpDataDir();
-  const h = await harness(dir, { 'tok-a': 'alice' });
-  try {
-    const ask = (i: number) => fetch(`${h.base}/saves/authorize-upload`, {
-      method: 'POST', headers: { authorization: 'Bearer tok-a' },
-      body: JSON.stringify({ name: `Loop ${i}.omwsave`, size: 0 }),
-    }).then((r) => r.json() as Promise<{ ok: boolean; reason?: string }>);
-
-    // Well inside the cap: an honest client authorises one at a time, so this must work.
-    const first = await ask(0);
-    assert.equal(first.ok, true, 'an ordinary authorisation must still be granted');
-
-    let refused: { ok: boolean; reason?: string } | undefined;
-    for (let i = 1; i < 200 && !refused; i++) {
-      const r = await ask(i);
-      if (!r.ok) refused = r;
-    }
-    assert.ok(refused, 'an account was allowed unlimited outstanding authorisations');
-    assert.equal(refused.reason, 'busy',
-      `the refusal must say why, in the same shape as the quota answer: ${JSON.stringify(refused)}`);
-  } finally { await h.close(); }
 });

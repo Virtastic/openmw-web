@@ -794,6 +794,17 @@ function dashboardLayers(dataDir: string): { tree: Tree; from: string; broken?: 
   return out;
 }
 
+/** CL6: v2 is one multiplayer world. The frozen wizard still offers "single" (CL14), and a
+ *  server set to it would boot into a mode nothing serves any more, so refuse to start and say
+ *  why. "" is a setup that never finished, which has always run as multiplayer. */
+export function assertMultiplayer(config: Config): void {
+  const m = config.setup.deploymentMode;
+  if (m !== '' && m !== 'multiplayer') {
+    throw new Error(`[setup] deploymentMode = "${m}" is not supported: this server runs one `
+      + 'multiplayer world. Set deploymentMode = "multiplayer" in config.toml and restart.');
+  }
+}
+
 export function loadConfig(dataDir: string, override?: DeepPartial<Config>, sharedDir?: string): Config {
   let base = parse(readFileSync(DEFAULTS_URL, 'utf8')) as Tree;
   const operatorTrees: (Tree | undefined)[] = [];

@@ -71,7 +71,6 @@ ticket to a different hostname. Forward to the gateway:
 /w/*   /ws          # the gameplay WebSocket - needs Upgrade handling
 /auth/*             # OAuth sign-in
 /locker/*           # game-data upload/stream
-/saves  /saves/*
 /worlds /worlds/*
 ```
 

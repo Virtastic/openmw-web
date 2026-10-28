@@ -3,8 +3,8 @@
 // Filesystem backend for the storage locker, backed by a directory on the server.
 //
 // WHY. v2 is one world on one box (CL9, OT3-223): players upload only the three ESMs, which
-// are hashed, and the server hosts the rest of the game itself. What remains is ESM uploads
-// and cloud saves, small enough for the box's own disk. The S3 backend is gone; there is no
+// are hashed, and the server hosts the rest of the game itself. What remains is ESM uploads,
+// small enough for the box's own disk. The S3 backend is gone; there is no
 // object-storage account to keep keys for.
 //
 // PRESIGNING WITHOUT S3. The browser PUTs and Ranges directly against the URL it is handed,
@@ -168,7 +168,7 @@ export function lockerStorageFrom(
 ): FsStorage | undefined {
   // OFF MEANS OFF, and it has to be decided here: every caller in both programs builds its
   // storage through this function, and "no storage" is already the shape the rest of the code
-  // understands — Locker.enabled reads false and /saves answers saves_disabled.
+  // understands — Locker.enabled reads false.
   if (cfg.enabled === false) {
     log('info', 'locker.disabled', { note: 'players cannot store files on this server' });
     return undefined;

@@ -526,15 +526,9 @@ test('the reachability nonce is served, and is the only thing at that path', asy
   assert.equal((await (await fetch(`${base}/.well-known/openmw-web-verify`)).text()).trim(), nonce);
 });
 
-test('a single-player server is healthy without game data or a sim peer', async (t) => {
-  // The two modes are different products sharing a server. Multiplayer owns the world and
-  // runs a headless OpenMW to move every NPC, so no game data means no world. Single player
-  // is the launcher's cloud locker: the engine runs in the player's own browser against
-  // their own files, and this server holds accounts, that library and their saves.
-  //
-  // deploymentMode reached nothing outside the dashboard UI, so choosing single player still
-  // produced a server in setup mode, refusing the one player it was set up for and reporting
-  // itself unhealthy for a job nobody asked it to do.
+test('a server set to single player refuses to boot, and says why', async () => {
+  // CL6: v2 is one multiplayer world. The frozen wizard can still store "single" (CL14); a
+  // restart onto it must stop with the fix in the message, not come up as a mode nothing serves.
   const dataDir = tmpDataDir();
   const first = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
   const call = (p: string, o: RequestInit = {}) => fetch(`http://127.0.0.1:${first.port}/admin/api${p}`, o);
@@ -550,10 +544,8 @@ test('a single-player server is healthy without game data or a sim peer', async 
   await first.close();
 
   // Restart, so the stored answer is loaded the way a real restart loads it.
-  const single = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
-  t.after(() => single.close());
-  assert.equal((await fetch(`http://127.0.0.1:${single.port}/healthz`)).status, 200,
-    'no game data, no peer, and still healthy: there is no world to simulate');
+  await assert.rejects(startServer({ dataDir, port: 0, host: '127.0.0.1' }),
+    /deploymentMode = "single" is not supported.*deploymentMode = "multiplayer"/);
 });
 
 test('a multiplayer server still refuses to pretend it has a world', async (t) => {

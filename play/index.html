@@ -2337,22 +2337,11 @@ try {
            });
        } catch(e){}
        // --- Saves ---------------------------------------------------
-       // __idbfsReady lets the server-save mirror wait until IDBFS has loaded (otherwise the
-       // IDBFS reconcile could wipe what it restores).
+       // v2 has no client save path (CL6): the server owns the character. __idbfsReady resolves
+       // once IDBFS has loaded.
        window.__idbfsReady = new Promise(function(r){ window.__idbfsReadyResolve = r; });
-       var __SAVES_DIR = '/userdata/data-home/openmw/saves';
 
-       // --- Server-backed saves ----------------------------------------------------------------
-       // The same mirror as above with the SERVER standing in for the folder, for the modes that
-       // have no folder: the server holds the game data (locker, or operator-hosted retail), so it
-       // holds the saves too. Without this, saves lived only in IndexedDB — navigator.storage
-       // .persist() is a request, not a promise, so an eviction took the character with it, and
-       // there was no way to continue the same game on another machine.
-       //
-       // The player still decides WHEN: the engine calls __omwSyncfs() immediately after writing a
-       // save (statemanagerimp.cpp), and __omwSync pushes from the same place. Clicking Save in the
-       // game uploads; nothing else does. No autosave, no background snapshots.
-       // The locker origin: the GATEWAY (?locker=), which serves /auth, /locker and /saves — a
+       // The locker origin: the GATEWAY (?locker=), which serves /auth and /locker — a
        // different origin than the world socket (?mp=). Falls back to the ws host for a
        // standalone single-world server that serves them itself.
        function lockerHttpBase(){
@@ -2362,90 +2351,7 @@ try {
          catch(e){ return ''; }
        }
        window.__lockerHttpBase = lockerHttpBase;
-       var __srvSaves = false, __srvMirrored = {}, __srvMirroring = false, __srvAgain = false;
-       // WHICH GAME THESE SAVES BELONG TO: only the non-MP local game has client saves at
-       // all now (Phase 5 removed Save/Load from every MP session — the server keeps the
-       // one save). The old 'mp' scope is unreachable, and the save mirror below never runs
-       // in an MP session, so this constant is the scope rather than a branch that looks
-       // like a supported path. /saves keeps serving the local game.
-       var __saveScope = 'solo';
-       var __savesEnabled = !window.__omwMPEnabled; // MP: no client saves to mirror
-       window.__omwSavesEnabled = __savesEnabled; // test mirror (s68): the locker save path is closed in MP
-       function srvApi(path, opts){
-         opts = opts || {};
-         opts.headers = Object.assign({ authorization: 'Bearer ' + (window.__omwLockerToken||'') },
-                                      opts.headers || {});
-         return fetch(lockerHttpBase() + path, opts);
-       }
-       // mirror IN: server -> MEMFS. Server wins on a slot this browser has never seen or has an
-       // older copy of, which is what makes a second machine (or a cleared browser) work.
-       async function setupServerSaves(){
-         if (!__savesEnabled) return; // MP: the server owns the save; nothing to mirror
-         var list;
-         try {
-           var r = await srvApi('/saves?scope=' + __saveScope);
-           if (r.status === 503) return;                  // operator has no storage configured
-           if (!r.ok) { append('[saves] server saves unavailable ('+r.status+')','err'); return; }
-           list = (await r.json()).files || [];
-         } catch(e){ append('[saves] could not reach server saves: '+e,'err'); return; }
-         __srvSaves = true;
-         FS.mkdirTree(__SAVES_DIR);
-         var pulled = 0;
-         for (var i=0;i<list.length;i++){
-           var f = list[i], path = __SAVES_DIR+'/'+f.name, local = null;
-           try { local = FS.stat(path).mtime.getTime(); } catch(e){}
-           if (local !== null && local >= f.mtime){ __srvMirrored[f.name] = local; continue; }
-           try {
-             var d = await srvApi('/saves/download?scope=' + __saveScope
-               + '&name='+encodeURIComponent(f.name));
-             if (!d.ok) continue;
-             var bytes = new Uint8Array(await (await fetch((await d.json()).url)).arrayBuffer());
-             FS.writeFile(path, bytes);
-             __srvMirrored[f.name] = FS.stat(path).mtime.getTime();
-             pulled++;
-           } catch(e){ append('[saves] downloading '+f.name+' failed: '+e,'err'); }
-         }
-         append('[saves] '+(pulled ? ('restored '+pulled+' save(s) from') : 'saving to')+' the server');
-         if (pulled) { try { window.__omwSyncfs(); } catch(e){} }
-       }
-       // mirror OUT: MEMFS -> server. mtime-diffed so an unchanged save is never re-uploaded (these
-       // are megabytes each), and coalesced like the folder mirror and syncfs.
-       async function mirrorSavesToServer(){
-         if (!__srvSaves || __srvMirroring){ if(__srvSaves) __srvAgain=true; return; }
-         __srvMirroring = true;
-         try {
-           var names=[], live={};
-           try { names=FS.readdir(__SAVES_DIR).filter(function(n){ return /\.omwsave$/i.test(n); }); } catch(e){}
-           for (var i=0;i<names.length;i++){
-             var n=names[i], st; try { st=FS.stat(__SAVES_DIR+'/'+n); } catch(e){ continue; }
-             live[n]=1; var mt=st.mtime.getTime();
-             if (__srvMirrored[n]===mt) continue;
-             try {
-               var data=FS.readFile(__SAVES_DIR+'/'+n);
-               var au=await (await srvApi('/saves/authorize-upload', { method:'POST',
-                 body: JSON.stringify({ name:n, size:data.length, scope:__saveScope }) })).json();
-               if (!au.ok){
-                 append('[saves] server refused '+n+(au.reason==='quota'?' — out of space':''),'err');
-                 __srvMirrored[n]=mt;                     // do not retry every 15s on a hard refusal
-                 continue;
-               }
-               var put=await fetch(au.url, { method:'PUT', body:data });
-               if (!put.ok) throw new Error('PUT '+put.status);
-               await srvApi('/saves/uploaded', { method:'POST',
-                 body: JSON.stringify({ name:n, size:data.length, mtime:mt, scope:__saveScope }) });
-               __srvMirrored[n]=mt;
-             } catch(e){ append('[saves] uploading '+n+' failed: '+e,'err'); }
-           }
-           for (var d in __srvMirrored){
-             if (live[d]) continue;                       // deleted in-game: delete it there too
-             try { await srvApi('/saves/delete', { method:'POST',
-               body: JSON.stringify({ name:d, scope:__saveScope }) }); } catch(e){}
-             delete __srvMirrored[d];
-           }
-         } catch(e){ append('[saves] mirror to server failed: '+e,'err'); }
-         __srvMirroring=false;
-         if (__srvAgain){ __srvAgain=false; mirrorSavesToServer(); }
-       }
+       window.__omwSavesEnabled = false; // test mirror (s68): no client save path in v2
 
        // Persist saves/config across reloads: mount IndexedDB-backed IDBFS at /userdata
        // and load its contents before the engine starts (via a run dependency so boot waits).
@@ -2484,7 +2390,7 @@ try {
                } catch(e){ append('[cfg override err] '+e,'err'); }
                window.__omwSyncfs();
              } catch(e){ append('[idbfs setup err] '+e,'err'); }
-             try { window.__idbfsReadyResolve(); } catch(e){}   // unblock the server-save mirror
+             try { window.__idbfsReadyResolve(); } catch(e){}
              removeRunDependency('idbfs-load');
            });
            // Flush game state back to IndexedDB periodically (lifecycle handlers cover exits).
@@ -2493,7 +2399,6 @@ try {
              // CLOSE — without this, changing settings then refreshing loses them), then sync.
              try { if (Module._omw_save_settings && Module.__omwRunning !== undefined) Module._omw_save_settings(); } catch(e){}
              window.__omwSyncfs();
-             try { mirrorSavesToServer(); } catch(e){}    // push new/changed saves up to the server
            };
            setInterval(window.__omwSync, 15000);
          } else {
@@ -2518,7 +2423,7 @@ try {
        // saves. That conflation left the operator's "this server hands out the files" answer
        // unreachable — sending the token to get saves forced the locker, and withholding it to
        // get the hosted library silently took saves with it. mwdata=1 says the server holds
-       // the data; the token still rides along and still buys saves below.
+       // the data.
        //
        // READ IT FROM THE SAVED FRAGMENT TOO, and that is what made this flag dead on arrival.
        // The multiplayer branch above scrubs location.hash the moment it reads mpticket -- a
@@ -2533,12 +2438,6 @@ try {
        window.__omwMpLocker = __mpLocker; // the world-change rebuild keeps the destination on the same data source
 
        if (__mpLocker) mountLockerMorrowind();       // prove ownership, then reboot onto /mwdata
-
-       // Server-backed saves need an account, so they follow the locker session token. Waits for
-       // the IDBFS reconcile, or it would race it and see its own restored files wiped.
-       if (window.__omwLockerToken) {
-         window.__idbfsReady.then(setupServerSaves).catch(function(e){ append('[saves] '+e,'err'); });
-       }
 
        // Build the openmw.cfg load order from the game files that are ACTUALLY present.
        // `rootFiles` maps lowercased top-level filename -> its real on-disk name.
@@ -2779,7 +2678,7 @@ try {
        // visit with an empty locker triggers a one-time upload from a folder you pick.
        function mountLockerMorrowind(){
          var TOKEN = window.__omwLockerToken || '';
-         var HTTP = lockerHttpBase();   // shared with the server-save mirror
+         var HTTP = lockerHttpBase();
          function api(path, opts){ opts=opts||{}; opts.headers=Object.assign({ authorization:'Bearer '+TOKEN }, opts.headers||{}); return fetch(HTTP+path, opts); }
          // EVERY locker failure lands here.
          function bounce(msg){ append('[locker] '+msg,'err');

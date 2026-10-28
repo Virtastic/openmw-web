@@ -17,7 +17,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { SocialStore } from '../core/socialstore';
 import { detectGameData, gameDataDir } from '../core/gamedata';
 import { orderedContent } from '../net/admin/api-mods';
-import { loadConfig } from '../config';
+import { loadConfig, assertMultiplayer } from '../config';
 import { AccountStore, validEmail, validAccountName, MAX_CHARACTERS } from '../core/accounts';
 import { AttioHook } from '../integrations/attio';
 import { PlayerStore } from '../persist/playerstore';
@@ -30,7 +30,7 @@ import { createAuthRoutes } from '../auth/routes';
 import { Locker, loadVanillaManifest } from '../data/locker';
 import { ensureVanillaManifest } from '../data/vanilla-manifest';
 import { lockerPublicBase, lockerStorageFrom, blobRoutes, FsStorage } from '../data/fsstorage';
-import { saveRoutes, eraseSaves } from '../data/save-routes';
+import { eraseSaves } from '../data/save-routes';
 import { lockerRoutes, esmOwnerGate } from '../data/locker-routes';
 import type { HttpRoute } from '../net/http';
 import { log } from '../log';
@@ -346,6 +346,7 @@ export async function buildFrontDoor(
   refreshWorlds?: () => Promise<void>,
 ): Promise<FrontDoor> {
   const config = loadConfig(sharedDir, undefined, sharedDir);
+  assertMultiplayer(config);
   const accounts = new AccountStore(sharedDir);
   const bans = new BanStore(sharedDir);
   const identities = new IdentityStore(sharedDir);
@@ -433,10 +434,6 @@ export async function buildFrontDoor(
   // Blob routes go BEFORE the locker's: these URLs carry their capability in the path and
   // have no Bearer header, which lockerRoutes would reject.
   const blobs = blobRoutes(storage instanceof FsStorage ? storage : undefined);
-  const saves = saveRoutes({
-    storage, sessions: lockerSessions, dataDir: sharedDir,
-    maxBytesPerAccount: config.locker.maxSaveBytesPerAccount,
-  });
   const profile = profileRoutes(accounts, lockerSessions, attio);
   // A character's solo world id ends in the last 8 chars of its id (worlds.ts
   // discardForCharacter); a live one with players in it means the character is in play.
@@ -449,7 +446,7 @@ export async function buildFrontDoor(
   const social = new SocialStore(sharedDir);
   const playing = friendsPlayingRoutes(accounts, lockerSessions, social, worldsNow ?? (() => []));
   const also: HttpRoute = async (req, res, url) =>
-    (await blobs(req, res, url)) || (await saves(req, res, url))
+    (await blobs(req, res, url))
     || (await locker2(req, res, url)) || (await profile(req, res, url))
     || (await chars(req, res, url)) || (await reticket(req, res, url))
     || (await playing(req, res, url));

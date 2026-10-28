@@ -268,8 +268,8 @@ test('POST /worlds derives the private id from the character and refuses ghosts'
 
 // The directory's prefix list IS the router: a path the front door implements but that is
 // missing here falls through to the directory's own 404, with no error anywhere to explain
-// it. That is exactly how /saves behaved on the live dev server while /locker/* worked
-// beside it — the game played fine and every save silently never left the browser.
+// it. That is exactly how /saves (gone in v2, CL6) behaved on the live dev server while
+// /locker/* worked beside it.
 test('every front-door path reaches the front door, not the directory 404', async () => {
   const h = await harness();
   const seen: string[] = [];
@@ -285,11 +285,14 @@ test('every front-door path reaches the front door, not the directory 404', asyn
     },
   });
   try {
-    for (const p of ['/auth/providers', '/locker/files', '/locker/blob/t/k', '/saves', '/saves/download']) {
+    for (const p of ['/auth/providers', '/locker/files', '/locker/blob/t/k']) {
       const r = await fetch(`http://127.0.0.1:${dir2.port}${p}`);
       assert.equal(r.status, 401, `${p} never reached the front door`);
     }
-    assert.equal(seen.length, 5);
+    assert.equal(seen.length, 3);
+    // CL6: no route answers /saves any more, so the directory does not hand it to the front door.
+    assert.equal((await fetch(`http://127.0.0.1:${dir2.port}/saves`)).status, 404);
+    assert.equal(seen.length, 3);
   } finally {
     await dir2.close();
     await h.cleanup();

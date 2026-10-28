@@ -231,13 +231,10 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       return;
     }
 
-    // Front door first: /auth/*, /locker/* and /saves are handled by the shared SSO, locker
-    // and savegame services. This list is the real router — a path the front door implements
-    // but that is missing HERE falls through to the 404 below, which is how server-side saves
-    // reached the gateway and were answered "not found" with the locker working fine beside
-    // them. Add the prefix here as well as mounting the route.
-    if (deps.frontDoor && (path.startsWith('/auth/') || path.startsWith('/locker/')
-        || path === '/saves' || path.startsWith('/saves/'))) {
+    // Front door first: /auth/* and /locker/* are handled by the shared SSO and locker. This
+    // list is the real router — a path the front door implements but that is missing HERE
+    // falls through to the 404 below. Add the prefix here as well as mounting the route.
+    if (deps.frontDoor && (path.startsWith('/auth/') || path.startsWith('/locker/'))) {
       void Promise.resolve(deps.frontDoor(req, res, url)).then((claimed) => {
         if (!claimed) { json(res, 404, { error: 'not found' }); }
       }).catch(() => { if (!res.headersSent) json(res, 500, { error: 'internal' }); });
@@ -288,7 +285,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       // The gateway's OWN series, then every world's, folded into one scrape.
       //
       // Each world listens on an internal port that nothing publishes (deploy/Caddyfile proxies
-      // only /w, /auth, /locker, /saves, /worlds), so a world's /metrics was unreachable from
+      // only /w, /auth, /locker, /worlds), so a world's /metrics was unreachable from
       // outside the container — the per-world `world=` label metrics.ts stamps so carefully had
       // no way to be seen. One scrape target, every world in it.
       // Its own IIFE rather than making the whole request handler async: every other branch
