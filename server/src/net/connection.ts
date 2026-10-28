@@ -1597,7 +1597,9 @@ export class Connection implements Peer {
     //
     // Safe because it is gated on gameDataOk — the server's data validated on disk — and a
     // world configured [simPeer] mode = "on" refuses to boot at all if that validation fails.
-    if (this.isSystem && this.ctx.gameDataOk && !this.ctx.content.peerPinned) {
+    // OT3-30: system is self-declared and the password is only checked later, at login; the
+    // real peer always dials loopback (server.ts wsUrl), so only a loopback hello may pin.
+    if (this.isSystem && isLoopback(this.ip) && this.ctx.gameDataOk && !this.ctx.content.peerPinned) {
       this.ctx.content.setAuthoritative(msg.manifest);
       this.ctx.world.adoptContentList(msg.manifest); // backlog 298: remap cell docs on a list change
     }
