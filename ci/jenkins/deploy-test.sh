@@ -100,9 +100,10 @@ $SSH "$TEST_HOST" "
   # loses whatever was written since the last checkpoint, which on this project means
   # character state, and we have spent enough of today on characters that lost their stats.
   #
-  # 20s is well past the flush and short enough that a wedged process does not stall a deploy;
+  # 45s matches docker-compose stop_grace_period (worlds 20 s + gateway close, OT3-128) and is
+  # still short enough that a wedged process does not stall a deploy;
   # docker escalates to SIGKILL by itself after it.
-  docker stop --time 20 $NAME >/dev/null 2>&1 || true
+  docker stop --time 45 $NAME >/dev/null 2>&1 || true
   docker rm -f $NAME >/dev/null 2>&1 || true
   # Run as whoever owns the staged data dir. config.toml and s3.env are mode 600, so a
   # container whose user does not match cannot read them and dies at loadConfig(). The

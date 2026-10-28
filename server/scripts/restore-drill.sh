@@ -80,12 +80,12 @@ stop() {
   [[ -z "$PID" ]] && return 0
   kill -TERM "$PID" 2>/dev/null || true
   # SIGTERM broadcasts SessionDisconnect SHUTDOWN and flushes; give it the same grace the
-  # production compose does (stop_grace_period: 30s).
-  for _ in $(seq 1 150); do
+  # production compose does (stop_grace_period: 45s).
+  for _ in $(seq 1 225); do
     kill -0 "$PID" 2>/dev/null || { PID=""; return 0; }
     sleep 0.2
   done
-  fail "server did not exit within 30s of SIGTERM"
+  fail "server did not exit within 45s of SIGTERM"
 }
 
 mkdir -p "$DATA" "$BACKUPS"

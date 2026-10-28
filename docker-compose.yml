@@ -53,8 +53,10 @@ services:
     init: true
     # The gateway waits for every world to drain (players and cells flushed) before it exits,
     # and a world gets 20 s before it is killed outright. Docker's default 10 s would SIGKILL
-    # the whole container mid-flush on every `compose down` and every update.
-    stop_grace_period: 30s
+    # the whole container mid-flush on every `compose down` and every update. 45 s covers the
+    # world drain (20 s) plus the gateway's own close (front door, accounts, directory) with
+    # room to spare; 30 s did not once those were added up (OT3-128).
+    stop_grace_period: 45s
     # ${REPO_DIR:-.} ON EVERY BIND SOURCE: set REPO_DIR in .env when compose runs anywhere
     # but the checkout itself; the "." fallback is the checkout.
     volumes:

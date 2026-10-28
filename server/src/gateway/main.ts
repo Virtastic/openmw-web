@@ -341,8 +341,9 @@ async function shutdown(signal: string, code = 0): Promise<void> {
   // connection to end, and a spliced game socket ends only when its world closes it -- which
   // is below. Awaited, a SIGTERM with anyone playing never reached stopAll(): the gateway sat
   // here until it was KILLed, and every world (its own process group) and its sim peer lived
-  // on (the harness's gateway scenarios leaked two peers each that way).
-  void directory.close();
+  // on (the harness's gateway scenarios leaked two peers each that way). It IS awaited below,
+  // once the worlds have exited and closed their sockets.
+  const directoryClosed = directory.close();
   unhookNotifier();
   await frontDoor.close();
   // Drain the account store's write-behind queue, which a world does on its way out and this
@@ -359,6 +360,10 @@ async function shutdown(signal: string, code = 0): Promise<void> {
   // Non-zero on the crash path so whatever supervises this process restarts it, rather than
   // treating a crash as a clean stop.
   await worlds.allExited();
+  // Every world is gone, so every spliced socket is closed and the directory's close can
+  // finish. Bounded anyway: a stuck client socket must not hold the exit until SIGKILL.
+  await Promise.race([directoryClosed, new Promise((r) => setTimeout(r, 5000).unref())]);
+  log('info', 'gateway.flush_complete', { signal, code });
   process.exit(code);
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
