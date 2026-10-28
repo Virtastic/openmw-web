@@ -216,11 +216,13 @@ return {
         end,
     },
     eventHandlers = {
+        -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
         -- Test-only: the harness cannot press F (no SDL key injection), so the window has
         -- to be openable another way for any automated UI check to exist.
         MP_SocialUiOpen = function()
             if not isOpen then toggle() end
         end,
+        -- @testhook end
         MP_Roster = function(data)
             roster = data.players or {}
             -- Arriving somewhere completes any join in flight. The world list and the port
@@ -322,6 +324,7 @@ return {
                 render()
             end
         end,
+        -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
         -- Test-only: press "join" for a listed world by id, through the SAME joinWorld()
         -- path the button uses (not a shortcut around it).
         MP_SocialJoinById = function(data)
@@ -348,6 +351,7 @@ return {
                 if not isOpen then toggle() else render() end
             end
         end,
+        -- @testhook end
         -- Character slots: the account's slot list (asked for, or pushed after a create).
         MP_Characters = function(data)
             characters = data.characters or {}

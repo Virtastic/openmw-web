@@ -1596,10 +1596,12 @@ local script = {
         MP_ChargenDone = function()
             identity.markBaselineReady()
         end,
+        -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
         -- Test hook: dynamic record created by global.lua (equiptest) — equip as a helmet.
         MP_TestItem = function(data)
             pendingTestEquip = { id = data.id, slot = 0, until_ = core.getRealTime() + 5 }
         end,
+        -- @testhook end
         -- The NPC we are talking to died, or someone else holds the conversation we were
         -- forced into: shut the window (quests.lua releases the lock).
         MP_CloseDialogue = function()

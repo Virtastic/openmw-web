@@ -3486,9 +3486,11 @@ local eventHandlers = {
         mp.disconnect()
     end,
 
+    -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
     mpSocialJoinById = function(data)
         toPlayer('MP_SocialJoinById', { id = tostring(data.id or '') })
     end,
+    -- @testhook end
 
     -- COMPANIONS. Sent by scripts/mp/companion.lua, which runs on the ACTOR because a global
     -- script cannot read AI package state for a foreign actor. This is the only route by which
@@ -3506,11 +3508,13 @@ local eventHandlers = {
         actors.noteTravel(data and data.actor, data and data.dest, data and data.initial)
     end,
 
+    -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
     mpSocialTab = function(data)
         -- toPlayer, not a world.players loop: the same helper every other player-bound
         -- bridge here uses, and the one that actually resolves the player script.
         toPlayer('MP_SocialTab', { tab = tostring(data.tab or '') })
     end,
+    -- @testhook end
 
     mpJoinWorld = function(data)
         -- `url` is still honoured for any caller that already has one; the Worlds tab now
