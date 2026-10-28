@@ -37,52 +37,19 @@
   try { hasClient = (await fetch('/index.html', { method: 'HEAD' })).ok; } catch { /* stays false */ }
   $('#noclient').hidden = hasClient;
 
-  // A FRIEND ON THE LAN OVER PLAIN HTTP cannot run the game: the engine needs cross-origin
-  // isolation, which browsers grant only to https:// (or this computer's own localhost). Say it
-  // here, before they sign in, rather than on the game page after (backlog 508, s179).
+  // PLAIN HTTP cannot run the game: the engine needs cross-origin isolation, which browsers
+  // grant only to https://. Say it here, before they sign in, rather than on the game page after.
   if (!self.isSecureContext) {
     note('This page is plain <b>http://</b>, and the game only runs on a secure page. Use this '
-      + "server's <b>https://</b> address, or play on the server machine itself at "
-      + '<b>http://localhost</b>.', 'err');
+      + "server's <b>https://</b> address.", 'err');
   }
 
-  // WHICH KIND OF SERVER THIS IS. The wizard's answer decides which of the two boot modes the
-  // player lands in, and it must be read before anybody signs in, because the mode is baked
-  // into the fragment handed over at that moment.
-  //
-  // Defaulting to multiplayer when this cannot be read would be the wrong way round: it is
-  // the mode that needs a running world, and offering it when the state is unknown produces
-  // a connection attempt to a server that may not simulate anything. Single player only needs
-  // the locker, which is always there.
-  let singlePlayer = true;
-  // The other wizard answer that changes what the game page is told: 'serve' means the
-  // operator's own library is published and nobody uploads anything, 'verify' means each
-  // player brings their own copy through their locker.
-  let hostedData = false;
-  // 'esm': hosted like 'serve', but only for players who proved they own the game by uploading
-  // its three master files. Not hostedData: the locker wizard is the proof, so it must run.
-  let esm = false;
   try {
     // no-store, like the dashboard's api(): a browser that once cached a 308 for this URL
-    // (a proxy's redirect loop) replayed it forever, the read failed, and the page fell back
-    // to single player on a multiplayer server, sending a signed-in player to the wrong game.
+    // (a proxy's redirect loop) replayed it forever.
     const s = await (await fetch('/admin/api/state', { cache: 'no-store' })).json();
     if (s.serverName) { $('#name').textContent = s.serverName; document.title = s.serverName; }
-    singlePlayer = s.setup?.deploymentMode !== 'multiplayer';
-    hostedData = s.setup?.deliveryModel === 'serve';
-    esm = s.setup?.deliveryModel === 'esm';
-  } catch { /* keep the default heading, and the safer mode */ }
-  $('#esmSteps').hidden = !esm;
-  $('#esmLegal').hidden = !esm;
-  // The launcher's words for the two modes, and its cloud glyph for the single-player one.
-  $('#title').textContent = singlePlayer ? 'Sign in to play anywhere' : 'Sign in to play together';
-  // Locker servers: players bring the game. Said BEFORE sign-in, or the first they hear of it is
-  // the upload wizard after a world was already started for them (prod 2026-10-13, never_joined).
-  $('#bring').hidden = hostedData || esm;
-  const CLOUD_GLYPH = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">'
-    + '<path d="M14 34h20a7 7 0 0 0 .6-13.97A10 10 0 0 0 15.2 18.4 6.6 6.6 0 0 0 14 34z"/>'
-    + '<path d="M24 22v10M20 28l4 4 4-4"/></svg>';
-  if (singlePlayer) $('#glyph').innerHTML = CLOUD_GLYPH;
+  } catch { /* keep the default heading */ }
 
   // CHROME OR EDGE ON A COMPUTER, SAID BEFORE SIGN-IN. The engine is a wasm64 build that only
   // Chromium runs; a Firefox or Safari player used to sign in, wait for a download and only then
@@ -122,21 +89,14 @@
 
   // In NICE's order (the launcher's: Google, Discord, Microsoft), not the config's.
   const providers = Object.keys(NICE).filter((p) => (auth.providers || []).includes(p));
-  if (!auth.allowPasswordLogin && !providers.length) {
+  // Password sign-in is for the harness and the peer only (CL13), never offered here.
+  if (!providers.length) {
     box.innerHTML = '<div class="note">This server has no sign-in method switched on yet. '
       + 'Its operator can turn one on in the <a href="/admin">admin dashboard</a>.</div>';
     return;
   }
 
   let out = '';
-  if (auth.allowPasswordLogin) {
-    out += '<form id="pwForm" autocomplete="on">'
-      + '<label class="fld"><span>Username</span>'
-      + '<input id="pwName" name="username" autocomplete="username" required></label>'
-      + '<label class="fld"><span>Password</span>'
-      + '<input id="pwPass" name="password" type="password" autocomplete="current-password" required></label>'
-      + '<button class="btn primary" type="submit" id="pwGo">Play now</button></form>';
-  }
   // THE INVITE LINK. An invite-only server checks the passphrase when an SSO sign-in would
   // create a new account. Players never type it: it rides in https://<server>/?invite=<code>,
   // the link the dashboard hands out. Kept for the tab, so a redirect that drops the query
@@ -155,7 +115,6 @@
     try { sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ }
   }
   if (providers.length) {
-    if (auth.allowPasswordLogin) out += '<div class="rule">or</div>';
     for (const p of providers) {
       out += `<a class="prov" href="/auth/${esc(p)}/start">${ICONS[p] || ''}<span>Continue with ${NICE[p]}</span></a>`;
     }
@@ -234,18 +193,6 @@
     // The token always rides along: it is what buys server-side saves, whichever library the
     // game data itself comes from. mwdata=1 is what picks the library.
     const lock = res.locker ? `&mplocker=${encodeURIComponent(res.locker)}` : '';
-    const data = hostedData ? '&mwdata=1' : '';
-
-    // SINGLE PLAYER IS THE ABSENCE OF mp=, NOT A FLAG. index.html decides it is a multiplayer
-    // session purely from mp= being present, so sending one unconditionally — which this did
-    // — put a single-player server into multiplayer: the game announced itself as MULTIPLAYER
-    // and tried to join a world that, in this mode, nothing is simulating. cloud=1 is what the
-    // launcher sends for the same mode, and index.html's own gate looks for it.
-    if (singlePlayer) {
-      location.href = '/index.html'
-        + `#locker=${encodeURIComponent(location.origin)}${lock}${acct}${data}&cloud=1`;
-      return;
-    }
 
     // /join, not /launcher.html: the same multiplayer steps (username, character, world) with
     // the hosted site's demo chooser stripped away. See DOOR MODE in play/launcher.html.
@@ -255,39 +202,8 @@
       + lock;
   };
 
-  const form = $('#pwForm');
-  if (form) {
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      const go = $('#pwGo');
-      const label = go.textContent;
-      go.disabled = true; go.textContent = 'Signing in…';
-      note('');
-      try {
-        const r = await fetch('/auth/password', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ name: $('#pwName').value.trim(), password: $('#pwPass').value }),
-        });
-        const body = await r.json();
-        if (!r.ok) {
-          note(esc(body.error || 'Could not sign in.'), 'err');
-        } else if (!hasClient) {
-          note('Signed in, but the player app has not been added to this server yet, so '
-            + 'there is nothing to launch.', 'err');
-        } else {
-          enterGame(body);
-          return; // navigating away; leave the button as it is
-        }
-      } catch {
-        note('Could not reach the server. It may be restarting.', 'err');
-      }
-      go.disabled = false; go.textContent = label;
-    };
-  }
-
   // An SSO round trip returns here with the ticket in the fragment. Carry it into the game
-  // exactly as the password path does, so both doors end in the same place.
+  // through /join (enterGame).
   const hash = location.hash || '';
   const tk = /[#&]mpticket=([^&]+)/.exec(hash);
   if (tk) {
@@ -321,7 +237,7 @@
       } catch { /* blocked: say it instead */ }
       if (again.startsWith(location.origin + '/auth/')) { location.href = again; return; }
     }
-    // The codes server/src/auth/routes.ts sends back, in the launcher's words (handleSsoReturn).
+    // The codes server/src/auth/routes.ts sends back. The ONE map: /join forwards its mperror here.
     const said = {
       registration_disabled: 'This server is not taking new players.',
       invite_required: 'This server is invite-only, and that sign-in had no working invite code. '

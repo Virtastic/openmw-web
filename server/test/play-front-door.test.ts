@@ -1,16 +1,10 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// The front door hands the game page a mode, and it must be the mode the operator chose.
-//
-// index.html decides a session is multiplayer from `mp=` being present in the fragment and
-// nothing else ("index.html keys multiplayer off mp= alone, so omitting it is the whole
-// mode", launcher.html). play.js sent `mp=` unconditionally, so a server the wizard had
-// configured as single player booted the engine into multiplayer: the page titled itself
-// MULTIPLAYER and tried to join a world that, in that mode, nothing simulates.
+// The front door (/): SSO sign-in, then the ticket goes to /join. v2 is one multiplayer world
+// (CL4): no single-player branch, no password form, and one SSO error map for both pages.
 //
 // Static assertions because play.js is browser code with no module boundary to import: it
-// runs inside an async IIFE against a live DOM. What is worth pinning here is the shape of
-// the two fragments and the fact that the branch exists at all.
+// runs inside an async IIFE against a live DOM.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,20 +13,12 @@ import { join } from 'node:path';
 
 const play = readFileSync(join(process.cwd(), 'web', 'play.js'), 'utf8');
 
-test('the front door reads the deployment mode the wizard stored', () => {
-  assert.match(play, /deploymentMode/,
-    'play.js must consult the wizard answer, not assume a mode');
-});
-
-test('single player boots WITHOUT mp=, which is what makes it single player', () => {
-  // The branch must produce a cloud-locker fragment: the locker origin, and cloud=1 for
-  // index.html's own launcher gate. Crucially no mp=.
-  const branch = /if \(singlePlayer\) \{[\s\S]*?\n    \}/.exec(play);
-  assert.ok(branch, 'no single-player branch in enterGame');
-  assert.match(branch[0], /#locker=/);
-  assert.match(branch[0], /cloud=1/);
-  assert.doesNotMatch(branch[0], /[#&]mp=/,
-    'sending mp= is exactly the bug: it turns single player into multiplayer');
+test('one mode: no single-player branch, no password form', () => {
+  assert.doesNotMatch(play, /singlePlayer|deploymentMode|cloud=1|pwForm|\/auth\/password/);
+  const launcher = readFileSync(join(process.cwd(), '..', 'play', 'launcher.html'), 'utf8');
+  assert.doesNotMatch(launcher, /registration_disabled/, 'the error map lives in play.js only');
+  assert.ok(launcher.includes("location.replace('/#mperror=' + err[1])"), '/join forwards its errors to the door');
+  for (const c of ['email_unverified', 'signup_limited']) assert.ok(play.includes(c + ": '"), c);
 });
 
 test('multiplayer hands the ticket to the launcher, never dials /ws itself', () => {
@@ -42,11 +28,6 @@ test('multiplayer hands the ticket to the launcher, never dials /ws itself', () 
   // Through /join: the launcher's multiplayer steps in door mode, never its demo chooser.
   assert.match(play, /'\/join'\s*\+\s*`#mpticket=\$\{encodeURIComponent\(res\.ticket\)\}`/);
   assert.doesNotMatch(play, /[#&]mp=\$\{/, 'nothing on this page may dial the gateway socket');
-});
-
-test('an unreadable state defaults to single player, the mode that needs no world', () => {
-  // Guessing multiplayer would mean dialling a world that may not be simulating anything.
-  assert.match(play, /let singlePlayer = true;/);
 });
 
 // --- the credential must not be left in the address bar ------------------------------------

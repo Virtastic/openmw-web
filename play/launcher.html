@@ -637,35 +637,8 @@
    const h = location.hash || '';
    const err = /[#&]mperror=([^&]+)/.exec(h);
    if (err){
-     history.replaceState(null,'',location.pathname);
-     // The codes server/src/auth/routes.ts sends back (plus the OIDC exchange codes it
-     // forwards). "Please try again" only where trying again can change anything: a refused
-     // registration, a ban or a linked identity does not become a sign-in on the second click.
-     var code = decodeURIComponent(err[1]);
-     var said = {
-       registration_disabled: 'This server is not accepting new accounts.',
-       invite_required: 'This server is invite-only. <a href="/join.html">Join our Discord to get the invite code.</a>',
-       invite_locked: 'Too many invite passphrase attempts. Wait a while before trying again.',
-       email_unverified: 'New accounts need a verified email address at that provider. Verify it there, then sign in again.',
-       signup_limited: 'Too many new accounts from your network. Wait a while before trying again.',
-       banned: 'This account is banned from this server.',
-       link_conflict: 'That sign-in is already linked to a different account. Sign in with the account it belongs to, or use another provider.',
-       provider_disabled: 'That sign-in provider is switched off on this server. Pick another.',
-       unknown_provider: 'That sign-in provider is not set up on this server. Pick another.',
-       provider_refused: 'The sign-in provider refused, or you cancelled. Please try again.',
-       provider_unreachable: 'The sign-in provider could not be reached. Please try again in a moment.',
-       disabled: 'That sign-in provider is switched off on this server. Pick another.',
-       discovery: 'The sign-in provider could not be reached. Please try again in a moment.',
-       network: 'The sign-in provider could not be reached. Please try again in a moment.',
-       http: 'The sign-in provider answered with an error. Please try again in a moment.',
-       busy: 'The sign-in provider is busy. Please try again in a moment.',
-       rate: 'Too many sign-in attempts from your connection. Wait a minute and try again.',
-       not_signed_in: 'Your session has ended. Sign in again.',
-       state: 'The sign-in took too long or was started in another tab. Please try again.',
-       bad_callback: 'The sign-in came back incomplete. Please try again.',
-       account: 'The server could not set up your account. Please try again; if it keeps happening, tell the person running the server.',
-     }[code] || (code.replace(/_/g,' ') + '. Please try again.');
-     launcherError('Sign-in failed', said);
+     // The front door owns the one error map (server/web/play.js): say it there.
+     location.replace('/#mperror=' + err[1]);
      return;
    }
    const tk = /[#&]mpticket=([^&]+)/.exec(h);

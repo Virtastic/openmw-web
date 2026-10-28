@@ -126,7 +126,7 @@
 </head>
 <body>
 <main class="card">
-  <!-- Multiplayer's glyph from launcher.html; play.js swaps in the cloud for single player. -->
+  <!-- Multiplayer's glyph from launcher.html. -->
   <div class="glyph" id="glyph" aria-hidden="true">
     <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
       <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
@@ -134,12 +134,10 @@
     </svg>
   </div>
   <div class="kicker" id="name">Morrowind</div>
-  <h1 id="title">Sign in to play</h1>
-  <p class="sub" id="bring" hidden>You will need your own copy of Morrowind (Steam, GOG or disc):
-    the first time you play, you pick its <b>Data Files</b> folder and it is uploaded once.</p>
-  <!-- deliveryModel "esm" (play.js unhides it): players prove ownership with the three master
+  <h1 id="title">Sign in to play together</h1>
+  <!-- Players prove ownership with the three master
        files and the server hosts the rest. No game name in the branding: that is [server] name. -->
-  <ol class="steps" id="esmSteps" hidden>
+  <ol class="steps" id="esmSteps">
     <li><b>Sign in</b> below. A new account is made the first time.</li>
     <li><b>Add your Morrowind files.</b> You need your own copy of <i>The Elder Scrolls III:
       Morrowind</i> Game of the Year Edition (it includes Tribunal and Bloodmoon). The first time
@@ -174,7 +172,7 @@
 
   <p class="foot">Powered by <a href="https://github.com/Virtastic/openmw-web"
     rel="noreferrer noopener">OpenMW-Web</a> · <a href="/admin">server administration</a></p>
-  <p class="foot" id="esmLegal" hidden>An unofficial fan project, not affiliated with or endorsed by
+  <p class="foot" id="esmLegal">An unofficial fan project, not affiliated with or endorsed by
     Bethesda Softworks or ZeniMax Media. Morrowind is a trademark of ZeniMax Media Inc.</p>
 </main>
 <script src="/admin/static/providers.js"></script>
