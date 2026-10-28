@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { packActorMoveBatch, unpackActorMoveBatch, peekActorMoveBatchEpoch, type ActorEntry } from '../src/proto/movement';
 import { startServer, type RunningServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
+import { WorldState } from '../src/core/worldstate';
 
 const ACTOR_REF = { __refnum: { index: 42, contentFile: 0 } };
 const REF_ENTRY: ActorEntry = {
@@ -521,6 +522,38 @@ test('a follow claim is re-issued to the holder for the character\'s new session
   back.sendCellChange('0,0', 0, 0, 0);
   const rebound = await peer.waitEvent('ActorAI', (v) => (v as { follow?: number }).follow === backId, 3000);
   assert.deepEqual((rebound.value as { ref: unknown }).ref, ACTOR_REF, 'the same companion, told to follow the new session');
+});
+
+// OT3-118: a claim whose character stayed away past the idle window lets the companion go.
+test('a follow claim expires once its character has been away past the idle window', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', configOverride: { server: { password: PEER_PASS } } });
+  const idle = WorldState.FOLLOW_IDLE_MS;
+  t.after(() => { WorldState.FOLLOW_IDLE_MS = idle; return server.close(); });
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant');
+  const first = await TestClient.connect(server.port);
+  const { playerId: firstId } = await first.joinAsNew('Recruiter');
+  await first.waitEvent('PlayerList');
+  first.sendCellChange('0,0', 0, 0, 0);
+  await first.waitEvent('PlayerCellChange');
+  first.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: true });
+  await first.waitEvent('DialogueLockResult');
+  first.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: firstId });
+  await peer.waitEvent('ActorAI', notHold);
+  first.ws.close();
+  await new Promise((r) => setTimeout(r, 200));
+
+  WorldState.FOLLOW_IDLE_MS = 0; // the character has been away "long enough"
+  peer.inbox.events.length = 0;
+  const back = await TestClient.connect(server.port);
+  t.after(() => back.close());
+  const backId = (await back.joinExisting('Recruiter'))['playerId'] as number;
+  back.sendCellChange('0,0', 0, 0, 0);
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorAI' && (e.value as { follow?: number }).follow === backId).length, 0,
+    'an expired follow claim was rebound to the returning character');
 });
 
 test('a follow claim survives a world restart', async (t) => {

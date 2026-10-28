@@ -687,8 +687,22 @@ export class WorldState {
   // the new cell has to find the claim made in the old one. The cell rides along (updated by
   // the holder's ActorCellChange) so a claim can be replayed to whoever next holds that cell
   // -- the peer restarts, and a fresh process has never heard who follows whom.
-  private readonly followedBy = new Map<string, { ref: ObjRef; cellKey: string; follow: number; charId: string; escort?: Record<string, number> }>();
-  private static readonly MAX_FOLLOWERS = 8;
+  private readonly followedBy = new Map<string, { ref: ObjRef; cellKey: string; follow: number; charId: string; escort?: Record<string, number>; at: number }>();
+  private static readonly MAX_FOLLOWERS = 16; // per player
+  // OT3-118: a claim whose character has been gone (offline, not seen to claim or change
+  // cell) this long lets the companion go -- no escort NPC held forever by one player.
+  static FOLLOW_IDLE_MS = 15 * 60_000;
+  private followStale(f: { follow: number; at: number }): boolean {
+    return !(f.follow >= 0 && this.roster.get(f.follow)) && Date.now() - f.at >= WorldState.FOLLOW_IDLE_MS;
+  }
+  private async expireFollows(): Promise<void> {
+    for (const [key, f] of [...this.followedBy]) {
+      if (!this.followStale(f)) continue;
+      this.followedBy.delete(key);
+      await this.storeFollow(f.cellKey, key);
+      log('info', 'actor.follow_expired', { cellKey: f.cellKey, key });
+    }
+  }
   private static readonly MAX_ACTOR_SPAWNS_PER_MIN = 10; // a sleeper ambush is one or two
   private actorSpawnsBy = new Map<number, number[]>(); // playerId -> recent request times (spawn)
   private positionClaimsBy = new Map<number, number[]>(); // #363: playerId -> recent lock-less claims
@@ -735,7 +749,7 @@ export class WorldState {
       const ref = parseRefKey(key);
       if (!ref || this.followedBy.has(key)) continue;
       const owner = this.roster.inWorld().find((p) => p.charId === f.charId);
-      this.followedBy.set(key, { ref, cellKey, follow: owner?.id ?? -1, charId: f.charId, ...(f.escort ? { escort: f.escort } : {}) });
+      this.followedBy.set(key, { ref, cellKey, follow: owner?.id ?? -1, charId: f.charId, at: Date.now(), ...(f.escort ? { escort: f.escort } : {}) });
     }
   }
   // THE COMPANION SURVIVES THE PLAYER'S RELOG. A claim names a SESSION id; the peer drops the
@@ -745,8 +759,11 @@ export class WorldState {
   // told again. Idempotent -- a claim already on this id is skipped.
   rebindFollows(player: Player): void {
     if (player.system) return;
+    this.enqueue(() => this.expireFollows());
     for (const f of this.followedBy.values()) {
-      if (f.charId !== player.charId || f.follow === player.id) continue;
+      if (f.charId !== player.charId || this.followStale(f)) continue;
+      f.at = Date.now();
+      if (f.follow === player.id) continue;
       f.follow = player.id;
       const holder = this.authority.holderOf(f.cellKey);
       const holderPlayer = holder === undefined ? undefined : this.roster.get(holder);
@@ -777,6 +794,7 @@ export class WorldState {
     // Only DURING creation: the census office is an ordinary room afterwards, and a finished
     // character's claim there must not vanish (a dismissal swallowed left the companion following).
     if (player.inChargen === true && isChargenCell(cellKey)) return;
+    await this.expireFollows();
     // #363: RECRUITING IS A CONVERSATION, like travel: the player who holds (or just held,
     // 5 s) this NPC's dialogue lock may say it follows them. A claim already theirs may be
     // updated or dismissed without one (a scripted escort ends by script, not by talking).
@@ -816,7 +834,7 @@ export class WorldState {
         log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follower cap' });
         return;
       }
-      this.followedBy.set(ref.key, { ref, cellKey, follow, charId: player.charId, ...(escort ? { escort } : {}) });
+      this.followedBy.set(ref.key, { ref, cellKey, follow, charId: player.charId, at: Date.now(), ...(escort ? { escort } : {}) });
       await this.storeFollow(cellKey, ref.key, { charId: player.charId, ...(escort ? { escort } : {}) });
     }
     log('info', 'actor.follow_claim', { from: player.name, cellKey, key: ref.key, follow: follow ?? null, escort: escort !== undefined });
