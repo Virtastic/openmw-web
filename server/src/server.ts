@@ -1506,7 +1506,25 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Every 2 s (was 5): anchors are player positions, and a running player covers ~1000 u
   // between passes at 5 s -- the edge of the peer's processing range trailing the edge of
   // theirs. The pass is diffed (authority, ring, the log line), so a shorter one costs little.
-  const simPeerTick = setInterval(simPeerPass, 2_000);
+  // OT3-164: the peer vetoes player damage on story actors (companion.lua, combat.lua); this
+  // tells it who may. Every pass, not diffed: the peer maps playerId -> avatar on receipt and an
+  // avatar spawned since the last one needs mapping. A few hundred bytes every 2 s.
+  const pushStoryLicence = (): void => {
+    const peer = worldPeerImpl();
+    if (!peer || contentTable.storyActors.size === 0) return;
+    const journalOf = (p: { charId: string }) => playerStore.getCached(p.charId)?.journal ?? {};
+    const humans = roster.humansInWorld().filter((p) => !p.bot).map((p) => ({
+      id: p.id,
+      journal: journalOf(p),
+      party: (socialStore.partyOf(p.accountKey)?.members ?? [])
+        .filter((a) => a !== p.accountKey)
+        .map((a) => roster.activeForAccount(a))
+        .filter((m): m is Player => m !== undefined)
+        .map(journalOf),
+    }));
+    peer.peer.sendEvent('StoryLicense', contentTable.storyLicence(humans));
+  };
+  const simPeerTick = setInterval(() => { simPeerPass(); pushStoryLicence(); }, 2_000);
   // A peer finishing its hello should not wait up to a full tick to be put to work —
   // that is 5s of the player holding a loading screen for no reason.
   ctx.onPeerJoined = () => simPeerPass();

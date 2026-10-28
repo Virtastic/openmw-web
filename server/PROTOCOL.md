@@ -20,6 +20,9 @@ Corrections, each checked against the validator or handler named:
 - `JournalSync` carries `{quests, borrowed, journalLog}`; `CrimeUpdate` is raise-only under
   shared crime, echoed back on a refused drop, and relayed with `byId`/`shared`.
 - `CombatHit`/`CombatSpellHit` reach the owner with `attackerId`; `CombatCast` with `fromId`.
+- `StoryLicense {actors: recordId[], players: {[playerId]: recordId[]}}` server -> world peer
+  every 2 s (OT3-164): the story actors, and which of them each in-world human may hurt
+  (a kill quest started by them or an online party member). The peer vetoes the rest.
 - `ContainerOpen` first-open caps and the `op="gold"` purse op; `ContainerState.gold`.
 - `DialogueLock` gates (reach, contention, one lock per player) and the 5 s "recently held"
   grace the M4 claims use.

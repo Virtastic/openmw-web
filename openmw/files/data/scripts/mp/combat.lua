@@ -23,6 +23,9 @@ local combat = {}
 -- injected by global.lua: {playerFn, ownIdFn, puppetObjOf, epochOf, isHolderOf,
 --                          cellKeyOfObj, isPvpEnabled}
 local deps = nil
+-- OT3-164: story actors and who may hurt them, from the server's StoryLicense (peer only).
+-- actors: {recordId=true}; byPlayer: {[playerId string]={recordId=true}}. Empty = no veto.
+local story = { actors = {}, byPlayer = {} }
 
 local lastHitTaken = nil -- diagnostic mirror for the scenarios
 
@@ -283,6 +286,10 @@ combat.handlers.MP_CombatSpellHit = function(data)
             victim and tostring(victim.recordId) or 'NO', okh and tostring(hp) or '?'))
     end
     if not victim then return end
+    if not combat.storyMayHurt(victim, data.attackerId) then
+        print(string.format('[mp] story actor %s spared a spell from player %s', tostring(victim.recordId), tostring(data.attackerId)))
+        return
+    end
     -- activeSpells:add wants INDEXES into the spell record's own effect list, while the wire
     -- carries rolled {id, magnitude, duration} triples. We therefore apply the record by the
     -- indexes the caster's engine says hit (all of them when it named none) and let the
@@ -342,6 +349,34 @@ end
 -- world object per shot for a visual that is already implied by the cast animation and the
 -- resulting CombatHit. Recorded here so the message is knowingly ignored rather than lost.
 combat.handlers.MP_CombatProjectile = function() end
+
+-- OT3-164. Server truth every 2 s; the avatar map rides it to companion.lua's melee veto.
+combat.handlers.MP_StoryLicense = function(data)
+    local function set(ids)
+        local s = {}
+        for _, id in ipairs(ids or {}) do s[string.lower(tostring(id))] = true end
+        return s
+    end
+    local byPlayer, byAvatar = {}, {}
+    for pid, ids in pairs(data.players or {}) do
+        byPlayer[tostring(pid)] = set(ids)
+        local obj = deps and deps.puppetObjOf(tonumber(pid))
+        if obj then byAvatar[obj.id] = byPlayer[tostring(pid)] end
+    end
+    story = { actors = set(data.actors), byPlayer = byPlayer }
+    local section = require('openmw.storage').globalSection('mpStory')
+    section:set('actors', story.actors)
+    section:set('byAvatar', byAvatar)
+end
+
+-- A player's spell on a story actor lands only with a licence for it. Unknown attacker (no
+-- licence received yet, a non-player source) = allowed: the rule degrades permissive.
+function combat.storyMayHurt(victim, attackerId)
+    local rid = victim.recordId and string.lower(victim.recordId)
+    if not (rid and story.actors[rid]) then return true end
+    local lic = story.byPlayer[tostring(attackerId)]
+    return lic == nil or lic[rid] == true
+end
 
 function combat.init(d)
     deps = d

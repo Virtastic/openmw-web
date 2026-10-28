@@ -36,6 +36,10 @@ interface ContentTableDoc {
   spells?: Record<string, { mag: number; dur: number }>;
   races?: Record<string, { male: Record<string, number>; female: Record<string, number>; skills: Record<string, number> }>;
   classes?: Record<string, { attributes: string[]; specialization: number; major: string[]; minor: string[] }>;
+  // OT3-164: actor record id -> the quest ids whose journal entry licenses killing it. A story
+  // actor takes no damage from a player unless they (or a party member online) have started
+  // one of its quests. [] = nobody may hurt it.
+  storyActors?: Record<string, string[]>;
 }
 
 // ESM skill order; a skill's specialization is index / 9 (combat, magic, stealth).
@@ -70,6 +74,14 @@ const DEFAULT_UNIQUE_ACTORS = [
   'trebonius artorius', 'hasphat antabolis', 'sharn gra-muzgob', 'nibani maesa',
   'sul-matuul', 'wulf', 'azura', 'gilvas barelo', 'king hlaalu helseth',
 ];
+// ponytail: conservative. Only actors nobody's quest asks you to kill; the ones a quest does
+// (Dagoth Ur, Almalexia, the Archmage route) stay off until an operator lists their quests.
+const DEFAULT_STORY_ACTORS: Record<string, string[]> = Object.fromEntries([
+  'fargoth', 'caius cosades', 'hasphat antabolis', 'sharn gra-muzgob', 'nibani maesa',
+  'sul-matuul', 'divayth fyr', 'yagrum bagarn', 'mehra milo', 'vivec_god', 'azura', 'wulf',
+  'crassius curio', 'king hlaalu helseth', 'gilvas barelo',
+].map((id) => [id, []]));
+
 const DEFAULT_NOTABLE_ITEMS = [
   // Artifacts + the daedric quest rewards: one-of-a-kind by design.
   'sunder', 'keening', 'wraithguard', 'ring_azura_unique', 'daedric_crescent_unique',
@@ -88,6 +100,7 @@ export class ContentTable {
   readonly uniqueActors: ReadonlySet<string>;
   readonly notableItems: ReadonlySet<string>;
   readonly items: ReadonlySet<string> | undefined;
+  readonly storyActors: ReadonlyMap<string, string[]>;
   private readonly doc: ContentTableDoc;
 
   private constructor(doc: ContentTableDoc) {
@@ -97,6 +110,24 @@ export class ContentTable {
     this.uniqueActors = lower(doc.uniqueActors ?? DEFAULT_UNIQUE_ACTORS);
     this.notableItems = lower(doc.notableItems ?? DEFAULT_NOTABLE_ITEMS);
     this.items = doc.items ? lower(doc.items) : undefined;
+    this.storyActors = new Map(Object.entries(doc.storyActors ?? DEFAULT_STORY_ACTORS)
+      .map(([id, qs]) => [id.toLowerCase(), qs.map((q) => q.toLowerCase())]));
+  }
+
+  /**
+   * OT3-164: which story actors each player may hurt. `players` holds EVERY human given (an
+   * empty list = may hurt none), so the peer can tell a human's avatar from an NPC attacker.
+   * A quest counts once started; whether it is still on the stage that wants the kill is not known.
+   */
+  storyLicence(humans: { id: number; journal: Record<string, number>; party: Record<string, number>[] }[]):
+    { actors: string[]; players: Record<number, string[]> } {
+    const players: Record<number, string[]> = {};
+    for (const h of humans) {
+      const started = new Set<string>();
+      for (const j of [h.journal, ...h.party]) for (const q of Object.keys(j)) started.add(q.toLowerCase());
+      players[h.id] = [...this.storyActors].filter(([, qs]) => qs.some((q) => started.has(q))).map(([id]) => id);
+    }
+    return { actors: [...this.storyActors.keys()], players };
   }
 
   // An engine-minted record (a brewed potion, an enchanted item: "Generated:0x1", "$dynamic3")

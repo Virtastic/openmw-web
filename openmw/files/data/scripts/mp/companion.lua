@@ -169,6 +169,20 @@ return {
                     print(string.format('[mp] hit on peer: %s by %s ok=%s health=%s fatigue=%s type=%s',
                         tostring(self.object.recordId), okn and tostring(who) or '?', tostring(attack.successful),
                         tostring(d.health), tostring(d.fatigue), tostring(attack.sourceType)))
+                    -- OT3-164: a story actor takes no damage from a player's avatar without a
+                    -- licence for it (the server's StoryLicense, mapped by combat.lua). Returning
+                    -- false stops the remaining handlers, the engine's damage among them.
+                    local section = require('openmw.storage').globalSection('mpStory')
+                    local actors = section:get('actors')
+                    local rid = string.lower(self.object.recordId)
+                    if actors and actors[rid] and attack.attacker then
+                        local byAvatar = section:get('byAvatar') or {}
+                        local lic = byAvatar[attack.attacker.id]
+                        if lic and not lic[rid] then
+                            print(string.format('[mp] story actor %s spared a hit from %s', rid, tostring(who)))
+                            return false
+                        end
+                    end
                 end)
             end
             if isPeer then
