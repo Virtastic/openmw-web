@@ -37,6 +37,7 @@ import { PvpConsent } from './core/pvp-consent';
 import { serverWhisper } from './core/chat';
 import { Binding } from './core/binding';
 import { AdminAudit, LoginLog } from './core/admin-audit';
+import { Schedule } from './core/schedule';
 import type { JsLike } from './proto/lser';
 import { WorldM7 } from './core/m7';
 import { Roster, type Player } from './core/players';
@@ -262,6 +263,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // any client frame can run.
   let hooks: HookBus;
   const moderation = new Moderation(sharedDir, config.moderation);
+  // OT3-190: a scheduled MOTD goes through the same path as /motd (set + announce).
+  const schedule = new Schedule(opts.dataDir, (kind, text) => {
+    if (kind === 'motd') {
+      motd = text;
+      config.server.motd = text;
+    }
+    broadcastChat(roster, { channel: 'server', text });
+  });
+  schedule.start();
   const admin = new Admin({
     questRepair,
     roster,
@@ -279,6 +289,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
     audit: new AdminAudit(opts.dataDir),
     logins: new LoginLog(sharedDir), // OT3-186
+    schedule, // OT3-190
     restore: (charKey, at) => playerStore.restoreTo(charKey, at), // OT3-184
     setMuted: (acct, muted, until, reason) => socialRef?.setServerMuted(acct, muted, until, reason), // OT3-185
   });
@@ -1847,6 +1858,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       closed = true;
       devBots?.stop();
       clearInterval(presenceTick);
+      schedule.stop();
       unhookGauge();
       unhookBackupAge();
       unhookBufferedGauge();

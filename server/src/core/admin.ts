@@ -17,6 +17,7 @@
 // the command's existence buys nothing when the command list is in the protocol doc.
 
 import type { AuditRow, LoginLog } from './admin-audit';
+import type { Schedule } from './schedule';
 import type { Player, Roster } from './players';
 import type { AccountStore, DashboardRole } from './accounts';
 import type { BanStore } from '../persist/banstore';
@@ -57,6 +58,9 @@ function outranks(rank: number, name: string, actor: Player): boolean {
 const MAX_ARG = 256;
 const BAN_USAGE = '/ban <account> [30m|12h|7d|perm] <reason>';
 const IPBAN_USAGE = '/ipban <player|ip> [30m|12h|7d|perm] <reason>';
+const SCHEDULE_USAGE = '/schedule <10m|2h|1d> [motd] <text> | /schedule list | /schedule cancel <id>';
+const MAX_SCHEDULE_MS = 30 * 86_400_000;
+const SPAN_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 };
 const MAX_SCRIPT = 4096;
 // A4: an admin answer is whispered line-by-line over the chat tier, so an unbounded
 // /chatlog would be a self-inflicted flood. Bound the reply, not the stored data.
@@ -91,6 +95,8 @@ interface AdminCtx {
   setMuted?(accountKey: string, muted: boolean, until?: number, reason?: string): void;
   // OT3-186: login history (admin-audit.ts LoginLog). Absent = /logins reports it is off.
   logins?: LoginLog;
+  // OT3-190: scheduled broadcasts / MOTD (schedule.ts). Absent = /schedule reports it is off.
+  schedule?: Schedule;
 }
 
 const MAX_MUTE_MINUTES = 60 * 24 * 30;
@@ -437,6 +443,37 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       return `Banned ${account.name}${forSpan(until)}: ${reason}`;
     },
   },
+  schedule: {
+    minRank: 2,
+    usage: SCHEDULE_USAGE,
+    help: 'broadcast or set the MOTD later (survives a restart); list or cancel pending ones',
+    run(ctx, actor, args) {
+      if (!ctx.schedule) return 'Scheduling is not available on this server.';
+      const when = (ts: number) => new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
+      if (args[0] === 'list') {
+        const rows = ctx.schedule.list();
+        return rows.length === 0 ? 'Nothing scheduled.'
+          : rows.map((r) => `#${r.id} ${when(r.at)} UTC ${r.kind} by ${r.by}: ${r.text}`).join('\n');
+      }
+      if (args[0] === 'cancel') {
+        const id = Number(args[1]);
+        if (!Number.isInteger(id)) return `usage: ${SCHEDULE_USAGE}`;
+        if (!ctx.schedule.cancel(id)) return `Nothing scheduled as #${id}.`;
+        audit(actor, 'schedule', { cancel: id });
+        return `Cancelled #${id}.`;
+      }
+      const m = /^(\d+)([mhd])$/i.exec(args[0] ?? '');
+      const ms = m ? Number(m[1]) * SPAN_MS[m[2]!.toLowerCase()]! : 0;
+      const kind = args[1] === 'motd' ? 'motd' : 'say';
+      const text = args.slice(kind === 'motd' ? 2 : 1).join(' ').trim();
+      if (!(ms > 0 && ms <= MAX_SCHEDULE_MS) || !text) return `usage: ${SCHEDULE_USAGE}`;
+      if (text.length > 512) return 'Text too long (max 512 chars).';
+      const at = Date.now() + ms;
+      const id = ctx.schedule.add(at, kind, text, actor.name);
+      audit(actor, 'schedule', { id, at: new Date(at).toISOString(), kind, text });
+      return `Scheduled #${id} ${kind === 'motd' ? 'MOTD change' : 'broadcast'} for ${when(at)} UTC.`;
+    },
+  },
   logins: {
     minRank: 2,
     usage: '/logins <account>',
@@ -537,7 +574,6 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
 
 // OT3-187: `<who> [30m|12h|7d|perm] <reason>`. The reason is mandatory; no span = permanent.
 // Parsed from the joined rest so the dashboard's one free-text field ("1d spamming") works too.
-const SPAN_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 };
 const MAX_BAN_MS = 365 * 86_400_000;
 export function banTerms(args: string[], now = Date.now()): { reason: string; until?: number } | undefined {
   const rest = args.slice(1).join(' ').trim();
