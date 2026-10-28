@@ -159,3 +159,44 @@ test('two characters each take the same placed item; neither sees the other take
   const hers = (c.inbox.events.find((e) => e.name === 'WorldCellState')!.value) as { deleted: string[] };
   assert.deepEqual(hers.deleted, [], 'a third character still finds it');
 });
+
+// OT3-167: human drops are capped per account per cell and per cell; the oldest expires.
+test('litter caps: a drop past the per-account or per-cell cap expires the oldest drop', async (t) => {
+  const dataDir = tmpDataDir();
+  const seed = new CellStore(dataDir);
+  const doc = await seed.get('0,0');
+  const ids: number[] = [];
+  const put = (account: string) => {
+    const netId = seed.allocNetId();
+    ids.push(netId);
+    doc.placed[`n:${netId}`] = { netId, recordId: 'gold_001', cellKey: '0,0', x: 0, y: 0, z: 0, rotZ: 0, count: 1, byId: 0, byAccount: account };
+  };
+  for (let i = 0; i < 100; i++) put('alice'); // MAX_LITTER_PER_ACCOUNT
+  for (let i = 0; i < 400; i++) put(`other${i % 4}`); // 500 = MAX_LITTER_PER_CELL
+  seed.markDirty('0,0');
+  await seed.close();
+
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const join = async (name: string) => {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    await c.joinAsNew(name);
+    await c.waitEvent('PlayerList');
+    c.sendCellChange('0,0', 0, 0, 0);
+    await c.waitEvent('WorldCellState');
+    return c;
+  };
+  const a = await join('Alice');
+  const b = await join('Bob');
+
+  // Alice is at her cap: her own oldest goes (it is also the cell's oldest).
+  a.sendEvent('ObjectSpawnRequest', { tempId: 1, recordId: 'gold_001', cellKey: '0,0', x: 0, y: 0, z: 0, rotZ: 0, count: 1 });
+  await a.waitEvent('ObjectSpawnAck');
+  assert.equal(((await b.waitEvent('ObjectDelete')).value as { net?: number }).net, ids[0]);
+
+  // Bob is far under his own cap, but the cell is full: the oldest drop in the cell goes.
+  b.sendEvent('ObjectSpawnRequest', { tempId: 2, recordId: 'gold_001', cellKey: '0,0', x: 0, y: 0, z: 0, rotZ: 0, count: 1 });
+  await b.waitEvent('ObjectSpawnAck');
+  assert.equal(((await a.waitEvent('ObjectDelete', (v) => (v as { net?: number }).net !== ids[0])).value as { net?: number }).net, ids[1]);
+});

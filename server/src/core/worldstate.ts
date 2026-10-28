@@ -76,6 +76,11 @@ const MAX_TRAVEL_CLAIMS_PER_MIN = 12;
 // Two thousand each is far past any honest cell and leaves half the ceiling for the rest.
 const MAX_PLACED_PER_CELL = 2000;
 const MAX_DELETED_PER_CELL = 2000;
+// OT3-167: litter caps. What players drop (not what the world peer places) is bounded per
+// account per cell and per cell; at a cap the OLDEST such drop expires to make room, so a
+// griefer bot dropping a thousand items leaves at most these, and honest drops never fail.
+export const MAX_LITTER_PER_ACCOUNT = 100;
+export const MAX_LITTER_PER_CELL = 500;
 const MAX_TAKEN_PER_CELL = 20_000; // OT3-165 per-character takes, summed over the cell's refs
 const MAX_MEMBER_VARS_PER_CELL = 2000;
 // The per-map caps do not add up to a cell that fits: every map merely AT its cap is past
@@ -1331,6 +1336,7 @@ export class WorldState {
     }
     // The drop is going ahead, so whatever credit backed it is now spent (see setInventoryDebit).
     const doc = await this.cells.get(cellKey);
+    if (!player.system && !actor) this.expireLitter(doc, cellKey, player.accountKey);
     // Refused BEFORE the debit: a drop that is not going ahead must not spend the credit that
     // backed it, or the item is gone from the count and never appears on the ground.
     if (Object.keys(doc.placed).length >= MAX_PLACED_PER_CELL) {
@@ -1361,6 +1367,29 @@ export class WorldState {
     const { byAccount: _owner, ...wire } = placed;
     this.relayCell(cellKey, 'ObjectPlace', wire);
     log('info', 'world.spawn', { netId, recordId, cellKey, by: player.name });
+  }
+
+  // OT3-167: make room for one more human drop. Oldest = lowest netId (allocNetId is monotonic).
+  private expireLitter(doc: CellDoc, cellKey: string, accountKey: string): void {
+    const litter = Object.entries(doc.placed)
+      .filter(([, p]) => p.byAccount !== undefined && (p as { actor?: boolean }).actor !== true)
+      .sort(([, a], [, b]) => a.netId - b.netId);
+    const mine = litter.filter(([, p]) => p.byAccount === accountKey);
+    const expire = [
+      ...mine.slice(0, Math.max(0, mine.length - MAX_LITTER_PER_ACCOUNT + 1)),
+      ...litter.slice(0, Math.max(0, litter.length - MAX_LITTER_PER_CELL + 1)),
+    ];
+    for (const [key, p] of expire) {
+      if (!(key in doc.placed)) continue; // in both lists
+      delete doc.placed[key];
+      delete doc.moved[key];
+      delete doc.locks[key];
+      delete doc.doors[key];
+      delete doc.containers[key];
+      this.relayCell(cellKey, 'ObjectDelete', { net: p.netId, cellKey, byId: 0 });
+      log('info', 'world.litter_expired', { cellKey, netId: p.netId, recordId: p.recordId, account: p.byAccount });
+    }
+    if (expire.length) this.cells.markDirty(cellKey);
   }
 
   // Loads the doc and parses the union; drops ops addressing tombstoned objects.
