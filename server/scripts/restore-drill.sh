@@ -10,22 +10,34 @@
 # What it does, end to end:
 #   1. boots a server on an ephemeral port with a scratch data dir
 #   2. drives a real omw-mp/1 client to create an account + a known character/world state
-#   3. SIGUSR1 (flush), then `tar czf` the data dir EXACTLY as the documented cron does
+#   3. SIGUSR1 (flush), then tools/backup-sqlite.mjs EXACTLY as the documented hourly cron does
 #   4. deletes the data dir completely
-#   5. restores from the tarball, boots again, and ASSERTS the state came back:
+#   5. restores from the archive, boots again, and ASSERTS the state came back:
 #      the account logs in, and the character doc (appearance + cell + coords) is intact
+#
+# OT3-66 --from <archive>: drill a REAL backup instead (fetch last hour's archive from off-box
+# storage first, with the same tool that shipped it). Steps 1-4 are skipped; the archive is
+# restored into a scratch dir, the server must boot on it, and the seeded character is checked
+# when the archive carries the drill canary account (seed it once on that server).
 #
 # Exit 0 = the backup procedure works. Any nonzero exit means it does not — this is
 # designed to be a CI gate, so it never prints "probably fine".
 #
-# Usage: server/scripts/restore-drill.sh [--keep]   (--keep leaves the scratch dir behind)
+# Usage: server/scripts/restore-drill.sh [--keep] [--from <sqlite-*.tar.gz>]
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."   # server/
 
 KEEP=0
-[[ "${1:-}" == "--keep" ]] && KEEP=1
+FROM=""
+while (( $# )); do
+  case "$1" in
+    --keep) KEEP=1 ;;
+    --from) FROM="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift ;;
+  esac
+  shift
+done
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/openmw-mp-drill.XXXXXX")"
 DATA="$WORK/data"
@@ -90,6 +102,26 @@ stop() {
 
 mkdir -p "$DATA" "$BACKUPS"
 
+# Is the drill account in this data dir's accounts.db? (usernames are stored lowercase)
+has_canary() {
+  node -e 'const {DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.argv[1]+"/accounts.db",{readOnly:true});process.exit(d.prepare("SELECT 1 FROM usernames WHERE username=?").get(process.argv[2])?0:1)' "$1" restoredrill 2>/dev/null
+}
+
+if [[ -n "$FROM" ]]; then
+  step "restore $FROM into a scratch data dir and boot"
+  [[ -s "$FROM" ]] || fail "no such archive: $FROM"
+  tar xzf "$FROM" -C "$DATA"
+  boot "$LOG2"
+  if has_canary "$DATA"; then
+    npx tsx scripts/drill-bot.ts verify "$PORT" || fail "restored server does not have the canary character"
+  else
+    printf 'no drill canary in this archive: boot-only check\n'
+  fi
+  stop
+  printf '\nrestore-drill PASS: %s restores and boots\n' "$FROM"
+  exit 0
+fi
+
 # ---------------------------------------------------------------- 1. seed
 step "1/6 boot a server on a scratch data dir"
 boot "$LOG1"
@@ -101,11 +133,9 @@ npx tsx scripts/drill-bot.ts seed "$PORT" || fail "seeding failed"
 step "3/6 flush (SIGUSR1) + back up exactly as the documented cron does"
 kill -USR1 "$PID"
 sleep 2   # same 2s the cron allows the flush; if that is too short, the drill must fail
-STAMP="$(date +%F)"
-TARBALL="$BACKUPS/data-$STAMP.tar.gz"
-tar czf "$TARBALL" -C "$WORK" data
-printf 'backup: %s (%s bytes)\n' "$TARBALL" "$(wc -c <"$TARBALL" | tr -d ' ')"
-[[ -s "$TARBALL" ]] || fail "backup tarball is empty"
+node tools/backup-sqlite.mjs --data "$DATA" --out "$BACKUPS" || fail "backup-sqlite failed"
+TARBALL="$(ls -t "$BACKUPS"/sqlite-*.tar.gz | head -1)"
+[[ -s "$TARBALL" ]] || fail "backup archive is empty"
 
 step "4/6 stop the server and DESTROY the data dir"
 stop
@@ -115,9 +145,10 @@ printf 'data dir wiped: %s\n' "$DATA"
 
 # ---------------------------------------------------------------- 3. restore
 step "5/6 restore from the tarball and boot again"
-tar xzf "$TARBALL" -C "$WORK"
+mkdir -p "$DATA"
+tar xzf "$TARBALL" -C "$DATA"
 [[ -d "$DATA" ]] || fail "restore did not recreate the data dir"
-[[ -f "$DATA/accounts/restoredrill.json" ]] || fail "restored data dir has no account file"
+has_canary "$DATA" || fail "restored accounts.db has no drill account"
 boot "$LOG2"
 
 step "6/6 ASSERT the known state came back"
