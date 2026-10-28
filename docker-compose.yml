@@ -105,8 +105,11 @@ services:
     image: caddy:2-alpine
     container_name: openmw-web-caddy
     restart: unless-stopped
+    # OT3-125: start the proxy only once the server answers /healthz, so `docker compose up
+    # --wait` returns on a serving stack, not a booting one.
     depends_on:
-      - openmw-web
+      openmw-web:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
