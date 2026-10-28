@@ -22,6 +22,17 @@ export interface ChatContext {
   // OT3-23: accountKey -> when it last spoke on global. Per server, created on first use.
   lastGlobalAt?: Map<string, number>;
   globalCooldownMs?: number;
+  // OT3-67: may this player read and post on the Novice channel? Absent = nobody may.
+  noviceOk?(player: Player): boolean;
+}
+
+// OT3-67 NOVICE channel: new characters (below NOVICE_MAX_LEVEL) and opted-in mentors only,
+// so a sprout's question is not lost in world chat. A mentor must be at least
+// MENTOR_MIN_LEVEL to opt in; staff can revoke (admin.ts /mentor).
+export const NOVICE_MAX_LEVEL = 5;
+export const MENTOR_MIN_LEVEL = 10;
+export function noviceEligible(level: number, mentorState: string | undefined): boolean {
+  return level < NOVICE_MAX_LEVEL || mentorState === 'on';
 }
 import { cellsVisible } from './movement';
 import { log } from '../log';
@@ -56,7 +67,8 @@ export type ChatMessageBody = {
   //   global  the whole world, rate-limited
   //   server  announcements; never muted, never proximity-filtered
   //   whisper one recipient
-  channel: 'say' | 'party' | 'global' | 'server' | 'whisper';
+  //   novice  new characters + mentors (OT3-67)
+  channel: 'say' | 'party' | 'global' | 'server' | 'whisper' | 'novice';
   from?: string;
   fromId?: number;
   // Whisper only: on the SENDER's echo copy, the recipient's display name, so the client can
@@ -172,10 +184,10 @@ export function handleChatSend(
   if (!hooks.onChat(player, trimmed)) return; // vetoed lines were never delivered, so never logged
   // Channel resolution: an explicit channel from the selector wins; otherwise the !/@ MMO
   // prefixes, parsed here because they are channel markers, not commands.
-  let channel: 'say' | 'party' | 'global' | 'whisper' = 'say';
+  let channel: 'say' | 'party' | 'global' | 'whisper' | 'novice' = 'say';
   let line = trimmed;
   if (explicitChannel === 'say' || explicitChannel === 'party'
-    || explicitChannel === 'global' || explicitChannel === 'whisper') {
+    || explicitChannel === 'global' || explicitChannel === 'whisper' || explicitChannel === 'novice') {
     channel = explicitChannel;
   } else if (/^!/.test(trimmed)) {
     channel = 'global';
@@ -199,6 +211,10 @@ export function handleChatSend(
     deliverWhisper(ctx, player, whisperTo, line, mod);
     return;
   }
+  if (channel === 'novice' && ctx.noviceOk?.(player) !== true) {
+    serverWhisper(player, `The Novice channel is for characters below level ${NOVICE_MAX_LEVEL} and mentors.`);
+    return;
+  }
   recordChat(mod, player, channel, line);
   const msg: ChatMessageBody = { channel, from: player.name, fromId: player.id, text: line };
   if (channel === 'party') {
@@ -211,6 +227,12 @@ export function handleChatSend(
     }
     for (const p of ctx.roster.inWorld()) {
       if (!members.includes(p.accountKey)) continue;
+      if (p.accountKey !== player.accountKey && ctx.isMuted?.(p.accountKey, player.accountKey)) continue;
+      p.peer.sendEvent('ChatMessage', msg);
+    }
+  } else if (channel === 'novice') {
+    for (const p of ctx.roster.inWorld()) {
+      if (ctx.noviceOk?.(p) !== true) continue;
       if (p.accountKey !== player.accountKey && ctx.isMuted?.(p.accountKey, player.accountKey)) continue;
       p.peer.sendEvent('ChatMessage', msg);
     }

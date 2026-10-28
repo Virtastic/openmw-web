@@ -131,3 +131,26 @@ test('chat is rate limited, the flooder is told, and it refills', async (t) => {
   world.a.close();
   world.b.close();
 });
+
+// OT3-67: the Novice channel reaches new characters (and opted-in mentors), and a mentor must
+// be level 10 to opt in.
+test('novice chat reaches new characters; a level-1 cannot opt in as mentor', async (t) => {
+  const { a, b } = await two(t);
+  a.sendEvent('ChatSend', { channel: 'novice', text: 'how do I level up?' });
+  await b.waitEvent('ChatMessage', (v) => (v as { channel?: string; text?: string }).channel === 'novice'
+    && (v as { text?: string }).text === 'how do I level up?');
+  b.sendEvent('MentorOptIn', { state: 'on' });
+  const r = await b.waitEvent('SocialResult', (v) => (v as { op?: string }).op === 'MentorOptIn');
+  const rv = r.value as { ok: boolean; detail: string };
+  assert.deepEqual([rv.ok, rv.detail], [false, 'too_low']);
+  a.close();
+  b.close();
+});
+
+test('noviceEligible: below level 5, or a mentor', async () => {
+  const { noviceEligible } = await import('../src/core/chat');
+  assert.equal(noviceEligible(4, undefined), true);
+  assert.equal(noviceEligible(5, 'off'), false);
+  assert.equal(noviceEligible(30, 'on'), true);
+  assert.equal(noviceEligible(30, 'revoked'), false);
+});

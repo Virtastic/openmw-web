@@ -39,7 +39,7 @@ import type { ChatContext } from './core/chat';
 import { Moderation } from './core/moderation';
 import { Admin, ADMIN_COMMANDS } from './core/admin';
 import { ResumeStore } from './core/resume';
-import { broadcastChat, type ChatMessageBody } from './core/chat';
+import { broadcastChat, noviceEligible, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
 import { MoveBroadcaster, interestFromLimits } from './core/movement';
@@ -250,6 +250,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     resume,
     moderation,
     allowConsole: config.admin.allowConsole,
+    setMentor: (p, state) => socialRef?.setMentor(p, state, true) ?? 'not_ready',
     motd: () => motd,
     setMotd: (text) => {
       motd = text;
@@ -335,6 +336,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // the number /status and the dashboard advertise.
   const CHAT_HISTORY_KEEP = 200;
   const CHAT_HISTORY_REPLAY = 60;
+  const levelOf = (p: Player): number => playerStore.getCached(p.charId)?.stats?.level ?? 1;
   const chatCtx: ChatContext = {
     roster,
     // Mutes are enforced at DELIVERY (chat.ts), not in the client: a mute a modified
@@ -351,6 +353,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // very much does not (friends spread across the map must still be able to talk).
     sayProximity: config.rules.sayScope === 'proximity',
     globalCooldownMs: config.limits.globalChatCooldownSec * 1000,
+    noviceOk: (p) => noviceEligible(levelOf(p), socialStore.getMentor(p.accountKey)),
     // SCROLLBACK. Only the channels a newcomer may legitimately replay: 'global' and 'server'
     // are the server-wide conversation, and world chat ('party' on the wire) is the one
     // world's. History is scoped by channel only (OT3-46).
@@ -638,6 +641,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Resolution must accept what players SEE, which is now the username.
     resolveName: (name) => accounts.keyForUsername(name) ?? (accounts.existsNow(name) ? name.toLowerCase() : undefined),
     now: () => Date.now(),
+    levelOf,
     // A4/3.8: the context-menu report writes to the same queue as /report.
     report: (doc) => moderation.reports.write({
       ts: new Date().toISOString(),

@@ -48,6 +48,8 @@ interface AdminCtx {
     clearSpawnCooldowns(charId: string, by: string): void;
   };
   allowConsole: boolean;
+  // OT3-67: staff revoke/restore of Novice-channel mentor status (Social.setMentor).
+  setMentor?(player: Player, state: 'revoked' | 'off'): string;
   motd: () => string;
   setMotd(text: string): void;
   // Plugin veto: false = this actor may not run this command (default allow).
@@ -191,6 +193,25 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
         .slice(-MAX_CHATLOG_LINES)
         .map((l) => `${l.ts} [${l.channel}] ${l.name}: ${l.text}`)
         .join('\n');
+    },
+  },
+  mentor: {
+    minRank: 1,
+    usage: '/mentor <player> revoke|restore',
+    help: 'revoke or restore a Novice-channel mentor (moderator)',
+    run(ctx, actor, args) {
+      const name = arg(args, 0);
+      const target = targetOf(ctx, name);
+      const sub = args[1];
+      if (!target || (sub !== 'revoke' && sub !== 'restore')) {
+        return name && !target ? `No player named "${name}".` : 'usage: /mentor <player> revoke|restore';
+      }
+      if (!ctx.setMentor) return 'Mentors are not available on this world.';
+      // Restore clears the revoke to 'off': the player opts back in themselves.
+      const r = ctx.setMentor(target, sub === 'revoke' ? 'revoked' : 'off');
+      if (r !== 'ok') return `/mentor failed: ${r}`;
+      audit(actor, 'mentor', { target: target.name, sub });
+      return sub === 'revoke' ? `${target.name} can no longer mentor.` : `${target.name} may opt in as a mentor again.`;
     },
   },
   kick: {

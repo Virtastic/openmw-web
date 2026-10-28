@@ -185,6 +185,12 @@ export class SocialStore {
         PRIMARY KEY (muter, muted)
       );
       CREATE INDEX IF NOT EXISTS mute_muter ON mute(muter);
+      -- OT3-67: Novice-channel mentors. state 'on' | 'off' | 'revoked'; a staff revoke sticks
+      -- (the player cannot opt back in) until staff restore it.
+      CREATE TABLE IF NOT EXISTS mentor (
+        account TEXT PRIMARY KEY,
+        state   TEXT NOT NULL
+      );
     `);
 
     // COLUMNS ADDED TO AN EXISTING TABLE. `CREATE TABLE IF NOT EXISTS` above is a no-op on a
@@ -488,6 +494,18 @@ export class SocialStore {
 
   setAvailability(account: AccountKey, state: string): void {
     this.write('INSERT OR REPLACE INTO availability_pref (account, state) VALUES (?, ?)').run(account, state);
+  }
+
+  // -------------------------------------------------------------------- mentors
+
+  getMentor(account: AccountKey): string | undefined {
+    const row = this.db.prepare('SELECT state FROM mentor WHERE account = ?').get(account) as
+      { state: string } | undefined;
+    return row?.state;
+  }
+
+  setMentor(account: AccountKey, state: 'on' | 'off' | 'revoked'): void {
+    this.write('INSERT OR REPLACE INTO mentor (account, state) VALUES (?, ?)').run(account, state);
   }
 
   // --------------------------------------------------------------------- mutes

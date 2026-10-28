@@ -12,6 +12,7 @@ import type { Player, Roster } from './players';
 import { SocialStore, type AccountKey, type PresenceRow } from './socialstore';
 import type { LValue, LTable, JsLike } from '../proto/lser';
 import { log } from '../log';
+import { MENTOR_MIN_LEVEL, noviceEligible } from './chat';
 
 interface SocialTuning {
   requestTtlMs: number;
@@ -61,7 +62,9 @@ type SocialFailure =
   | 'no_request'
   | 'not_online'
   | 'not_friends'
-  | 'private';
+  | 'private'
+  | 'revoked'
+  | 'too_low';
 
 /** How long a presence row stays believable without a refresh. Comfortably longer than the
  *  heartbeat, so a hiccup does not blink everyone offline, and short enough that a world which
@@ -78,6 +81,8 @@ interface SocialDeps {
   // Resolve a typed-in display name to an account key (case-insensitive).
   resolveName(name: string): AccountKey | undefined;
   now(): number;
+  // OT3-67: the character's level, for the Novice channel and the mentor opt-in. Absent = 1.
+  levelOf?(player: Player): number;
   // A4/3.8: file a report into the moderation queue (the same store /report writes).
   report?(doc: {
     reporter: { id: number; account: string; name: string };
@@ -261,6 +266,10 @@ export class Social {
       invites: this.d.store.invitesFor(acct, this.d.now())
         .filter((inv) => !this.d.store.blockedEitherWay(acct, inv.from))
         .map((inv) => named(inv.from)) as unknown as never,
+      // OT3-67: the Novice tab and the mentor switch. Resent with every snapshot, so a sprout
+      // crossing the level line loses the tab at the next heartbeat.
+      mentor: this.d.store.getMentor(acct) ?? 'off',
+      novice: noviceEligible(this.d.levelOf?.(player) ?? 1, this.d.store.getMentor(acct)),
     });
   }
 
@@ -509,6 +518,17 @@ export class Social {
     return 'ok';
   }
 
+  // OT3-67: a player opts in or out as a Novice-channel mentor; staff (admin.ts /mentor)
+  // revoke or restore. A revoke sticks: the player cannot opt back in over it.
+  setMentor(player: Player, state: string, byStaff = false): SocialFailure | 'ok' {
+    if (byStaff ? state !== 'revoked' && state !== 'off' : state !== 'on' && state !== 'off') return 'no_such_player';
+    if (!byStaff && this.d.store.getMentor(player.accountKey) === 'revoked') return 'revoked';
+    if (!byStaff && state === 'on' && (this.d.levelOf?.(player) ?? 1) < MENTOR_MIN_LEVEL) return 'too_low';
+    this.d.store.setMentor(player.accountKey, state as 'on' | 'off' | 'revoked');
+    this.sendFriendList(player);
+    return 'ok';
+  }
+
   // May `viewer` see where `subject` is? The single place this question is answered, so a
   // new surface cannot accidentally disclose a location the player asked to hide.
   private maySeeLocation(viewer: AccountKey, subject: AccountKey): boolean {
@@ -688,6 +708,12 @@ export class Social {
         const r = this.mute(player, muteTarget);
         this.reply(player, 'MuteAdd', r === 'ok', r);
         this.sendFriendList(player);
+        return true;
+      }
+      case 'MentorOptIn': {
+        const state = str('state') || str('acct');
+        const r = this.setMentor(player, state);
+        this.reply(player, 'MentorOptIn', r === 'ok', r === 'ok' ? state : r);
         return true;
       }
       case 'MuteRemove':

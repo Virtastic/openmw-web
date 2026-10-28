@@ -3666,7 +3666,7 @@ window.omw = (function(){
 #omw-chat, #omw-social{ --panel:#17130e; --panel-2:#211a12; --line:#3a2e1e; --line-soft:rgba(58,46,30,.45);
   --bronze:#8a6838; --bronze-hi:#c69a4e; --gold:#d3a84e; --gold-hi:#e8c86a; --ink:#e9dcc3; --muted:#b9a888;
   --faint:#8a7a5e; --c-say:#e9dcc3; --c-world:#8fe58f; --c-party:#8fe58f; --c-global:#f0d15a;
-  --c-whisper:#dd95f4; --c-server:#a89a80;
+  --c-whisper:#dd95f4; --c-server:#a89a80; --c-novice:#7fc8f0;
   font:13.5px/1.45 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; }
 #omw-chat *, #omw-chat *::before, #omw-chat *::after{ box-sizing:border-box; }
 #omw-social *, #omw-social *::before, #omw-social *::after{ box-sizing:border-box; }
@@ -3686,7 +3686,7 @@ window.omw = (function(){
 #omw-chat .ln .who{ font-weight:600; color:var(--ink); }
 #omw-chat .c-say{ color:var(--c-say); } #omw-chat .c-world{ color:var(--c-world); }
 #omw-chat .c-global{ color:var(--c-global); }
-#omw-chat .c-whisper{ color:var(--c-whisper); }
+#omw-chat .c-whisper{ color:var(--c-whisper); } #omw-chat .c-novice{ color:var(--c-novice); }
 #omw-chat .c-server{ color:var(--c-server); font-style:italic; }
 /* active (T): the feed becomes a real panel with scrollback + the compose bar below it */
 #omw-chat.active{ pointer-events:auto; }
@@ -3704,6 +3704,7 @@ window.omw = (function(){
 #omw-chat .chan.on{ color:var(--ink); }
 #omw-chat .chan.on[data-c="world"]{ border-color:var(--c-world); color:var(--c-world); }
 #omw-chat .chan.on[data-c="whisper"]{ border-color:var(--c-whisper); color:var(--c-whisper); }
+#omw-chat .chan.on[data-c="novice"]{ border-color:var(--c-novice); color:var(--c-novice); }
 #omw-chat .r2{ display:flex; align-items:center; gap:7px; padding:7px 9px 9px; }
 #omw-chat .clab{ font-weight:700; font-size:12px; white-space:nowrap; }
 #omw-chat select.wto{ background:rgba(0,0,0,.45); border:1px solid var(--line); color:var(--c-whisper);
@@ -4438,9 +4439,11 @@ window.omw = (function(){
   // Player-facing channels are WORLD / WHISPER: everyone in your world, or one friend.
   // "world" rides the wire as the server's 'party' channel (the '@' tier, which is world
   // chat now); incoming 'say'/'global' render as [World] too.
+  // OT3-67: + NOVICE for new characters and mentors; the server says who (mentor/novice mirror).
   var CHANS = ['world','whisper'];
-  var CLABEL = { world:'[World]', whisper:'[Whisper]' };
-  var WIRE = { world:'party', whisper:'whisper' };
+  function chans(){ return mpState().novice === 'true' ? CHANS.concat(['novice']) : CHANS; }
+  var CLABEL = { world:'[World]', whisper:'[Whisper]', novice:'[Novice]' };
+  var WIRE = { world:'party', whisper:'whisper', novice:'novice' };
   var ready = false; // chargen done? overlays stay hidden until the character exists
   var chChan = 'world', chWhisper = '', chatOpen = false, seenChatSeq = 0, seenOpenChat = 0;
   var feed = document.getElementById('omw-feed'), chatEl = document.getElementById('omw-chat');
@@ -4479,7 +4482,8 @@ window.omw = (function(){
     feed.scrollTop = feed.scrollHeight;
   }
   function renderChans(){
-    chansEl.innerHTML = CHANS.map(function(c){
+    if (chans().indexOf(chChan) < 0) chChan = 'world';
+    chansEl.innerHTML = chans().map(function(c){
       return '<span class="chan'+(c===chChan?' on':'')+'" data-c="'+c+'">'+c+'</span>'; }).join('');
     clab.textContent = CLABEL[chChan];
     clab.style.color = 'var(--c-'+chChan+')';
@@ -4515,7 +4519,7 @@ window.omw = (function(){
   function chatKey(e){
     if (e.key === 'Enter'){ e.preventDefault(); sendChat(); }
     else if (e.key === 'Escape'){ e.preventDefault(); closeChat(); }
-    else if (e.key === 'Tab'){ e.preventDefault(); chChan = CHANS[(CHANS.indexOf(chChan)+1)%CHANS.length]; renderChans(); }
+    else if (e.key === 'Tab'){ e.preventDefault(); var cs = chans(); chChan = cs[(cs.indexOf(chChan)+1)%cs.length]; renderChans(); }
   }
   tx.addEventListener('keydown', function(e){ e.stopPropagation(); chatKey(e); });
 
@@ -4787,6 +4791,25 @@ window.omw = (function(){
       sec.appendChild(privRow);
       sec.appendChild(el('div','note','Who may see which cell you are in and invite you. Private'
         + ' hides your location from friends too.'));
+
+      // OT3-67: MENTOR. Opted-in mentors see the Novice channel and answer new players there.
+      var mentor = mpState().mentor || 'off';
+      sec.appendChild(el('h3',null,'Mentor'));
+      if (mentor === 'revoked'){
+        sec.appendChild(el('div','note','A moderator has removed your mentor status.'));
+      } else {
+        var mRow = el('div','setrow');
+        mRow.appendChild(el('div','setlbl','Novice channel'));
+        var mSeg = el('div','seg');
+        [['on','Mentor'],['off','Off']].forEach(function(mo){
+          var b = el('button','btn'+(mentor===mo[0]?' on':''), mo[1]);
+          b.onclick = function(){ cmd('social:MentorOptIn:'+mo[0]); };
+          mSeg.appendChild(b);
+        });
+        mRow.appendChild(mSeg);
+        sec.appendChild(mRow);
+        sec.appendChild(el('div','note','Mentors (level 10+) join the Novice channel to answer questions from new players.'));
+      }
 
       // THE WAY BACK. Block and mute could be done from a row and undone from nowhere.
       var blocked = pj(m.blocked)||[], muted = pj(m.muted)||[];

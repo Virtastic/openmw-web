@@ -50,6 +50,8 @@ local presence = 'friends'
 -- location"). Offline hides you from everyone; the world is the same one. Echoed back by
 -- the server on SetAvailability so the toggle reflects the real state.
 local availability = 'online'
+-- OT3-67: Novice channel. mentor = 'on'|'off'|'revoked'; novice = may use the channel.
+local mentor, novice = 'off', false
 local status = ''
 local draft = ''
 local myName = nil
@@ -101,6 +103,8 @@ local SOCIAL_FAIL = {
     no_request        = 'That invitation has expired.',
     not_online        = 'They are offline.',
     private           = 'They are not accepting invitations.',
+    revoked           = 'A moderator has removed your mentor status.',
+    too_low           = 'Mentors must be level 10 or higher.',
 }
 
 local SOCIAL_FAIL_BY_OP = {}
@@ -116,6 +120,7 @@ local SOCIAL_OK = {
     MuteAdd       = 'Muted.',
     MuteRemove    = 'Unmuted.',
     ReportPlayer  = 'Report sent to the moderators.',
+    MentorOptIn   = 'Mentor setting saved.',
 }
 
 local SOCIAL_SILENT = {}
@@ -157,6 +162,8 @@ local function mirror()
     mp.set('muted', json.encode(muted))
     mp.set('presenceMode', presence)
     mp.set('availability', availability)
+    mp.set('mentor', mentor)
+    mp.set('novice', novice and 'true' or 'false')
     local reqs, invs = {}, {}
     for acct, name in pairs(requests) do reqs[#reqs + 1] = { acct = acct, name = name } end
     for acct, inv in pairs(invites) do invs[#invs + 1] = { acct = acct, name = inv.name } end
@@ -207,6 +214,8 @@ return {
             friends = data.friends or {}
             blocked = data.blocked or {}
             muted = data.muted or {}
+            mentor = tostring(data.mentor or 'off')
+            novice = data.novice == true
             -- REBUILT FROM THE SNAPSHOT, not merged into it. The live FriendRequestReceived
             -- only fires when the sender is in this world, so a request from a friend sitting
             -- in their own game arrives ONLY here. The server's list is authoritative, which
