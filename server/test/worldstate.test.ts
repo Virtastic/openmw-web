@@ -126,19 +126,23 @@ test('world objects and containers end to end', async (t) => {
     assert.deepEqual(st2.items, [{ id: 'gold_001', n: 500 }, { id: 'ash_yam', n: 5 }]);
   });
 
-  await t.test('container transactions: reject on gone, update fan-out includes requester', async () => {
+  await t.test('container transactions: reject on gone, each character loots its own copy (OT3-82)', async () => {
     a.sendEvent('ContainerOpRequest', { ref: CONT_REF, cellKey: '0,0', opId: 1, op: 'take', itemId: 'gold_001', n: 200 });
     const r1 = (await a.waitEvent('ContainerOpResult')).value as { opId: number; ok: boolean; stateSeq: number };
     assert.deepEqual(r1, { opId: 1, ok: true, stateSeq: 2 });
     const upA = (await a.waitEvent('ContainerUpdate')).value as { delta: { itemId: string; dn: number }; stateSeq: number };
     assert.deepEqual(upA.delta, { itemId: 'gold_001', dn: -200 });
-    const upB = (await b.waitEvent('ContainerUpdate')).value as { stateSeq: number };
-    assert.equal(upB.stateSeq, 2);
+
+    // Alice's take is hers alone: Bob still sees all 500.
+    b.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0' });
+    const bView = (await b.waitEvent('ContainerState')).value as { items: { id: string; n: number }[] };
+    assert.deepEqual(bView.items, [{ id: 'gold_001', n: 500 }, { id: 'ash_yam', n: 5 }]);
+    assert.ok(!b.inbox.events.some((e) => e.name === 'ContainerUpdate'), "another character's take is not relayed");
 
     // Bob took optimistically and his acquisition diff already credited it (backlog 235).
-    b.sendEvent('PlayerItemAcquired', { id: 'gold_001', n: 400 });
+    b.sendEvent('PlayerItemAcquired', { id: 'gold_001', n: 600 });
     await new Promise((r) => setTimeout(r, 50));
-    b.sendEvent('ContainerOpRequest', { ref: CONT_REF, cellKey: '0,0', opId: 2, op: 'take', itemId: 'gold_001', n: 400 }); // only 300 left
+    b.sendEvent('ContainerOpRequest', { ref: CONT_REF, cellKey: '0,0', opId: 2, op: 'take', itemId: 'gold_001', n: 600 }); // only 500 in his copy
     const r2 = (await b.waitEvent('ContainerOpResult')).value as { ok: boolean; reason?: string };
     assert.equal(r2.ok, false);
     assert.equal(r2.reason, 'gone');
@@ -147,7 +151,10 @@ test('world objects and containers end to end', async (t) => {
 
     b.sendEvent('ContainerOpRequest', { ref: CONT_REF, cellKey: '0,0', opId: 3, op: 'put', itemId: 'iron_dagger', n: 2 });
     assert.equal(((await b.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
-    await a.waitEvent('ContainerUpdate', (v) => (v as { delta: { itemId: string } }).delta.itemId === 'iron_dagger');
+    await b.waitEvent('ContainerUpdate', (v) => (v as { delta: { itemId: string } }).delta.itemId === 'iron_dagger');
+    a.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0' });
+    const aView = (await a.waitEvent('ContainerState')).value as { items: { id: string; n: number }[] };
+    assert.deepEqual(aView.items, [{ id: 'gold_001', n: 300 }, { id: 'ash_yam', n: 5 }], "Bob's put stays in Bob's copy");
 
     // Unopened container -> nostate.
     b.sendEvent('ContainerOpRequest', { ref: { __refnum: { index: 9999, contentFile: 0 } }, cellKey: '0,0', opId: 4, op: 'take', itemId: 'x', n: 1 });
@@ -181,11 +188,11 @@ test('world objects and containers end to end', async (t) => {
         const r = (await client.waitEvent('ContainerOpResult', () => true, 10000)).value as {
           opId: number; ok: boolean;
         };
-        if (r.ok) successes++;
+        if (r.ok && client === a) successes++;
       }
     }
-    // Recompute expected from the authoritative update stream instead: each client saw
-    // every successful op as a ContainerUpdate; sum deltas from one client's view.
+    // Recompute expected from the authoritative update stream instead: a client sees every
+    // successful op on ITS OWN copy (OT3-82) as a ContainerUpdate; sum Alice's.
     a.sendEvent('ChatSend', { text: 'cons-fence' });
     await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'cons-fence');
     for (const e of a.inbox.events.filter((x) => x.name === 'ContainerUpdate')) {
@@ -196,9 +203,9 @@ test('world objects and containers end to end', async (t) => {
     a.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0' }); // nil contents: read canonical
     const final = (await a.waitEvent('ContainerState')).value as { items: { id: string; n: number }[]; stateSeq: number };
     const gold = final.items.find((i) => i.id === 'gold_001')?.n ?? 0;
-    assert.equal(gold, 300 + delta, 'canonical must equal prior state plus the update stream');
-    assert.ok(successes > 0 && successes <= 3 * OPS_PER_CLIENT);
-    assert.equal(final.stateSeq, 3 + successes); // 3 mutations before this subtest
+    assert.equal(gold, 300 + delta, 'her copy must equal prior state plus her update stream');
+    assert.ok(successes > 0 && successes <= OPS_PER_CLIENT);
+    assert.equal(final.stateSeq, 2 + successes); // her one take before this subtest
     c.close();
     await c.closed;
   });

@@ -172,7 +172,22 @@ function isUnseededContainer(c: CellDoc['containers'][string], dead: boolean): b
   return c.stateSeq === 1 && c.items.length === 0 && c.gold === undefined && !dead;
 }
 
-export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], withMemberVars: boolean): Record<string, JsLike> {
+/** OT3-82: PER-CHARACTER LOOT. Every corpse and chest is looted from the character's own copy,
+ *  so three players who killed one mudcrab each find its loot, and a take never empties anyone
+ *  else's view. Merchants (a purse) stay shared -- their stock is one shop -- and so does the
+ *  peer, whose world scripts act on the shared row. The copy is made on the first take/put
+ *  (`create`); until then the character sees the shared roll. */
+export function containerView(cont: CellDoc['containers'][string], charId: string | undefined, system: boolean,
+  create: boolean): { items: ContainerItems; stateSeq: number } {
+  if (system || !charId || cont.gold !== undefined) return cont;
+  const own = cont.views?.[charId];
+  if (own || !create) return own ?? cont;
+  cont.views ??= {};
+  return (cont.views[charId] = { items: cont.items.map((i) => ({ ...i })), stateSeq: cont.stateSeq });
+}
+
+export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], withMemberVars: boolean,
+  charId?: string): Record<string, JsLike> {
   const locks: Record<string, JsLike> = {};
   for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
   const body: Record<string, JsLike> = {
@@ -185,7 +200,10 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
     containers: Object.fromEntries(
       Object.entries(doc.containers)
         .filter(([key, c]) => !isUnseededContainer(c, deaths.includes(key)))
-        .map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
+        .map(([key, c]) => {
+          const v = containerView(c, charId, false, false);
+          return [key, { items: v.items.map((i) => ({ ...i })), stateSeq: v.stateSeq }];
+        }),
     ),
     disabled: disabledKeys(doc),
     enabled: enabledKeys(doc),
@@ -1681,10 +1699,11 @@ export class WorldState {
         }
       }
     }
+    const view = containerView(cont, player.charId, player.system === true, false);
     player.peer.sendEvent('ContainerState', {
       ...objRefToJs(ref),
-      items: cont.items.map((i) => ({ ...i })),
-      stateSeq: cont.stateSeq,
+      items: view.items.map((i) => ({ ...i })),
+      stateSeq: view.stateSeq,
       ...(cont.gold !== undefined ? { gold: cont.gold } : {}),
     });
   }
@@ -1751,7 +1770,10 @@ export class WorldState {
       reply(false, 'contained', cont.stateSeq); // a container is how an item reaches someone else
       return;
     }
-    const item = cont.items.find((i) => i.id === itemId);
+    // OT3-82: take/put land on this character's own copy (shared for merchants and the peer).
+    const view = containerView(cont, player.charId, player.system === true, true);
+    const shared = view === cont;
+    const item = view.items.find((i) => i.id === itemId);
     if (op === 'take') {
       if (!item || item.n < n) {
         // The client took optimistically and its 0.25 s acquisition diff has already credited
@@ -1764,7 +1786,7 @@ export class WorldState {
           if (had > n) led.set(itemId, had - n);
           else led.delete(itemId);
         }
-        reply(false, 'gone', cont.stateSeq); // losing racer / stale client view
+        reply(false, 'gone', view.stateSeq); // losing racer / stale client view
         return;
       }
       if (!player.system) player.questTriggerAt = Date.now(); // OnPCAdd (quests.ts guestWriteUnbacked)
@@ -1774,37 +1796,40 @@ export class WorldState {
       // reported co-op quest break. The taker gets their copy, the container keeps its
       // own, and no ContainerUpdate is relayed — nothing changed for anyone else.
       if (this.questItems.has(itemId.toLowerCase())) {
-        reply(true, undefined, cont.stateSeq);
+        reply(true, undefined, view.stateSeq);
         log('debug', 'world.quest_item_kept', { itemId, by: player.name, cellKey });
         return;
       }
       // Loot is first-come and gold goes to the looter: the group rules (rolls, splits)
       // went with the party concept.
       item.n -= n;
-      if (item.n === 0) cont.items.splice(cont.items.indexOf(item), 1);
+      if (item.n === 0) view.items.splice(view.items.indexOf(item), 1);
     } else {
       // put: always accepted except hard caps (conservation guard, not gameplay).
       if (item && item.n + n > (itemId === GOLD ? MAX_GOLD : MAX_COUNT)) {
-        reply(false, 'full', cont.stateSeq);
+        reply(false, 'full', view.stateSeq);
         return;
       }
-      if (!item && cont.items.length >= MAX_CONTAINER_ENTRIES) {
-        reply(false, 'full', cont.stateSeq);
+      if (!item && view.items.length >= MAX_CONTAINER_ENTRIES) {
+        reply(false, 'full', view.stateSeq);
         return;
       }
       if (item) item.n += n;
-      else cont.items.push({ id: itemId, n });
+      else view.items.push({ id: itemId, n });
     }
-    cont.stateSeq++;
+    view.stateSeq++;
     this.cells.markDirty(cellKey);
     // Result to the requester first (FIFO: it resolves opId before its own Update),
-    // then one Update to the whole cell INCLUDING the requester — a single apply path.
-    reply(true, undefined, cont.stateSeq);
-    this.relayCell(cellKey, 'ContainerUpdate', {
+    // then one Update INCLUDING the requester — a single apply path. A per-character copy
+    // changed for nobody else, so only the requester hears it.
+    reply(true, undefined, view.stateSeq);
+    const update = {
       ...objRefToJs(ref),
       delta: { itemId, dn: op === 'take' ? -n : n },
-      stateSeq: cont.stateSeq,
-    });
+      stateSeq: view.stateSeq,
+    };
+    if (shared) this.relayCell(cellKey, 'ContainerUpdate', update);
+    else player.peer.sendEvent('ContainerUpdate', update);
   }
 
   // ------------------------------------------------------------- cell state
@@ -1847,7 +1872,7 @@ export class WorldState {
       // MemberVarUpdate and never read back, so a joiner's copy started from the defaults).
       // Not to a character still in creation (prod 2026-10-26): a stored dock-guard `state`
       // of -1 skipped the race menu for every new character after the first (quests.ts memberVar).
-      player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, player.inChargen !== true));
+      player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, player.inChargen !== true, player.system ? undefined : player.charId));
     });
   }
 

@@ -74,17 +74,18 @@ test('quest items never deplete: two players can each take the Puzzle Box', asyn
   assert.equal((r2.value as { ok: boolean }).ok, true,
     'a quest item must still be there for the next eligible player (the TES3MP break)');
 
-  // An ORDINARY item still depletes: the rule is narrow, not "containers are infinite".
+  // An ORDINARY item still depletes -- for its taker (OT3-82: each character loots its own
+  // copy): the rule is narrow, not "containers are infinite".
   a.sendEvent('ContainerOpRequest', {
     ref: { __refnum: { index: 77, contentFile: 0 } }, cellKey: '0,0',
     opId: 3, op: 'take', itemId: 'iron_dagger', n: 1,
   });
   assert.equal(((await a.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
-  b.sendEvent('ContainerOpRequest', {
+  a.sendEvent('ContainerOpRequest', {
     ref: { __refnum: { index: 77, contentFile: 0 } }, cellKey: '0,0',
     opId: 4, op: 'take', itemId: 'iron_dagger', n: 1,
   });
-  const r4 = await b.waitEvent('ContainerOpResult');
+  const r4 = await a.waitEvent('ContainerOpResult');
   assert.equal((r4.value as { ok: boolean; reason?: string }).ok, false, 'ordinary loot is still finite');
   a.close();
   b.close();
@@ -93,7 +94,8 @@ test('quest items never deplete: two players can each take the Puzzle Box', asyn
 test('public no-drop: a unique NPC corpse is stripped for the whole cell', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false,
-    dataDir, port: 0, host: '127.0.0.1',
+    dataDir, port: 0, host: '127.0.0.1',
+
     configOverride: { economy: { noDrop: true }, server: { password: PEER_PASS } },
   });
   t.after(() => server.close());

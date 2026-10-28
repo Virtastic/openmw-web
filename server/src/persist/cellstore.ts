@@ -91,6 +91,9 @@ export interface CellDoc {
   containers: Record<string, {
     items: ContainerItems; stateSeq: number; origin?: ContainerItems;
     gold?: number; goldOrigin?: number; goldRestockAt?: number;
+    // OT3-82: each character's own copy, made on its first take/put (charId -> view).
+    // `items` above stays the shared roll a character without a view sees.
+    views?: Record<string, { items: ContainerItems; stateSeq: number }>;
   }>;
   // M4: last actor snapshot folded when the cell went dormant ({actors:[...]}, JSON-safe),
   // and per-actor highest processed deathNo (dedup + death persistence) with the ABSOLUTE
@@ -421,7 +424,9 @@ export class CellStore {
           ...(cont.origin ? { origin: cont.origin.map((i) => ({ ...i })) } : {}),
           ...(cont.gold !== undefined ? { gold: cont.gold } : {}),
           ...(cont.goldOrigin !== undefined ? { goldOrigin: cont.goldOrigin } : {}),
-          ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}) };
+          ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}),
+          ...(cont.views ? { views: Object.fromEntries(Object.entries(cont.views).map(([c, v]) =>
+            [c, { items: v.items.map((i) => ({ ...i })), stateSeq: v.stateSeq + 1 }])) } : {}) };
         continue;
       }
       if (!cont.origin) continue; // pre-restock doc: nothing to restore it to
