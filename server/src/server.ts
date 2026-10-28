@@ -253,9 +253,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // updates never need to dirty the doc.
   playerStore.setLivePositionProvider((key) => {
     // Store keys are character ids now; a system peer's key is still its accountKey, so
-    // check both. Linear scan is fine: called only at flush points, roster is small.
-    const p = roster.activeForAccount(key)
-      ?? [...roster.inWorld()].find((pl) => pl.charId === key);
+    // check both. OT3-87: both are map hits, so a sweep stays O(N).
+    const p = roster.activeForAccount(key) ?? roster.activeForChar(key);
     return p?.cellKey && p.pose ? { cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z } : undefined;
   });
 

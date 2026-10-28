@@ -518,7 +518,10 @@ export class PlayerStore {
     return row.ts;
   }
 
+  // OT3-87: a sweep reads the tombstones once instead of one SELECT per doc.
+  private erasedSet?: Set<string>;
   private erased(key: string): boolean {
+    if (this.erasedSet) return this.erasedSet.has(key);
     try { return this.db.prepare('SELECT 1 FROM erased WHERE key = ?').get(key) !== undefined; }
     catch { return false; }
   }
@@ -527,10 +530,13 @@ export class PlayerStore {
     // OT3-92: one transaction per sweep (see CellStore.flushAll).
     const keys = [...this.dirty];
     try {
+      this.erasedSet = new Set((this.db.prepare('SELECT key FROM erased').all() as { key: string }[]).map((r) => r.key));
       await timeFlush('players', async () => tx(this.db, () => { for (const key of keys) this.writeKey(key); }));
     } catch (err) {
       for (const key of keys) this.dirty.add(key); // rolled back: every key is unwritten again
       log('error', 'players.sweep_failed', { error: String(err) });
+    } finally {
+      this.erasedSet = undefined;
     }
     checkpoint(this.db); // so a backup tarred after SIGUSR1 sees one file, not db+wal+shm
   }
