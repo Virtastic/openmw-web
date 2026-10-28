@@ -9,7 +9,7 @@
 //   locals   cell-scoped, stored in the cell doc
 // Individual mode stores per-player and never relays.
 
-import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
+import { lToJs, tbl, finite, str, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { objRefToJs, parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
@@ -21,7 +21,6 @@ import type { PlayerDoc, PlayerStore } from '../persist/playerstore';
 import { daysPassed } from './worldtime';
 import { log } from '../log';
 
-const MAX_ID = 64;
 // 5000 (backlog 321): 2000 dropped the BEGINNING of a long campaign (Tamriel Rebuilt passes it).
 // The bound is the JournalSync frame: an entry is 12 LSER nodes ({q,i,d,m,dm}), so 5000 is
 // ~60k of the 65,536-node ceiling with room for a ~2000-quest map beside it (pinned by a
@@ -134,18 +133,6 @@ export interface QuestCtx {
 }
 
 type JournalLogEntry = NonNullable<PlayerDoc['journalLog']>[number];
-
-function tbl(v: LValue | undefined): LTable | undefined {
-  return v instanceof Map ? v : undefined;
-}
-
-function str(v: LValue | undefined, max = MAX_ID): string | undefined {
-  return typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined;
-}
-
-function finite(v: LValue | undefined): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-}
 
 function index(v: LValue | undefined): number | undefined {
   const n = finite(v);

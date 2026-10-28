@@ -40,7 +40,7 @@ export function tes3Hash(name: Buffer): { lo: number; hi: number } {
 }
 
 /** Data offsets are u32: an archive whose data block would exceed this cannot be written. */
-export const BSA_MAX_DATA = 0xffffffff;
+const BSA_MAX_DATA = 0xffffffff;
 
 type Entry = { raw: Buffer; path: string; size: number; lo: number; hi: number; nameOff: number; dataOff: number };
 

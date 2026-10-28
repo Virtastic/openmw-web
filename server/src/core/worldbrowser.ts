@@ -15,7 +15,7 @@
 import type { Player } from './players';
 import { log } from '../log';
 
-export interface WorldEntry {
+interface WorldEntry {
   id: string;
   mode: string;
   name: string;
@@ -30,7 +30,7 @@ export interface WorldEntry {
   ownerAccount?: string;
 }
 
-export interface WorldBrowserDeps {
+interface WorldBrowserDeps {
   gatewayUrl: string; // '' = no gateway configured
   serverToken?: string; // platform credential; '' or absent = cannot create worlds
   // This world's own port, so the client can tell which entry in the list is where it

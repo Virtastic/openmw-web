@@ -10,7 +10,7 @@
 // its message budget, never the shared world.
 
 import type { LTable, LValue, JsLike } from '../proto/lser';
-import { lToJs } from '../proto/lser';
+import { lToJs, str } from '../proto/lser';
 import type { Player, Roster } from './players';
 import { WorldClock } from './worldtime';
 import { WeatherRegions } from './weather';
@@ -98,7 +98,7 @@ function recordWithinCaps(data: unknown, kind?: string): boolean {
   return true;
 }
 
-export const M7_EVENTS = new Set([
+const M7_EVENTS = new Set([
   'WorldTimeRequest',
   'WorldRegionChange',
   'WorldWeather',
@@ -106,7 +106,7 @@ export const M7_EVENTS = new Set([
   'WorldMapExplored',
 ]);
 
-export interface M7Ctx {
+interface M7Ctx {
   roster: Roster;
   cells: CellStore;
   records: RecordStore;
@@ -121,10 +121,6 @@ export interface M7Ctx {
   world?: { sendCellSnapshot(cellKey: string, doc: CellDoc): void };
   // Phase 2.5 time-skip policy. Absent = unrestricted (M7 behaviour).
   maySkipTime?(player: Player): { may: boolean; why: string };
-}
-
-function str(v: LValue | undefined, max: number): string | undefined {
-  return typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined;
 }
 
 export class WorldM7 {

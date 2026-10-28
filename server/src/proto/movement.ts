@@ -128,9 +128,9 @@ export function unpackMoveBatch(payload: Buffer): BatchEntry[] {
 // M4 ActorMoveBatch (0x0200): [u32 epoch][u8 count] + count × (8-byte ref + 20-byte pose).
 // The 8-byte ref is a raw RefNum (u32 index LE + i32 contentFile LE), same layout as the
 // LSER "o" userdata payload — actors are content-file objects.
-export const ACTOR_REF_BYTES = 8;
+const ACTOR_REF_BYTES = 8;
 
-export interface ActorRef {
+interface ActorRef {
   index: number;
   contentFile: number;
 }

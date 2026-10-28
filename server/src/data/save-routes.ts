@@ -62,7 +62,7 @@ export function saveKey(account: string, scope: string, name: string): string {
   return scope === 'mp' ? `saves/${account}/${name}` : `saves/${account}/${scope}/${name}`;
 }
 
-export interface SaveEntry { name: string; size: number; mtime: number }
+interface SaveEntry { name: string; size: number; mtime: number }
 
 export class SaveStore {
   private readonly db: DatabaseSync;

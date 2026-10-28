@@ -7,7 +7,7 @@
 // are transactional: first-opener contents become canonical, take/put conserve items,
 // the losing racer gets ok=false.
 
-import { lToJs, lserNodeCount, type LTable, type LValue, type JsLike } from '../proto/lser';
+import { lToJs, lserNodeCount, str, finite, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, objRefToJs, netRefKey, parseRefKey, contentRefKey, type ObjRef } from '../proto/ref';
 import { INPUT_DRIVING_MS, type Player, type Roster } from './players';
 import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells, isChargenCell } from './movement';
@@ -143,16 +143,8 @@ const ACTOR_RELAY_EVENTS = new Set([
 // ActorRevive (#293) is ActorDeath's inverse: the doc forgets the death, then it relays.
 const ACTOR_EVENTS = new Set([...ACTOR_RELAY_EVENTS, 'ActorSnapshot', 'ActorDeath', 'ActorRevive']);
 
-function str(v: LValue | undefined, max: number): string | undefined {
-  return typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined;
-}
-
 function coord(v: LValue | undefined): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= MAX_ABS_COORD ? v : undefined;
-}
-
-function finite(v: LValue | undefined): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
 // GOLD IS A STACK (see playerstate.ts): 10,001 gold dropped or stashed was silently invalid
@@ -174,7 +166,7 @@ const GOLD = 'gold_001';
 // script's items on the next cell entry and the next open (prod 1.7.14: the hiding place emptied
 // as the player walked up). Such a row is not sent and the next opener re-seeds it. A corpse is
 // excluded: its [] can be the unique no-drop strip (actorDeath), which must stand.
-export function isUnseededContainer(c: CellDoc['containers'][string], dead: boolean): boolean {
+function isUnseededContainer(c: CellDoc['containers'][string], dead: boolean): boolean {
   return c.stateSeq === 1 && c.items.length === 0 && c.gold === undefined && !dead;
 }
 

@@ -28,8 +28,8 @@ export interface ModPlugin {
   groundcover?: boolean;
 }
 
-export const GROUNDCOVER_RE = /grass|groundcover/i;
-export const isGroundcover = (p: { file: string; groundcover?: boolean }): boolean =>
+const GROUNDCOVER_RE = /grass|groundcover/i;
+const isGroundcover = (p: { file: string; groundcover?: boolean }): boolean =>
   p.groundcover === true || GROUNDCOVER_RE.test(p.file);
 
 export interface InstalledMod {
@@ -69,7 +69,7 @@ export const MODS_SUBDIR = 'mods';
 
 /** The stock files a community copy can stand in for: Morrowind's masters and their archives.
  *  Content NAMES stay fixed (every other plugin names its masters), only the bytes change. */
-export const STOCK_FILES = ['morrowind.esm', 'tribunal.esm', 'bloodmoon.esm',
+const STOCK_FILES = ['morrowind.esm', 'tribunal.esm', 'bloodmoon.esm',
   'morrowind.bsa', 'tribunal.bsa', 'bloodmoon.bsa'];
 export const isStockFile = (f: string): boolean => STOCK_FILES.includes(f.toLowerCase());
 
@@ -207,7 +207,7 @@ export interface ModStack {
   refused: { slug: string; name: string; files: string[] }[];
 }
 
-export interface ResolveOpts {
+interface ResolveOpts {
   /** `[content] allowStockSwap`. Off (the default): a mod shadowing a stock file is refused. */
   allowStockSwap?: boolean;
 }
@@ -215,7 +215,7 @@ export interface ResolveOpts {
 const OFFICIAL_MASTERS = ['morrowind.esm', 'tribunal.esm', 'bloodmoon.esm'];
 
 /** `.esm` before `.esp`, which is the order the engine expects and the client also applies. */
-export const pluginRank = (f: string): number => (/\.(esm|omwgame)$/i.test(f) ? 0 : 1);
+const pluginRank = (f: string): number => (/\.(esm|omwgame)$/i.test(f) ? 0 : 1);
 
 /**
  * Turn the doc into the lines a config needs.

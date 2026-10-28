@@ -64,13 +64,12 @@ export interface ReportDoc {
   context: ChatLine[]; // the lines immediately before the report was filed
 }
 
-export interface ModerationConfig {
+interface ModerationConfig {
   chatLog: boolean;
   retentionDays: number;
   contextLines: number;
 }
 
-export const MAX_REASON_CHARS = 512;
 const MAX_CONTEXT_SCAN_DAYS = 31; // bounds /chatlog work no matter what minutes it is given
 const DAY_MS = 86_400_000;
 

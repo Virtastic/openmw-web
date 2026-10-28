@@ -39,7 +39,7 @@ const MAX_REGIONS = 256;
 // occupant inherit -- the same handoff a region change makes.
 export const HOLDER_SILENCE_MS = 3 * 60_000;
 
-export interface WeatherCtx {
+interface WeatherCtx {
   roster: Roster;
   weather: Record<string, WeatherState>; // lives in the CellStore global doc
   save(): void;

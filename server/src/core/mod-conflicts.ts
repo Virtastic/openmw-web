@@ -16,12 +16,12 @@
 
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { MODS_SUBDIR, type ModDoc } from './mods';
+import type { ModDoc } from './mods';
 
 /** Where commitInstall parks each mod's file list. */
 export const MOD_META = 'mod-files';
 
-export interface Conflict {
+interface Conflict {
   /** The mod that wins, i.e. the one latest in the list. */
   winner: string;
   /** The mod that loses to it. */
@@ -31,7 +31,7 @@ export interface Conflict {
   sample: string[];
 }
 
-export interface MissingMaster {
+interface MissingMaster {
   mod: string;
   plugin: string;
   master: string;
@@ -123,7 +123,3 @@ export function missingMasters(doc: ModDoc, baseContent: string[]): MissingMaste
   }
   return out;
 }
-
-/** Where a mod's files live, for anything that needs to read them back. */
-export const modRoot = (gameDataDir: string, slug: string): string =>
-  join(gameDataDir, MODS_SUBDIR, slug);

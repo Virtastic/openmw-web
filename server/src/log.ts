@@ -53,11 +53,7 @@ function redact(fields: Record<string, unknown>): Record<string, unknown> {
   return out ?? fields;
 }
 
-let minLevel: LogLevel = (process.env.LOG_LEVEL as LogLevel) in ORDER ? (process.env.LOG_LEVEL as LogLevel) : 'info';
-
-export function setLogLevel(level: LogLevel): void {
-  minLevel = level;
-}
+const minLevel: LogLevel = (process.env.LOG_LEVEL as LogLevel) in ORDER ? (process.env.LOG_LEVEL as LogLevel) : 'info';
 
 // --- ring buffer ------------------------------------------------------------------------
 // Sized for "what just happened" — a few minutes of a busy server. History beyond this is

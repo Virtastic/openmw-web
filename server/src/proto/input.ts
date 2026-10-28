@@ -35,10 +35,7 @@ export const INPUT_PAYLOAD_BYTES = 12;
 
 // Input flag bits. Attack type rides bits 4-5 (NoAttack/Chop/Slash/Thrust), mirroring
 // MWMechanics::AttackType so the Lua side is a cast, not a mapping.
-export const INPUT_RUN = 1 << 0;
-export const INPUT_SNEAK = 1 << 1;
-export const INPUT_JUMP = 1 << 2; // edge: pressed this frame
-export const INPUT_USE = 1 << 3; // attack/use held
+// bit 0 run, bit 1 sneak, bit 2 jump (edge: pressed this frame), bit 3 attack/use held.
 
 // AvatarMoveBatch pose flag bit 7: this entry is the avatar's body where it stands NOW, for
 // everyone else; the entry for the same id without it is the seq-matched pose the owner
@@ -56,7 +53,7 @@ export interface PlayerInput {
 }
 
 const quantAxis = (v: number): number => Math.max(-127, Math.min(127, Math.round(v * 127)));
-export const unquantAxis = (q: number): number => Math.max(-1, Math.min(1, q / 127));
+const unquantAxis = (q: number): number => Math.max(-1, Math.min(1, q / 127));
 
 export function packInput(input: PlayerInput): Buffer {
   const b = Buffer.allocUnsafe(INPUT_PAYLOAD_BYTES);

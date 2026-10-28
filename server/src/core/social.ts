@@ -14,7 +14,7 @@ import type { LValue, LTable, JsLike } from '../proto/lser';
 import type { WorldBrowser } from './worldbrowser';
 import { log } from '../log';
 
-export interface SocialTuning {
+interface SocialTuning {
   requestTtlMs: number;
   maxOutstandingRequests: number;
   inviteTtlMs: number;
@@ -31,7 +31,7 @@ export const socialTuning: SocialTuning = {
   presenceGraceMs: 15_000,
 };
 
-export interface FriendView {
+interface FriendView {
   acct: AccountKey;
   name: string;
   online: boolean;
@@ -49,11 +49,11 @@ export interface FriendView {
 // This is a PRIVACY control, so the server enforces it on every path that could disclose a
 // location or deliver an invite. A client-side filter would be decorative.
 // ('party' was a mode once; the party concept is gone and the migration maps it to 'friends'.)
-export const PRESENCE_MODES = ['public', 'friends', 'private'] as const;
-export type PresenceMode = (typeof PRESENCE_MODES)[number];
-export const DEFAULT_PRESENCE: PresenceMode = 'friends';
+const PRESENCE_MODES = ['public', 'friends', 'private'] as const;
+type PresenceMode = (typeof PRESENCE_MODES)[number];
+const DEFAULT_PRESENCE: PresenceMode = 'friends';
 
-export type SocialFailure =
+type SocialFailure =
   | 'no_such_player'
   | 'blocked'
   | 'already_friends'
@@ -69,7 +69,7 @@ export type SocialFailure =
  *  died without cleaning up ages out rather than leaving ghosts online forever. */
 const PRESENCE_TTL_MS = 30_000;
 
-export interface SocialDeps {
+interface SocialDeps {
   store: SocialStore;
   roster: Roster;
   /** This world's id, so shared presence can name where a player actually is. */

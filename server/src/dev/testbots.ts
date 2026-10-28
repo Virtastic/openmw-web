@@ -21,7 +21,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import type { JsLike } from '../proto/lser';
 import { log } from '../log';
 
-export interface TestBotDeps {
+interface TestBotDeps {
   roster: Roster;
   social: Social;
   /** Bots get REAL accounts. Friend requests resolve a typed name through the account index,
@@ -52,7 +52,7 @@ export interface TestBotDeps {
   isPublic: boolean;
 }
 
-export interface RunningTestBots {
+interface RunningTestBots {
   names: string[];
   stop(): void;
 }

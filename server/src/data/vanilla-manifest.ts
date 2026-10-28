@@ -51,7 +51,7 @@ async function walk(dir: string, root: string, out: string[] = []): Promise<stri
  *  keeps media as pre-packed tars, so it yields a manifest of about six files and the server
  *  then asks uploaders for the ESMs alone — the game installs "fine" and runs with no voice,
  *  no music and no intro. A real install produces thousands of entries. */
-export async function buildVanillaManifest(dataFilesDir: string): Promise<VanillaManifest> {
+async function buildVanillaManifest(dataFilesDir: string): Promise<VanillaManifest> {
   const files = await walk(dataFilesDir, dataFilesDir);
   const records = [];
   for (const f of files) {

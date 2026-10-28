@@ -9,7 +9,7 @@
 import type { ManifestEntry } from '../proto/session';
 import { log } from '../log';
 
-export type ContentCheck = { ok: true } | { ok: false; detail: string };
+type ContentCheck = { ok: true } | { ok: false; detail: string };
 
 export class ContentGate {
   private canonical: ManifestEntry[] | null = null;

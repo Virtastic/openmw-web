@@ -65,7 +65,7 @@ export interface SessionLoginTicket {
   serverPassword?: string;
   characterId?: string;
 }
-export interface SessionReady {
+interface SessionReady {
   t: 'SessionReady';
 }
 // Character slots: create a new slot. Valid in AUTHED (the select screen) — the client
@@ -84,7 +84,7 @@ export interface ProfileSetup {
   username: string;
   marketingOptIn?: boolean; // unchecked-by-default consent checkbox; absent = false
 }
-export interface SessionPing {
+interface SessionPing {
   t: 'SessionPing';
   clientTime: number;
 }
@@ -242,7 +242,7 @@ export function helloOk(serverName: string, contentPolicy: 'names' | 'strict' | 
 
 // M5: rule flags the client reflects locally (difficulty is applied client-side, in the
 // victim's own combat pipeline — the server never computes damage).
-export interface SessionFlags {
+interface SessionFlags {
   pvp: boolean;
   difficulty: number;
   // G2 render LOD. The client degrades DISTANT avatars rather than hiding them, and it

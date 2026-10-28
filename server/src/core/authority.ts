@@ -38,7 +38,7 @@ export interface AuthoritySenders {
 
 // ------------------------------------------------------------------- tuning
 
-export interface AuthorityTuning {
+interface AuthorityTuning {
   reviewMs: number; // 0 disables the periodic liveness sweep
   // The sim peer has produced no ActorMoveBatch for this long: the cell it holds is not being
   // simulated. There is nobody to hand it to (only the peer may hold), so this is reported,
@@ -72,7 +72,7 @@ export function noteAnchorsChanged(now: number): void {
 // per-cell log line was the only consequence -- frozen NPCs for ever. server.ts wires this to
 // simPeers.stop(), whose crash path respawns the peer. Module-level like the tuning above,
 // because WorldState builds the Authority without ever seeing server.ts.
-export let onSilentPeer: ((holderId: number, cellKeys: string[]) => void) | undefined;
+let onSilentPeer: ((holderId: number, cellKeys: string[]) => void) | undefined;
 export function setOnSilentPeer(fn: typeof onSilentPeer): void {
   onSilentPeer = fn;
 }
@@ -91,7 +91,7 @@ export function configureAuthority(t: Partial<AuthorityTuning>): void {
 
 // Can this connection simulate a cell's actors? ONLY the sim peer can. Injected so Authority
 // stays standalone for the fuzz test.
-export interface CapabilitySource {
+interface CapabilitySource {
   canSimulate(playerId: number): boolean;
 }
 
@@ -110,7 +110,7 @@ interface Cell {
   silentReported: boolean; // reported once per silence, not once per sweep
 }
 
-export interface AuthorityOptions {
+interface AuthorityOptions {
   now?: () => number; // tests drive the clock
   review?: boolean; // false: no periodic sweep (M7 weather reuses this class)
   // Absent = everyone is treated as capable (the pre-capability behaviour, which the fuzz

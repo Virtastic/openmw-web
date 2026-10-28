@@ -23,7 +23,7 @@ export interface ChatContext {
 import { cellsVisible } from './movement';
 import { log } from '../log';
 
-export const MAX_CHAT_CHARS = 1024;
+const MAX_CHAT_CHARS = 1024;
 
 // Type alias (not interface) so it structurally satisfies JsLike's index signature.
 export type ChatMessageBody = {
@@ -65,7 +65,7 @@ export function serverWhisper(player: Player, text: string): void {
   player.peer.sendEvent('ChatMessage', { channel: 'server', text } satisfies ChatMessageBody);
 }
 
-export interface ChatHooks {
+interface ChatHooks {
   // false = a plugin vetoed the line.
   onChat(player: Player, text: string): boolean;
   /** Record a line for SCROLLBACK (distinct from the moderation log, which is an archive
@@ -76,7 +76,7 @@ export interface ChatHooks {
 // A4: the durable moderation stream. Slash commands are recorded too (channel 'command')
 // because "what did they type right before they got kicked" is exactly the question an
 // operator asks — but the text is NOT broadcast, so it never reaches another player.
-export function recordChat(mod: Moderation | undefined, player: Player, channel: string, text: string): void {
+function recordChat(mod: Moderation | undefined, player: Player, channel: string, text: string): void {
   mod?.chat.record({
     ts: new Date().toISOString(),
     playerId: player.id,

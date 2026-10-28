@@ -35,7 +35,7 @@ export interface SimPeerSettings {
 }
 
 // Injected so tests can drive the supervisor without launching a real engine.
-export interface Spawner {
+interface Spawner {
   (key: string, env: NodeJS.ProcessEnv, args: string[]): ChildProcess;
 }
 
@@ -53,7 +53,7 @@ interface Peer {
   killTimer?: NodeJS.Timeout;
 }
 
-export interface SimPeerDeps {
+interface SimPeerDeps {
   settings: SimPeerSettings;
   // Lazy: the OS-assigned port (port 0 in tests, and any deployment that lets the OS pick)
   // is not known when the supervisor is constructed, so this is resolved at spawn time.

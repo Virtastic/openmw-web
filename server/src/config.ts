@@ -267,8 +267,8 @@ export interface Config {
     smtpHost: string; smtpPort: number; smtpUser: string; smtpPass: string;
     from: string; to: string; webhookUrl: string; events: string[];
   };
-  // Phase B SSO. Password login stays on by default, so a self-hoster who never touches
-  // this section sees no change at all.
+  // Players sign in with Google or Discord. Password login is only ever honoured for the sim
+  // peer, the harness and loopback (CL13), whatever these flags say.
   auth: AuthConfig;
   plugins: string[];
 }
@@ -283,11 +283,9 @@ export interface AuthProviderConfig {
 }
 
 export interface AuthConfig {
-  // Product default for the hosted multiplayer service is SSO-ONLY: a persistent character
-  // that follows you across worlds needs a durable identity, and passwords on a browser
-  // game are the weakest possible one. When true, SessionRegister and password
-  // SessionLoginRequest are refused — only the SSO ticket path is accepted. Self-hosters
-  // may set it false; the shipped launcher only ever does SSO.
+  // When true, SessionRegister and password SessionLoginRequest are refused outright and
+  // only the SSO ticket path is accepted. When false, password login still only reaches the
+  // sim peer, the harness and loopback (auth/routes.ts).
   requireSso: boolean;
   allowPasswordLogin: boolean;
   returnUrl: string; // the game page the callback sends the browser back to

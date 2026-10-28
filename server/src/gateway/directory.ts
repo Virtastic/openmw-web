@@ -28,16 +28,16 @@ import { timingSafeEqual } from 'node:crypto';
 import { log } from '../log';
 import { renderMetrics } from '../metrics';
 import type { WorldSupervisor, WorldMode, WorldInfo } from './worlds';
-import { addressAllowed, clientLogRoute, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../net/http';
+import { addressAllowed, clientLogRoute, json, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../net/http';
 import { IpRateLimiter } from '../net/ratelimit';
 import { VERIFY_PATH } from '../net/admin/setup-check';
 
 /** How long a dial to a world that is starting is held before it is refused (the client then
  *  retries on its own ladder), and how often the hold re-checks. */
-export const BOOT_HOLD_MS = 30_000;
+const BOOT_HOLD_MS = 30_000;
 const BOOT_HOLD_POLL_MS = 250;
 
-export interface DirectoryDeps {
+interface DirectoryDeps {
   worlds: WorldSupervisor;
   host: string;
   port: number;
@@ -135,15 +135,9 @@ async function aggregateMetrics(deps: DirectoryDeps, token: string | undefined):
   return `${out.join('\n')}\n`;
 }
 
-export interface RunningDirectory {
+interface RunningDirectory {
   port: number;
   close: () => Promise<void>;
-}
-
-function json(res: ServerResponse, code: number, body: unknown): void {
-  const s = JSON.stringify(body);
-  res.writeHead(code, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(s) });
-  res.end(s);
 }
 
 export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirectory> {

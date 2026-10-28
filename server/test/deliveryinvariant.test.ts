@@ -29,7 +29,7 @@ function tsFiles(dir: string): string[] {
   return out;
 }
 
-export function serverSentEvents(): Map<string, string> {
+function serverSentEvents(): Map<string, string> {
   const sent = new Map<string, string>();
   for (const f of tsFiles(join(ROOT, 'server', 'src'))) {
     for (const m of readFileSync(f, 'utf8').matchAll(/\.sendEvent\(\s*['"]([A-Za-z0-9_]+)['"]/g)) {
@@ -39,7 +39,7 @@ export function serverSentEvents(): Map<string, string> {
   return sent;
 }
 
-export function globalHandlers(): Set<string> {
+function globalHandlers(): Set<string> {
   const g = readFileSync(join(MP, 'global.lua'), 'utf8');
   const requires = new Map<string, string>();
   for (const m of g.matchAll(/local (\w+) = require\('scripts\.mp\.(\w+)'\)/g)) requires.set(m[1]!, m[2]!);

@@ -92,7 +92,7 @@ export interface WorldSettings {
 }
 
 /** One row of a game's roster, as its /status reports it. */
-export interface WorldPlayer { id: number; name: string; cellKey: string | null; level?: number }
+interface WorldPlayer { id: number; name: string; cellKey: string | null; level?: number }
 
 export interface WorldInfo {
   id: string;
@@ -167,7 +167,7 @@ export interface WorldDeps {
   sample?: (pids: number[]) => { rssMb: number; load1: number };
 }
 
-export type CapReason = 'count' | 'memory' | 'mem' | 'cpu';
+type CapReason = 'count' | 'memory' | 'mem' | 'cpu';
 
 function procRssMb(pid: number): number {
   try {

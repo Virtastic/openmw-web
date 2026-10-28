@@ -21,11 +21,11 @@ import { validAccountName, validEmail, type AccountStore } from '../core/account
 import type { Identity, ProviderId } from './oidc';
 import { log } from '../log';
 
-export function identityKey(iss: string, sub: string): string {
+function identityKey(iss: string, sub: string): string {
   return createHash('sha256').update(`${iss}\n${sub}`).digest('hex');
 }
 
-export interface IdentityRecord {
+interface IdentityRecord {
   iss: string;
   sub: string;
   accountKey: string; // lowercased account name — the account store's key
@@ -192,7 +192,7 @@ export async function resolveSsoAccount(
 
 // ------------------------------------------------------------- login tickets
 
-export interface LoginTicket {
+interface LoginTicket {
   accountKey: string;
   accountName: string;
   expiresAt: number;
@@ -534,7 +534,7 @@ export class AdminSessionStore {
   }
 }
 
-export interface AdminSession {
+interface AdminSession {
   accountKey: string;
   ip: string;
   issuedAt: number;

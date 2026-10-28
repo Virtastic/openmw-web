@@ -31,7 +31,7 @@ import { loadConfig } from './config';
 const arg = (name: string): string | undefined =>
   process.argv.slice(2).find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 
-const dataDir = arg('data') ?? process.env.OMW_DATA_DIR ?? '/data';
+const dataDir = arg('data') ?? '/data';
 const waitMs = Number(arg('timeout') ?? 120_000);
 
 function say(ok: boolean, event: string, detail: Record<string, unknown> = {}): void {

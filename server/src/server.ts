@@ -1461,10 +1461,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         log('warn', 'simpeer.navmesh_seed_failed', { from: navmeshTemplate, error: String(err) });
       }
     }
-    // Resources ship beside the binary (…/bin/openmw -> …/share/openmw/resources); override
-    // via OMW_SIMPEER_RESOURCES if a build lays them out differently.
-    const resources = process.env.OMW_SIMPEER_RESOURCES
-      || join(dirname(config.simPeer.binary), '..', 'share', 'openmw', 'resources');
+    // Resources ship beside the binary (…/bin/openmw -> …/share/openmw/resources).
+    const resources = join(dirname(config.simPeer.binary), '..', 'share', 'openmw', 'resources');
     // WITH THE MODS. The peer simulates the world the players are in, so it has to load the
     // same content they do. Without this it ran vanilla while every browser ran the mod list:
     // the two disagree about what exists, and ContentGate — which is there to catch exactly

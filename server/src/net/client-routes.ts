@@ -27,12 +27,12 @@ import { TYPES } from './admin/static';
 /** Where the player app is mounted: /client in the Docker images, OMW_CLIENT where the volume lives elsewhere (Pterodactyl/Pelican). */
 export const defaultClientDir = (): string => process.env.OMW_CLIENT || '/client';
 
-export interface ClientDeps {
+interface ClientDeps {
   /** The folder holding index.html, launcher.html and e/<hash>/. */
   clientDir: string;
 }
 
-export const ISOLATION: Record<string, string> = {
+const ISOLATION: Record<string, string> = {
   'cross-origin-opener-policy': 'same-origin',
   'cross-origin-embedder-policy': 'require-corp',
   'cross-origin-resource-policy': 'cross-origin',

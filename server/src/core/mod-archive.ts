@@ -14,8 +14,8 @@
 
 /** Plugins. `.omwscripts` is here because a Lua mod is a mod, and the rest of this codebase
  *  had forgotten they exist. */
-export const PLUGIN_EXT = /\.(esp|esm|omwaddon|omwgame|omwscripts)$/i;
-export const ARCHIVE_EXT = /\.(bsa|ba2)$/i;
+const PLUGIN_EXT = /\.(esp|esm|omwaddon|omwgame|omwscripts)$/i;
+const ARCHIVE_EXT = /\.(bsa|ba2)$/i;
 
 /**
  * Folder names Morrowind itself uses inside Data Files. A directory holding one of these is

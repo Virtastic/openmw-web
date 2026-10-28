@@ -16,7 +16,7 @@ import { log } from '../log';
 // and NOTHING more. Deliberately absent: IP addresses, account names (the `name` here is
 // the in-game display name a player chose to show to every other player anyway), ranks,
 // bans, and any per-player identifier beyond the transient session playerId.
-export interface StatusSnapshot {
+interface StatusSnapshot {
   name: string;
   motd: string;
   players: { id: number; name: string; cellKey: string | null; level?: number }[];
@@ -49,7 +49,7 @@ export interface StatusSnapshot {
 
 // enabled=false or an empty token makes /metrics indistinguishable from any other unknown
 // path (404, not 401) — a prober must not learn that the endpoint exists here.
-export interface MetricsOptions {
+interface MetricsOptions {
   enabled: boolean;
   token: string;
 }
@@ -206,7 +206,7 @@ export function readCookie(req: IncomingMessage, name: string): string {
   return '';
 }
 
-export interface CookieOptions {
+interface CookieOptions {
   maxAgeSec: number; // 0 clears the cookie
   path: string;
   secure: boolean;
@@ -251,6 +251,26 @@ export function gateAdmin(route: HttpRoute, allow: () => readonly string[]): Htt
     }
     return route(req, res, url);
   };
+}
+
+/** A JSON response with an exact length and no caching or CORS headers: the route sets those. */
+export function json(res: ServerResponse, code: number, body: unknown): void {
+  const s = JSON.stringify(body);
+  res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s) });
+  res.end(s);
+}
+
+/** Read a JSON request body of at most `limit` bytes. Throws when it is larger or not JSON;
+ *  an empty body reads as {}. Every route states its own cap. */
+export async function readJsonBody(req: IncomingMessage, limit: number): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > limit) throw new Error('too large');
+    chunks.push(c as Buffer);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
 }
 
 export function sendJson(res: ServerResponse, code: number, value: unknown): void {

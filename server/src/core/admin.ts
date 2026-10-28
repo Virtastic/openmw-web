@@ -24,8 +24,8 @@ import type { Moderation } from './moderation';
 import { broadcastChat } from './chat';
 import { log } from '../log';
 
-export const RANK_NAMES: Record<number, string> = { 0: 'player', 1: 'moderator', 2: 'admin', 3: 'owner' };
-export const MAX_RANK = 3;
+const RANK_NAMES: Record<number, string> = { 0: 'player', 1: 'moderator', 2: 'admin', 3: 'owner' };
+const MAX_RANK = 3;
 
 const MAX_ARG = 256;
 const MAX_SCRIPT = 4096;
@@ -35,7 +35,7 @@ const MAX_REPORT_LIST = 50;
 const MAX_CHATLOG_LINES = 40;
 const MAX_CHATLOG_MINUTES = 60 * 24 * 7;
 
-export interface AdminCtx {
+interface AdminCtx {
   roster: Roster;
   accounts: AccountStore;
   bans: BanStore;
@@ -55,7 +55,7 @@ export interface AdminCtx {
 }
 
 /** The commands a rank may run, one line each. The dashboard's catalog is the same table. */
-export function adminHelpLines(rank: number): string[] {
+function adminHelpLines(rank: number): string[] {
   return Object.entries(ADMIN_COMMANDS)
     .filter(([, spec]) => rank >= spec.minRank)
     .map(([, spec]) => `${spec.usage} — ${spec.help}`);

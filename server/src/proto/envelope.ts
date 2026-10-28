@@ -16,7 +16,7 @@ export class ProtoError extends Error {
   }
 }
 
-export interface Envelope {
+interface Envelope {
   type: number;
   seq: number;
   payload: Buffer;

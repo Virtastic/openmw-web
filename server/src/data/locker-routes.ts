@@ -18,14 +18,14 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Locker, LockerFile } from './locker';
-import { clientIp, isSecureRequest, readCookie, setCookie } from '../net/http';
+import { clientIp, isSecureRequest, json, readCookie, readJsonBody, setCookie } from '../net/http';
 import { log } from '../log';
 
-export interface LockerSessions {
+interface LockerSessions {
   resolve(token: string): string | undefined; // token -> accountKey
 }
 
-export interface LockerRouteDeps {
+interface LockerRouteDeps {
   locker: Locker;
   sessions: LockerSessions;
   // The content files the server's own worlds actually run, in load order. The launcher must
@@ -57,20 +57,7 @@ export function esmOwnerGate(locker: Locker, sessions: LockerSessions) {
   };
 }
 
-function json(res: ServerResponse, code: number, body: unknown): void {
-  const s = JSON.stringify(body);
-  res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s) });
-  res.end(s);
-}
-
-async function readBody(req: IncomingMessage, limit = 65536): Promise<unknown> {
-  let body = '';
-  for await (const chunk of req) {
-    body += chunk;
-    if (body.length > limit) throw new Error('too large');
-  }
-  return JSON.parse(body || '{}');
-}
+const BODY_LIMIT = 65536;
 
 function parseFile(v: unknown): LockerFile | undefined {
   if (typeof v !== 'object' || v === null) return undefined;
@@ -109,7 +96,7 @@ export function lockerRoutes(deps: LockerRouteDeps) {
 
     try {
       if (req.method === 'POST' && url.pathname === '/locker/attest') {
-        const body = (await readBody(req)) as { files?: unknown };
+        const body = (await readJsonBody(req, BODY_LIMIT)) as { files?: unknown };
         const files = Array.isArray(body.files) ? body.files.map(parseFile) : [];
         if (files.some((f) => f === undefined)) { json(res, 400, { error: 'bad_files' }); return true; }
         const att = await deps.locker.attest(accountKey, files as LockerFile[], clientIp(req));
@@ -118,7 +105,7 @@ export function lockerRoutes(deps: LockerRouteDeps) {
       }
 
       if (req.method === 'POST' && url.pathname === '/locker/authorize-upload') {
-        const file = parseFile((await readBody(req)) as unknown);
+        const file = parseFile((await readJsonBody(req, BODY_LIMIT)) as unknown);
         if (!file) { json(res, 400, { error: 'bad_file' }); return true; }
         // Register THIS origin with the bucket before handing back a presigned URL. The
         // browser PUTs straight to the bucket, so an unlisted origin is blocked client-side
@@ -142,7 +129,7 @@ export function lockerRoutes(deps: LockerRouteDeps) {
       }
 
       if (req.method === 'POST' && url.pathname === '/locker/uploaded') {
-        const file = parseFile((await readBody(req)) as unknown);
+        const file = parseFile((await readJsonBody(req, BODY_LIMIT)) as unknown);
         if (!file) { json(res, 400, { error: 'bad_file' }); return true; }
         const rec = await deps.locker.recordUploaded(accountKey, file);
         json(res, 200, rec.ok ? { ok: true } : { ok: false, reason: rec.reason });

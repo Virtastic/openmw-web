@@ -124,7 +124,7 @@ import { HARNESS_PASSWORD } from '../auth/harness';
 import { checkInvite } from '../auth/invite';
 import { metrics } from '../metrics';
 
-export type SessionState = 'CONNECTED' | 'HELLO_OK' | 'AUTHED' | 'IN_WORLD' | 'CLOSED';
+type SessionState = 'CONNECTED' | 'HELLO_OK' | 'AUTHED' | 'IN_WORLD' | 'CLOSED';
 
 // omwmp_auth_total{op,...}. Kept apart from the message name so the label space is closed.
 type AuthOp = 'register' | 'login' | 'resume' | 'ticket';

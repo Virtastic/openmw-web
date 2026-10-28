@@ -9,7 +9,7 @@
 
 import { log } from './log';
 
-export type Labels = Record<string, string>;
+type Labels = Record<string, string>;
 
 interface Series {
   labels: Labels;
@@ -64,7 +64,7 @@ function checkLabels(metric: string, labelNames: readonly string[], labels: Labe
 
 // Exported (with the concrete classes) so a metric can be built and rendered standalone:
 // constructing one does NOT register it, so tests never pollute the process registry.
-export abstract class Metric {
+abstract class Metric {
   constructor(
     readonly name: string,
     readonly help: string,

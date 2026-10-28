@@ -23,7 +23,7 @@ import type { Config } from '../config';
 import type { AccountStore } from '../core/accounts';
 import type { BanStore } from '../persist/banstore';
 import type { IpRateLimiter } from '../net/ratelimit';
-import { clientIp, isLoopback, isSecureRequest, readCookie, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
+import { clientIp, isLoopback, isSecureRequest, readCookie, readJsonBody, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
 import { OidcError, OidcService, isProviderId, type ProviderId } from './oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, resolveSsoAccount } from './identities';
 import { log } from '../log';
@@ -35,7 +35,7 @@ const STATE_COOKIE = 'omwmp_oauth';
 const COOKIE_PATH = '/auth'; // sent on the callback, on nothing else
 const STATE_COOKIE_MAX_AGE = 600;
 
-export interface AuthDeps {
+interface AuthDeps {
   config: Config;
   oidc: OidcService;
   identities: IdentityStore;
@@ -47,19 +47,6 @@ export interface AuthDeps {
   accounts: AccountStore;
   bans: BanStore;
   limiter: IpRateLimiter; // shares the operator's per-IP auth budget
-}
-
-/** Read a small JSON body. Capped hard: this is an unauthenticated endpoint. */
-async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const c of req) {
-    size += (c as Buffer).length;
-    if (size > 4096) return {};
-    chunks.push(c as Buffer);
-  }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>; }
-  catch { return {}; }
 }
 
 // Appends the outcome to the operator's return URL as a fragment, replacing any fragment
@@ -350,7 +337,8 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
         sendJson(res, 403, { error: 'this server does not accept password sign-in' });
         return true;
       }
-      const body = await readBody(req);
+      // Capped hard: this is an unauthenticated endpoint. Oversize or bad JSON reads as {}.
+      const body = (await readJsonBody(req, 4096).catch(() => ({}))) as Record<string, unknown>;
       const name = String(body.name ?? '').trim();
       const password = String(body.password ?? '');
       const account = await accounts.verifyLogin(name, password) ? await accounts.get(name) : undefined;

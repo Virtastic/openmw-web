@@ -48,7 +48,7 @@ import { exportDataDir, summariseMetrics } from '../net/admin/ops';
 import { passwordReset } from '../net/admin/reset';
 import type { WorldSupervisor, WorldInfo } from './worlds';
 
-export interface GatewayAdminDeps {
+interface GatewayAdminDeps {
   worlds: WorldSupervisor;
   sharedDir: string;
   /** Re-read each call, like a game's: the settings page shows what a restart would load. */
@@ -66,7 +66,7 @@ export interface GatewayAdminDeps {
 }
 
 /** A game as the dashboard shows it: the owner's NAME first, the id alongside. */
-export interface GameRow {
+interface GameRow {
   id: string;
   mode: string;
   up: boolean;

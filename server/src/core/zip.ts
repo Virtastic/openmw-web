@@ -34,7 +34,7 @@ export interface ZipEntry {
   crc32: number;
 }
 
-export interface ZipLimits {
+interface ZipLimits {
   maxEntries: number;
   maxEntryBytes: number;
   maxTotalBytes: number;

@@ -13,7 +13,7 @@
 // door writes is the ticket the world reads. Auth is still done again on the world's WebSocket
 // — the ticket grants exactly one auth attempt there, nothing more.
 
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { SocialStore } from '../core/socialstore';
@@ -33,18 +33,9 @@ import { ensureVanillaManifest } from '../data/vanilla-manifest';
 import { lockerPublicBase, lockerStorageFrom, blobRoutes, FsStorage } from '../data/fsstorage';
 import { eraseSaves } from '../data/save-routes';
 import { lockerRoutes, esmOwnerGate } from '../data/locker-routes';
-import type { HttpRoute } from '../net/http';
+import { json as sendJson, readJsonBody, type HttpRoute } from '../net/http';
 import { log } from '../log';
 
-function sendJson(res: ServerResponse, code: number, body: unknown): void {
-  const s = JSON.stringify(body);
-  res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s) });
-  res.end(s);
-}
-async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let b = ''; for await (const c of req) { b += c; if (b.length > 8192) throw new Error('too large'); }
-  return JSON.parse(b || '{}') as Record<string, unknown>;
-}
 
 // The onboarding profile: contact email (kept private, never on the wire) + the unique public
 // handle shown to everyone. Done in the launcher (HTML) right after sign-in, so a fresh player
@@ -73,7 +64,7 @@ function profileRoutes(accounts: AccountStore, lockerSessions: LockerSessionStor
     }
     if (req.method === 'POST') {
       let body: Record<string, unknown>;
-      try { body = await readBody(req); } catch { sendJson(res, 400, { error: 'bad_body' }); return true; }
+      try { body = (await readJsonBody(req, 8192)) as Record<string, unknown>; } catch { sendJson(res, 400, { error: 'bad_body' }); return true; }
       const email = typeof body.email === 'string' ? body.email.trim() : '';
       const username = typeof body.username === 'string' ? body.username.trim() : '';
       // Email required only if not already on file (SSO does not give us one — profile scope only).
@@ -194,7 +185,7 @@ export function characterRoutes(
     }
     if (req.method === 'POST') {
       let body: Record<string, unknown>;
-      try { body = await readBody(req); } catch { sendJson(res, 400, { error: 'bad_body' }); return true; }
+      try { body = (await readJsonBody(req, 8192)) as Record<string, unknown>; } catch { sendJson(res, 400, { error: 'bad_body' }); return true; }
       // No alias needed: the real name comes from Morrowind's character creation and replaces
       // this provisional label on the next listing (see GET above). An explicit alias is still
       // accepted for callers that want one.
@@ -253,7 +244,7 @@ export function ticketRoutes(
   };
 }
 
-export interface FrontDoor {
+interface FrontDoor {
   // A single HttpRoute that handles /auth/* and /locker/*. Returns true when it claimed the
   // request; the directory handles everything else (/worlds, /healthz).
   route: HttpRoute;

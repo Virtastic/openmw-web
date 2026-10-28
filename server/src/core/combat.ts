@@ -10,7 +10,7 @@
 //                                  {ref,cellKey,epoch} : the cell's authority holder only
 //   CombatCast / CombatProjectile -> cell-scoped cosmetic relay, excluding the sender
 
-import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
+import { lToJs, tbl, finite, str, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
@@ -19,22 +19,21 @@ import { TokenBucket } from '../net/ratelimit';
 import { metrics } from '../metrics';
 import { log } from '../log';
 
-const MAX_ID = 64;
 const MAX_CELL_KEY = 128;
 const MAX_EFFECTS = 64;
 
-export const COMBAT_EVENTS = new Set(['CombatHit', 'CombatSpellHit', 'CombatCast', 'CombatProjectile']);
+const COMBAT_EVENTS = new Set(['CombatHit', 'CombatSpellHit', 'CombatCast', 'CombatProjectile']);
 
 // Target union: a player session, or an actor owned by a cell's authority holder.
 // epoch is OPTIONAL on actor targets: the attacker is usually a NON-holder, and until it
 // has seen an ActorAuthorityInfo/Grant for that cell it has no legal epoch to quote.
 // Presence is proven by proximity instead (see resolveOwner); when an epoch IS supplied
 // it must be current, which keeps a mid-handoff hit from landing on the wrong simulator.
-export type CombatTarget =
+type CombatTarget =
   | { kind: 'player'; playerId: number }
   | { kind: 'actor'; ref: ObjRef; cellKey: string; epoch?: number };
 
-export interface CombatCtx {
+interface CombatCtx {
   worldPeer(): Player | undefined;
   roster: Roster;
   maxHitDamage: number;
@@ -50,18 +49,6 @@ export interface CombatCtx {
   // retail spell on anyone in a neighbouring cell with no magicka at all (backlog 252).
   // Which of the two it is matters: a spell must also have been cast (OT3-8).
   knowsSource(caster: Player, id: string): 'spell' | 'item' | false;
-}
-
-function finite(v: LValue | undefined): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-}
-
-function str(v: LValue | undefined, max = MAX_ID): string | undefined {
-  return typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined;
-}
-
-function tbl(v: LValue | undefined): LTable | undefined {
-  return v instanceof Map ? v : undefined;
 }
 
 function coord(v: LValue | undefined): number | undefined {

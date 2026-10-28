@@ -24,7 +24,7 @@ import type { AuthConfig, AuthProviderConfig } from '../config';
 import { log } from '../log';
 
 export type ProviderId = 'discord' | 'google';
-export const PROVIDER_IDS: readonly ProviderId[] = ['discord', 'google'];
+const PROVIDER_IDS: readonly ProviderId[] = ['discord', 'google'];
 
 export function isProviderId(s: string): s is ProviderId {
   return (PROVIDER_IDS as readonly string[]).includes(s);
@@ -109,7 +109,7 @@ const MAX_PENDING = 10_000; // bounded: /auth/start is unauthenticated
 
 // A leg of an authorization round trip, held server-side and keyed by `state`. The
 // verifier NEVER leaves this process — that is the entire point of PKCE.
-export interface Pending {
+interface Pending {
   provider: ProviderId;
   verifier: string;
   nonce: string;

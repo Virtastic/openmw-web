@@ -127,7 +127,7 @@ export interface PlayerDoc {
   bounty?: number;
 }
 
-export type LivePosition = { cellKey: string; x: number; y: number; z: number };
+type LivePosition = { cellKey: string; x: number; y: number; z: number };
 
 const SWEEP_MS = 45_000;
 const ERASED_TTL_MS = 90 * 24 * 3_600_000; // backlog 196: erased tombstones older than this are dropped at boot

@@ -5,7 +5,7 @@
 // id, sender included, mirroring PlayerCellChange; dynamic stats -> VISIBLE only;
 // attributes/skills/level/spellbook/inventory -> store only; death -> plugin hooks).
 
-import type { LValue, LTable, JsLike } from '../proto/lser';
+import { tbl, finite, type LValue, type LTable, type JsLike } from '../proto/lser';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
 import type { PlayerStore, PlayerAppearanceDoc, PlayerDoc, DynamicStatDoc, ItemStateDoc } from '../persist/playerstore';
@@ -58,7 +58,7 @@ const GOLD_DELTA_MAX = 20_000;
 // claiming; two full merchant purses a minute is already a fast honest seller.
 // ponytail: rolling cap, not a ledger -- a server-observed gold ledger replaces it.
 const GOLD_PER_MINUTE = 40_000;
-export const MAX_EQUIPMENT_SLOT = 20;
+const MAX_EQUIPMENT_SLOT = 20;
 
 export interface StateCtx {
   worldPeer(): Player | undefined; // THE world peer (server.ts): the one simulator answers rule
@@ -87,16 +87,8 @@ export interface StateCtx {
   holderOf?(cellKey: string): number | undefined;
 }
 
-function tbl(v: LValue | undefined): LTable | undefined {
-  return v instanceof Map ? v : undefined;
-}
-
 function recordId(v: LValue | undefined): string | undefined {
   return typeof v === 'string' && v.length > 0 && v.length <= MAX_RECORD_ID ? v : undefined;
-}
-
-function finite(v: LValue | undefined): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
 function relayAll(roster: Roster, name: string, body: JsLike): void {
@@ -180,7 +172,7 @@ function handleEquipment(ctx: StateCtx, player: Player, body: LTable): boolean {
 }
 
 // Slot keys must go over the wire as Lua NUMBER keys, not strings.
-export function equipmentToL(slots: Record<number, string>): LTable {
+function equipmentToL(slots: Record<number, string>): LTable {
   const t: LTable = new Map();
   for (const [k, v] of Object.entries(slots)) t.set(Number(k), v);
   return t;
@@ -1337,7 +1329,7 @@ export function pushAvatarsToPeer(ctx: StateCtx, peer: Player): void {
 // shape (persist/playerstore.ts) is already exactly the right payload; this only sends it.
 // Incremental freshness rides the existing Player* identity relays, which peers receive
 // like any client; this is the join-time snapshot that must precede the avatar acting.
-export function avatarStateBody(id: number, doc: PlayerDoc, liveBounty?: number): JsLike {
+function avatarStateBody(id: number, doc: PlayerDoc, liveBounty?: number): JsLike {
   const bounty = liveBounty ?? doc.bounty;
   // NEVER BUILD A CORPSE. Death is a flush point, so a character who died and left has hp 0
   // on record; an avatar built from that is dead on arrival and its first bar report kills

@@ -75,7 +75,7 @@ export interface VanillaManifest {
   files: { name: string; size: number; sha256: string }[];
 }
 
-export interface Attestation {
+interface Attestation {
   accountKey: string;
   at: string; // ISO
   // The exact words the user checked. Stored verbatim: what matters in a dispute is what
@@ -94,7 +94,7 @@ export interface LockerFile {
 }
 
 /** One row of the upload wizard's checklist. */
-export interface LockerNeed {
+interface LockerNeed {
   name: string;
   size: number;
   /** The world this server runs loads this file. Never relaxed — see requiredManifest. */
@@ -107,13 +107,13 @@ const ESM_NAMES = ['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm'];
 // GOTY Morrowind.esm is ~80 MB; anything far past that is not one of these files.
 export const ESM_MAX_BYTES = 128 * 2 ** 20;
 
-export type UploadRefusal =
+type UploadRefusal =
   | 'no-attestation'
   | 'not-recognized'
   | 'too-large'
   | 'quota';
 
-export interface LockerSettings {
+interface LockerSettings {
   dataDir: string; // where locker.db (file lists + attestations) lives
   maxBytesPerAccount: number;
   // Object storage. Absent = the locker is disabled entirely and the client keeps using

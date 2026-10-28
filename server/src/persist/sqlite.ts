@@ -16,7 +16,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { log } from '../log';
 
-export type Migration = {
+type Migration = {
   // Human label, logged when applied. Keep it descriptive: it is the schema's changelog.
   name: string;
   up: (db: DatabaseSync) => void;

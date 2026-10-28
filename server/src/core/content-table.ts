@@ -23,7 +23,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { log } from '../log';
 
-export interface ContentTableDoc {
+interface ContentTableDoc {
   questItems?: string[];
   uniqueActors?: string[];
   notableItems?: string[];

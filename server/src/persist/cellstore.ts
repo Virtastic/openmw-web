@@ -33,7 +33,7 @@ const CELL_MIGRATIONS = [
 import { log } from '../log';
 import { timeFlush } from '../metrics';
 
-export interface PlacedObject {
+interface PlacedObject {
   netId: number;
   recordId: string;
   cellKey: string;
@@ -122,7 +122,7 @@ export interface FactionState {
   expelled?: boolean;
 }
 
-export interface SharedQuestState {
+interface SharedQuestState {
   journal: Record<string, number>; // questId -> arbitrated index
   globals: Record<string, { value: number; seq: number }>; // MWScript globals + LWW seq
   factions: Record<string, FactionState>;
@@ -134,7 +134,7 @@ export interface SharedQuestState {
   scripts?: string[];
 }
 
-export function emptySharedQuestState(): SharedQuestState {
+function emptySharedQuestState(): SharedQuestState {
   return { journal: {}, globals: {}, factions: {}, bounty: 0 };
 }
 
@@ -153,20 +153,20 @@ export interface WeatherState {
   transition?: number;
 }
 
-export interface CellResetEntry {
+interface CellResetEntry {
   cellKey: string;
   intervalSec: number; // 0 = manual only (operator/plugin driven)
   lastResetMs: number; // wall clock of the last reset; survives restart
 }
 
-export interface WorldM7State {
+interface WorldM7State {
   time: WorldTimeState;
   // Last known weather per region, handed to the next region authority on claim.
   weather: Record<string, WeatherState>;
   resets: Record<string, CellResetEntry>; // cellKey -> schedule
 }
 
-export function emptyWorldM7State(): WorldM7State {
+function emptyWorldM7State(): WorldM7State {
   // Morrowind's own start date; timeScale 30 = vanilla.
   return { time: { gameHour: 9, day: 16, month: 7, year: 427, timeScale: 30 }, weather: {}, resets: {} };
 }
@@ -186,7 +186,7 @@ interface GlobalDoc {
  *  live WorldState stay valid). Keys whose file is gone are dropped. actorOverrides is a
  *  dormant snapshot of the peer's own actors, keyed the same way inside an opaque blob: it
  *  is cleared rather than walked, and the peer re-simulates the cell from content. */
-export function remapCellDoc(doc: CellDoc, idxMap: Map<number, number>): { changed: number; dropped: number } {
+function remapCellDoc(doc: CellDoc, idxMap: Map<number, number>): { changed: number; dropped: number } {
   let changed = 0, dropped = 0;
   const rk = (k: string): string | null => remapRefKey(k, idxMap);
   const rekey = (rec: Record<string, unknown> | undefined): void => {

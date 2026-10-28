@@ -10,7 +10,7 @@
 // game (loss on TCP is a stall, never a gap). Unset: `netDelay` is undefined and the hot
 // path is one `if`.
 
-export interface StallSpec { ms: number; everyMs: number }
+interface StallSpec { ms: number; everyMs: number }
 
 export class NetDelay {
   private readonly q: { due: number; fn: () => void }[] = [];

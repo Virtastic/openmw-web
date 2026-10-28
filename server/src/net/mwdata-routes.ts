@@ -64,7 +64,7 @@ async function walk(root: string, dir = root, out: Entry[] = [], skip?: string):
   return out;
 }
 
-export interface MwDataDeps {
+interface MwDataDeps {
   /** The folder the dashboard uploads into. */
   gameDataDir: string;
   /** Installed mods, in order. Read per request so a change lands without a restart. */

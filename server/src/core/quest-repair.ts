@@ -36,7 +36,7 @@ export interface SpawnRule {
 // ambush, Tashpi's ghost) now travels as an actor ObjectSpawnRequest and the holder spawns it
 // (worldstate.ts spawn), so no hand-written rule per quest is needed. The mechanism stays for
 // an operator's quests.json.
-export const DEFAULT_SPAWN_RULES: SpawnRule[] = [];
+const DEFAULT_SPAWN_RULES: SpawnRule[] = [];
 
 // Quests verified to work under the party model. Everything else still PLAYS — it just
 // behaves like TES3MP does today (best-effort shared world) rather than claiming the
@@ -49,7 +49,7 @@ export const DEFAULT_QUEST_WHITELIST = [
   'da_azura', 'da_mehrunes', 'da_molagbal',
 ];
 
-export interface QuestRepairCtx {
+interface QuestRepairCtx {
   roster: Roster;
   players: PlayerStore;
   spawnRules?: SpawnRule[];

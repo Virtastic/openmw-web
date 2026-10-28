@@ -8,7 +8,7 @@
 import type { JsLike } from '../src/proto/lser';
 
 /** One fake content ref per cell: the soak's shared chest. */
-export const SOAK_CONTAINER = { __refnum: { index: 4242, contentFile: 0 } };
+const SOAK_CONTAINER = { __refnum: { index: 4242, contentFile: 0 } };
 
 /** Open the chest (first opener's contents become canonical), take one gold, put one yam. */
 export function containerCycle(tick: number, cellKey: string): { name: string; body: JsLike }[] {

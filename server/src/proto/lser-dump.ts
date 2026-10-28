@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { lserDecode, lToJs } from './lser';
 
-export function lserDumpJson(blob: Buffer): string {
+function lserDumpJson(blob: Buffer): string {
   return JSON.stringify(lToJs(lserDecode(blob)), null, 2);
 }
 

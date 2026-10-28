@@ -76,6 +76,18 @@ export type LUserdata = LRefNum | LVec2 | LVec3 | LVec4 | LTransformM | LTransfo
 export type LTable = Map<LValue, LValue>;
 export type LValue = number | string | boolean | LTable | LUserdata;
 
+// Narrowing readers for decoded wire values: undefined unless the value has the right shape.
+export function tbl(v: LValue | undefined): LTable | undefined {
+  return v instanceof Map ? v : undefined;
+}
+export function finite(v: LValue | undefined): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+/** A non-empty string of at most `max` chars (default: a record id's 64). */
+export function str(v: LValue | undefined, max = 64): string | undefined {
+  return typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined;
+}
+
 // ---------------------------------------------------------------- encode
 
 class Writer {

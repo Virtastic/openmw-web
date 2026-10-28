@@ -46,7 +46,7 @@ export function daysPassed(t: { day: number; month: number; year: number }): num
   return Math.max(1, absDays(t) - EPOCH_DAYS + 1);
 }
 
-export interface ClockCtx {
+interface ClockCtx {
   state: WorldTimeState; // lives in the CellStore global doc; mutated in place
   save(): void; // schedule the atomic global.json write
   broadcast(body: JsLike): void; // WorldTime to everyone in-world

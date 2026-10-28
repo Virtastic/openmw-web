@@ -10,7 +10,7 @@ import type { JsLike } from '../proto/lser';
 import type { ShareFamily } from '../core/quests';
 
 // M7 world actions: the operator-facing clock and cell-reset controls.
-export interface PluginWorld {
+interface PluginWorld {
   time(): { gameHour: number; day: number; month: number; year: number; timeScale: number };
   advanceTime(hours: number): void;
   setTimeScale(scale: number): void;
