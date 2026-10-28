@@ -225,6 +225,9 @@ export interface Config {
     probationHours: number;
     // OT3-23: one global chat line per account per N seconds. 0 = off.
     globalChatCooldownSec: number;
+    // OT3-185: masked on public channels (say, world, global, novice). Whole words, any case.
+    chatFilterWords: string[];
+    chatFilterLinks: boolean;
     maxHitDamage: number;
     // M9 interest management + LOD. Tunable, not constants: a crowded public world and a
     // 4-player co-op session want very different answers and neither should need a rebuild.
@@ -653,6 +656,8 @@ function validate(t: Tree): Config {
       loginPerMinPerIp: reqNum(t, 'limits', 'loginPerMinPerIp'),
       probationHours: optNum(t, 'limits', 'probationHours', 24),
       globalChatCooldownSec: optNum(t, 'limits', 'globalChatCooldownSec', 10),
+      chatFilterWords: optStrArray(t, 'limits', 'chatFilterWords', []),
+      chatFilterLinks: optBool(t, 'limits', 'chatFilterLinks', true),
       maxHitDamage: reqNum(t, 'limits', 'maxHitDamage'),
       interestRadius: reqNum(t, 'limits', 'interestRadius'),
       interestHysteresis: reqNum(t, 'limits', 'interestHysteresis'),

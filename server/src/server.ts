@@ -43,7 +43,7 @@ import type { ChatContext } from './core/chat';
 import { Moderation } from './core/moderation';
 import { Admin, ADMIN_COMMANDS } from './core/admin';
 import { ResumeStore } from './core/resume';
-import { broadcastChat, noviceEligible, type ChatMessageBody } from './core/chat';
+import { broadcastChat, makeChatFilter, noviceEligible, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
 import { MoveBroadcaster, interestFromLimits } from './core/movement';
@@ -277,6 +277,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
     audit: new AdminAudit(opts.dataDir),
     restore: (charKey, at) => playerStore.restoreTo(charKey, at), // OT3-184
+    setMuted: (acct, muted, until, reason) => socialRef?.setServerMuted(acct, muted, until, reason), // OT3-185
   });
   const m7 = new WorldM7({
     roster,
@@ -393,6 +394,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // very much does not (friends spread across the map must still be able to talk).
     sayProximity: config.rules.sayScope === 'proximity',
     globalCooldownMs: config.limits.globalChatCooldownSec * 1000,
+    filter: makeChatFilter(config.limits.chatFilterWords, config.limits.chatFilterLinks), // OT3-185
     noviceOk: (p) => noviceEligible(levelOf(p), socialStore.getMentor(p.accountKey)),
     // SCROLLBACK. Only the channels a newcomer may legitimately replay: 'global' and 'server'
     // are the server-wide conversation, and world chat is the one world's. History is scoped

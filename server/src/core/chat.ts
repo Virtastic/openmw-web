@@ -26,6 +26,26 @@ export interface ChatContext {
   globalCooldownMs?: number;
   // OT3-67: may this player read and post on the Novice channel? Absent = nobody may.
   noviceOk?(player: Player): boolean;
+  // OT3-185: the public-channel filter (makeChatFilter). Absent = no filtering.
+  filter?(line: string): string;
+}
+
+// OT3-185: mask listed words (whole words, any case) and links on PUBLIC channels. Party and
+// whisper lines are between people who chose each other and go through untouched. The
+// moderation log keeps the raw line: evidence is what was typed, not what was shown.
+// ponytail: a fixed TLD list for bare domains; a link on an unlisted TLD without www./http
+// gets through. Widen the list if spam finds the gap.
+const LINK = /\b(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+\.(?:com|net|org|gg|io|xyz|ru|cn|tk|ly)\b(?:\/\S*)?/gi;
+export function makeChatFilter(words: readonly string[], links: boolean): ((line: string) => string) | undefined {
+  const esc = words.map((w) => w.trim()).filter((w) => w !== '').map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (esc.length === 0 && !links) return undefined;
+  const word = esc.length > 0 ? new RegExp(`(?<![\\p{L}\\p{N}])(?:${esc.join('|')})(?![\\p{L}\\p{N}])`, 'giu') : undefined;
+  const mask = (m: string): string => '*'.repeat(m.length);
+  return (line) => {
+    let out = word ? line.replace(word, mask) : line;
+    if (links) out = out.replace(LINK, mask);
+    return out;
+  };
 }
 
 // OT3-67 NOVICE channel: new characters (below NOVICE_MAX_LEVEL) and opted-in mentors only,
@@ -226,6 +246,13 @@ export function handleChatSend(
     return;
   }
   recordChat(mod, player, channel, line);
+  if (channel !== 'party' && ctx.filter) {
+    const shown = ctx.filter(line);
+    if (shown !== line) {
+      log('info', 'chat.filtered', { from: player.name, account: player.accountKey, channel });
+      line = shown;
+    }
+  }
   const msg: ChatMessageBody = { channel, from: player.name, fromId: player.id, text: line };
   if (channel === 'world' || channel === 'party') {
     // WORLD: the people in your world (server.ts commandCtx). PARTY: its members.

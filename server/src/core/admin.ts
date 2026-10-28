@@ -59,6 +59,21 @@ interface AdminCtx {
   audit?: { write(row: AuditRow): void };
   // OT3-184: point-in-time character restore (PlayerStore.restoreTo).
   restore?(charKey: string, at: number): number | undefined;
+  // OT3-185: the moderator mute (Social.setServerMuted); until = epoch ms, absent = permanent.
+  setMuted?(accountKey: string, muted: boolean, until?: number, reason?: string): void;
+}
+
+const MAX_MUTE_MINUTES = 60 * 24 * 30;
+
+// A mute may land on someone offline (the usual case: they spammed and left), so it resolves
+// the ACCOUNT like /ban does, not an online player.
+async function muteTarget(ctx: AdminCtx, actor: Player, name: string): Promise<{ key: string; name: string; online?: Player } | string> {
+  const key = ctx.accounts.keyForUsername(name) ?? name.toLowerCase();
+  const account = await ctx.accounts.get(key);
+  if (!account) return `No account named "${name}".`;
+  const online = ctx.roster.findByName(account.name);
+  if ((online?.rank ?? account.rank) > actor.rank) return `${account.name} outranks you.`;
+  return { key, name: account.name, online };
 }
 
 /** The commands a rank may run, one line each. The dashboard's catalog is the same table. */
@@ -217,6 +232,45 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       if (r !== 'ok') return `/mentor failed: ${r}`;
       audit(actor, 'mentor', { target: target.name, sub });
       return sub === 'revoke' ? `${target.name} can no longer mentor.` : `${target.name} may opt in as a mentor again.`;
+    },
+  },
+  mute: {
+    minRank: 1,
+    usage: `/mute <account> <minutes 1-${MAX_MUTE_MINUTES}|perm> [reason]`,
+    help: 'silence an account\'s chat everywhere; a timed mute lifts itself (moderator)',
+    async run(ctx, actor, args) {
+      const name = arg(args, 0);
+      const span = args[1];
+      const minutes = span === 'perm' ? 0 : Number(span);
+      if (!name || !(span === 'perm' || (Number.isInteger(minutes) && minutes >= 1 && minutes <= MAX_MUTE_MINUTES))) {
+        return `usage: /mute <account> <minutes 1-${MAX_MUTE_MINUTES}|perm> [reason]`;
+      }
+      if (!ctx.setMuted) return 'Mutes are not available on this world.';
+      const t = await muteTarget(ctx, actor, name);
+      if (typeof t === 'string') return t;
+      const reason = args.slice(2).join(' ').slice(0, MAX_ARG) || `muted by ${actor.name}`;
+      const until = minutes > 0 ? Date.now() + minutes * 60_000 : undefined;
+      ctx.setMuted(t.key, true, until, reason);
+      t.online?.peer.sendEvent('ChatMessage', {
+        channel: 'server', text: `You are muted ${minutes > 0 ? `for ${minutes} min` : 'until a moderator lifts it'}: ${reason}`,
+      });
+      audit(actor, 'mute', { target: t.name, minutes: minutes || 'perm', reason });
+      return `Muted ${t.name} ${minutes > 0 ? `for ${minutes} min` : 'permanently'}: ${reason}`;
+    },
+  },
+  unmute: {
+    minRank: 1,
+    usage: '/unmute <account>',
+    help: 'lift a moderator mute (moderator)',
+    async run(ctx, actor, args) {
+      const name = arg(args, 0);
+      if (!name) return 'usage: /unmute <account>';
+      if (!ctx.setMuted) return 'Mutes are not available on this world.';
+      const t = await muteTarget(ctx, actor, name);
+      if (typeof t === 'string') return t;
+      ctx.setMuted(t.key, false);
+      audit(actor, 'unmute', { target: t.name });
+      return `Unmuted ${t.name}.`;
     },
   },
   kick: {

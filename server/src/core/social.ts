@@ -581,14 +581,15 @@ export class Social {
 
   // Moderator mute: one row under the server pseudo-muter, so every listener's check is
   // the same query and nobody has to remember to consult two lists.
-  setServerMuted(targetAcct: AccountKey, muted: boolean): void {
-    if (muted) this.d.store.addMute(SocialStore.SERVER_MUTER, targetAcct, this.d.now());
+  // OT3-185: `until` (epoch ms) makes it a timed mute that lifts itself; absent = permanent.
+  setServerMuted(targetAcct: AccountKey, muted: boolean, until?: number, reason?: string): void {
+    if (muted) this.d.store.addMute(SocialStore.SERVER_MUTER, targetAcct, this.d.now(), until, reason);
     else this.d.store.removeMute(SocialStore.SERVER_MUTER, targetAcct);
-    log('info', 'social.server_mute', { account: targetAcct, muted });
+    log('info', 'social.server_mute', { account: targetAcct, muted, until, reason });
   }
 
   isMuted(listener: AccountKey, speaker: AccountKey): boolean {
-    return this.d.store.isMuted(listener, speaker);
+    return this.d.store.isMuted(listener, speaker, this.d.now());
   }
 
   // ------------------------------------------------------------------ dispatch

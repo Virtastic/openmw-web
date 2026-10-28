@@ -224,6 +224,9 @@ export class SocialStore {
       // Backlog 334: WHICH character of the account the row is about. The PK stays the account
       // (the friend list is per account); the one-character-one-world check compares char ids.
       ['presence', 'char_id', 'TEXT'],
+      // OT3-185: timed moderator mutes. NULL until = permanent (every player mute).
+      ['mute', 'until', 'INTEGER'],
+      ['mute', 'reason', 'TEXT'],
     ] as const) {
       const has = (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
         .some((c) => c.name === column);
@@ -592,9 +595,13 @@ export class SocialStore {
 
   static readonly SERVER_MUTER = '@server';
 
-  addMute(muter: AccountKey, muted: AccountKey, now: number): void {
+  // A repeat mute keeps `since` but takes the new expiry and reason: a moderator extending
+  // or making permanent a timed mute means the latest call.
+  addMute(muter: AccountKey, muted: AccountKey, now: number, until?: number, reason?: string): void {
     if (muter === muted) return;
-    this.write('INSERT OR IGNORE INTO mute (muter, muted, since) VALUES (?, ?, ?)').run(muter, muted, now);
+    this.write(`INSERT INTO mute (muter, muted, since, until, reason) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (muter, muted) DO UPDATE SET until = excluded.until, reason = excluded.reason`)
+      .run(muter, muted, now, until ?? null, reason ?? null);
   }
 
   removeMute(muter: AccountKey, muted: AccountKey): void {
@@ -603,10 +610,12 @@ export class SocialStore {
 
   // True when `listener` should not hear/see `speaker`: either they muted them, or a
   // moderator muted the speaker for everyone.
-  isMuted(listener: AccountKey, speaker: AccountKey): boolean {
+  // OT3-185: an expired timed mute stops counting here, the moment it expires; the sweep
+  // only tidies the row away.
+  isMuted(listener: AccountKey, speaker: AccountKey, now = Date.now()): boolean {
     return this.db
-      .prepare('SELECT 1 FROM mute WHERE muted = ? AND (muter = ? OR muter = ?)')
-      .get(speaker, listener, SocialStore.SERVER_MUTER) !== undefined;
+      .prepare('SELECT 1 FROM mute WHERE muted = ? AND (muter = ? OR muter = ?) AND (until IS NULL OR until > ?)')
+      .get(speaker, listener, SocialStore.SERVER_MUTER, now) !== undefined;
   }
 
   mutesOf(muter: AccountKey): AccountKey[] {
@@ -623,6 +632,7 @@ export class SocialStore {
     // re-delivered on every join — expiry-on-read hides it, but it never goes away.
     this.write('DELETE FROM invite WHERE expires <= ?').run(now);
     this.write('DELETE FROM party_invite WHERE expires <= ?').run(now);
+    this.write('DELETE FROM mute WHERE until IS NOT NULL AND until <= ?').run(now); // OT3-185
     return before - (count('friend_request') + count('invite'));
   }
 }
