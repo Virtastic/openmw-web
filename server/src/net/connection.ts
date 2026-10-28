@@ -782,7 +782,7 @@ export class Connection implements Peer {
     this.ctx.accounts.setEmail(this.account, email, msg.marketingOptIn === true, email === this.account.email && this.account.emailVerified === true);
     // The public handle IS the display name from now on; a session already in the roster
     // updates live so nametags/chat pick it up on the next frame they render it.
-    if (this.player) this.player.name = this.account.username ?? this.player.name;
+    if (this.player) this.ctx.roster.rename(this.player, this.account.username ?? this.player.name);
     log('info', 'player.profile_set', {
       account: this.account.name, username: this.account.username ?? msg.username,
     });
@@ -2079,7 +2079,7 @@ export class Connection implements Peer {
     // lookup at once. The fix is to guarantee a username: set [login] requireProfile = true,
     // which refuses SessionReady until one exists, and this fallback becomes unreachable.
     // ponytail: config guarantee, not a second name-resolution path.
-    this.player = this.ctx.roster.addAuthed(account.username ?? account.name, accountKey, account.rank, this, this.ip);
+    this.player = this.ctx.roster.addAuthed(account.username ?? account.name, accountKey, account.rank, this, this.ip, char?.id ?? accountKey);
     const created = Date.parse(account.createdAt);
     if (!this.isSystem && account.rank === 0 && Number.isFinite(created)) {
       this.player.probationUntil = created + this.ctx.config.limits.probationHours * 3_600_000;
@@ -2087,7 +2087,6 @@ export class Connection implements Peer {
     // Character slots: every persistence path keys on charId from here on. System peers
     // keep the accountKey default (no character; marked ephemeral below).
     if (char) {
-      this.player.charId = char.id;
       this.ctx.accounts.touchCharacter(account, char.id);
     }
     this.player.simulatesActors = this.simulatesActors;

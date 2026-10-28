@@ -197,9 +197,8 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
   const dressed = looks.length > 0 || !!(look && look.race && look.head && look.class);
 
   const arrive = (b: BotId): void => {
-    const self = roster.addAuthed(b.name, b.accountKey, 0, b.peer, '127.0.0.1');
+    const self = roster.addAuthed(b.name, b.accountKey, 0, b.peer, '127.0.0.1', b.charId);
     self.bot = true;
-    self.charId = b.charId;
     // Stand where the party is if we are following someone, else in the starter village.
     const lead = roster.humansInWorld().find((p) => !p.bot && p.cellKey !== undefined);
     const at = lead?.pose as { x: number; y: number; z: number } | undefined;

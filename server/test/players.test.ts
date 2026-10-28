@@ -46,3 +46,23 @@ test('a system peer is invisible on every human-facing surface', async (t) => {
     (e) => e.name === 'PlayerJoinWorld' && (e.value as { id?: number }).id === peerId);
   assert.equal(strayJoin.length, 0, 'the human must not be told the sim peer joined');
 });
+
+test('OT3-71: name/char indexes follow rename and remove; a duplicate key passes on', async () => {
+  const { Roster } = await import('../src/core/players');
+  const roster = new Roster();
+  const peer = { sendEvent() {} } as never;
+  const a = roster.addAuthed('Alice', 'acc-a', 0, peer, '', 'char-1');
+  const b = roster.addAuthed('alice', 'acc-b', 0, peer, '', 'char-1');
+  assert.equal(roster.findByName('ALICE'), a); // first session wins, as the old scan did
+  assert.equal(roster.activeForChar('char-1'), a);
+  roster.remove(a);
+  assert.equal(roster.findByName('Alice'), b);
+  assert.equal(roster.activeForChar('char-1'), b);
+  roster.rename(b, 'Bob');
+  assert.equal(roster.findByName('alice'), undefined);
+  assert.equal(roster.findByName('bob'), b);
+  roster.remove(b);
+  assert.equal(roster.findByName('bob'), undefined);
+  assert.equal(roster.activeForChar('char-1'), undefined);
+  assert.equal(roster.activeForChar('acc-a'), undefined); // charId default is the accountKey
+});

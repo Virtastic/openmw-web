@@ -233,6 +233,11 @@ export interface Player {
 export class Roster {
   private byId = new Map<number, Player>();
   private byAccount = new Map<string, Player>();
+  // OT3-71: join-path lookups were roster scans. name/charId change only through
+  // addAuthed/rename/remove, which keep these in step. First session wins a key,
+  // as the old scan (insertion order) did; when it leaves, index() finds the next holder.
+  private byName = new Map<string, Player>();
+  private byChar = new Map<string, Player>();
   private nextId = 1;
   private inWorldCache?: Player[];
 
@@ -268,8 +273,7 @@ export class Roster {
   }
 
   findByName(name: string): Player | undefined {
-    const lower = name.toLowerCase();
-    return [...this.byId.values()].find((p) => p.name.toLowerCase() === lower);
+    return this.byName.get(name.toLowerCase());
   }
 
   activeForAccount(accountKey: string): Player | undefined {
@@ -277,11 +281,23 @@ export class Roster {
   }
 
   // One session per CHARACTER (not account): byAccount holds only the latest session of an
-  // account, so a phone on char A and a laptop on char B need a charId lookup. Auth-time
-  // only; a roster scan is nothing next to argon2.
+  // account, so a phone on char A and a laptop on char B need a charId lookup.
   activeForChar(charId: string): Player | undefined {
-    for (const p of this.byId.values()) if (p.charId === charId) return p;
-    return undefined;
+    return this.byChar.get(charId);
+  }
+
+  rename(player: Player, name: string): void {
+    this.unindex(this.byName, player.name.toLowerCase(), player, (p) => p.name.toLowerCase());
+    player.name = name;
+    if (this.byId.get(player.id) === player && !this.byName.has(name.toLowerCase())) this.byName.set(name.toLowerCase(), player);
+  }
+
+  // Drop player's entry; if it held the key, hand it to the next session with the same key.
+  // The rescan runs only on a collision (two sessions of one name/char), which is rare.
+  private unindex(map: Map<string, Player>, key: string, player: Player, keyOf: (p: Player) => string): void {
+    if (map.get(key) !== player) return;
+    map.delete(key);
+    for (const p of this.byId.values()) if (p !== player && keyOf(p) === key) { map.set(key, p); return; }
   }
 
   private allocId(): number {
@@ -294,12 +310,12 @@ export class Roster {
     throw new Error('playerId space exhausted');
   }
 
-  addAuthed(name: string, accountKey: string, rank: number, peer: Peer, ip = ''): Player {
+  addAuthed(name: string, accountKey: string, rank: number, peer: Peer, ip = '', charId = accountKey): Player {
     const player: Player = {
       id: this.allocId(),
       name,
       accountKey,
-      charId: accountKey,
+      charId,
       rank,
       peer,
       ip,
@@ -309,6 +325,8 @@ export class Roster {
     };
     this.byId.set(player.id, player);
     this.byAccount.set(accountKey, player);
+    if (!this.byName.has(name.toLowerCase())) this.byName.set(name.toLowerCase(), player);
+    if (!this.byChar.has(charId)) this.byChar.set(charId, player);
     return player;
   }
 
@@ -335,6 +353,8 @@ export class Roster {
     if (!this.byId.delete(player.id)) return; // already removed (supersede + close race)
     this.inWorldCache = undefined;
     if (this.byAccount.get(player.accountKey) === player) this.byAccount.delete(player.accountKey);
+    this.unindex(this.byName, player.name.toLowerCase(), player, (p) => p.name.toLowerCase());
+    this.unindex(this.byChar, player.charId, player, (p) => p.charId);
     if (player.inWorld) {
       player.inWorld = false;
       // Mirror joinWorld: no client ever spawned a puppet for a system peer, so no client
