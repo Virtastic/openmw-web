@@ -1183,7 +1183,7 @@ local function killRecorded(cell, now)
         if okv and valid then
             local okd, dead = pcall(types.Actor.isDead, obj) -- a key that names a non-actor must not abort the holder tick
             if okd and not dead then
-                if not obj:hasScript('scripts/mp/testkill.lua') then pcall(function() obj:addScript('scripts/mp/testkill.lua', {}) end) end
+                if not obj:hasScript('scripts/mp/selfkill.lua') then pcall(function() obj:addScript('scripts/mp/selfkill.lua', {}) end) end
                 left[#left + 1] = wireKey -- until it reads dead
             end
         else
@@ -1213,8 +1213,8 @@ function actors.noteCellDeaths(cellKey, keys)
             local key = refKeyOf(obj)
             if held[cellKey] then
                 -- We simulate this cell: the body dies for real, in its own Self context
-                -- (dynamic stats are Self-gated; testkill.lua is exactly that one write).
-                if not types.Actor.isDead(obj) then pcall(function() obj:addScript('scripts/mp/testkill.lua', {}) end) end
+                -- (dynamic stats are Self-gated; selfkill.lua is exactly that one write).
+                if not types.Actor.isDead(obj) then pcall(function() obj:addScript('scripts/mp/selfkill.lua', {}) end) end
             elseif puppetActors[key] then
                 pcall(function() obj:sendEvent('MP_Kill', {}) end)
             else
@@ -1233,14 +1233,14 @@ function actors.killActorByRecord(recordId)
         -- kills killed one and the rest bit on (#158 s149).
         local okL, alive = pcall(function()
             return not types.Actor.isDead(obj) and types.Actor.stats.dynamic.health(obj).current > 0
-                and not obj:hasScript('scripts/mp/testkill.lua')
+                and not obj:hasScript('scripts/mp/selfkill.lua')
         end)
         if obj.recordId == recordId and okL and alive then
             -- Dynamic-stat writes are Self-gated: setting health from here silently fails
             -- (a pcall around it just hides the error). Attach a one-shot CUSTOM script to
             -- reach the actor's own Self context instead.
             local ok, err = pcall(function()
-                obj:addScript('scripts/mp/testkill.lua', {})
+                obj:addScript('scripts/mp/selfkill.lua', {})
             end)
             if not ok then print('[mp] killActorByRecord: addScript failed: ' .. tostring(err)) end
             return ok

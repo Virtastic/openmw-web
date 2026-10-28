@@ -1434,8 +1434,7 @@ local function despawnPuppet(id)
     -- a frame a second the despawn lands in that same frame often enough: fresh6's guest kept
     -- a live, untracked body of the host at the new spot whose puppet.lua then drove the
     -- tracked successor to its stale target every 3 s for the rest of the session.
-    -- OUT OF THE AVATAR REGISTRY FIRST. avatar.lua's mpAvatarDetach is the only other place
-    -- that clears it, and a despawn never goes through it: a SUPERSEDED reconnect left the
+    -- OUT OF THE AVATAR REGISTRY FIRST. Nothing else clears it: a SUPERSEDED reconnect left the
     -- old body registered beside the new one ("avatar registry ... (now 2)"), and guard and
     -- crime checks treat every registered body as a player.
     if mp.setAvatar then pcall(mp.setAvatar, p.obj, false) end
@@ -3635,14 +3634,6 @@ local eventHandlers = {
         end)
     end,
 
-    mpAvatarDetached = function(data)
-        if data.obj and data.obj:isValid() then
-            -- Guarded and SAID: removeScript throws when the script is already gone (a second
-            -- detach, a reload), and a throw here aborts the handler.
-            local ok, err = pcall(function() data.obj:removeScript('scripts/mp/avatar.lua') end)
-            if not ok then print('[mp] avatar script detach failed: ' .. tostring(err)) end
-        end
-    end,
     mpAvatarLanded = avatarLanded,
 
     -- Backlog 307 (peer): an armour/block skill use on an avatar, to its owner's progression.
@@ -3670,9 +3661,9 @@ local eventHandlers = {
         end
     end,
 
-    mpRemoveTestKill = function(data)
+    mpRemoveSelfKill = function(data)
         if data.obj and data.obj:isValid() then
-            data.obj:removeScript('scripts/mp/testkill.lua')
+            data.obj:removeScript('scripts/mp/selfkill.lua')
         end
     end,
 

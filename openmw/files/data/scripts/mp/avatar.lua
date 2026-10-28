@@ -11,9 +11,8 @@
 -- per frame); if the stream stops (owner lagging or gone) the avatar coasts to a stop
 -- rather than running into a wall forever.
 --
--- Like puppet.lua: AI off while attached, and DETACH IS ASYNCHRONOUS BY CONTRACT — the
--- global script removes this script only via the mpAvatarDetached hop, after enableAI(true)
--- has run here, or mDisableAI wedges on and the actor freezes for good.
+-- Like puppet.lua: AI off while attached. The body is never detached, only despawned with
+-- its player (global.lua), so there is no detach hop to keep mDisableAI from latching.
 
 local self = require('openmw.self')
 local types = require('openmw.types')
@@ -672,15 +671,6 @@ return {
             if bit(data.flags, 2) and not timed then jumpLatch = true end
             if bit(data.flags, 3) then useLatch = true end
             strike.input(bit(data.flags, 3), core.getRealTime())
-        end,
-        -- Same three-step contract as puppet.lua: re-enable AI HERE, then ask the global
-        -- script to remove this script. Removing it synchronously from global would leave
-        -- mDisableAI latched.
-        mpAvatarDetach = function()
-            stop()
-            self:enableAI(true)
-            if mp.setAvatar then mp.setAvatar(self.object, false) end
-            core.sendGlobalEvent('mpAvatarDetached', { obj = self.object })
         end,
     },
 }

@@ -2031,8 +2031,8 @@ do
   local a2 = actors.killActorByRecord('slaughterfish_small')
   local a3 = actors.killActorByRecord('slaughterfish_small')
   check('two kills in one frame take two different live fish',
-    a1 and a2 and live1:hasScript('scripts/mp/testkill.lua') and live2:hasScript('scripts/mp/testkill.lua'))
-  check('the corpse is never picked', not corpse:hasScript('scripts/mp/testkill.lua'))
+    a1 and a2 and live1:hasScript('scripts/mp/selfkill.lua') and live2:hasScript('scripts/mp/selfkill.lua'))
+  check('the corpse is never picked', not corpse:hasScript('scripts/mp/selfkill.lua'))
   check('with every live fish already dying, a third kill finds nothing', a3 == false)
   package.loaded['scripts.mp.actors'] = nil
 end
@@ -3368,7 +3368,7 @@ do
   -- Its frame counter advances ONLY at the end of the global onUpdate; a player or object script
   -- has its own copy of the module, whose in-flight adds would never expire.
   local offenders = {}
-  for _, name in ipairs({ 'player', 'identity', 'social', 'puppet', 'avatar', 'companion', 'testkill', 'interp', 'menu' }) do
+  for _, name in ipairs({ 'player', 'identity', 'social', 'puppet', 'avatar', 'companion', 'selfkill', 'interp', 'menu' }) do
     local f = io.open('./openmw/files/data/scripts/mp/' .. name .. '.lua')
     if f then
       local src = f:read('*a'); f:close()
@@ -5045,9 +5045,9 @@ do
   check('the put-back moveInto of a refused drop logs its failure',
     ob:find("local okM, errM = pcall(function() obj:moveInto(types.Actor.inventory(player)) end)", 1, true) ~= nil
     and ob:find("[mp] refused drop of %s could not go back into the pack: %s", 1, true) ~= nil)
-  check('mpAvatarDetached guards removeScript and says why it failed',
-    g:find("local ok, err = pcall(function() data.obj:removeScript('scripts/mp/avatar.lua') end)", 1, true) ~= nil
-    and g:find("data.obj:removeScript('scripts/mp/avatar.lua')\n", 1, true) == nil)
+  check('the dead avatar detach hop is gone (DC4): nothing sent mpAvatarDetach',
+    g:find('mpAvatarDetached', 1, true) == nil
+    and io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a'):find('mpAvatarDetach', 1, true) == nil)
 end
 print('1.7.14 past chargen, every join: every window back, and the package if stage 1 lost it')
 do

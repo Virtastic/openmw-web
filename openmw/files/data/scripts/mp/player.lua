@@ -721,7 +721,7 @@ local PAGE_COMMANDS = { carry = true, vis = true, leaving = true, chatx = true, 
 local function dispatch(cmd)
     if type(cmd) ~= 'string' then return end
     if not TEST_HOOKS and not PAGE_COMMANDS[cmd:match('^[^:]*')] then return end
-    if type(cmd) == 'string' then
+    do
         -- Phase C: 'social:<Op>:<arg>'. The arg is a display NAME for FriendRequest and
         -- BlockAdd (what a player types) and an ACCOUNT KEY for everything else, matching
         -- the server contract.

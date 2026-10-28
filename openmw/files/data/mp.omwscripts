@@ -21,5 +21,5 @@ CUSTOM: scripts/mp/puppet.lua
 # Phase 3: the input-driven body on the SIM PEER only (global.lua attaches it when
 # mp.isSystem()); everywhere else the same body gets puppet.lua instead.
 CUSTOM: scripts/mp/avatar.lua
-# Test-only: attached on demand by actors.killActorByRecord (see testkill.lua).
-CUSTOM: scripts/mp/testkill.lua
+# Attached on demand by the cell holder to apply a recorded death (see selfkill.lua).
+CUSTOM: scripts/mp/selfkill.lua

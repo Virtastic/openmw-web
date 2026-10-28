@@ -1,13 +1,10 @@
--- Test-only one-shot: kill the actor this script is attached to.
+-- One-shot: kill the actor this script is attached to, then ask to be removed.
 --
 -- Why this exists: dynamic-stat writes are Self-gated in OpenMW 0.52 — a GLOBAL script
 -- cannot zero another actor's health (the call simply fails, and a pcall around it hides
--- that). Attaching a CUSTOM script is the supported way to reach an actor's Self context,
--- so actors.killActorByRecord() attaches this, it kills its host, and removes itself.
---
--- Production never needs this: real deaths come from the engine's own damage pipeline on
--- the authority holder (M5), and a non-holder's puppet applies death via MP_Stats, which
--- is already running in Self context.
+-- that). Attaching a CUSTOM script is the supported way to reach an actor's Self context.
+-- The cell holder attaches it to apply a recorded death (actors.lua noteCellDeaths and
+-- killRecorded); the harness kill hook (killActorByRecord) uses it too.
 local core = require('openmw.core')
 local self = require('openmw.self')
 local types = require('openmw.types')
@@ -25,7 +22,7 @@ return {
         onUpdate = function()
             if asked then return end
             asked = true
-            core.sendGlobalEvent('mpRemoveTestKill', { obj = self.object })
+            core.sendGlobalEvent('mpRemoveSelfKill', { obj = self.object })
         end,
     },
 }
