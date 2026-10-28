@@ -7,6 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { Config } from '../config';
+import { isLoopback } from './http';
 import { validEmail, validAccountName, DEFAULT_CHARACTER_NAME, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
@@ -1782,6 +1783,7 @@ export class Connection implements Peer {
 
   private async handleRegister(msg: SessionRegister): Promise<void> {
     if (!this.checkAuthGate('register', msg.serverPassword)) return;
+    if (this.refusePasswordAuth('register')) return;
     const cfg = this.ctx.config.login;
     if (this.ctx.config.auth.requireSso && !this.systemAuthAllowed()) {
       // SSO-only server: there is nothing to register. Point them at the real door rather
@@ -1963,8 +1965,21 @@ export class Connection implements Peer {
     return this.isSystem && this.ctx.config.server.password !== '';
   }
 
+  // CL13: players sign in by SSO only (a ticket); account+password is infrastructure. It is
+  // open to the sim peer (systemAuthAllowed), to a server the operator opted into harness
+  // auth, and to loopback (the test suite, a local TestClient). this.ip is clientIp(): behind
+  // the proxy it is the real client, and a gateway-spliced player carries the stamped address,
+  // so a browser on a public address never reads as loopback here.
+  private refusePasswordAuth(op: AuthOp): boolean {
+    if (this.systemAuthAllowed() || this.ctx.config.login.allowHarnessAuth || isLoopback(this.ip)) return false;
+    log('warn', 'conn.password_auth_refused', { ip: this.ip, op });
+    this.authFail(op, 'AUTH_FAILED', 'this server uses single sign-on — no account/password');
+    return true;
+  }
+
   private async handleLogin(msg: SessionLoginRequest): Promise<void> {
     if (!this.checkAuthGate('login', msg.serverPassword)) return;
+    if (this.refusePasswordAuth('login')) return;
     // Phase B: an operator can turn the password path off entirely (SSO-only server).
     // Registration is gated separately by [login].allowRegistration.
     if ((this.ctx.config.auth.requireSso || !this.ctx.config.auth.allowPasswordLogin) && !this.systemAuthAllowed()) {

@@ -109,11 +109,12 @@ export class TestClient {
     port: number,
     subprotocol: string | null = 'omw-mp.2',
     path = '/ws',
+    headers: Record<string, string> = {},
   ): Promise<TestClient> {
     return new Promise((resolve, reject) => {
       const ws = subprotocol
-        ? new WebSocket(`ws://127.0.0.1:${port}${path}`, subprotocol)
-        : new WebSocket(`ws://127.0.0.1:${port}${path}`);
+        ? new WebSocket(`ws://127.0.0.1:${port}${path}`, subprotocol, { headers })
+        : new WebSocket(`ws://127.0.0.1:${port}${path}`, { headers });
       ws.once('open', () => resolve(new TestClient(ws)));
       ws.once('error', reject);
     });

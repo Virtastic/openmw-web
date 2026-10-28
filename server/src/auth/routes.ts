@@ -23,7 +23,7 @@ import type { Config } from '../config';
 import type { AccountStore } from '../core/accounts';
 import type { BanStore } from '../persist/banstore';
 import type { IpRateLimiter } from '../net/ratelimit';
-import { clientIp, isSecureRequest, readCookie, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
+import { clientIp, isLoopback, isSecureRequest, readCookie, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
 import { OidcError, OidcService, isProviderId, type ProviderId } from './oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, resolveSsoAccount } from './identities';
 import { log } from '../log';
@@ -344,7 +344,9 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
         sendJson(res, 429, { error: 'too many attempts, wait a minute' });
         return true;
       }
-      if (!config.auth.allowPasswordLogin) {
+      // CL13: same rule as the WebSocket path — password sign-in is for loopback (tests) or a
+      // server opted into harness auth, never a public player.
+      if (!config.auth.allowPasswordLogin || !(isLoopback(ip) || config.login.allowHarnessAuth)) {
         sendJson(res, 403, { error: 'this server does not accept password sign-in' });
         return true;
       }
