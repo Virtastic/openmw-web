@@ -728,7 +728,7 @@ local function dispatch(cmd)
             -- `acct` meant the server saw an empty value and refused with no_such_player --
             -- silently, because SocialResult is not surfaced. The privacy control had
             -- therefore never worked. Route by what each op actually reads.
-            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state', MentorOptIn = 'state' }
+            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state', MentorOptIn = 'state', SetLfg = 'state' }
             local field = FIELD[sop]
             local body = { op = sop }
             if field then body[field] = sarg

@@ -46,6 +46,7 @@ local invites = {} -- acct -> {name=} (world invites: come stand next to me)
 local invitesSaid = {} -- acct -> true once toasted; forgotten when the invite leaves the snapshot
 local party = { id = 0, leader = '', members = {} } -- OT3-106: the server's PartyState, verbatim
 local partyInvites = {} -- acct -> name (pending party invites)
+local finderSeq = 0 -- OT3-73: bumped per PartyFinder so the overlay sees a fresh nudge
 local requestsSaid = {} -- same, for friend requests (the snapshot is their only cross-world path)
 local presence = 'friends'
 -- Availability (Online/Offline) — a SEPARATE axis from presence (which is "who sees my
@@ -136,6 +137,7 @@ local SOCIAL_OK = {
     PartyLeave    = 'You left the party.',
     PartyKick     = 'Removed from the party.',
     PartyLead     = 'Party lead passed.',
+    SetLfg        = 'Looking-for-group updated.',
 }
 
 local SOCIAL_SILENT = {}
@@ -392,6 +394,17 @@ return {
                 members = data.members or {} }
             if party.id ~= 0 then partyInvites = {} end -- in a party: other invites are moot
             mirror()
+        end,
+        -- OT3-73: who is looking for a group. nudge = we just left the census office.
+        MP_PartyFinder = function(data)
+            finderSeq = finderSeq + 1
+            mp.set('partyFinder', json.encode({
+                seq = finderSeq, nudge = data.nudge == true, lfg = data.lfg == true,
+                players = data.players or {},
+            }))
+            if data.nudge == true then
+                notice('Better together: find a party for Addamasartus (O)')
+            end
         end,
         MP_PartyInviteReceived = function(data)
             if data.fromAcct and not partyInvites[data.fromAcct] then

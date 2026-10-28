@@ -4524,7 +4524,7 @@ window.omw = (function(){
   tx.addEventListener('keydown', function(e){ e.stopPropagation(); chatKey(e); });
 
   // ================================ SOCIAL ================================
-  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '';
+  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '', seenFinderSeq = 0;
   // CHAT VISIBILITY, remembered per browser. Some players want the world without a chat box
   // in the corner, and the only way to get that was not to look at it. localStorage rather
   // than a server setting: it is a per-PERSON display preference, not a property of the
@@ -4621,7 +4621,7 @@ window.omw = (function(){
     // report. Measured before the fix: the input element was replaced 5 times in 2 seconds.
     // The status line is LOCAL state, but this render DRAWS it, so it belongs in the signature.
     var sig = [sTab, sStatusText, m.friends, m.players, m.friendRequests,
-      m.invites, m.availability, m.presenceMode, m.blocked, m.muted, m.party, m.partyInvites].join(' ')
+      m.invites, m.availability, m.presenceMode, m.blocked, m.muted, m.party, m.partyInvites, m.partyFinder].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
     var friends = pj(m.friends)||[], players = pj(m.players)||[];
@@ -4707,6 +4707,23 @@ window.omw = (function(){
         });
         var lv = el('button','btn','Leave party'); lv.onclick = function(){ lv.disabled = true; cmd('social:PartyLeave:'); };
         sec.appendChild(lv);
+      }
+      // OT3-73: the party finder, for anyone not yet in a party (or leading one with room).
+      if (canInvite){
+        var pf = pj(m.partyFinder) || {}, lfgOn = pf.lfg === true;
+        var lfgPlayers = Array.isArray(pf.players) ? pf.players : [];
+        sec.appendChild(el('h3',null,'Party finder'));
+        sec.appendChild(el('div','empty','Addamasartus, the smugglers\' cave just north-east of Seyda Neen, is the first dungeon built for a party.'));
+        var lb = el('button','btn'+(lfgOn?'':' pri'), lfgOn ? 'Stop looking for a group' : 'Look for a group');
+        lb.onclick = function(){ lb.disabled = true; cmd('social:SetLfg:'+(lfgOn?'off':'on')); };
+        sec.appendChild(lb);
+        var rb = el('button','btn','refresh'); rb.onclick = function(){ cmd('social:LfgQuery:'); };
+        sec.appendChild(rb);
+        if (!lfgPlayers.length) sec.appendChild(el('div','empty','Nobody else is looking right now.'));
+        lfgPlayers.forEach(function(lp){
+          if (inParty[String(lp.name).toLowerCase()]) return;
+          sec.appendChild(personRow(lp.name, 'Level '+lp.level+(lp.near?' · nearby':''), true, [partyInviteAct(lp.name)]));
+        });
       }
       sec.appendChild(el('h3',null,'Friends'));
       if (!friends.length) sec.appendChild(el('div','empty','No friends yet. Add someone below, or from Players.'));
@@ -5193,6 +5210,9 @@ window.omw = (function(){
     else {
       if (oc > seenOpenChat){ seenOpenChat = oc; chatOpen ? closeChat() : openChat(); }
       if (os > seenOpenSocial){ seenOpenSocial = os; socialOpen ? closeSocial() : openSocial(); }
+      // OT3-73: leaving the census office as a solo sprout opens the party finder once.
+      var pfs = pj(m.partyFinder);
+      if (pfs && pfs.nudge && pfs.seq > seenFinderSeq){ seenFinderSeq = pfs.seq; sTab = 'friends'; if (!socialOpen) openSocial(); }
     }
     if (cs > seenChatSeq){ seenChatSeq = cs; lastChatAt = Date.now(); feed.classList.remove('idle'); renderFeed(); persistChat(); }
     // The engine mirrors the server's ack for every social action. Surface it: an action that

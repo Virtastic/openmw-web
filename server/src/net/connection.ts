@@ -1434,6 +1434,7 @@ export class Connection implements Peer {
     player.teleportPose = { x, y, z, at: Date.now(), seq: player.inputSeq ?? 0, armedAt: Date.now(), // peer poses ignored until the avatar arrives (players.ts)
       rebase: oldCell !== undefined && oldCell !== cellKey };
     player.cellKey = cellKey;
+    if (oldCell !== cellKey) this.ctx.social.onCellChange(player, oldCell, cellKey); // OT3-73 party finder
     const prev = player.pose;
     player.pose = {
       x, y, z,

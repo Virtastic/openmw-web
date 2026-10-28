@@ -35,7 +35,7 @@ function world(store = new SocialStore(':memory:')) {
     now: () => 1_700_000_000_000,
   });
   const lastParty = (a: string) => (sent.get(a) ?? []).filter((e) => e.name === 'PartyState').at(-1)?.body;
-  return { store, social, add, players, lastParty, stop: () => social.stop() };
+  return { store, social, add, players, sent, lastParty, stop: () => social.stop() };
 }
 
 function join(w: ReturnType<typeof world>, leader: Player, who: Player): void {
@@ -120,5 +120,30 @@ test('party: handleEvent routes Party* ops and replies', () => {
   assert.deepEqual(w.social.partyMembers('b'), ['a', 'b']);
   w.social.handleEvent(b, 'PartyLeave', undefined);
   assert.equal(w.store.partyOf('a'), undefined);
+  w.stop(); w.store.close();
+});
+
+// OT3-73: the party finder.
+test('party finder: a solo sprout leaving the census office is nudged with LFG players, nearest first', () => {
+  const w = world();
+  const s = w.add('s'); const far = w.add('far'); const near = w.add('near'); w.add('quiet');
+  (far as { cellKey: string }).cellKey = '9,9';
+  w.social.handleEvent(far, 'SetLfg', new Map([['state', 'on']]));
+  w.social.handleEvent(near, 'SetLfg', new Map([['state', 'on']]));
+  const nudges = () => (w.sent.get('s') ?? []).filter((e) => e.name === 'PartyFinder' && e.body.nudge === true);
+  w.social.onCellChange(s, 'seyda neen, census and excise office', '0,0');
+  assert.equal(nudges().length, 1);
+  assert.deepEqual((nudges()[0]!.body.players as { acct: string; near: boolean }[]).map((p) => [p.acct, p.near]),
+    [['near', true], ['far', false]], 'quiet is not looking; nearby first');
+  w.social.onCellChange(s, '0,0', 'seyda neen'); // an ordinary door: no nudge
+  assert.equal(nudges().length, 1);
+  // far joins near's party: far stops looking, near still leads with room and stays listed.
+  join(w, near, far);
+  assert.deepEqual(w.social.partyFinder(s).map((p) => p.acct), ['near']);
+  w.social.handleEvent(near, 'SetLfg', new Map([['state', 'off']]));
+  assert.deepEqual(w.social.partyFinder(s), []);
+  // Partied sprouts are not nudged.
+  w.social.onCellChange(far, 'imperial prison ship', '0,0');
+  assert.equal((w.sent.get('far') ?? []).filter((e) => e.name === 'PartyFinder' && e.body.nudge === true).length, 0);
   w.stop(); w.store.close();
 });

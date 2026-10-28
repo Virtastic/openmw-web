@@ -12,7 +12,8 @@ import type { Player, Roster } from './players';
 import { SocialStore, type AccountKey, type PresenceRow } from './socialstore';
 import type { LValue, LTable, JsLike } from '../proto/lser';
 import { log } from '../log';
-import { MENTOR_MIN_LEVEL, noviceEligible } from './chat';
+import { MENTOR_MIN_LEVEL, NOVICE_MAX_LEVEL, noviceEligible } from './chat';
+import { isChargenCell, parseExterior, cellsVisible } from './movement';
 
 interface SocialTuning {
   requestTtlMs: number;
@@ -72,6 +73,8 @@ type SocialFailure =
 
 /** OT3-106: party size cap. */
 export const PARTY_MAX = 6;
+/** OT3-73: how many looking-for-group players the party finder lists. */
+const FINDER_MAX = 10;
 
 /** How long a presence row stays believable without a refresh. Comfortably longer than the
  *  heartbeat, so a hiccup does not blink everyone offline, and short enough that a world which
@@ -726,6 +729,17 @@ export class Social {
         this.sendFriendList(player);
         return true;
       }
+      case 'SetLfg': {
+        // OT3-73: "looking for a group". In memory on purpose: it means "right now".
+        const on = str('state') === 'on';
+        if (on) this.lfg.add(player.accountKey); else this.lfg.delete(player.accountKey);
+        this.reply(player, 'SetLfg', true, on ? 'on' : 'off');
+        this.sendPartyFinder(player, false);
+        return true;
+      }
+      case 'LfgQuery':
+        this.sendPartyFinder(player, false);
+        return true;
       case 'MentorOptIn': {
         const state = str('state') || str('acct');
         const r = this.setMentor(player, state);
@@ -823,6 +837,8 @@ export class Social {
     if (party && party.members.length >= PARTY_MAX) return 'party_full';
     const id = party?.id ?? this.d.store.createParty(fromAcct, now);
     this.d.store.addPartyMember(id, me, now);
+    this.lfg.delete(me); // found one
+    if (this.d.store.partyOf(fromAcct)!.members.length >= PARTY_MAX) this.lfg.delete(fromAcct);
     this.d.store.removePartyInvite(fromAcct, me);
     this.pushParty(me);
     return 'ok';
@@ -860,6 +876,49 @@ export class Social {
     this.d.store.setPartyLeader(party.id, targetAcct);
     this.pushParty(targetAcct);
     return 'ok';
+  }
+
+  // ------------------------------------------------------------ party finder (OT3-73)
+  private lfg = new Set<AccountKey>();
+
+  /** Called on every cell change. A sprout (below the Novice level) stepping out of the
+   *  chargen cells with no party gets the finder pushed once, flagged as a nudge so the
+   *  overlay opens it; it is the "you are free now, go find people" moment. */
+  onCellChange(player: Player, from: string | undefined, to: string): void {
+    if (player.system || player.bot) return;
+    if (!from || !isChargenCell(from) || isChargenCell(to)) return;
+    if ((this.d.levelOf?.(player) ?? 1) >= NOVICE_MAX_LEVEL) return;
+    if (this.d.store.partyOf(player.accountKey)) return;
+    this.sendPartyFinder(player, true);
+  }
+
+  /** Who is looking for a group and could take this player: online here, flagged LFG, not
+   *  blocked either way, not private, and unpartied or leading a party with room. Nearby
+   *  first (same or visible cell), then lowest level, so sprouts find sprouts. */
+  partyFinder(player: Player): Array<{ acct: string; name: string; level: number; near: boolean }> {
+    const me = player.accountKey;
+    const out: Array<{ acct: string; name: string; level: number; near: boolean }> = [];
+    for (const p of this.d.roster.inWorld()) {
+      const a = p.accountKey;
+      if (a === me || p.system || p.bot || !this.lfg.has(a)) continue;
+      if (this.d.store.blockedEitherWay(me, a) || this.presenceMode(a) === 'private') continue;
+      const party = this.d.store.partyOf(a);
+      if (party && (party.leader !== a || party.members.length >= PARTY_MAX)) continue;
+      const here = player.cellKey, there = p.cellKey;
+      const near = !!here && !!there && (here === there
+        || (parseExterior(here) !== null && parseExterior(there) !== null && cellsVisible(here, there)));
+      out.push({ acct: a, name: p.name, level: this.d.levelOf?.(p) ?? 1, near });
+    }
+    out.sort((x, y) => Number(y.near) - Number(x.near) || x.level - y.level);
+    return out.slice(0, FINDER_MAX);
+  }
+
+  private sendPartyFinder(player: Player, nudge: boolean): void {
+    player.peer.sendEvent('PartyFinder', {
+      nudge,
+      lfg: this.lfg.has(player.accountKey),
+      players: this.partyFinder(player) as unknown as never,
+    });
   }
 
   /** Party accounts for `acct`, itself included; empty when unpartied (for OT3-90 kill credit). */
