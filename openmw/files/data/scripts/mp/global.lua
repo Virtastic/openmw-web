@@ -1302,6 +1302,35 @@ local eventHandlers = {
     MP_PartyFollowPrompt = function(data) toPlayer('MP_PartyFollowPrompt', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
+    -- OT3-177: trade. The window lives on the page (social.lua mirrors it); only the apply
+    -- needs the global script, because only global can create and remove inventory items.
+    MP_TradeAsk = function(data) toPlayer('MP_TradeAsk', data) end,
+    MP_TradeState = function(data) toPlayer('MP_TradeState', data) end,
+    MP_TradeEnd = function(data) toPlayer('MP_TradeEnd', data) end,
+    -- The server already swapped both docs; make this engine match. `short` = what we were
+    -- told to give and no longer held (dropped in the doc's 2 s lag): the server logs it.
+    MP_TradeApply = function(data)
+        local player = playerScript()
+        if not player then return end
+        local inv = types.Actor.inventory(player)
+        local short = {}
+        for _, r in ipairs(data.remove or {}) do
+            local rid, left = worldmp.toLocal(r.id), r.n or 0
+            for _, item in ipairs(inv:getAll()) do
+                if left <= 0 then break end
+                if item.recordId == rid then
+                    local take = math.min(left, item.count or 1)
+                    if pcall(function() item:remove(take) end) then left = left - take end
+                end
+            end
+            if left > 0 then short[#short + 1] = { id = r.id, n = left } end
+        end
+        for _, a in ipairs(data.add or {}) do
+            local ok, obj = pcall(function() return world.createObject(worldmp.toLocal(a.id), a.n or 1) end)
+            if ok then obj:moveInto(inv) else print('[mp] trade: cannot build ' .. tostring(a.id)) end
+        end
+        mp.sendEvent('TradeApplied', { id = data.id, short = short })
+    end,
 
     -- Phase 3: the authoritative self pose stream (S->C). Forward OUR OWN entry to the
     -- player script, which reconciles against it via mp.correctSelf. Remote entries do not
@@ -2508,6 +2537,9 @@ local eventHandlers = {
             SetLfg = true, LfgQuery = true,
             -- OT3-79 group travel.
             PartyTravel = true, PartyFollow = true, PartyFollowDecline = true,
+            -- OT3-177 trade.
+            TradeRequest = true, TradeAccept = true, TradeOffer = true,
+            TradeConfirm = true, TradeCancel = true,
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end

@@ -32,6 +32,8 @@ import { Combat } from './core/combat';
 import { Quests } from './core/quests';
 import { Social } from './core/social';
 import { SocialStore } from './core/socialstore';
+import { Trades, TradeLedger } from './core/trade';
+import type { JsLike } from './proto/lser';
 import { WorldM7 } from './core/m7';
 import { Roster, type Player } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
@@ -688,6 +690,18 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   socialRef = social;
 
+  // OT3-177: the swap writes both docs; the ledger sits next to them in the shared dir.
+  const tradeLedger = new TradeLedger(sharedDir);
+  const trades = new Trades({
+    findByName: (name) => roster.findByName(name),
+    inventoryOf: (charId) => playerStore.getCached(charId)?.inventory ?? [],
+    setInventory: (charId, inv) => playerStore.update(charId, (doc) => { doc.inventory = inv; }, 'now'),
+    send: (p, event, body) => p.peer.sendEvent(event, body as JsLike),
+    ledger: (e) => tradeLedger.write(e),
+    noteAnomaly: (acct, kind) => moderation.noteAnomaly(acct, kind),
+    now: () => Date.now(),
+  });
+
   const contentGate = new ContentGate(config.content.enforce);
   // Approved cosmetic mods (meshes/textures) may differ between players; record-bearing
 
@@ -710,6 +724,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     combat,
     quests,
     social,
+    trades,
     m7,
     admin,
     bans,

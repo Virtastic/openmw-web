@@ -4530,7 +4530,7 @@ window.omw = (function(){
   tx.addEventListener('keydown', function(e){ e.stopPropagation(); chatKey(e); });
 
   // ================================ SOCIAL ================================
-  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '', seenFinderSeq = 0, answeredFollowSeq = 0, seenFollowSeq = 0;
+  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '', seenFinderSeq = 0, answeredFollowSeq = 0, seenFollowSeq = 0, answeredTradeSeq = 0, seenTradeSeq = 0;
   // CHAT VISIBILITY, remembered per browser. Some players want the world without a chat box
   // in the corner, and the only way to get that was not to look at it. localStorage rather
   // than a server setting: it is a per-PERSON display preference, not a property of the
@@ -4627,7 +4627,7 @@ window.omw = (function(){
     // report. Measured before the fix: the input element was replaced 5 times in 2 seconds.
     // The status line is LOCAL state, but this render DRAWS it, so it belongs in the signature.
     var sig = [sTab, sStatusText, m.friends, m.players, m.friendRequests,
-      m.invites, m.availability, m.presenceMode, m.blocked, m.muted, m.party, m.partyInvites, m.partyFinder, m.partyFollow, answeredFollowSeq].join(' ')
+      m.invites, m.availability, m.presenceMode, m.blocked, m.muted, m.party, m.partyInvites, m.partyFinder, m.partyFollow, answeredFollowSeq, m.trade, answeredTradeSeq].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
     var friends = pj(m.friends)||[], players = pj(m.players)||[];
@@ -4683,6 +4683,61 @@ window.omw = (function(){
     sBody.innerHTML = '';
     var sec = el('div');
     if (sTab === 'friends'){
+      // OT3-177: the trade card. Lock your offer, then accept once both locked; any change to
+      // either side unlocks both. The server swaps the items; nothing moves until both accept.
+      var tr = pj(m.trade);
+      if (tr && tr.phase === 'ask' && tr.seq > answeredTradeSeq){
+        var tc = el('div','card');
+        tc.appendChild(el('div','who','<div class="nm">'+esc(tr.from)+'</div><div class="st">wants to trade with you</div>'));
+        [['trade', function(){ cmd('social:TradeAccept:'+tr.from); }, true], ['decline', function(){}]].forEach(function(a){
+          var b = el('button','btn'+(a[2]?' pri':''),a[0]);
+          b.onclick = function(){ answeredTradeSeq = tr.seq; b.disabled = true; a[1](); renderSocial(true); };
+          tc.appendChild(b); });
+        sec.appendChild(tc);
+      }
+      if (tr && tr.phase === 'open'){
+        var lst = function(v){ return Array.isArray(v) ? v : []; };
+        var nameOf = {}; lst(tr.inv).forEach(function(i){ nameOf[String(i.id).toLowerCase()] = i.name; });
+        var line = function(i){ return (i.n > 1 ? i.n+' × ' : '') + esc(nameOf[String(i.id).toLowerCase()] || i.id); };
+        var stage = function(s){ return s === 2 ? 'accepted' : s === 1 ? 'locked' : 'choosing'; };
+        sec.appendChild(el('h3',null,'Trading with '+esc(tr.with)));
+        var cols = el('div'); cols.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px';
+        var mineCol = el('div','card'), theirCol = el('div','card');
+        mineCol.style.display = theirCol.style.display = 'block';
+        mineCol.appendChild(el('div','st','You give · '+stage(tr.myStage)));
+        var offered = {}; lst(tr.mine).forEach(function(i){ offered[String(i.id).toLowerCase()] = i.n; });
+        var inputs = [];
+        lst(tr.inv).slice(0, 60).forEach(function(i){
+          var r = el('div'); r.style.cssText = 'display:flex;justify-content:space-between;gap:6px;margin:2px 0';
+          var q = document.createElement('input'); q.type = 'number'; q.min = 0; q.max = i.n; q.style.width = '4.5em';
+          q.value = offered[String(i.id).toLowerCase()] || 0;
+          q.onkeydown = function(e){ e.stopPropagation(); };
+          r.appendChild(el('span',null,esc(i.name)+(i.n > 1 ? ' ('+i.n+')' : ''))); r.appendChild(q);
+          inputs.push([i.id, q]); mineCol.appendChild(r); });
+        var setB = el('button','btn','Set offer');
+        setB.onclick = function(){
+          var offer = inputs.map(function(x){ return {id: x[0], n: Math.floor(Number(x[1].value) || 0)}; })
+            .filter(function(o){ return o.n > 0; });
+          cmd('social:TradeOffer:'+JSON.stringify(offer)); };
+        mineCol.appendChild(setB);
+        theirCol.appendChild(el('div','st',esc(tr.with)+' gives · '+stage(tr.theirStage)));
+        lst(tr.theirs).forEach(function(i){ theirCol.appendChild(el('div',null,line(i))); });
+        if (!lst(tr.theirs).length) theirCol.appendChild(el('div','empty','Nothing yet.'));
+        cols.appendChild(mineCol); cols.appendChild(theirCol); sec.appendChild(cols);
+        if (tr.myStage === 0){
+          var lk = el('button','btn pri','Lock offer'); lk.onclick = function(){ lk.disabled = true; cmd('social:TradeConfirm:'); };
+          sec.appendChild(lk);
+        } else if (tr.myStage === 1 && tr.theirStage >= 1){
+          var ac = el('button','btn pri','Accept trade');
+          ac.onclick = function(){
+            var give = lst(tr.mine).map(line).join(', ') || 'nothing', get = lst(tr.theirs).map(line).join(', ') || 'nothing';
+            askConfirm('Accept this trade?', 'You give '+give+'.<br>You get '+get+'.', GLYPH_PARTY, 'Accept').then(function(ok){
+              if (ok){ ac.disabled = true; cmd('social:TradeConfirm:'); } }); };
+          sec.appendChild(ac);
+        } else sec.appendChild(el('div','empty', tr.myStage === 2 ? 'Waiting for '+esc(tr.with)+' to accept…' : 'Waiting for '+esc(tr.with)+' to lock their offer…'));
+        var cx = el('button','btn','Cancel trade'); cx.onclick = function(){ cx.disabled = true; cmd('social:TradeCancel:'); };
+        sec.appendChild(cx);
+      }
       reqs.forEach(function(q){ var c = el('div','card');
         c.appendChild(el('div','who','<div class="nm">'+esc(q.name)+'</div><div class="st">wants to be your friend</div>'));
         [['accept', function(){ cmd('social:FriendAccept:'+q.acct); }, true],
@@ -4805,6 +4860,7 @@ window.omw = (function(){
         else if (!p.reqOut) acts.push(['add friend', function(){
           cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true]);
         if (canInvite && !inParty[String(p.name).toLowerCase()]) acts.push(partyInviteAct(p.name));
+        acts.push(['trade', function(){ cmd('social:TradeRequest:'+p.name); setStatus('Asked '+p.name+' to trade (same cell only).'); }]);
         // Everything that targets a PERSON goes by name for the same reason.
         acts.push(['mute', function(){ cmd('social:MuteAdd:'+p.name); }]);
         acts.push(['block', function(){ cmd('social:BlockAdd:'+p.name); }]);
@@ -5239,6 +5295,10 @@ window.omw = (function(){
       // OT3-79: a follow prompt is time-limited, so it opens the panel too.
       var pfw = pj(m.partyFollow);
       if (pfw && pfw.seq > seenFollowSeq){ seenFollowSeq = pfw.seq; sTab = 'friends'; if (!socialOpen) openSocial(); }
+      // OT3-177: a trade ask, and the trade opening, bring the card up.
+      var tro = pj(m.trade);
+      if (tro && tro.seq > seenTradeSeq){ seenTradeSeq = tro.seq;
+        if (tro.phase === 'ask' || (tro.phase === 'open' && !socialOpen)){ sTab = 'friends'; if (!socialOpen) openSocial(); } }
     }
     if (cs > seenChatSeq){ seenChatSeq = cs; lastChatAt = Date.now(); feed.classList.remove('idle'); renderFeed(); persistChat(); }
     // The engine mirrors the server's ack for every social action. Surface it: an action that

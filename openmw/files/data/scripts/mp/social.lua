@@ -38,6 +38,7 @@ local element = nil
 local tab = 'players' -- players | friends | chars
 
 local roster = {} -- everyone in the world: {id, name}
+local trade, tradeSeq = nil, 0 -- OT3-177
 local friends = {} -- {acct, name, online, playerId, cellKey}
 local blocked = {} -- {acct, name}: who I have blocked, so the panel can offer unblock
 local muted = {} -- {acct, name}: who I have muted, so the panel can offer unmute
@@ -424,6 +425,33 @@ return {
                 notice(tostring(partyInvites[data.fromAcct]) .. ' invited you to their party (O)')
                 mirror()
             end
+        end,
+        -- OT3-177: one trade at a time, mirrored whole to the page's trade card.
+        MP_TradeAsk = function(data)
+            tradeSeq = tradeSeq + 1
+            trade = { seq = tradeSeq, phase = 'ask', from = data.fromName }
+            mp.set('trade', json.encode(trade))
+            notice(tostring(data.fromName) .. ' wants to trade (O)')
+        end,
+        MP_TradeState = function(data)
+            -- What we could offer: the page picks from this. Read-only here; the server checks
+            -- every offer against the persisted inventory anyway.
+            local types = require('openmw.types')
+            local inv = {}
+            for _, item in ipairs(types.Actor.inventory(self):getAll()) do
+                local ok, rec = pcall(function() return item.type.record(item) end)
+                inv[#inv + 1] = { id = item.recordId, name = ok and rec and rec.name or item.recordId, n = item.count or 1 }
+            end
+            tradeSeq = tradeSeq + 1
+            trade = { seq = tradeSeq, phase = 'open', with = data.with, mine = data.mine or {},
+                theirs = data.theirs or {}, myStage = data.myStage or 0, theirStage = data.theirStage or 0, inv = inv }
+            mp.set('trade', json.encode(trade))
+        end,
+        MP_TradeEnd = function(data)
+            tradeSeq = tradeSeq + 1
+            trade = { seq = tradeSeq, phase = 'end', ok = data.ok == true, why = data.why }
+            mp.set('trade', json.encode(trade))
+            notice(data.ok == true and 'Trade complete.' or ('Trade ended: ' .. tostring(data.why or 'cancelled')))
         end,
         MP_SocialNotice = function(data)
             status = 'Something changed: ' .. tostring(data.kind or 'notice')

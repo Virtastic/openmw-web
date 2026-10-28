@@ -15,6 +15,7 @@ import { INPUT_DRIVING_MS, PEER_POSE_FRESH_MS } from '../core/players';
 import type { HookBus } from '../plugins/loader';
 import { handleChatSend, serverWhisper, type ChatContext } from '../core/chat';
 import type { Social } from '../core/social';
+import type { Trades } from '../core/trade';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { socketRttMs } from './ws';
@@ -164,6 +165,7 @@ export interface ServerCtx {
   combat: Combat;
   quests: Quests;
   social: Social;
+  trades?: Trades; // OT3-177
   m7: WorldM7;
   // M8 ops.
   admin: Admin;
@@ -559,6 +561,7 @@ export class Connection implements Peer {
       // account still resolves; a reconnect inside the window then cancels it and friends
       // never see a flicker.
       this.ctx.social.onLeave(this.player);
+      this.ctx.trades?.end(this.player, 'left');
       this.ctx.roster.remove(this.player);
       // M6: drop every conversation this player held (same teardown as authority).
       this.ctx.quests.releaseDialogueLocks(this.player.id);
@@ -850,6 +853,7 @@ export class Connection implements Peer {
     // dashboard's POST /admin/api/command (server.ts runCommand -> Admin.exec); a client
     // cannot ask for them. The in-game admin window that sent this is gone with it.
     if (this.ctx.m7.handleEvent(this.player, name, value)) return; // M7 family
+    if (this.ctx.trades?.handleEvent(this.player, name, value)) return; // OT3-177
     if (this.ctx.social.handleEvent(this.player, name, value)) return; // Phase C family
     if (this.ctx.quests.handleEvent(this.player, name, value)) return; // M6 family
     if (this.ctx.combat.handleEvent(this.player, name, value)) return; // M5 family
@@ -1458,6 +1462,7 @@ export class Connection implements Peer {
     if (oldCell !== cellKey && !this.isSystem) this.ctx.quests.sendPersonalDispositions(player, cellKey); // OT3-155
     const prev = player.pose;
     if (oldCell !== cellKey) this.noteShrine(player, oldCell, cellKey, prev, x, y, z);
+    if (oldCell !== cellKey && oldCell !== undefined) this.ctx.trades?.end(player, 'moved');
     player.pose = {
       x, y, z,
       yaw: prev?.yaw ?? 0,

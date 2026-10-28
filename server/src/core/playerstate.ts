@@ -655,6 +655,12 @@ function noteGain(ctx: StateCtx, player: Player, kind: string, detail: Record<st
 function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   const items = tbl(body.get('items'));
   if (!items) return false;
+  // OT3-177: accepted and not persisted while a trade's apply is in flight; the doc already
+  // holds the post-trade inventory and this declaration may predate it.
+  if (player.tradeHoldUntil !== undefined) {
+    if (Date.now() < player.tradeHoldUntil) return true;
+    delete player.tradeHoldUntil;
+  }
   if (items.size > MAX_INVENTORY) {
     // Say WHICH limit and by how much. Refusing the whole inventory is a silent, permanent
     // loss for that character, so it must never be indistinguishable from a malformed body.

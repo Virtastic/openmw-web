@@ -27,6 +27,12 @@ Corrections, each checked against the validator or handler named:
 - `StoryLicense {actors: recordId[], players: {[playerId]: recordId[]}}` server -> world peer
   every 2 s (OT3-164): the story actors, and which of them each in-world human may hurt
   (a kill quest started by them or an online party member). The peer vetoes the rest.
+- Trade (OT3-177), client -> server: `TradeRequest {name}`, `TradeAccept {name}`, `TradeOffer
+  {payload: JSON [{id,n}] <=12 lines}`, `TradeConfirm` (1st = lock, 2nd = accept once both
+  locked; any offer change unlocks both), `TradeCancel`, `TradeApplied {id, short}`. Server ->
+  client: `TradeAsk {fromName}`, `TradeState {id, with, mine, theirs, myStage, theirStage}`,
+  `TradeApply {id, remove, add}` (docs already swapped and ledgered in trades.db; the client's
+  inventory declarations are held until it acks), `TradeEnd {ok, why?}`.
 - `ContainerOpen` first-open caps and the `op="gold"` purse op; `ContainerState.gold`.
 - `DialogueLock` gates (reach, contention, one lock per player) and the 5 s "recently held"
   grace the M4 claims use.

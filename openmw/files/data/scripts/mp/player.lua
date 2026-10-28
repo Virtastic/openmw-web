@@ -732,13 +732,13 @@ local function dispatch(cmd)
             -- server resolves names against its roster and the shared account index.
             local byName = (sop == 'FriendRequest' or sop == 'BlockAdd' or sop == 'FriendAccept'
                 or sop == 'MuteAdd' or sop == 'ReportPlayer' or sop == 'WorldKick'
-                or sop == 'PartyInvite')
+                or sop == 'PartyInvite' or sop == 'TradeRequest' or sop == 'TradeAccept')
             -- The arg does NOT always belong in name/acct. PresenceMode reads `mode` and
             -- SetAvailability reads `state` on the server, so routing their argument into
             -- `acct` meant the server saw an empty value and refused with no_such_player --
             -- silently, because SocialResult is not surfaced. The privacy control had
             -- therefore never worked. Route by what each op actually reads.
-            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state', MentorOptIn = 'state', SetLfg = 'state' }
+            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state', MentorOptIn = 'state', SetLfg = 'state', TradeOffer = 'payload' }
             local field = FIELD[sop]
             local body = { op = sop }
             if field then body[field] = sarg
