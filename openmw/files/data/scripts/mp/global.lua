@@ -496,6 +496,13 @@ local function puppetRecordId(id, name)
         if app.hair and app.hair ~= '' then draft.hair = app.hair end
     end
     local ok, record = pcall(function() return world.createRecord(types.NPC.createRecordDraft(draft)) end)
+    if not ok and app then
+        -- Keep the LOOK before giving it up: an engine that refuses model '' ("Path should start
+        -- with 'meshes\'", 1.7.0-1.7.17) failed every build here, and every player was drawn
+        -- as the template -- a retail game's first NPC record, so everyone was the same Dark Elf.
+        draft.model = nil
+        ok, record = pcall(function() return world.createRecord(types.NPC.createRecordDraft(draft)) end)
+    end
     if not ok then
         -- Bad/foreign record ids in the appearance (content mismatch): fall back to template look.
         -- LOUD: a template body is the wrong race, and race weight changes run speed -- the

@@ -4241,6 +4241,8 @@ do
     g:find("obj:teleport(inviteCellArg(key), tgt, { onGround = false })", 1, true) ~= nil
     and not g:find('rotation = util.transform.rotateZ(e.yaw or 0), onGround = false', 1, true))
   check('puppet records carry no template mwscript', g:find("local draft = { template = template, name = name, mwscript = '', model = '' }", 1, true) ~= nil)
+  check('a refused puppet draft retries without the model before the template look',
+    g:find("if not ok and app then", 1, true) ~= nil and g:find("draft.model = nil", 1, true) ~= nil)
   check('a paralyzed avatar stops its owner (kd)', g:find("getEffect('paralyze')", 1, true) ~= nil)
   local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
   local a = av:find('local placedFatigue = {}', 1, true)

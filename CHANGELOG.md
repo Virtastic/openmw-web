@@ -2,6 +2,13 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.18
+
+**Other players look like themselves again.** Since 1.7.0 every other player in multiplayer was
+drawn with the same stand-in body, which in the retail game is a Dark Elf, whatever race and
+face they had chosen. Each player is now drawn with their own race, sex, head and hair, and a
+Khajiit or Argonian friend has their tail.
+
 ## 1.7.17
 
 **No more purple buildings or holes in the ground on self-hosted servers.** When a game file
