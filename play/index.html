@@ -3357,83 +3357,6 @@ try {
          }
          FS.mkdirTree('/mwdata');
          addRunDependency('mw-data');
-         // Minimal ustar extractor: writes each entry under destPrefix into MEMFS.
-         function untar(buf, destPrefix){
-           var u8 = new Uint8Array(buf), off = 0, n = 0;
-           function str(o,len){ var s=''; for(var i=0;i<len;i++){ var c=u8[o+i]; if(c===0) break; s+=String.fromCharCode(c);} return s; }
-           while (off + 512 <= u8.length){
-             var name = str(off,100);
-             if (name === ''){ off += 512; continue; } // zero/pad block
-             var prefix = str(off+345,155);
-             var full = prefix ? prefix + '/' + name : name;
-             var size = parseInt(str(off+124,12).trim(),8) || 0;
-             var type = u8[off+156];
-             off += 512;
-             // Skip macOS AppleDouble junk (._name) + __MACOSX so OpenMW doesn't try to load them.
-             var base = full.substring(full.lastIndexOf('/') + 1);
-             if (base.indexOf('._') === 0 || full.indexOf('__MACOSX') !== -1){ off += Math.ceil(size/512)*512; continue; }
-             var path = destPrefix + full;
-             if (type === 53){ try { FS.mkdirTree(path); } catch(e){} }        // '5' dir
-             else if (type === 48 || type === 0){                              // '0'/'\0' file
-               var dir = path.substring(0, path.lastIndexOf('/'));
-               try { FS.mkdirTree(dir); } catch(e){}
-               try { FS.writeFile(path, u8.subarray(off, off+size)); n++; } catch(e){}
-             }
-             off += Math.ceil(size/512) * 512;
-           }
-           return n;
-         }
-         // Cache-API-backed fetch with REAL progress: streams the body so the HUD can show
-         // per-file % and cumulative MB (previously a multi-minute blank wait). Downloads once,
-         // then persists across reloads (cache.put ignores the dev server's no-cache headers).
-         // QuotaExceeded on cache.put is non-fatal: skip caching, keep playing.
-         var __dlTotal = 0; // cumulative bytes this session (for the HUD)
-         function fetchStreaming(url){
-           return fetch(url).then(function(r){
-             if(!r.ok) throw url+' HTTP '+r.status;
-             var name = url.split('/').pop();
-             var total = parseInt(r.headers.get('Content-Length')||'0',10);
-             if (!r.body || !r.body.getReader) return r.arrayBuffer().then(function(ab){ return {resp:r, buf:ab}; });
-             var reader = r.body.getReader(), chunks = [], got = 0, lastPct = -10;
-             function pump(){
-               return reader.read().then(function(res){
-                 if (res.done){
-                   var out = new Uint8Array(got), pos = 0;
-                   for (var i=0;i<chunks.length;i++){ out.set(chunks[i], pos); pos += chunks[i].length; }
-                   __dlTotal += got;
-                   return {resp:r, buf:out.buffer};
-                 }
-                 chunks.push(res.value); got += res.value.length;
-                 var pct = total ? Math.floor(got*100/total) : 0;
-                 if (pct >= lastPct + 5){ // update every 5% to keep the log readable
-                   lastPct = pct;
-                   append('[dl] ' + name + ' ' + (total ? pct+'%' : Math.round(got/1048576)+'MB')
-                     + '  (session total ' + Math.round((__dlTotal+got)/1048576) + 'MB)');
-                 }
-                 return pump();
-               });
-             }
-             return pump();
-           });
-         }
-         function grab(url){
-           if (!self.caches) return fetchStreaming(url).then(function(x){ return x.buf; });
-           return caches.open('mwdata-v1').then(function(cache){
-             return cache.match(url).then(function(hit){
-               if (hit){ append('[mw] cache hit '+url); return hit.arrayBuffer(); }
-               return fetchStreaming(url).then(function(x){
-                 return cache.put(url, new Response(x.buf)).then(
-                   function(){ return x.buf; },
-                   function(e){
-                     append('[cache] put failed (' + (e && e.name) + ') — continuing uncached', 'err');
-                     return x.buf;
-                   });
-               });
-             });
-           });
-         }
-         function writeRaw(dest){ return function(b){ FS.writeFile(dest, new Uint8Array(b)); return b.byteLength; }; }
-         function untarInto(label){ return function(b){ var c = untar(b, '/mwdata/'); append('[mw] '+label+': extracted '+c+' files'); }; }
          append('[mw] loading Morrowind (cached after first run)…');
          // Whether a host stages game data is the OPERATOR'S choice, so its absence is an
          // ordinary configuration and not a crash. Without this it surfaced as a 404 mid-chain
@@ -3448,13 +3371,10 @@ try {
          }
          // DISCOVER what the host actually put in mwdata/, instead of demanding a fixed file list.
          // A self-host can drop a real "Data Files" folder there and it just works — base game
-         // only, with expansions, with mods, whatever they own. The old hardcoded chain also
-         // required pre-packed .tar archives that exist in NO retail install, so anyone with a
-         // normal copy hit "file not found" with no way to satisfy it.
+         // only, with expansions, with mods, whatever they own.
          //
          // Everything is StreamFS-mounted (lazy HTTP Range reads), so nothing is resident up
-         // front — a strict improvement on grab()+writeRaw(), which held whole files in MEMFS.
-         // .tar entries are still unpacked, for previously-packed datasets.
+         // front.
          window.__mwRootFiles = new Map(); window.__mwHasVideoBik = false;
          fetch('mwdata-manifest.json')
          .then(function(r){ if (!r.ok) return noGameData('no manifest (HTTP '+r.status+')'); return r.json(); },
@@ -3462,11 +3382,10 @@ try {
          .then(function(list){
            if (!list.length) noGameData('mwdata/ is empty');
            try { StreamFS.init(); } catch(e){ append('[mw] streamfs unavailable: '+e,'err'); }
-           var tars = [], bytes = 0;
+           var bytes = 0;
            list.forEach(function(f){
              bytes += f.s;
              var lower = f.p.toLowerCase();
-             if (/\.tar$/.test(lower)) { tars.push(f.p); return; }
              if (lower.indexOf('/') < 0) window.__mwRootFiles.set(lower, f.p);   // top level = load order
              if (/^video\/.*\.bik$/.test(lower)) window.__mwHasVideoBik = true;
              var dir = f.p.lastIndexOf('/');
@@ -3480,17 +3399,11 @@ try {
              try { StreamFS.mount('/mwdata/' + f.p, 'mwdata/' + encodeURI(f.p) + '?v=2', f.s); }
              catch(e){ append('[mw] mount failed '+f.p+': '+e, 'err'); }
            });
-           append('[mw] mounted '+(list.length-tars.length)+' files from mwdata/ ('
+           append('[mw] mounted '+list.length+' files from mwdata/ ('
                   +Math.round(bytes/1048576)+'MB, streamed on demand)');
-           return tars.reduce(function(p, name){   // legacy packed sets: each holds many loose files
-             return p.then(function(){
-               append('[mw] unpacking '+name+'…');
-               return grab('mwdata/'+name).then(untarInto(name.replace(/\.tar$/,'')));
-             });
-           }, Promise.resolve());
          })
          .then(function(){
-           // Videos play from whatever is mounted (loose Video/*.bik, or an unpacked mwvideo.tar).
+           // Videos play from whatever is mounted (loose Video/*.bik).
            // Playback is cooperative under emscripten (WindowManager::playVideo starts the decode
            // pthreads and returns; Engine::frame drives updateVideoPlayback each tick) — the old
            // blocking-loop futex deadlock is fixed. Originals play via the native Bink decoder
