@@ -34,7 +34,28 @@ const PLAYER_MIGRATIONS = [
     name: '002-erased',
     up: (db: DatabaseSync) => { db.exec('CREATE TABLE erased (key TEXT PRIMARY KEY, at INTEGER NOT NULL)'); },
   },
+  {
+    // OT3-41: ONE WORLD. positions was keyed by world id (priv- worlds, the old public one);
+    // each character now keeps one entry, the place they last stood, under WORLD_ID.
+    name: '003-one-world-positions',
+    up: (db: DatabaseSync) => {
+      const rows = db.prepare(`SELECT key, doc FROM players WHERE json_extract(doc, '$.positions') IS NOT NULL`)
+        .all() as { key: string; doc: string }[];
+      const write = db.prepare('UPDATE players SET doc = ? WHERE key = ?');
+      let before = 0; let after = 0;
+      for (const r of rows) {
+        const doc = JSON.parse(r.doc) as PlayerDoc;
+        const last = mostRecentPosition(doc.positions ?? {});
+        if (last) before++;
+        doc.positions = last ? { [WORLD_ID]: last } : {};
+        if (last) { doc.position = { cellKey: last.cellKey, x: last.x, y: last.y, z: last.z }; after++; }
+        write.run(JSON.stringify(doc), r.key);
+      }
+      log('info', 'players.positions_migrated', { docs: rows.length, before, after });
+    },
+  },
 ];
+import { WORLD_ID } from '../gateway/worlds';
 import { log } from '../log';
 import { timeFlush } from '../metrics';
 
@@ -95,10 +116,8 @@ export interface PlayerDoc {
   // a cell the current world lacks never resolves, which is vanilla's "no mark" answer.
   mark?: { cell: string; x: number; y: number; z: number };
   position?: { cellKey: string; x: number; y: number; z: number };
-  // Character slots: one doc per CHARACTER, shared across worlds — but a position only
-  // makes sense in the world it was recorded in. positions is keyed by world id;
-  // `position` stays as this world's materialized view (set on load, folded back on
-  // flush) so every existing caller keeps working untouched.
+  // Keyed by world id for the wire/launcher, but ONE WORLD (OT3-41): a flush keeps only this
+  // world's entry, and a load takes the most recent one. `position` is the materialized view.
   positions?: Record<string, { cellKey: string; x: number; y: number; z: number; at?: string }>;
   // M6: this player's own view. Always written (even in shared mode, so a family can be
   // switched to individual later without losing history); relayed only per [sharing].
@@ -321,28 +340,14 @@ export class PlayerStore {
     return loaded;
   }
 
-  // `position` in memory is always THIS world's position. A doc written by another world
-  // must not teleport the player here; absent an entry for this world the player gets the
-  // default spawn (no position at all).
+  // One world (OT3-41): the position is where the character last stood, whatever world key
+  // wrote it. No entry at all leaves the default spawn.
   private materializePosition(doc: PlayerDoc): void {
-    if (doc.positions) {
-      const mine = doc.positions[this.worldId];
-      // The `at` stamp is the map's, not the pose's: it must not ride into the Welcome.
-      if (mine) { doc.position = { cellKey: mine.cellKey, x: mine.x, y: mine.y, z: mine.z }; return; }
-      // NEVER "no position at all". Deleting it left the client to the engine's own default,
-      // which put a player switching to the public world at exterior cell 0,0 — the grid
-      // ORIGIN, open sea. They drowned there and the respawn point then threw them somewhere
-      // else again. The log says exactly that: join_world -> cell_change 0,0 -> death.
-      //
-      // The original rule ("a doc written by another world must not teleport the player
-      // here") was guarding a real hazard but over-corrected: this is the SAME character
-      // walking into another instance of the SAME world, so the honest answer for a world
-      // they have never visited is where they last stood, not nowhere. Every world here runs
-      // the same content, so the cell resolves.
-      const seeded = mostRecentPosition(doc.positions);
-      if (seeded) doc.position = { cellKey: seeded.cellKey, x: seeded.x, y: seeded.y, z: seeded.z };
-      else delete doc.position;
-    }
+    if (!doc.positions) return;
+    const last = doc.positions[this.worldId] ?? mostRecentPosition(doc.positions);
+    // The `at` stamp is the map's, not the pose's: it must not ride into the Welcome.
+    if (last) doc.position = { cellKey: last.cellKey, x: last.x, y: last.y, z: last.z };
+    else delete doc.position;
   }
 
   /** This character has left THIS world. Flush first, then forget it.
@@ -423,14 +428,13 @@ export class PlayerStore {
     }
     const live = this.livePosition(key);
     if (live) doc.position = { ...live };
-    // Fold this world's position back into the per-world map before it hits disk, so a doc
-    // shared across worlds never clobbers another world's position with ours.
+    // One entry (OT3-41): the position replaces the map rather than joining it.
     // STAMPED, because "where you last stood" needs to know WHEN. Seeding a world you have
     // never visited picks the most recent entry, and with no timestamp that silently degraded
     // to object insertion order — which does NOT move when an existing key is rewritten, so a
     // player with several worlds could be seeded from the oldest one they had ever entered.
     if (doc.position) {
-      (doc.positions ??= {})[this.worldId] = { ...doc.position, at: new Date().toISOString() };
+      doc.positions = { [this.worldId]: { ...doc.position, at: new Date().toISOString() } };
     }
     try {
       await timeFlush('players', async () =>

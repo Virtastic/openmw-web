@@ -8,7 +8,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { PlayerStore } from '../src/persist/playerstore';
+import { DatabaseSync } from 'node:sqlite';
+import { PlayerStore, type PlayerDoc } from '../src/persist/playerstore';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
@@ -121,10 +122,15 @@ test('CharacterCreate: adds a slot, enforces name rules and the cap; new slot is
   c3.close();
 });
 
-test('shared character doc keeps per-world positions apart', async () => {
+// `at` is a flush timestamp (see playerstore); these tests are about WHERE, so drop it.
+const where = (p?: { cellKey: string; x: number; y: number; z: number }): unknown =>
+  p && { cellKey: p.cellKey, x: p.x, y: p.y, z: p.z };
+
+// OT3-41: one world, one position. Whichever store wrote last is where the character stands,
+// and a flush leaves one entry, not one per world id.
+test('one world: the last position written wins and a flush keeps one entry', async () => {
   const dataDir = tmpDataDir();
   const charId = 'c00112233445566778899aabb';
-
   const w1 = new PlayerStore(dataDir, 'world-a');
   w1.update(charId, (doc) => {
     doc.stats = { level: 5 };
@@ -132,35 +138,47 @@ test('shared character doc keeps per-world positions apart', async () => {
   });
   await w1.close();
 
-  // Another world sees the character (stats) and is SEEDED from where they last stood.
-  // This used to assert `position === undefined` — "a doc from another world must not
-  // teleport the player here". Right hazard, wrong cure: it left the client on the engine's
-  // own default and dropped a player switching to the public world at exterior 0,0, the grid
-  // origin, in open sea, where they drowned. They are the same character walking into another
-  // instance of the same content, so seeding is correct. The property that MATTERS — one
-  // world's write never clobbers another's — is asserted below and still holds.
   const w2 = new PlayerStore(dataDir, 'world-b');
-  const seenByB = await w2.get(charId);
-  assert.equal(seenByB?.stats?.level, 5);
-  // `at` is a flush timestamp (see playerstore); these tests are about WHERE, so drop it.
-  const where = (p?: { cellKey: string; x: number; y: number; z: number }): unknown =>
-    p && { cellKey: p.cellKey, x: p.x, y: p.y, z: p.z };
-  assert.deepEqual(where(seenByB?.position), { cellKey: '1,1', x: 10, y: 20, z: 30 });
+  const seen = await w2.get(charId);
+  assert.equal(seen?.stats?.level, 5);
+  assert.deepEqual(where(seen?.position), { cellKey: '1,1', x: 10, y: 20, z: 30 });
   w2.update(charId, (doc) => (doc.position = { cellKey: '9,9', x: 1, y: 1, z: 1 }));
   await w2.close();
 
-  // world-a still has its own position; world-b's write did not clobber it.
-  const w1again = new PlayerStore(dataDir, 'world-a');
-  const seenByA = await w1again.get(charId);
-  assert.deepEqual(where(seenByA?.position), { cellKey: '1,1', x: 10, y: 20, z: 30 });
-  await w1again.close();
-
-  const w2again = new PlayerStore(dataDir, 'world-b');
-  const seenByB2 = await w2again.get(charId);
-  assert.deepEqual(where(seenByB2?.position), { cellKey: '9,9', x: 1, y: 1, z: 1 });
-  await w2again.close();
+  const again = new PlayerStore(dataDir, 'world-a');
+  assert.deepEqual(where((await again.get(charId))?.position), { cellKey: '9,9', x: 1, y: 1, z: 1 });
+  await again.close();
+  assert.deepEqual(Object.keys((readPlayerDoc(dataDir, charId) as PlayerDoc | undefined)?.positions ?? {}), ['world-b']);
 });
 
+// OT3-41: docs written while there were many worlds collapse to the one they last stood in,
+// and no character with a position loses it.
+test('migration 003 collapses per-world positions to the most recent one', async () => {
+  const dataDir = tmpDataDir();
+  mkdirSync(dataDir, { recursive: true });
+  const db = new DatabaseSync(join(dataDir, 'players.db'));
+  db.exec(`CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, appliedAt TEXT NOT NULL);
+    CREATE TABLE players (key TEXT PRIMARY KEY, doc TEXT NOT NULL);
+    CREATE TABLE erased (key TEXT PRIMARY KEY, at INTEGER NOT NULL);
+    INSERT INTO schema_migrations VALUES ('001-players', 'x'), ('002-erased', 'x');`);
+  const put = db.prepare('INSERT INTO players VALUES (?, ?)');
+  put.run('cA', JSON.stringify({ positions: {
+    'priv-abc': { cellKey: 'Balmora', x: 1, y: 2, z: 3, at: '2026-10-01T00:00:00Z' },
+    public: { cellKey: '-2,-9', x: 4, y: 5, z: 6, at: '2026-10-20T00:00:00Z' },
+  } }));
+  put.run('cB', JSON.stringify({ positions: { 'priv-x': { cellKey: 'Ald-ruhn', x: 7, y: 8, z: 9 } } }));
+  put.run('cC', JSON.stringify({ stats: { level: 1 } }));
+  db.close();
+
+  const store = new PlayerStore(dataDir, 'vvardenfell');
+  await store.close();
+  const a = (readPlayerDoc(dataDir, 'cA') as PlayerDoc | undefined);
+  const b = (readPlayerDoc(dataDir, 'cB') as PlayerDoc | undefined);
+  assert.deepEqual(Object.keys(a?.positions ?? {}), ['vvardenfell']);
+  assert.deepEqual(where(a?.positions?.['vvardenfell']), { cellKey: '-2,-9', x: 4, y: 5, z: 6 });
+  assert.deepEqual(where(b?.positions?.['vvardenfell']), { cellKey: 'Ald-ruhn', x: 7, y: 8, z: 9 });
+  assert.equal((readPlayerDoc(dataDir, 'cC') as PlayerDoc | undefined)?.positions, undefined);
+});
 
 // Regression: a player who FINISHED creation (race/class/sign chosen, appearance sent) but
 // whose ChargenComplete flag never reached the server must not lose the character. An earlier
