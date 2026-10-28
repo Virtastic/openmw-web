@@ -316,6 +316,19 @@ test('a rest moves only the resting character clock offset, never the world cloc
   await s.closed;
 });
 
+// OT3-112: a jail sentence is a server timer; it releases the player and never moves the clock.
+test('a jailed player is released by a server timer and the world clock does not move', async (t) => {
+  const { server } = await boot(t);
+  const { c: a } = await join(server, 'Convict');
+  await a.waitEvent('WorldTime');
+  const before = server.api.world.time();
+  a.sendEvent('WorldTimeRequest', { advanceHours: 48, reason: 'jail' });
+  await a.waitEvent('ChatMessage', (v) => /served your sentence/.test((v as { text?: string }).text ?? ''));
+  assert.deepEqual(server.api.world.time(), before, 'a jail sentence moved the shared clock');
+  a.close();
+  await a.closed;
+});
+
 test('a client cannot invent an unlimited number of weather regions', async (t) => {
   // Regions are DECLARED by the client and cannot be validated -- cell->region lives in the
   // content files this server never reads. That is the same hole the per-session cell bound
