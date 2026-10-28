@@ -11,6 +11,9 @@
 //
 // Reads stay in memory because isIpBanned runs on every accept; SQLite is the durable side,
 // not the read path.
+//
+// OT3-187: a ban may carry `until` (ISO). An expired ban lifts itself on the next read, in
+// whichever process reads it first, and logs ban.expired; no timer needed.
 
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -22,6 +25,7 @@ export interface BanEntry {
   by: string; // admin account name
   at: string; // ISO timestamp
   reason: string;
+  until?: string; // ISO; absent = permanent
 }
 
 interface BansDoc {
@@ -43,7 +47,11 @@ const MIGRATIONS = [
       )`);
     },
   },
+  { name: '002-ban-until', up: (db: DatabaseSync) => db.exec('ALTER TABLE bans ADD COLUMN until TEXT') },
 ];
+
+const live = (e: BanEntry | undefined, now = Date.now()): boolean =>
+  !!e && (e.until === undefined || Date.parse(e.until) > now);
 
 export class BanStore {
   private readonly db: DatabaseSync;
@@ -56,11 +64,11 @@ export class BanStore {
   }
 
   private load(): void {
-    const rows = this.db.prepare('SELECT scope, key, by, at, reason FROM bans').all() as
-      { scope: string; key: string; by: string; at: string; reason: string }[];
+    const rows = this.db.prepare('SELECT scope, key, by, at, reason, until FROM bans').all() as
+      { scope: string; key: string; by: string; at: string; reason: string; until: string | null }[];
     for (const r of rows) {
       const target = r.scope === 'ip' ? this.doc.ips : this.doc.accounts;
-      target[r.key] = { by: r.by, at: r.at, reason: r.reason };
+      target[r.key] = { by: r.by, at: r.at, reason: r.reason, ...(r.until ? { until: r.until } : {}) };
     }
   }
 
@@ -75,17 +83,23 @@ export class BanStore {
   private lookupStmt: ReturnType<DatabaseSync['prepare']> | undefined;
 
   private read(scope: 'account' | 'ip', key: string): BanEntry | undefined {
+    const target = scope === 'ip' ? this.doc.ips : this.doc.accounts;
+    let entry: BanEntry | undefined;
     try {
       this.lookupStmt ??= this.db.prepare(
-        'SELECT by, at, reason FROM bans WHERE scope = ? AND key = ?');
+        'SELECT by, at, reason, until FROM bans WHERE scope = ? AND key = ?');
       const row = this.lookupStmt.get(scope, key) as
-        { by: string; at: string; reason: string } | undefined;
-      if (row) return { by: row.by, at: row.at, reason: row.reason };
+        { by: string; at: string; reason: string; until: string | null } | undefined;
+      entry = row && { by: row.by, at: row.at, reason: row.reason, ...(row.until ? { until: row.until } : {}) };
     } catch {
-      // A read failure must not open the door: fall back to the snapshot below.
+      // A read failure must not open the door: fall back to the snapshot.
+      entry = target[key];
     }
-    const target = scope === 'ip' ? this.doc.ips : this.doc.accounts;
-    return target[key];
+    if (!entry || live(entry)) return entry;
+    delete target[key];
+    this.remove(scope, key);
+    log('info', 'ban.expired', { scope, key: scope === 'ip' ? '(ip)' : key, by: entry.by, until: entry.until });
+    return undefined;
   }
 
   isAccountBanned(name: string): BanEntry | undefined {
@@ -96,9 +110,9 @@ export class BanStore {
     return this.read('ip', ip);
   }
 
-  banAccount(name: string, by: string, reason: string): void {
+  banAccount(name: string, by: string, reason: string, until?: number): void {
     const key = name.toLowerCase();
-    const entry = { by, at: new Date().toISOString(), reason };
+    const entry = { by, at: new Date().toISOString(), reason, ...(until ? { until: new Date(until).toISOString() } : {}) };
     this.doc.accounts[key] = entry;
     this.put('account', key, entry);
   }
@@ -112,8 +126,8 @@ export class BanStore {
     return true;
   }
 
-  banIp(ip: string, by: string, reason: string): void {
-    const entry = { by, at: new Date().toISOString(), reason };
+  banIp(ip: string, by: string, reason: string, until?: number): void {
+    const entry = { by, at: new Date().toISOString(), reason, ...(until ? { until: new Date(until).toISOString() } : {}) };
     this.doc.ips[ip] = entry;
     this.put('ip', ip, entry);
   }
@@ -126,18 +140,18 @@ export class BanStore {
   }
 
   listAccounts(): string[] {
-    return Object.keys(this.doc.accounts);
+    return Object.keys(this.doc.accounts).filter((k) => live(this.doc.accounts[k]));
   }
 
   listIps(): string[] {
-    return Object.keys(this.doc.ips);
+    return Object.keys(this.doc.ips).filter((k) => live(this.doc.ips[k]));
   }
 
   private put(scope: 'account' | 'ip', key: string, e: BanEntry): void {
     this.run(() =>
       this.db
-        .prepare('INSERT OR REPLACE INTO bans (scope, key, by, at, reason) VALUES (?, ?, ?, ?, ?)')
-        .run(scope, key, e.by, e.at, e.reason),
+        .prepare('INSERT OR REPLACE INTO bans (scope, key, by, at, reason, until) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(scope, key, e.by, e.at, e.reason, e.until ?? null),
     );
   }
 

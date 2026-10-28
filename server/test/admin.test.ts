@@ -97,7 +97,7 @@ test('rank gating', async (t) => {
     for (const r of ['2', '3']) {
       assert.match(await slash(owner, `/setrank Victim ${r}`, /is now/), /is now/);
       for (const cmd of ['kick', 'ban', 'ipban', 'mute']) {
-        const answer = await slash(player, `/${cmd} Victim${cmd === 'mute' ? ' perm' : ''}`, /not below your rank|usage|not available/);
+        const answer = await slash(player, `/${cmd} Victim${cmd === 'mute' ? ' perm' : ' griefing'}`, /not below your rank|usage|not available/);
         assert.match(answer, /not below your rank|not available/, `/${cmd} on rank ${r}: ${answer}`);
       }
     }
@@ -111,7 +111,7 @@ test('rank gating', async (t) => {
     assert.match(await slash(owner, '/kick Nobody', /No player named "Nobody"/), /No player named "Nobody"/);
     assert.match(await slash(owner, '/give Victim gold_001 0 oops', /count must be an integer/), /count must be an integer/);
     assert.match(await slash(owner, '/setrank Victim 9', /usage: \/setrank/), /usage: \/setrank/);
-    assert.match(await slash(owner, '/ban Nobody', /No account named/), /No account named/);
+    assert.match(await slash(owner, '/ban Nobody griefing', /No account named/), /No account named/);
   });
 
   await t.test('/console is owner-only, delivered, and disable-able', async () => {
@@ -145,6 +145,8 @@ test('bans', async (t) => {
 
   await t.test('a banned account is kicked and refused on reconnect', async () => {
     const { c: bad } = await join(server, 'Griefer');
+    assert.match(await slash(owner, '/ban Griefer', /usage/), /usage: \/ban/, 'OT3-187: a ban needs a reason');
+    assert.match(await slash(owner, '/ban Griefer 1h', /usage/), /usage: \/ban/, 'a span is not a reason');
     assert.match(await slash(owner, '/ban Griefer spawn camping', /Banned Griefer: spawn camping/), /Banned Griefer: spawn camping/);
     const kicked = await bad.waitDisconnect('BANNED');
     assert.match(String(kicked['detail']), /spawn camping/);

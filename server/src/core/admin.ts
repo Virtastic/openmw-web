@@ -55,6 +55,8 @@ function outranks(rank: number, name: string, actor: Player): boolean {
 }
 
 const MAX_ARG = 256;
+const BAN_USAGE = '/ban <account> [30m|12h|7d|perm] <reason>';
+const IPBAN_USAGE = '/ipban <player|ip> [30m|12h|7d|perm] <reason>';
 const MAX_SCRIPT = 4096;
 // A4: an admin answer is whispered line-by-line over the chat tier, so an unbounded
 // /chatlog would be a self-inflicted flood. Bound the reply, not the stored data.
@@ -412,22 +414,25 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
   },
   ban: {
     minRank: 2,
-    usage: '/ban <account> [reason]',
-    help: 'ban an account (kicks them if online)',
+    usage: BAN_USAGE,
+    help: 'ban an account (kicks them if online); a timed ban lifts itself',
     async run(ctx, actor, args) {
       const name = arg(args, 0);
-      if (!name) return 'usage: /ban <account> [reason]';
+      const terms = banTerms(args);
+      if (!name || !terms) return `usage: ${BAN_USAGE}`;
+      const { reason, until } = terms;
       const account = await ctx.accounts.get(ctx.accounts.keyForUsername(name) ?? name);
       if (!account) return `No account named "${name}".`;
       const online = ctx.roster.findByName(account.name);
       if (outranks(Math.max(online?.rank ?? 0, account.rank), account.name, actor)) return `${account.name} is not below your rank.`;
-      const reason = args.slice(1).join(' ').slice(0, MAX_ARG) || `banned by ${actor.name}`;
-      ctx.bans.banAccount(account.name, actor.name, reason);
-      ctx.accounts.setBanned(account.name, true);
+      ctx.bans.banAccount(account.name, actor.name, reason, until);
+      // The account flag is the permanent marker only: a timed ban lives in bans.db alone, so
+      // it can lift itself there (every login path checks bans.db too).
+      ctx.accounts.setBanned(account.name, !until);
       ctx.resume.revokeAccount(account.name.toLowerCase()); // no rejoin-in-place for a banned account
       online?.peer.disconnect('BANNED', reason);
-      audit(actor, 'ban', { target: account.name, reason });
-      return `Banned ${account.name}: ${reason}`;
+      audit(actor, 'ban', { target: account.name, reason, until: until ? new Date(until).toISOString() : 'perm' });
+      return `Banned ${account.name}${forSpan(until)}: ${reason}`;
     },
   },
   unban: {
@@ -450,20 +455,21 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
   },
   ipban: {
     minRank: 2,
-    usage: '/ipban <player|ip> [reason]',
-    help: 'ban the address of an online player, or a literal IP',
+    usage: IPBAN_USAGE,
+    help: 'ban the address of an online player, or a literal IP; a timed ban lifts itself',
     run(ctx, actor, args) {
       const who = arg(args, 0);
-      if (!who) return 'usage: /ipban <player|ip> [reason]';
+      const terms = banTerms(args);
+      if (!who || !terms) return `usage: ${IPBAN_USAGE}`;
+      const { reason, until } = terms;
       const target = ctx.roster.findByName(who);
       const ip = target?.ip ?? who;
       if (target && outranks(target.rank, target.name, actor)) return `${target.name} is not below your rank.`;
       if (!target && !looksLikeIp(who)) return `No online player named "${who}" and "${who}" is not an IP.`;
-      const reason = args.slice(1).join(' ').slice(0, MAX_ARG) || `ip-banned by ${actor.name}`;
-      ctx.bans.banIp(ip, actor.name, reason);
+      ctx.bans.banIp(ip, actor.name, reason, until);
       for (const p of ctx.roster.inWorld()) if (p.ip === ip) p.peer.disconnect('BANNED', reason);
-      audit(actor, 'ipban', { ip, target: target?.name, reason });
-      return `IP-banned ${ip}: ${reason}`;
+      audit(actor, 'ipban', { ip, target: target?.name, reason, until: until ? new Date(until).toISOString() : 'perm' });
+      return `IP-banned ${ip}${forSpan(until)}: ${reason}`;
     },
   },
   setrank: {
@@ -505,6 +511,23 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
     },
   },
 };
+
+// OT3-187: `<who> [30m|12h|7d|perm] <reason>`. The reason is mandatory; no span = permanent.
+// Parsed from the joined rest so the dashboard's one free-text field ("1d spamming") works too.
+const SPAN_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 };
+const MAX_BAN_MS = 365 * 86_400_000;
+export function banTerms(args: string[], now = Date.now()): { reason: string; until?: number } | undefined {
+  const rest = args.slice(1).join(' ').trim();
+  const m = /^(perm|(\d+)([mhd]))(?:\s+|$)/i.exec(rest);
+  const reason = (m ? rest.slice(m[0].length) : rest).trim().slice(0, MAX_ARG);
+  if (!reason) return undefined;
+  if (!m || m[1]!.toLowerCase() === 'perm') return { reason };
+  const ms = Number(m[2]) * SPAN_MS[m[3]!.toLowerCase()]!;
+  if (!(ms > 0 && ms <= MAX_BAN_MS)) return undefined;
+  return { reason, until: now + ms };
+}
+const forSpan = (until?: number): string =>
+  until ? ` until ${new Date(until).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '';
 
 function looksLikeIp(s: string): boolean {
   // Both alternatives REQUIRE a separator. Without it, any name spelled in hex ("Facade",
