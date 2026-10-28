@@ -369,8 +369,9 @@ test('a full authorization-code + PKCE round trip creates an account and logs in
 
     const { client, welcome } = await joinWithTicket(h, out.ticket!);
     assert.equal(typeof welcome['sessionToken'], 'string');
-    assert.deepEqual(await onlineNames(h), ['Nerevarine']);
-    assert.deepEqual(await accountNames(h.dataDir), ['nerevarine.json']);
+    const [online] = await onlineNames(h);
+    assert.match(online!, /^Outlander-[0-9a-f]{6}$/);
+    assert.deepEqual(await accountNames(h.dataDir), [`${online!.toLowerCase()}.json`]);
     client.close();
   });
 });
@@ -399,19 +400,21 @@ test('identities are keyed on (iss,sub), never on email', async (t) => {
     const other = await ssoLogin(h, { sub: 'sub-other', nameHint: 'Player Two', email: 'before@example.com' });
     assert.ok(other.ticket, other.location);
     const c = await joinWithTicket(h, other.ticket!);
-    assert.deepEqual(await onlineNames(h), ['Player Two']);
+    const [online] = await onlineNames(h);
+    assert.notEqual(online, name);
+    assert.match(online!, /^Outlander-[0-9a-f]{6}$/);
     assert.equal((await accountNames(h.dataDir)).length, 2);
     c.client.close();
     await c.client.closed;
   });
 
-  await t.test('a display-name claim that collides gets a suffix, never the other account', async () => {
-    const collide = await ssoLogin(h, { sub: 'sub-collide', nameHint: name });
-    assert.ok(collide.ticket, collide.location);
-    const d = await joinWithTicket(h, collide.ticket!);
+  await t.test("the provider's name claim is never shown to other players (OT3-24)", async () => {
+    const r = await ssoLogin(h, { sub: 'sub-realname', nameHint: 'Jane Doe' });
+    assert.ok(r.ticket, r.location);
+    const d = await joinWithTicket(h, r.ticket!);
     const online = (await onlineNames(h))[0]!;
-    assert.notEqual(online, name);
-    assert.match(online, new RegExp(`^${name}-\\d+$`));
+    assert.ok(!/jane|doe/i.test(online), `leaked the provider name: ${online}`);
+    assert.ok(!(await accountNames(h.dataDir)).some((n) => /jane|doe/i.test(n)));
     d.client.close();
     await d.client.closed;
   });
@@ -422,7 +425,7 @@ test('identities are keyed on (iss,sub), never on email', async (t) => {
     const j = await joinWithTicket(h, e.ticket!);
     const online = (await onlineNames(h))[0]!;
     assert.ok(!online.includes('@') && !online.toLowerCase().includes('someone'), `leaked the email: ${online}`);
-    assert.match(online, /^Google-[0-9a-f]{6}$/);
+    assert.match(online, /^Outlander-[0-9a-f]{6}$/);
     j.client.close();
     await j.client.closed;
   });
@@ -550,6 +553,7 @@ test('a banned account is refused through the SSO path', async (t) => {
   const first = await ssoLogin(h, { sub: 'ban-me', nameHint: 'Troublemaker' });
   assert.ok(first.ticket, first.location);
   const joined = await joinWithTicket(h, first.ticket!);
+  const banned = (await onlineNames(h))[0]!;
   joined.client.close();
   await joined.client.closed;
 
@@ -560,7 +564,7 @@ test('a banned account is refused through the SSO path', async (t) => {
   // Through the one gate the dashboard uses; there is no typed command path.
   const ownerPlayer = h.server.roster.activeForAccount('owner');
   assert.ok(ownerPlayer, 'the owner is a joined player');
-  assert.match(await h.server.admin.exec(ownerPlayer, 'ban', ['Troublemaker', 'cheating']), /banned/i);
+  assert.match(await h.server.admin.exec(ownerPlayer, 'ban', [banned, 'cheating']), /banned/i);
 
   await t.test('an already-minted ticket is refused with BANNED at redemption', async () => {
     await refuseTicket(h, stale.ticket!, 'BANNED');
@@ -588,6 +592,7 @@ test('one account, several providers', async (t) => {
   assert.ok(first.ticket, first.location);
   const { client, welcome } = await joinWithTicket(h, first.ticket!);
   const sessionToken = welcome['sessionToken'] as string;
+  const linker = (await onlineNames(h))[0]!;
 
   await t.test('linking requires a live game session', async () => {
     const res = await fetch(`${h.base}/auth/link/discord`, { redirect: 'manual' });
@@ -630,8 +635,8 @@ test('one account, several providers', async (t) => {
     const viaGoogle = await ssoLogin(h, { sub: 'google-sub-1' }, 'discord', h.idp2);
     assert.ok(viaGoogle.ticket, viaGoogle.location);
     const back = await joinWithTicket(h, viaGoogle.ticket!);
-    assert.deepEqual(await onlineNames(h), ['Linker']);
-    assert.deepEqual(await accountNames(h.dataDir), ['linker.json']);
+    assert.deepEqual(await onlineNames(h), [linker]);
+    assert.deepEqual(await accountNames(h.dataDir), [`${linker.toLowerCase()}.json`]);
     back.client.close();
     await back.client.closed;
   });
@@ -655,7 +660,7 @@ test('one account, several providers', async (t) => {
     session2.client.close();
     await session2.client.closed;
     const back = await joinWithTicket(h, viaGoogle.ticket!);
-    assert.deepEqual(await onlineNames(h), ['Linker']);
+    assert.deepEqual(await onlineNames(h), [linker]);
     back.client.close();
     await back.client.closed;
   });
@@ -688,13 +693,14 @@ test('password login is unaffected, and cannot be used against an SSO-only accou
     const out = await ssoLogin(h, { sub: 'pw-1', nameHint: 'Passwordless' });
     assert.ok(out.ticket, out.location);
     const { client } = await joinWithTicket(h, out.ticket!);
+    const ssoName = (await onlineNames(h))[0]!;
     client.close();
     await client.closed;
     for (const password of ['', 'hunter22', 'anything']) {
       const c = await TestClient.connect(h.server.port);
       c.hello();
       await c.waitJson('SessionHelloOk');
-      c.login('Passwordless', password);
+      c.login(ssoName, password);
       // AUTH_FAILED, not an internal error: an absent pwHash must not throw into argon2.
       const msg = await c.waitDisconnect('AUTH_FAILED');
       assert.match(String(msg['detail']), /unknown account or wrong password/);
@@ -726,7 +732,7 @@ test('requireSso forces SSO-only: register AND password login are both refused',
   const out = await ssoLogin(h, { sub: 'require-sso-1', nameHint: 'Legit' });
   assert.ok(out.ticket, out.location);
   const { client } = await joinWithTicket(h, out.ticket!);
-  assert.deepEqual(await onlineNames(h), ['Legit']);
+  assert.match((await onlineNames(h))[0]!, /^Outlander-/);
   client.close();
 });
 
@@ -747,7 +753,7 @@ test('an SSO-only server can turn the password path off', async (t) => {
     const out = await ssoLogin(h, { sub: 'sso-only-1', nameHint: 'Modern' });
     assert.ok(out.ticket, out.location);
     const { client } = await joinWithTicket(h, out.ticket!);
-    assert.deepEqual(await onlineNames(h), ['Modern']);
+    assert.match((await onlineNames(h))[0]!, /^Outlander-/);
     client.close();
   });
 
@@ -778,7 +784,7 @@ test('SSO respects the server registration policy', async (t) => {
     const code = h.idp.issueCode(authorize, { sub: 'invite-2', nameHint: 'Invited' });
     const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
     assert.ok(fragment(res.headers.get('location')).get('mpticket'), res.headers.get('location') ?? '');
-    assert.deepEqual(await accountNames(h.dataDir), ['invited.json']);
+    assert.equal((await accountNames(h.dataDir)).length, 1);
   });
 
   await t.test('the invite passphrase cannot be brute-forced: guesses run out, then even the right one is refused', async (tt) => {
@@ -910,7 +916,7 @@ test('SSO into the admin dashboard: role required, session lands as /admin#t=', 
   const listed = await (await fetch(`${h.base}/admin/api/accounts`, {
     headers: { authorization: `Bearer ${ownerToken}` },
   })).json() as { accounts: { name: string }[] };
-  const ssoAccount = listed.accounts.find((a) => a.name === 'DashUser');
+  const ssoAccount = listed.accounts.find((a) => a.name.startsWith('Outlander-'));
   assert.ok(ssoAccount, 'the failed attempt still created the game account');
   assert.equal((await fetch(`${h.base}/admin/api/accounts/role`, {
     method: 'POST',

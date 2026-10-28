@@ -91,42 +91,13 @@ export class IdentityStore {
 
 // ------------------------------------------------------------- display names
 
-const PROVIDER_LABEL: Record<ProviderId, string> = {
-  discord: 'Discord',
-  google: 'Google',
-};
-
-// Never the email — it is mutable, it is not ours to publish in a player list, and it is
-// exactly the identifier we refuse to key on. Anything email-shaped is dropped outright,
-// then the hint is reduced to the account charset.
-function sanitizeHint(hint: string | undefined): string {
-  if (!hint || hint.includes('@')) return '';
-  const cleaned = hint
-    .replace(/[^A-Za-z0-9_ -]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 24)
-    .trim();
-  return validAccountName(cleaned) ? cleaned : '';
-}
-
-// A display name that cannot collide with an existing account. The provider hint is only
-// a suggestion: whoever registered a password account with that name owns it, so an SSO
-// arrival gets a suffix instead of stealing it.
-async function pickDisplayName(accounts: AccountStore, provider: ProviderId, hint: string | undefined): Promise<string> {
-  const base = sanitizeHint(hint);
-  if (base !== '' && !(await accounts.get(base))) return base;
-  if (base !== '') {
-    for (let n = 2; n <= 99; n++) {
-      const suffix = `-${n}`;
-      const candidate = `${base.slice(0, 24 - suffix.length).trim()}${suffix}`;
-      if (validAccountName(candidate) && !(await accounts.get(candidate))) return candidate;
-    }
-  }
-  // Fallback: label + random. 6 hex is 16.7M per label, and we retry, so a collision here
-  // is not a failure mode worth a second index.
+// NEVER THE PROVIDER'S NAME (OT3-24). The account name is what other players see when no
+// handle has been chosen, and the provider's display claim is usually a real name. The
+// account starts as a generated handle; the player picks a public one in ProfileSetup.
+// 6 hex is 16.7M names and we retry, so a collision is not a failure mode worth an index.
+async function pickDisplayName(accounts: AccountStore): Promise<string> {
   for (let i = 0; i < 20; i++) {
-    const candidate = `${PROVIDER_LABEL[provider]}-${randomBytes(3).toString('hex')}`;
+    const candidate = `Outlander-${randomBytes(3).toString('hex')}`;
     if (!(await accounts.get(candidate))) return candidate;
   }
   throw new Error('could not allocate a free display name');
@@ -181,7 +152,7 @@ export async function resolveSsoAccount(
   // one by email or name (H6): that handed a role-holding account to whoever controlled a
   // matching address at a provider. A role holder links SSO from inside their own session
   // (/auth/link), which proves they hold the account first.
-  const name = await pickDisplayName(accounts, provider, identity.nameHint);
+  const name = await pickDisplayName(accounts);
   const created = await accounts.createSso(name);
   if (typeof created === 'string') throw new Error(`cannot create SSO account ${name}: ${created}`);
   const accountKey = created.name.toLowerCase();
