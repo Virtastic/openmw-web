@@ -163,8 +163,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   const accounts = new AccountStore(sharedDir);
   // Character docs live in the SHARED dir so a character follows its player across worlds;
-  // positions inside the doc are scoped by world id. The world's own players/ dir is the
-  // pre-slot legacy location, read only during migration.
+  // positions inside the doc are scoped by world id.
   const worldId = opts.worldId ?? process.env.OMW_WORLD_ID ?? 'default';
   // Runtime-mutable: a character's Solo world flips to Party IN PLACE (the owner stays put,
   // their world simply starts admitting party members) rather than the owner travelling to a

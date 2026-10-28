@@ -15,36 +15,8 @@
 // expressed by a file this process owns.
 
 import { DatabaseSync } from 'node:sqlite';
-import { openDb, type Migration } from '../persist/sqlite';
+import { openDb } from '../persist/sqlite';
 import { join } from 'node:path';
-
-// Phase W (multiplayer912026): the party concept is deleted — every player owns a world and
-// guests simply join it. Live servers carry party rows, so this is a MIGRATION, not a schema
-// edit: it runs once, recorded in schema_migrations, in its own transaction.
-//
-// Existence-guarded because openDb runs migrations BEFORE migrate() creates the base tables,
-// so on a fresh database these tables do not exist yet and there is nothing to rewrite.
-const SOCIAL_MIGRATIONS: Migration[] = [
-  {
-    name: 'w1-solo-party',
-    up: (db: DatabaseSync) => {
-      const has = (t: string): boolean => db
-        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?")
-        .get(t) !== undefined;
-      // Party chat scrollback: the scope was the party id, and the party — the only thing
-      // that could ever read it back — is gone. Server-wide scope ('') survives; from now on
-      // non-empty scopes are WORLD ids.
-      if (has('chat_history')) db.exec("DELETE FROM chat_history WHERE scope <> ''");
-      // Invites collapse to one kind: a party invite has nothing left to accept into.
-      if (has('invite')) db.exec("DELETE FROM invite WHERE kind = 'party'");
-      // The 'party' presence-privacy mode is gone; 'friends' is the nearest survivor.
-      if (has('presence_pref')) db.exec("UPDATE presence_pref SET mode = 'friends' WHERE mode = 'party'");
-      db.exec('DROP TABLE IF EXISTS party_setting');
-      db.exec('DROP TABLE IF EXISTS party_member');
-      db.exec('DROP TABLE IF EXISTS party');
-    },
-  },
-];
 
 // Keys are ACCOUNT keys, never player ids: player ids are per-session, so an id-keyed
 // friendship would expire on every reconnect.
@@ -102,7 +74,7 @@ export class SocialStore {
       // The header comment above still says node:sqlite is safe because a world is
       // single-process. That stopped being true when the gateway started spawning one process
       // per world; this line is the correction.
-      this.db = openDb(join(dataDir, filename), SOCIAL_MIGRATIONS);
+      this.db = openDb(join(dataDir, filename));
     }
     this.migrate();
   }

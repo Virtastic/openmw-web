@@ -343,7 +343,6 @@ export class PlayerStore {
       if (seeded) doc.position = { cellKey: seeded.cellKey, x: seeded.x, y: seeded.y, z: seeded.z };
       else delete doc.position;
     }
-    // No positions map = pre-slot doc from this world's own dir; keep legacy position as-is.
   }
 
   /** This character has left THIS world. Flush first, then forget it.
@@ -371,7 +370,6 @@ export class PlayerStore {
     this.ephemeral.delete(key);
   }
 
-  // Character-slot migration: adopt a pre-slot account-keyed doc under a character id.
   // Synchronous view for fan-out paths (docs of connected players are always cached,
   // because login always calls get()).
   getCached(key: string): PlayerDoc | undefined {

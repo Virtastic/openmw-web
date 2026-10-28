@@ -8,11 +8,17 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { hash, verify, Algorithm } from '@node-rs/argon2';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { readdir } from 'node:fs/promises';
 import { checkpoint, openDb, tx } from '../persist/sqlite';
 
+// v2 starts on a fresh data dir (CL16, OT3-230): no v1 data is migrated, so the one-time
+// migrations for v1 shapes are gone. This marker is applied FIRST on a fresh accounts.db, so a
+// second process opening it mid-creation already sees it; an accounts.db that has 001 but not
+// this marker came from v1 and is refused at open (assertV2DataDir).
+const V2_BASELINE = 'v2-baseline';
 const ACCOUNT_MIGRATIONS = [
+  { name: V2_BASELINE, up: (): void => {} },
   {
     name: '001-accounts',
     up: (db: DatabaseSync) => {
@@ -59,7 +65,7 @@ export interface Account {
   lastSeenAt: string;
   rank: number; // 0 = player, >=1 = admin (seeded by editing the JSON by hand in M0)
   banned?: boolean;
-  // Absent on pre-slot accounts; the first authed session migrates them to one character.
+  // Absent until the first authed session creates the first slot.
   characters?: CharacterSummary[];
   // Ids of characters this account has DELETED. The gateway and every world write this whole
   // document, so a write has to merge the character list rather than replace it (see
@@ -197,6 +203,25 @@ export function accountNameProblem(name: string): string | null {
   return 'is not usable. Try an email address instead.';
 }
 
+/** Refuse a v1 data dir: v2 boots on a fresh one (CL16). Every process that opens the shared
+ *  dir (front door, worlds, the account CLI) goes through AccountStore, so this one check
+ *  covers boot everywhere. */
+export function assertV2DataDir(path: string): void {
+  if (!existsSync(path)) return;
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const has = (name: string): boolean => {
+      try { return db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?').get(name) !== undefined; }
+      catch { return false; } // no schema_migrations table: nothing applied yet
+    };
+    if (has('001-accounts') && !has(V2_BASELINE)) {
+      throw new Error(`${path} is a v1 data dir. v2 starts on a fresh one (CL16): point the server at an empty data directory.`);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 export class AccountStore {
   private cache = new Map<string, Account>(); // key = nameLower
   // Queued FIELDS, not queued docs: flush() patches exactly these onto a fresh read of the row.
@@ -212,6 +237,7 @@ export class AccountStore {
   private readonly provisional = new Map<string, string>();
 
   constructor(dataDir: string) {
+    assertV2DataDir(join(dataDir, 'accounts.db'));
     this.db = openDb(join(dataDir, 'accounts.db'), ACCOUNT_MIGRATIONS);
     this.flushTimer = setInterval(() => void this.flush(), 30_000);
     this.flushTimer.unref();
@@ -424,10 +450,6 @@ export class AccountStore {
 
   // Character slots. Mutations go through the dirty queue; callers hold a cached account
   // (every auth path has just awaited get()).
-  //
-  // createCharacter is also the pre-slot migration step: an account with no characters[]
-  // gets its first slot named after the account, and the caller adopts any legacy
-  // account-keyed PlayerDoc under the new character id.
   /** An id for a character that does not exist yet. The slot is only written once creation
    *  FINISHES (adoptCharacter), so a player who quits during Morrowind's opening leaves
    *  nothing behind — no tile, no row, no doc. Nothing to hide and nothing to delete, which
@@ -474,8 +496,7 @@ export class AccountStore {
   private buildCharacter(chars: CharacterSummary[], name: string): CharacterSummary {
     const now = new Date().toISOString();
     const char: CharacterSummary = {
-      // 'c' + 24 hex chars: never collides with a legacy account-keyed doc (those are
-      // lowercased account names, capped at 24 chars total and allowed spaces).
+      // 'c' + 24 hex chars, the shape resolveCharacter accepts for a provisional id.
       id: `c${randomBytes(12).toString('hex')}`,
       name,
       createdAt: now,

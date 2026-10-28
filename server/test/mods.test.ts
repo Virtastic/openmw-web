@@ -29,16 +29,11 @@ const mod = (over: Partial<InstalledMod> & { slug: string }): InstalledMod => ({
 
 // --- the document ----------------------------------------------------------------------------
 
-test('a v1 file reads as v2 with no mods, and its load order survives', () => {
-  // v1 is what is on disk today. It must keep meaning exactly what it meant.
+test('a v1 file (no version) is not migrated: v2 starts fresh (CL16)', () => {
   const d = tmp();
   writeFileSync(join(d, 'modlist.json'),
     '{"entries":[{"file":"Morrowind.esm","enabled":true},{"file":"Tribunal.esm","enabled":false}]}');
-  const doc = readModDoc(d);
-  assert.equal(doc.version, 2);
-  assert.deepEqual(doc.mods, []);
-  assert.deepEqual(doc.entries, [
-    { file: 'Morrowind.esm', enabled: true }, { file: 'Tribunal.esm', enabled: false }]);
+  assert.deepEqual(readModDoc(d), emptyDoc());
 });
 
 test('a v2 file round-trips', () => {

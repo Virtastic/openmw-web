@@ -22,13 +22,9 @@ import { existsSync, rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 
-// A4: the chat log is a per-line stream, so erasure REWRITES each day file without this
-// account's lines rather than deleting the file — one player's deletion request must not
-// destroy everyone else's conversation. Whole-file delete only happens if nothing is left.
-// Chat lines and reports live in moderation.db since the persistence consolidation. Erasure
-// must DELETE those rows: missing them would leave the account's own words, and every report
-// naming it, behind after an erase. The legacy files are still scrubbed below so an erase run
-// against either layout is complete.
+// A4: chat lines and reports live in moderation.db. Erasure DELETES this account's rows only —
+// one player's deletion request must not destroy everyone else's conversation — and missing
+// them would leave the account's own words, and every report naming it, behind.
 // SSO identities moved into identities.db. Same rule as the moderation and ban tables: the
 // rows must GO, or the next SSO login silently re-creates the account that was just erased.
 // Every eraser below opens a database, deletes rows, and closes. A table that does not exist
@@ -137,22 +133,21 @@ export interface EraseReport {
   locker: boolean; // file list + attestation (and the bytes, when stored on this disk)
   saves: number; // savegames removed
   identities: number; // Phase B: linked SSO identities removed
-  chatLines: number; // A4: lines removed from logs/chat-*.jsonl AND social chat history
+  chatLines: number; // A4: lines removed from moderation.db AND social chat history
   reports: number; // A4: report docs removed (filed BY or ABOUT the account)
   socialRows: number; // friends, blocks, requests, invites, mutes, presence and prefs
 }
 
 // A character document is the bulk of what this server knows about a person (inventory,
 // journal, position), so missing one is not a partial erasure, it is a failed one. The ids
-// come from the account row, which is why this must run BEFORE the account is erased. `key`
-// itself is included for the pre-slot account-keyed doc.
+// come from the account row, which is why this must run BEFORE the account is erased.
 function erasePlayerDocs(dataDir: string, key: string): boolean {
   const charIds = (readAccountDoc(dataDir, key)?.characters ?? [])
     .map((c) => c.id)
     .filter((id): id is string => typeof id === 'string');
   return withDb(join(dataDir, 'players.db'), false, (db) => {
     let erased = false;
-    for (const k of [key, ...charIds]) {
+    for (const k of charIds) {
       if (Number(db.prepare('DELETE FROM players WHERE key = ?').run(k).changes) > 0) erased = true;
       // THE TOMBSTONE. A world that still has this doc cached writes it straight back at its
       // next flush unless the `erased` table says not to (playerstore.ts flushKey). The

@@ -85,14 +85,9 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const bool = (v: unknown, dflt: boolean): boolean => (typeof v === 'boolean' ? v : dflt);
 
 /**
- * Read modlist.json, migrating v1 in memory.
- *
- * v1 was `{entries:[{file,enabled}]}` with no version. It is read as v2 with no mods — the same
- * base-game load order it always described. Nothing is rewritten here: the read path stays
- * read-only, and the first save writes v2.
- *
- * A version from the future is treated as empty rather than parsed optimistically. Mangling a
- * newer file is worse than ignoring it, because the newer writer will be back.
+ * Read modlist.json. Only version 2 is read: v2 starts on a fresh data dir (CL16), so the v1
+ * in-memory migration is gone. Any other version, past or future, is treated as empty rather
+ * than parsed optimistically: mangling a file we do not understand is worse than ignoring it.
  */
 export function readModDoc(dataDir: string): ModDoc {
   let raw: unknown;
@@ -107,9 +102,8 @@ export function readModDoc(dataDir: string): ModDoc {
   const doc = raw as Record<string, unknown>;
   if (doc === null || typeof doc !== 'object') return emptyDoc();
 
-  const version = typeof doc.version === 'number' ? doc.version : 1;
-  if (version > 2) {
-    log('warn', 'admin.modlist_future_version', { version });
+  if (doc.version !== 2) {
+    log('warn', 'admin.modlist_unknown_version', { version: doc.version ?? null });
     return emptyDoc();
   }
 
@@ -119,7 +113,7 @@ export function readModDoc(dataDir: string): ModDoc {
       .map((r) => ({ file: r.file as string, enabled: r.enabled !== false }))
     : [];
 
-  const mods: InstalledMod[] = version === 2 && Array.isArray(doc.mods)
+  const mods: InstalledMod[] = Array.isArray(doc.mods)
     ? (doc.mods as Record<string, unknown>[])
       .filter((m) => m !== null && typeof m === 'object' && /^[a-z0-9-]{1,64}$/.test(str(m.slug)))
       .map((m) => ({

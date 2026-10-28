@@ -1683,9 +1683,8 @@ export class Connection implements Peer {
 
   // Character slots. Resolves which character this session plays: an explicit characterId
   // must belong to the account (refused otherwise — silently playing the wrong character is
-  // worse than a failed login); absent means last-played. An account with no slots yet is
-  // migrated here: its first character is created named after the account, adopting the
-  // legacy account-keyed PlayerDoc if this world has one. System peers never come through
+  // worse than a failed login); absent means last-played. An account with no slots yet gets
+  // its first character here, under a neutral placeholder name. System peers never come through
   // this path — a sim peer owns no character at all.
   // Returns null after authFail.
   // IS THIS SLOT STILL BEING CREATED? The single fact the chargen sanctuary turns on, and it
@@ -1835,8 +1834,6 @@ export class Connection implements Peer {
       this.authFail('register', 'AUTH_FAILED', 'account already exists');
       return;
     }
-    // A register can still adopt a doc (account file deleted by an operator but player
-    // doc kept); resolveCharacter's migration path handles exactly that.
     const rc = await this.resolveCharacter('register', result, msg.characterId);
     if (!rc) return;
     this.finishAuth('register', result, rc.doc, false, rc.char);
@@ -1916,7 +1913,7 @@ export class Connection implements Peer {
       return;
     }
     // Character slots: resume returns to the SAME character the session was playing. A
-    // pre-slot ticket (no charId) falls back to default resolution, which also migrates.
+    // ticket with no charId falls back to default resolution.
     let char: CharacterSummary | undefined;
     let doc: PlayerDoc | undefined;
     if (ticket.charId !== undefined) {
