@@ -139,12 +139,17 @@ export class SocialStore {
         id       INTEGER PRIMARY KEY AUTOINCREMENT,
         ts       INTEGER NOT NULL,
         channel  TEXT NOT NULL,
-        scope    TEXT NOT NULL,   -- '' for server-wide; a world id for world-scoped lines
+        scope    TEXT NOT NULL,   -- the channel (OT3-46); one world, so no world id
         acct     TEXT NOT NULL,
         name     TEXT NOT NULL,
         text     TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS chat_history_scope ON chat_history (scope, id);
+      -- OT3-46: scope was '' (server-wide) or a world id. World-scoped rows are dropped
+      -- deliberately: old private worlds' chat must not replay on the one public world.
+      -- Server-wide rows keep their place under their channel. Idempotent.
+      DELETE FROM chat_history WHERE scope <> '' AND scope <> channel;
+      UPDATE chat_history SET scope = channel WHERE scope = '';
       CREATE TABLE IF NOT EXISTS presence (
         account       TEXT PRIMARY KEY,
         world         TEXT NOT NULL,

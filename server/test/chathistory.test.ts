@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
+import { SocialStore } from '../src/core/socialstore';
 
 const CFG = { login: { allowHarnessAuth: true } };
 
@@ -118,4 +119,21 @@ test('a block stops live chat both ways', async (t) => {
   await b.waitEvent('ChatMessage', said(b, 'blocker says hi'));
   assert.equal(await a.waitEvent('ChatMessage', said(a, 'blocker says hi'), 1500).catch(() => null), null,
     'the blocked player still heard the blocker live');
+});
+
+// OT3-46: history is scoped by channel, not world id. Rows from the old world-id scope are
+// dropped on open (old private worlds' chat must not replay on the one world); server-wide
+// rows move under their channel.
+test('chat history migrates from world-id scope to channel scope', () => {
+  const dir = tmpDataDir();
+  const old = new SocialStore(dir);
+  const now = Date.now();
+  old.appendChat({ ts: now, channel: 'global', scope: '', acct: 'a', name: 'A', text: 'server-wide' }, 200);
+  old.appendChat({ ts: now, channel: 'party', scope: 'priv-someone', acct: 'a', name: 'A', text: 'private' }, 200);
+  old.close();
+  const s = new SocialStore(dir);
+  assert.deepEqual(s.recentChat('global', 10).map((r) => r.text), ['server-wide']);
+  assert.equal(s.recentChat('party', 10).length, 0, 'a private world line must not reach world chat');
+  assert.equal(s.recentChat('priv-someone', 10).length, 0);
+  s.close();
 });

@@ -351,14 +351,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // very much does not (friends spread across the map must still be able to talk).
     sayProximity: config.rules.sayScope === 'proximity',
     // SCROLLBACK. Only the channels a newcomer may legitimately replay: 'global' and 'server'
-    // are the server-wide conversation, and world chat is scoped to this world's id.
+    // are the server-wide conversation, and world chat ('party' on the wire) is the one
+    // world's. History is scoped by channel only (OT3-46).
     // 'say' is proximity (replaying a conversation from a cell you were not in is noise),
     // and 'whisper' is nobody else's business.
     history: (player, channel, text) => {
-      const scope = channel === 'party' ? (worldId ?? 'default') : '';
       if (channel !== 'global' && channel !== 'server' && channel !== 'party') return;
       socialStore.appendChat({
-        ts: Date.now(), channel, scope,
+        ts: Date.now(), channel, scope: channel,
         acct: player.accountKey, name: player.name, text,
       }, CHAT_HISTORY_KEEP);
     },
@@ -677,8 +677,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // handling — history is the same messages, earlier.
     replayChat: (player): void => {
       const lines = [
-        ...socialStore.recentChat('', CHAT_HISTORY_REPLAY),
-        ...socialStore.recentChat(worldId ?? 'default', CHAT_HISTORY_REPLAY),
+        ...socialStore.recentChat('global', CHAT_HISTORY_REPLAY),
+        ...socialStore.recentChat('server', CHAT_HISTORY_REPLAY),
+        ...socialStore.recentChat('party', CHAT_HISTORY_REPLAY),
       ].sort((a, b) => a.ts - b.ts);
       for (const l of lines) {
         // A listener who muted the speaker never received the line live, and must not get it
