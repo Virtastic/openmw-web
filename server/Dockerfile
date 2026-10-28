@@ -45,6 +45,8 @@ COPY config.default.toml ./
 # at runtime (see src/net/admin/static.ts), not bundled, so they resolve the same way
 # config.default.toml does.
 COPY web ./web
+# OT3-63: the hourly SQLite backup runs inside the container (docker exec ... node tools/backup-sqlite.mjs).
+COPY tools ./tools
 COPY docker-entrypoint.sh /usr/local/bin/
 # Explicit: a checkout on Windows does not carry the executable bit, so relying on the
 # source file's mode would produce an image that fails to start on some machines and not

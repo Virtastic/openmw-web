@@ -170,6 +170,7 @@ COPY server/config.default.toml ./
 # The admin dashboard's page and its vendored AdminLTE/Bootstrap assets, read from disk at
 # runtime (src/net/admin/static.ts) rather than bundled — same as config.default.toml.
 COPY server/web ./web
+COPY server/tools ./tools
 # Mode-switch entrypoint: reads <data>/.mode and starts either one game or the multiplayer
 # server. This image DEFAULTS to the multiplayer server (OMW_DEFAULT_MODE below), which is
 # exactly what production has always run, so a deploy changes nothing on its own — but a

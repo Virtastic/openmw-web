@@ -240,6 +240,8 @@ export const metrics = {
   // Phase H4 sim-peer lifecycle. simPeerRefused is the one to alert on: 'at_cap' means the
   // box is full and somebody's world is running without a peer (falling back to client
   // authority), which is a capacity signal rather than an error.
+  // OT3-63: seconds since tools/backup-sqlite.mjs last wrote a good snapshot; -1 = never.
+  backupAgeSec: reg(new Gauge('omwmp_backup_age_seconds', 'Seconds since the last good SQLite backup (-1 = none yet).')),
   simPeerRunning: reg(new Gauge('omwmp_simpeer_running', 'Headless simulation peers currently up.')),
   simPeerSpawned: reg(new Counter('omwmp_simpeer_spawned_total', 'Headless simulation peers started.', [])),
   simPeerReaped: reg(new Counter('omwmp_simpeer_reaped_total', 'Sim peers stopped after going idle.', [])),

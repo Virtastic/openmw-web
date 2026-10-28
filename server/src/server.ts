@@ -1017,6 +1017,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // it too — and an operator reading this gauge for capacity would be reading one peer per
   // cluster as load.
   const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.humansInWorld().length);
+  const backupStatus = join(opts.dataDir, 'backup-status.json');
+  const unhookBackupAge = metrics.backupAgeSec.addCollector(() =>
+    existsSync(backupStatus) ? Math.round((Date.now() - statSync(backupStatus).mtimeMs) / 1000) : -1);
 
   // Phase H4: the on-demand simulation peer. Wired at ONE point rather than hooked into
   // join/leave in connection.ts, because ensure()/markIdle() are idempotent by design and a
@@ -1755,6 +1758,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       devBots?.stop();
       clearInterval(presenceTick);
       unhookGauge();
+      unhookBackupAge();
       unhookBufferedGauge();
       // The test suite builds dozens of servers in one process; a subscriber left behind
       // would keep a closed server's config alive and fire on the next server's log lines.

@@ -285,25 +285,26 @@ Re-measure with `free -m` + `docker stats --no-stream` before raising limits.
 
 ## Backups
 
-Nightly cron on the VPS (installed manually, one-time — same convention as other /opt
-services). SIGUSR1 makes the server flush all dirty state to disk first. In multiplayer
-mode the container runs the gateway, which flushes its own account store and relays the
-signal to every world process (players, cells, records, bans, chat); each flush ends with a
-`wal_checkpoint(TRUNCATE)`, so `tar` sees one `.db` per store rather than a db/-wal/-shm
-trio captured at three different instants. The container is `openmw-web` for the
-self-hosting `docker-compose.yml`;
-`gamedata/` is your own Morrowind files, so exclude it like the dashboard's export does:
+Hourly cron on the host (installed manually, one-time). `tools/backup-sqlite.mjs` takes a
+`VACUUM INTO` snapshot of every `.db` under the data dir while the server keeps writing
+(one transaction-consistent image per store, no SIGUSR1 needed), checks each copy with
+`PRAGMA integrity_check`, copies the other files (chat logs, JSON stores) as-is, skips
+`gamedata/`, and tars the set into `data/backups/sqlite-<time>.tar.gz`, keeping the newest
+48. `--ship` runs your own command on the archive to move it off the box; its credentials
+stay in your rclone/aws config, never in this repo. The container is `openmw-web` for the
+self-hosting `docker-compose.yml`:
 
 ```sh
-# /etc/cron.d/openmw-web-backup (as root); <checkout> is where docker-compose.yml lives
-15 4 * * * root docker kill -s USR1 openmw-web && sleep 5 \
-  && tar czf <checkout>/backups/data-$(date +\%F).tar.gz -C <checkout> --exclude=data/gamedata data \
-  && find <checkout>/backups -name 'data-*.tar.gz' -mtime +14 -delete
+# /etc/cron.d/openmw-web-backup (as root)
+7 * * * * root docker exec openmw-web node tools/backup-sqlite.mjs --data /data \
+  --ship 'rclone copy {} offsite:openmw-backups/'
 ```
 
-Restore: stop the container, untar over `data/` (`/opt/openmw-mp/data` on the VPS),
-`docker compose up -d`. The deploy workflow never touches `/opt/openmw-mp/data`, so
-redeploys are always safe.
+Off-box retention is the bucket's lifecycle rule. The server exports
+`omwmp_backup_age_seconds` (seconds since the last good backup, `-1` = none yet); alert
+when it passes 7200.
+
+Restore: stop the container, untar the archive into `data/`, `docker compose up -d`.
 
 ### Verifying the backup actually restores
 
@@ -317,11 +318,16 @@ server/scripts/restore-drill.sh          # ~15 s; --keep leaves the scratch dir 
 
 It boots a server on an ephemeral port and a scratch data dir, drives a **real** omw-mp/1
 client to create an account plus a known character (appearance, cell, coordinates) and a
-chat line, flushes with `SIGUSR1`, takes a `tar czf` backup **exactly the way the cron
-above does**, deletes the data dir, restores from the tarball, boots again, and then
+chat line, takes a backup with `tools/backup-sqlite.mjs` **exactly the way the cron above
+does**, deletes the data dir, restores from the archive, boots again, and then
 **asserts** the state came back: the account logs in, `SessionWelcome.playerRecord` carries
 the same appearance and position, and the chat log still contains the seeded line. Any
 mismatch exits nonzero with a reason, so it can gate CI — it never prints "probably fine".
+
+`restore-drill.sh --from <sqlite-*.tar.gz>` drills a **real** backup instead: fetch the last
+archive back from off-box storage, and the drill restores it into a scratch dir and boots
+on it. If the archive holds the drill's canary account (run the seed once against that
+server), the seeded character is verified too.
 
 Run it after any change to the persistence layer, the flush path, or the backup command
 itself. If it fails, the nightly cron is not a backup, it is a tarball.
