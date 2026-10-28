@@ -92,14 +92,6 @@ local lastPoseMirror = 0
 -- six paying into a per-client purse that never empties.
 local liveContainerOpen = false -- a pickpocket window is up (Container mode on a live actor)
 local arrestDialoguePending = false -- the next Dialogue mode is MP_PlayerArrest's: no lock request (343)
--- The world's rest rule, off WorldMode (#262). A guest under timeSkip=owner used to get the
--- whole wait animation, a fast-forwarded sky, THEN the refusal and the sky slewing back. The
--- Rest window is refused before it opens instead; the sleep itself must still happen for a
--- guest to level (#256), so the pending level-up is offered in its place.
-local restRule = { isOwner = true, timeSkip = 'anyone' }
-local function restRefusedHere()
-    return not restRule.isOwner and (restRule.timeSkip == 'owner' or restRule.timeSkip == 'party')
-end
 local GOLD_SERVICE_MODES = {
     Barter = true, Training = true, Travel = true, SpellBuying = true,
     SpellCreation = true, Enchanting = true, MerchantRepair = true,
@@ -711,7 +703,7 @@ local TEST_HOOKS = (function()
     local ok, flags = pcall(require, 'scripts.mp.buildflags')
     return ok and type(flags) == 'table' and flags.testHooks == true
 end)()
-local PAGE_COMMANDS = { carry = true, vis = true, leaving = true, chatx = true, joinfriend = true,
+local PAGE_COMMANDS = { vis = true, leaving = true, chatx = true,
     pause = true, profile = true, social = true, uimode = true, where = true }
 
 local function dispatch(cmd)
@@ -789,21 +781,13 @@ local function dispatch(cmd)
             mp.set('consoleOpen', okOpen and tostring(open) or ('error:' .. tostring(open)))
         end
 
-        local joinId = cmd:match('^worldjoin:([%w_-]+)$')
-        if joinId then core.sendGlobalEvent('mpSocialJoinById', { id = joinId }) end
-
-        local wcId, wcMode = cmd:match('^worldcreate:([%w_-]+):(%a+)$')
-        if wcId then
-            core.sendGlobalEvent('mpSocial', { op = 'WorldCreate', id = wcId, mode = wcMode })
-        end
-
         -- Character slot test hooks: the same uplinks the Characters tab uses.
         local ccName = cmd:match('^charcreate:(.+)$')
         if ccName then core.sendGlobalEvent('mpCharCreate', { name = ccName }) end
         local csId = cmd:match('^charswitch:(%w+)$')
         if csId then core.sendGlobalEvent('mpCharSwitch', { id = csId }) end
-        -- leaving: the page's Exit button, on its way to the launcher. A deliberate departure
-        -- closes a Party world to its guests now (server onPlayerLeaving), not after the grace.
+        -- leaving: the page's Exit button. A deliberate departure, said now (server
+        -- onPlayerLeaving) rather than after the crash grace.
         if cmd == 'leaving' then pcall(function() mp.sendEvent('PlayerLeaving', {}) end) end
         if cmd == 'chars' then core.sendGlobalEvent('mpChars', {}) end
         local text = cmd:match('^chat:(.*)$')
@@ -818,13 +802,11 @@ local function dispatch(cmd)
         if cxCh and cxText ~= '' then
             core.sendGlobalEvent('mpChatSend', { text = cxText, channel = cxCh, to = cxTo })
         end
-        -- Where-am-I switcher (solo/party/online/offline).
-        -- A freshly minted login ticket, handed down by the page before a world switch. Not a
+        -- A freshly minted login ticket, handed down by the page before a rejoin. Not a
         -- secret the client did not already hold: it is minted from the same SSO session.
         local tkt = cmd:match('^mpticket:(.+)$')
         if tkt then core.sendGlobalEvent('mpSetTicket', { ticket = tkt }) end
-        local carry = cmd:match('^carry:(.*)$')
-        if carry then core.sendGlobalEvent('mpCarry', { v = carry }) end
+        -- Online/Offline (the Social hub).
         local whereMode = cmd:match('^where:(%a+)$')
         if whereMode then core.sendGlobalEvent('mpWhere', { mode = whereMode }) end
         -- Availability toggle.
@@ -838,15 +820,6 @@ local function dispatch(cmd)
             core.sendGlobalEvent('mpProfileSetup', { email = pEmail, username = pUser })
         end
 
-        -- Cross-world join a friend.
-        local jfAcct = cmd:match('^joinfriend:(.+)$')
-        if jfAcct then
-            print('[mp] joinfriend command for ' .. jfAcct)
-            core.sendGlobalEvent('mpSocial', { op = 'JoinFriend', acct = jfAcct })
-        end
-        -- Owner in-place Solo<->Party flip of their own world.
-        local wmMode = cmd:match('^worldmode:(%a+)$')
-        if wmMode then core.sendGlobalEvent('mpSocial', { op = 'SetWorldMode', mode = wmMode }) end
         -- Cursor handshake for the HTML overlays: when the overlay opens it asks the engine to
         -- enter Interface mode (frees the mouse cursor + suspends game input, no pause); on
         -- close it restores. This is what lets clicking/typing in the HTML panel not also drive
@@ -1575,10 +1548,6 @@ local script = {
             pcall(I.SkillProgression.skillUsed, data.skill, { useType = data.useType or 0 })
         end,
         MP_UiChatMessage = pushMessage,
-        -- Whose world, and its rest rule (global.lua forwards the server's WorldMode; #262).
-        MP_WorldMode = function(data)
-            restRule = { isOwner = data and data.isOwner == true, timeSkip = tostring(data and data.timeSkip or 'anyone') }
-        end,
         -- M2 rejoin restore: global.lua forwards SessionWelcome.playerRecord here (after
         -- granting the inventory and teleporting us to record.position).
         MP_ApplyRecord = function(record)
@@ -1621,17 +1590,6 @@ local script = {
             -- Esc (or any other window) closed our Interface mode -> drop the chat window.
             if chatElement and data.newMode == nil then
                 destroyChat()
-            end
-            -- A guest's Rest in a timeSkip=owner world is refused BEFORE the bed lies (#262):
-            -- the window closes, one line says why, and a level earned since the last sleep
-            -- is offered now, since the sleep that would have offered it never happens.
-            if data.newMode == 'Rest' and restRefusedHere() then
-                pcall(function() I.UI.removeMode('Rest') end)
-                pushMessage({ channel = 'server', text = 'Only the world owner can rest for everyone.' })
-                local okLvl, due = pcall(function()
-                    return types.Actor.stats.level(self).progress >= (tonumber(core.getGMST('iLevelUpTotal')) or 10)
-                end)
-                if okLvl and due then pcall(function() I.UI.addMode('LevelUp') end) end
             end
             -- M6: leaving the dialogue window releases the NPC's conversation lock
             -- (PROTOCOL.md §M6: "released on close, cell change, or disconnect").

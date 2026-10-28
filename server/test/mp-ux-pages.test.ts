@@ -13,7 +13,6 @@ const PLAY = join(import.meta.dirname, '..', '..', 'play');
 const pages = existsSync(join(PLAY, 'index.html')) && existsSync(join(PLAY, 'launcher.html'));
 const opts = pages ? {} : { skip: 'play/ pages are not part of the server image' };
 const index = pages ? readFileSync(join(PLAY, 'index.html'), 'utf8') : '';
-const launcher = pages ? readFileSync(join(PLAY, 'launcher.html'), 'utf8') : '';
 
 test('#88: BAD_CONTENT reloads once automatically, then shows the remedy and a Reload button', opts, () => {
   assert.ok(index.includes('BAD_CONTENT_REMEDY = \'The world’s mod list changed since this page loaded'), 'no remedy sentence');
@@ -30,16 +29,3 @@ test('#88: BAD_CONTENT reloads once automatically, then shows the remedy and a R
   assert.ok(index.slice(auto, auto + 400).includes('location.reload();'));
 });
 
-test('#89: a friend playing solo is listed as such, with no join button', opts, () => {
-  assert.ok(launcher.includes("const solo = f.mode === 'private';"));
-  assert.ok(launcher.includes("'<b></b> is playing solo'"));
-  assert.ok(launcher.includes('if (solo) { wrap.appendChild(row); return; }'), 'a solo row still gets a Join button');
-  // The join-as hint is joinable rows only.
-  assert.ok(launcher.includes('if (ready[0] && !solo) {'));
-});
-
-test('send home shows only on a guest in your own world, not on the server-wide list', opts, () => {
-  // The Players list is every player on the server; rows from other worlds carry no id.
-  assert.ok(index.includes("if (amHost && p.id != null) acts.push(['send home'"), 'send home is not gated to local guests');
-  assert.ok(!/if \(amHost\) acts\.push\(\['send home'/.test(index), 'an ungated send home is back');
-});

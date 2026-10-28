@@ -35,7 +35,7 @@ end
 -- while the player saw no window at all.
 local isOpen = false
 local element = nil
-local tab = 'players' -- players | friends | worlds | chars
+local tab = 'players' -- players | friends | chars
 
 local roster = {} -- everyone in the world: {id, name}
 local friends = {} -- {acct, name, online, playerId, cellKey}
@@ -47,15 +47,13 @@ local invitesSaid = {} -- acct -> true once toasted; forgotten when the invite l
 local requestsSaid = {} -- same, for friend requests (the snapshot is their only cross-world path)
 local presence = 'friends'
 -- Availability (Online/Offline) — a SEPARATE axis from presence (which is "who sees my
--- location"). Offline peels you into your Solo world, hidden and unjoinable. Echoed back by
+-- location"). Offline hides you from everyone; the world is the same one. Echoed back by
 -- the server on SetAvailability so the toggle reflects the real state.
 local availability = 'online'
 local status = ''
 local draft = ''
 local myName = nil
 
--- F3 world browser. worlds=nil means "not asked yet", {} means "asked, none joinable" —
--- the two read very differently to a player and must not collapse into one blank list.
 -- Friend requests THIS CLIENT has just sent, keyed by lowercased display name.
 --
 -- The row already renders 'Request sent' -- but only once the SERVER roster comes back saying
@@ -64,11 +62,6 @@ local myName = nil
 -- response. Recording the click locally flips the row immediately; the server's own reqOut
 -- takes over when it arrives, and the two agree.
 local sentFriendReq = {}
-local worlds = nil
-local worldsError = ''
-local worldDraft = ''
-local myWorldPort = nil -- so the world we are IN is marked rather than offered as a join
-local joiningWorld = nil -- name of the world a join is in flight to, nil = not switching
 
 -- Character slots. nil = not asked yet; the list comes from the global script's cache of
 -- Welcome/CharacterResult (MP_Characters). Switching is a reconnect with the selection.
@@ -147,23 +140,6 @@ local function send(op, body)
     core.sendGlobalEvent('mpSocial', body)
 end
 
--- Switching world is a reconnect, not a reload: mp.connect takes any URL, so the engine
--- keeps running and only the session moves. Accounts are shared across worlds (F1), so
--- the same login works wherever we land. THE ADDRESS IS COMPUTED ON THE GLOBAL SIDE, by
--- worldUrlOf, the one place that knows the rule (prefer the gateway PATH on the current
--- connection's authority; fall back to host:port only when a world publishes them). Used by
--- the overlay's join (MP_SocialJoinById), so it lives with the bridge, not the dead window.
-local function joinWorld(w)
-    joiningWorld = tostring(w.name)
-    status = 'Joining ' .. joiningWorld .. '...'
-    -- mpJoinWorld, NOT MP_JoinWorld: mp* is player -> global, MP_* is global -> player.
-    -- Sending the wrong one is silent -- an unhandled sendGlobalEvent simply does nothing.
-    core.sendGlobalEvent('mpJoinWorld', {
-        name = tostring(w.name), id = tostring(w.id or ''),
-        wsPath = w.wsPath, host = w.host, port = w.port,
-    })
-end
-
 -- The MyGUI window is gone; the overlay renders. Kept as a no-op so the handlers below
 -- read the same as when they redrew a window.
 local render = function() end
@@ -171,7 +147,7 @@ local render = function() end
 -- The Social hub is now presented by the HTML overlay (index.html), not MyGUI. This script
 -- is the BRIDGE: it maintains social state from server events and MIRRORS it to JS via
 -- mirror() (window.omw.state.friends/presenceMode/availability/blocked/muted/...); the overlay reads
--- that and sends ops back as commands (social:/where:/avail:/joinfriend:/...) parsed in
+-- that and sends ops back as commands (social:/where:/avail:/...) parsed in
 -- player.lua's dispatch. render() is a deliberate no-op so the old MyGUI window (and its
 -- tab builders, kept below but never called) never draws. The O key raises an openSocial
 -- signal the overlay polls; the overlay drives the cursor via uimode: commands.
@@ -225,17 +201,6 @@ return {
         -- @testhook end
         MP_Roster = function(data)
             roster = data.players or {}
-            -- Arriving somewhere completes any join in flight. The world list and the port
-            -- that marks "you are here" both belong to the world we LEFT, so they are
-            -- dropped rather than shown stale — the tab refetches next time it is opened.
-            if joiningWorld then
-                status = 'You are now in ' .. joiningWorld .. '.'
-                joiningWorld = nil
-                worlds = nil
-                worldsError = ''
-                myWorldPort = nil
-                if tab == 'worlds' then send('WorldList', {}) end
-            end
             render()
         end,
         MP_FriendList = function(data)
@@ -325,26 +290,11 @@ return {
             end
         end,
         -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
-        -- Test-only: press "join" for a listed world by id, through the SAME joinWorld()
-        -- path the button uses (not a shortcut around it).
-        MP_SocialJoinById = function(data)
-            local want = tostring(data.id or '')
-            for _, w in ipairs(worlds or {}) do
-                if tostring(w.id) == want then
-                    joinWorld(w)
-                    return
-                end
-            end
-            mp.set('joinError', 'no such world: ' .. want)
-        end,
         -- Test-only: the harness has no way to click a tab button.
         MP_SocialTab = function(data)
             local which = tostring(data.tab or '')
-            if which == 'players' or which == 'friends' or which == 'worlds' or which == 'chars' then
+            if which == 'players' or which == 'friends' or which == 'chars' then
                 tab = which
-                if which == 'worlds' and worlds == nil and worldsError == '' then
-                    send('WorldList', {})
-                end
                 if which == 'chars' and characters == nil then
                     core.sendGlobalEvent('mpChars', {})
                 end
@@ -366,39 +316,6 @@ return {
         end,
         MP_ProfileResult = function(data)
             status = data.ok and 'Profile saved.' or ('Profile not saved: ' .. tostring(data.error or 'error'))
-            render()
-        end,
-        MP_WorldList = function(data)
-            worlds = data.worlds or {}
-            worldsError = tostring(data.error or '')
-            myWorldPort = data.myPort
-            mp.set('worldCount', string.format('%d', #worlds))
-            -- The list itself, so a scenario can assert a SPECIFIC world is present rather
-            -- than only counting (s57 reaps and revives one world by id).
-            local ids = {}
-            for _, w in ipairs(worlds) do ids[#ids + 1] = { id = w.id, up = w.up } end
-            mp.set('worlds', json.encode(ids))
-            mp.set('worldsError', worldsError)
-            render()
-        end,
-        MP_WorldCreate = function(data)
-            if data.ok == true and data.world then
-                status = 'Session "' .. tostring(data.world.name or data.world.id) .. '" is ready.'
-                worldDraft = ''
-                -- Refresh so the new session appears in the list with a join button.
-                send('WorldList', {})
-            else
-                local why = tostring(data.error or 'refused')
-                local human = why
-                if why == 'too_many_sessions' then human = 'You already have as many sessions as you are allowed.'
-                elseif why == 'platform_full' then human = 'The server has no room for another world right now.'
-                elseif why == 'bad_id' then human = 'That name has characters the server will not accept.'
-                elseif why == 'unreachable' then human = 'The world directory did not answer.'
-                end
-                status = human
-                notice(human)
-            end
-            mp.set('worldCreate', json.encode({ ok = data.ok, error = data.error }))
             render()
         end,
         MP_PresenceUpdate = function(data)
@@ -453,10 +370,7 @@ return {
             elseif data.op == 'SetAvailability' and data.ok == true then
                 availability = tostring(data.detail)
                 status = availability == 'offline'
-                    and 'You are offline (solo, hidden).' or 'You are online.'
-            elseif data.op == 'SetWorldMode' and data.ok == true then
-                status = tostring(data.detail) == 'party'
-                    and 'Your world is open to your friends.' or 'Your world is solo again.'
+                    and 'You are offline (hidden).' or 'You are online.'
             elseif SOCIAL_SILENT[data.op] then
                 -- Machinery, not a player action. Never narrated, success or failure.
             else
@@ -467,27 +381,6 @@ return {
             if not SOCIAL_SILENT[data.op] then notice(status) end
             mp.set('socialResult', json.encode({ op = data.op, ok = data.ok, detail = data.detail }))
             mirror()
-            render()
-        end,
-        -- Cross-world join result (the redial itself happens in global.lua on success).
-        MP_JoinFriend = function(data)
-            if data.ok == true then
-                status = 'Joining ' .. tostring(data.friendName or 'your friend') .. '...'
-            else
-                local why = {
-                    not_friends = 'You are not friends with them.',
-                    not_online = 'They are offline.',
-                    in_chargen = 'Finish creating your character first.',
-                    blocked = 'You cannot join them.',
-                    not_open = 'Their world is not open to friends yet. Ask them to switch to Party.',
-                    host_not_friend = "They are in someone else's party, and you are not friends with that host.",
-                    host_away = 'They have just disconnected. Try again in a moment.',
-                    self = 'That is you.',
-                    no_gateway = 'This server runs a single world, so there is nowhere else to join.',
-                }
-                status = why[tostring(data.error)] or ('Could not join: ' .. tostring(data.error or '?'))
-                notice(status)
-            end
             render()
         end,
     },

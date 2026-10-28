@@ -71,21 +71,6 @@ local avatarDocDirty = {}
 -- The frame each avatar's doc was last applied in (reconcile.worldGivenSpells reads it).
 local avatarDocAppliedGen = {}
 
--- The party leader's level, from their avatar doc, onto the engine (peer only). Called when
--- the leader is named (WorldMode) and whenever their doc arrives or changes (AvatarState).
-M.partyOwnerId = 0
-local partyLevelSaid = nil
-local function applyPartyLevel()
-    if not mp.isSystem() then return end
-    local doc = M.partyOwnerId > 0 and avatarDocs[M.partyOwnerId] or nil
-    local level = doc and doc.stats and tonumber(doc.stats.level) or 0
-    if level ~= (partyLevelSaid or -1) then
-        partyLevelSaid = level
-        mp.setPartyLevel(level)
-        print(string.format('[mp] party level -> %d (leader #%d)', level, M.partyOwnerId))
-    end
-end
-
 -- Backlog 507: ids whose avatar shed something, and when to read what the shed left them
 -- able to do (a frame later: the engine applies a Lua inventory change at the end of the
 -- frame). Drained by shedProbeTick on the peer.
@@ -767,7 +752,6 @@ M.usePending = usePending
 M.avatarDocs = avatarDocs
 M.avatarDocDirty = avatarDocDirty
 M.avatarDocAppliedGen = avatarDocAppliedGen
-M.applyPartyLevel = applyPartyLevel
 M.applyAvatarDoc = applyAvatarDoc
 M.avatarDocTick = avatarDocTick
 M.avatarLanded = avatarLanded

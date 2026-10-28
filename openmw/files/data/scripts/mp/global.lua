@@ -15,22 +15,9 @@ local json = require('scripts.mp.json')
 local net = require('scripts.mp.net')
 local shared = require('scripts.mp.shared')
 
--- Where-am-I switcher state. `worldUrls.own` = this character's own world (Solo/Party — the
--- same instance, mode-flipped in place). `pendingFlip` defers a Solo<->Party flip until we
--- are back in our own world.
-local worldUrls = {}
-local pendingFlip = nil
--- BOTH SURVIVE THE RELOAD. A world change reboots the page (net.switchTo), and these are
--- exactly the two things a switch is FOR: Party clicked while visiting queues 'party' for
--- the arrival home, Offline remembers where to go back to. As plain locals they died with
--- the page -- the player arrived home in Solo, and Online had nowhere to return to. The page
--- carries this mirror across the reload and hands it back as 'carry:<flip>|<lastOut>'.
 -- Helpers that would each cost one of the main chunk's 200 locals (Lua's hard limit; global.lua
 -- sits at it), kept as fields of one table instead.
 local kit = {}
-function kit.mirrorCarry()
-    mp.set('switchCarry', (pendingFlip or '') .. '|' .. (worldUrls.lastOut or ''))
-end
 -- A player id as a table key or mirror key. LSER numbers are doubles, and Lua 5.4's tostring(2.0)
 -- is "2.0" where LuaJIT's is "2": the same id keyed two ways on two engines (objects.lua netKey).
 function kit.idKey(id)
@@ -43,27 +30,6 @@ end
 -- once true it stays true for the session (an existing character starts at -1 immediately).
 local chargenDone = false
 local chargenReported = false
--- Build the URL to dial for a world entry.
---
--- PREFER wsPath: production publishes NO world ports (the edge reaches only the gateway on
--- 443, deploy/openmw-mp.caddy), so a world is reachable solely by asking the gateway to
--- splice us through — `/w/<worldId>` on the origin we are already connected to. Falling back
--- to host:port keeps a direct local connection working, where the ports ARE published.
-local function worldUrlOf(w)
-    if type(w) ~= 'table' then return nil end
-    if type(w.wsPath) == 'string' and w.wsPath ~= '' then
-        -- Same scheme and authority as the current connection: wss stays wss, so a page on
-        -- https never tries to open an insecure socket.
-        local cur = net.currentTarget() or ''
-        local scheme, authority = cur:match('^(wss?)://([^/]+)')
-        if scheme and authority then return scheme .. '://' .. authority .. w.wsPath end
-    end
-    if w.host and w.port then
-        return 'ws://' .. tostring(w.host) .. ':' .. string.format('%d', w.port) .. '/ws'
-    end
-    return nil
-end
-
 -- SessionWelcome.playerRecord (captured by net.lua), held here until restoreTick applies it.
 -- Declared above chargenTick because chargenTick must see it (backlog 404).
 local pendingRestore = nil
@@ -127,18 +93,9 @@ local admin = require('scripts.mp.admin')
 local reconcile = require('scripts.mp.reconcile')
 
 local roster = {} -- array of {id=u16, name=string}, server order
--- Monotonic across every "this was done TO you" event (world closed). The UI
--- compares THIS, not the payload: the payloads repeat verbatim, so value comparison could not
--- tell a second occurrence from a stale mirror.
-local noticeSeq = 0
 -- Said once per session, not once per join: a world switch and every reconnect re-enter the
 -- Joined state, and repeating the banner buried the actual conversation.
 local announcedConnect = false
--- What the world we are connected to says it is. SERVER-OWNED: the switcher used to render
--- from a localStorage note of what was last clicked, so it could sit on "Public" while the
--- connection was to your own world and no amount of clicking fixed it.
-local worldMode = 'solo'
-
 local function mirrorRoster()
     mp.set('players', json.encode(roster))
     -- WHO WE ARE, by id. The UI used to filter itself out of the Players list by comparing
@@ -147,11 +104,6 @@ local function mirrorRoster()
     -- with add-friend/party/mute/block buttons. The connection id is the only identity both
     -- sides agree on.
     mp.set('selfId', tostring(net.playerId or ''))
-    -- WHICH WORLD WE ARE ACTUALLY IN. The switcher used to render from a localStorage value
-    -- of what the player last CLICKED, which survives reloads and reconnects — so after a
-    -- redial to your own world the panel still read "Public" and the whole UI lied about
-    -- where you were. The dialled target is the truth; publish it.
-    mp.set('whereNow', worldMode == 'party' and 'party' or 'solo')
     -- The social hub lists everyone currently playing, and the roster lives here. Forwarded
     -- rather than duplicated so there is one source of truth for who is online.
     local player = world.players[1]
@@ -1243,21 +1195,6 @@ local function start()
                     .. ' as ' .. tostring(mp.getName() or '?'))
             end
             wasJoined = true
-            -- OUR OWN WORLD, from the boot fragment — not "whichever world we happen to be
-            -- in". A world change REBOOTS the page, so this Lua state is brand new on
-            -- arrival; mphome rides every switch.
-            if not worldUrls.own then
-                local home = mp.getHomeUrl() or ''
-                if type(home) == 'string' and home ~= '' then worldUrls.own = home
-                else worldUrls.own = net.currentTarget() end -- pre-mphome boot / standalone
-            end
-            -- A flip that had to wait for us to arrive back in our own world fires now
-            -- that we are joined.
-            if pendingFlip and net.currentTarget() == worldUrls.own then
-                mp.sendEvent('SetWorldMode', { mode = pendingFlip })
-                pendingFlip = nil
-                kit.mirrorCarry()
-            end
             if net.playerRecord then
                 pendingRestore = net.playerRecord -- applied by restoreTick once the player exists
                 net.playerRecord = nil
@@ -1318,39 +1255,6 @@ net.onProfileResult = function(msg)
     toPlayer('MP_ProfileResult', { ok = msg.ok == true, error = msg.error or '' })
 end
 
--- The world we are in, or were on our way to, is no longer ours to be in: say why through
--- the notice the page shows for WorldClosed, and dial our own world. Two callers: the
--- server's WorldClosed and a dial the destination refused (net.onRefusedAway below).
-local function goHome(data)
-    -- Mirrored so the HTML overlay can say WHY the world just changed under the player.
-    mp.set('worldClosedBy', tostring(data.by or ''))
-    mp.set('worldClosed', tostring(data.reason or 'closed'))
-    -- A SEQUENCE, not the value. The reason is a constant ('owner_went_solo'), so the UI
-    -- deduping on the value alone silently swallowed the second and every later kick in a
-    -- session: the player was redialed with nothing on screen explaining why.
-    noticeSeq = noticeSeq + 1
-    mp.set('noticeSeq', tostring(noticeSeq))
-    if worldUrls.own and net.currentTarget() ~= worldUrls.own then
-        return net.switchTo(worldUrls.own)
-    end
-    return false
-end
-
--- A refused dial into somebody else's world (net.lua: AUTH_FAILED "this world is private"
--- on a target that is not our own): the host went solo or blocked us while we were on the
--- way. Not a credential problem; go home and say so instead of the sign-in-again modal.
-net.onRefusedAway = function(detail)
-    -- We never JOINED this page (the refusal came at the door), so worldUrls.own has not been
-    -- learned from a welcome yet: read the boot fragment's mphome directly.
-    if not worldUrls.own then
-        local home = mp.getHomeUrl() or ''
-        if type(home) == 'string' and home ~= '' then worldUrls.own = home end
-    end
-    if not worldUrls.own or net.currentTarget() == worldUrls.own then return false end
-    print('[mp] refused at the door of ' .. tostring(net.currentTarget()) .. ' -- going home (' .. tostring(detail) .. ')')
-    return goHome({ reason = detail == 'you were sent home' and 'kicked' or 'not_open' })
-end
-
 local eventHandlers = {
     MP_TransportOpen = function() net.onOpen() end,
     MP_TransportClose = function() net.onClose() end,
@@ -1364,12 +1268,6 @@ local eventHandlers = {
         mp.set('friends', json.encode(data.friends or {}))
         toPlayer('MP_FriendList', data)
     end,
-    -- F3 world browser. Inbound server events land in the GLOBAL context and reach the
-    -- window only if forwarded here — the social family's straight pass-through pattern.
-    MP_WorldList = function(data)
-        toPlayer('MP_WorldList', data)
-    end,
-    MP_WorldCreate = function(data) toPlayer('MP_WorldCreate', data) end,
     -- BOTH OF THESE WERE SENT BY THE SERVER AND HANDLED BY NOBODY. A server->client event with
     -- no handler is not an error anywhere: it arrives, matches nothing, and is dropped in
     -- silence, so the feature reads as unimplemented while the server-side half is complete
@@ -1676,12 +1574,8 @@ local eventHandlers = {
         if not data or not data.id then return end
         av.avatarDocs[data.id] = data
         av.avatarDocDirty[data.id] = true -- applied once this frame, by avatarDocTick
-        if data.id == av.partyOwnerId then av.applyPartyLevel() end
     end,
 
-    -- The owner of the world we are standing in went Solo, so it is no longer open to us.
-    -- Dial our OWN world, which this client already knows; the server drops anyone still
-    -- here shortly after, so doing nothing would just become a disconnect.
     -- WHERE TO SIMULATE. Sent only to the sim peer: one anchor per populated region, so a
     -- single engine keeps several parts of the world active instead of one ~450MB process per
     -- region. A normal client never receives this, and without anchors the engine behaves
@@ -1750,53 +1644,6 @@ local eventHandlers = {
         if data and data.ready and not (mp.isSystem()) then toPlayer('MP_ResyncActive', {}) end
     end,
 
-    MP_WorldMode = function(data)
-        local m = tostring(data and data.mode or '')
-        local was = worldMode
-        worldMode = m == 'party' and 'party' or 'solo'
-        -- WHOSE WORLD THIS IS. A guest used to see the same "Playing: Solo | Party" switcher
-        -- as the host, with Party lit, and nothing on screen said they were in somebody
-        -- else's game. The server names the host (character name) and says whether we are
-        -- them; the page shows "Visiting X's world" with a Leave button instead.
-        mp.set('worldHost', tostring(data and data.owner or ''))
-        mp.set('amHost', (data and data.isOwner == true) and 'true' or 'false')
-        -- THE PEER: which avatar is the leader. Levelled lists roll against their level
-        -- everywhere in this world (mp.setPartyLevel), not against whoever is nearest.
-        av.partyOwnerId = tonumber(data and data.ownerId) or 0
-        av.applyPartyLevel()
-        mirrorRoster()
-        -- The rest rule, for player.lua's pre-emptive refusal of a guest's Rest (#262).
-        toPlayer('MP_WorldMode', { isOwner = data and data.isOwner == true, timeSkip = tostring(data and data.timeSkip or 'anyone') })
-        -- Which world you are in is invisible otherwise — the scenery is identical — and it
-        -- decides who can see you. Announced on CHANGE only; the server also sends this at
-        -- join, which is not a transition worth narrating.
-        -- FOR THE PERSON IT HAPPENED TO. A guest arriving in a friend's Party world got the
-        -- host's line ("your world, open to your friends"); a guest being sent home got "your
-        -- own world (solo)" while still standing in the host's. The owner is told about their
-        -- world; a guest is told whose world they are in; the eviction has its own notice.
-        if was ~= nil and was ~= worldMode then
-            if data and data.isOwner == true then
-                notice('You are now in ' .. (worldMode == 'party' and 'your world, open to your friends' or 'your own world (solo)') .. '.')
-            elseif worldMode == 'party' and data and data.owner and data.owner ~= '' then
-                notice("You are in " .. tostring(data.owner) .. "'s world.")
-            end
-        elseif was == nil and data and data.isOwner ~= true and data.owner and data.owner ~= '' then
-            -- A GUEST ARRIVES ON A FRESH PAGE (every join is a reboot), so `was` is nil and the
-            -- transition above never fires: the one thing a guest most wants said -- whose world
-            -- this is -- was said nowhere but the panel.
-            notice("You are in " .. tostring(data.owner) .. "'s world.")
-        end
-        -- THE HOST WHO CAME BACK TOO LATE (#29). The crash grace ran out and the guests were
-        -- sent home; the server names them once, on the owner's first WorldMode after return.
-        if data and data.isOwner == true and type(data.sentHome) == 'table' and #data.sentHome > 0 then
-            notice('Your guests were sent home while you were away: ' .. table.concat(data.sentHome, ', ') .. '.')
-        end
-    end,
-    MP_WorldClosed = function(data)
-        toPlayer('MP_WorldClosed', data)
-        goHome(data)
-    end,
-
     -- The server answers InviteAccept with the host's live position. Travelling is done
     -- here rather than trusting a client-side coordinate: the server is the only thing that
     -- knows where the host actually is.
@@ -1828,21 +1675,6 @@ local eventHandlers = {
             notice('Could not travel to them just now.')
         end
         mp.set('invitedTo', tostring(data.cellKey))
-    end,
-
-    -- "Join a friend": the server resolved their world and told us where to dial. An
-    -- ACTION, so the redial happens here; the hub is told first so it can show a failure.
-    MP_JoinFriend = function(data)
-        toPlayer('MP_JoinFriend', data)
-        -- The server's exact answer, for the scenarios: a refusal in place looks like nothing
-        -- happened from the host's screen, and the reason is the whole diagnosis.
-        pcall(function() mp.set('joinFriendResult', json.encode({ ok = data and data.ok, error = data and data.error, worldId = data and data.worldId })) end)
-        if not data or data.ok ~= true then return end
-        local url = worldUrlOf(data)
-        if not url then return end
-        mp.set('joinFriendTo', tostring(data.worldId or ''))
-        if url == net.currentTarget() then return end
-        net.switchTo(url)
     end,
 
     MP_ChatMessage = function(data)
@@ -2634,19 +2466,11 @@ local eventHandlers = {
             BlockAdd = true, BlockRemove = true, InviteSend = true, InviteAccept = true,
             PresenceMode = true, MuteAdd = true, MuteRemove = true,
             ReportPlayer = true,
-            -- Social UX: availability (Online/Offline), cross-world join, and the owner's
-            -- in-place Solo<->Party world flip.
-            SetAvailability = true, JoinFriend = true, SetWorldMode = true,
-            -- The host's "send home": one guest, no block, no flip.
-            WorldKick = true,
-            -- F3 world browser. The server takes the ACCOUNT from the authenticated
-            -- session, never from here, so a client cannot list or create sessions under
-            -- someone else's identity.
-            WorldList = true, WorldCreate = true,
+            -- Availability (Online/Offline). One world (OT3-58): no world ops.
+            SetAvailability = true,
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end
-        if op == 'JoinFriend' then print('[mp] JoinFriend sent for ' .. tostring(data.acct)) end
         mp.sendEvent(op, {
             name = data.name, acct = data.acct, mode = data.mode, id = data.id,
             target = data.target, kind = data.kind, payload = data.payload,
@@ -2732,18 +2556,9 @@ local eventHandlers = {
         })
     end,
 
-    -- F3: switch worlds. A reconnect, not a page reload — mp.connect takes any URL, so the
-    -- engine and loaded assets stay put and only the session moves. Accounts are shared
-    -- across worlds, so the login that got us here works there too.
     mpNetDrop = function()
         mp.disconnect()
     end,
-
-    -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)
-    mpSocialJoinById = function(data)
-        toPlayer('MP_SocialJoinById', { id = tostring(data.id or '') })
-    end,
-    -- @testhook end
 
     -- COMPANIONS. Sent by scripts/mp/companion.lua, which runs on the ACTOR because a global
     -- script cannot read AI package state for a foreign actor. This is the only route by which
@@ -2769,86 +2584,16 @@ local eventHandlers = {
     end,
     -- @testhook end
 
-    mpJoinWorld = function(data)
-        -- `url` is still honoured for any caller that already has one; the Worlds tab now
-        -- sends the world's FIELDS instead and lets worldUrlOf decide, so the gateway-path
-        -- rule lives in exactly one place. Without this the tab's join button computed
-        -- ws://nil:nil/ws, because the directory publishes no host or port.
-        local url = tostring(data.url or '')
-        if url == '' then url = worldUrlOf(data) or '' end
-        if url == '' then
-            -- Say so. A silent return here is indistinguishable from a click that did nothing,
-            -- and that is how this stayed broken.
-            print('[mp] cannot join ' .. tostring(data.name) .. ': it published no address')
-            notice('That world did not say where to connect.')
-            return
-        end
-        print('[mp] switching to ' .. tostring(data.name) .. ' at ' .. url)
-        net.switchTo(url)
-    end,
-
-    -- The where-am-I switcher (from the Social hub). Solo/Party flip our OWN world in
-    -- place; Offline peels us home + hides us; Online restores us to where we last were.
     mpSetTicket = function(data)
         net.setLoginTicket(tostring(data and data.ticket or ''))
     end,
 
+    -- Online/Offline (the Social hub). One world (OT3-58): availability only, no world flip.
     mpWhere = function(data)
-        -- Nothing to do in multiplayer until the character exists: no leaving the solo world
-        -- (or flipping it joinable) mid-chargen. The server's own chargen gate backs this up.
-        if not chargenDone then
-            notice('Finish creating your character first.')
-            return
-        end
         local mode = tostring(data.mode or '')
-        -- THE LATEST CLICK WINS. pendingFlip queues a mode change to apply once we are back in
-        -- our own world, and nothing used to clear it when the player chose something else in
-        -- the meantime. A queued 'private' from an earlier Solo click then fired on the next
-        -- join and overrode the Party the player had just asked for — the server logged
-        -- mode_flip party immediately followed by mode_flip private, and the switcher snapped
-        -- back to Solo with no explanation.
-        pendingFlip = nil
-        local inOwn = worldUrls.own ~= nil and net.currentTarget() == worldUrls.own
-        if mode == 'solo' then
-            if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'private' })
-            else pendingFlip = 'private'; net.switchTo(worldUrls.own) end
-        elseif mode == 'party' then
-            if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'party' })
-            else pendingFlip = 'party'; net.switchTo(worldUrls.own) end
-        elseif mode == 'home' then
-            -- LEAVE A FRIEND'S WORLD, and nothing else. The guest panel's Leave used to send
-            -- 'solo', which also queued a Solo flip for the guest's OWN world -- a host who
-            -- had visited a friend came home to find their own party dismissed.
-            if not inOwn and worldUrls.own then net.switchTo(worldUrls.own) end
-        elseif mode == 'offline' then
-            if not inOwn and worldUrls.own then worldUrls.lastOut = net.currentTarget() end
-            mp.sendEvent('SetAvailability', { state = 'offline' })
-            if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'private' })
-            else pendingFlip = 'private'; net.switchTo(worldUrls.own) end
-        elseif mode == 'online' then
-            mp.sendEvent('SetAvailability', { state = 'online' })
-            if worldUrls.lastOut and net.currentTarget() ~= worldUrls.lastOut then
-                local back = worldUrls.lastOut
-                worldUrls.lastOut = nil
-                kit.mirrorCarry()
-                net.switchTo(back)
-            end
+        if mode == 'offline' or mode == 'online' then
+            mp.sendEvent('SetAvailability', { state = mode })
         end
-        kit.mirrorCarry()
-    end,
-
-    -- The page handing back what mpWhere queued before the reload (see mirrorCarry).
-    mpCarry = function(data)
-        local flip, lastOut = tostring(data and data.v or ''):match('^(%a*)|(.*)$')
-        if not flip then return end
-        if flip ~= '' then pendingFlip = flip end
-        if lastOut ~= '' then worldUrls.lastOut = lastOut end
-        -- Already joined at home (the command can land after the join): fire it now.
-        if pendingFlip and wasJoined and worldUrls.own and net.currentTarget() == worldUrls.own then
-            mp.sendEvent('SetWorldMode', { mode = pendingFlip })
-            pendingFlip = nil
-        end
-        kit.mirrorCarry()
     end,
 
     -- Script removal lives here because removeScript is bound on GObject only. Both senders

@@ -267,39 +267,6 @@ interface FrontDoor {
 }
 
 // All state lives in the shared dir; the same files the world processes read and write.
-/** GET /auth/friends-playing: the signed-in account's friends who are in the one world right
- *  now (OT3-28), read from the presence table every world heartbeats into. Blocked either way
- *  is not a friend for this purpose. */
-export function friendsPlayingRoutes(
-  accounts: AccountStore,
-  lockerSessions: LockerSessionStore,
-  social: SocialStore,
-  worldsNow: () => { up: boolean; playerCount: number; id: string; players: { charId?: string }[] }[],
-): HttpRoute {
-  return async (req, res, url) => {
-    if (url.pathname !== '/auth/friends-playing') return false;
-    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
-    res.setHeader('access-control-allow-headers', 'authorization');
-    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
-    if (req.method !== 'GET') { sendJson(res, 405, { error: 'method_not_allowed' }); return true; }
-    const auth = req.headers.authorization ?? '';
-    const accountKey = lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : '');
-    if (!accountKey) { sendJson(res, 401, { error: 'sign_in_first' }); return true; }
-    const worlds = worldsNow();
-    const present = social.presentEverywhere(Date.now(), 30_000).filter((p) => !p.isBot);
-    const friends = social.friendsOf(accountKey)
-      .filter((f) => !social.blockedEitherWay(accountKey, f.account))
-      .map((f) => {
-        const here = present.find((p) => p.account === f.account);
-        const w = here && worlds.find((x) => x.id === here.world && x.up);
-        return w ? { acct: f.account, name: accounts.cachedByKey(f.account)?.username ?? accounts.usernameOf(f.account) ?? f.account, worldId: w.id, wsPath: `/w/${w.id}`, players: w.playerCount, mode: 'public' } : null;
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
-    sendJson(res, 200, { friends });
-    return true;
-  };
-}
-
 export async function buildFrontDoor(
   sharedDir: string,
   onCharacterDeleted?: (owner: { accountKey: string; username?: string }, charId: string) => void,
@@ -309,8 +276,7 @@ export async function buildFrontDoor(
   // The dashboard's session store, so an SSO round trip with return=admin can sign an
   // operator into the multiplayer server's dashboard the way it does into a game's.
   adminSessions?: AdminSessionStore,
-  // The live world list, for /auth/friends-playing. Absent (a standalone front door) the
-  // route answers an empty list.
+  // The live world list (who is playing which character). Absent: a standalone front door.
   worldsNow?: () => { up: boolean; playerCount: number; id: string; players: { charId?: string }[] }[],
   // Poll every world's status right now (the gateway's WorldSupervisor.poll).
   refreshWorlds?: () => Promise<void>,
@@ -404,12 +370,10 @@ export async function buildFrontDoor(
     refreshWorlds);
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
   const social = new SocialStore(sharedDir);
-  const playing = friendsPlayingRoutes(accounts, lockerSessions, social, worldsNow ?? (() => []));
   const also: HttpRoute = async (req, res, url) =>
     (await blobs(req, res, url))
     || (await locker2(req, res, url)) || (await profile(req, res, url))
-    || (await chars(req, res, url)) || (await reticket(req, res, url))
-    || (await playing(req, res, url));
+    || (await chars(req, res, url)) || (await reticket(req, res, url));
   const route = createAuthRoutes(
     { config, oidc, identities, tickets, sessions, lockerSessions, accounts, bans,
       ...(adminSessions ? { adminSessions } : {}),

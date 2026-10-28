@@ -97,12 +97,6 @@
    font-size:34px; color:var(--ink)}
  .cs-sub{margin:10px 0 0; color:var(--muted); font-size:14.5px}
  .cs-grid{display:flex; flex-wrap:wrap; justify-content:center; gap:16px; margin:34px 0 8px}
- /* Friends whose world is open right now: one click boots straight into it. */
- .cs-friends{margin:18px auto 0; max-width:560px; text-align:left}
- .cs-friends h4{margin:0 0 8px; font:600 11px/1.4 "Optima","Gill Sans",sans-serif; letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
- .cs-friend{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:6px}
- .cs-friend .who{font-size:14px; color:var(--ink)} .cs-friend .who b{color:var(--gold)}
- .cs-friend .as{font-size:12px; color:var(--muted); margin-left:6px}
  .cs-tile{position:relative; width:230px; border:1px solid var(--line); border-radius:10px;
    padding:24px 18px 20px; box-sizing:border-box; text-align:center;
    background:linear-gradient(170deg,rgba(26,20,11,.9),rgba(12,9,5,.92));
@@ -423,43 +417,6 @@
          grid.appendChild(nt);
        }
        if (chars.length === 0) showCreate();
-       renderFriends(chars);
-     }
-     // FRIENDS PLAYING NOW. A drop-in used to be two full boots: home first, then the social
-     // panel, then a second reload into the friend's world. The gateway knows which friends
-     // have a world open to friends and occupied, so the launcher offers the join here and the
-     // boot goes straight there (bootGame reads chosenChar.joinWsPath). Joins as the most
-     // recently played finished character: an unfinished one cannot enter a shared world (the
-     // destination's chargen gate), and a fresh page is where creation belongs.
-     async function renderFriends(chars){
-       const old = bd.querySelector('.cs-friends'); if (old) old.remove();
-       let data = null;
-       try { data = await (await fetch(gwHttp + '/auth/friends-playing', { headers: auth })).json(); } catch(e){ return; }
-       const friends = (data && data.friends) || [];
-       if (!friends.length) return;
-       const ready = chars.filter((c) => !c.needsChargen)
-         .sort((a, b) => String(b.lastPlayedAt || '').localeCompare(String(a.lastPlayedAt || '')));
-       const wrap = document.createElement('div'); wrap.className = 'cs-friends';
-       const h = document.createElement('h4'); h.textContent = 'Friends playing now'; wrap.appendChild(h);
-       friends.forEach((f) => {
-         const row = document.createElement('div'); row.className = 'cs-friend';
-         const who = document.createElement('div'); who.className = 'who';
-         // A friend playing SOLO is listed, not joinable (#89): the join rule (#103) is the
-         // gateway's, and a Solo world admits nobody, so the row says so and offers nothing.
-         const solo = f.mode === 'private';
-         who.innerHTML = solo ? '<b></b> is playing solo' : '<b></b> has their world open' + (f.players > 1 ? ' (' + f.players + ' playing)' : '');
-         who.querySelector('b').textContent = f.name;
-         if (ready[0] && !solo) { const as = document.createElement('span'); as.className = 'as'; as.textContent = 'join as ' + ready[0].name; who.appendChild(as); }
-         row.appendChild(who);
-         if (solo) { wrap.appendChild(row); return; }
-         const b = document.createElement('button'); b.className = 'btn btn-ghost'; b.type = 'button';
-         b.textContent = ready[0] ? 'Join' : 'Finish a character first';
-         b.disabled = !ready[0];
-         b.onclick = () => done(Object.assign({}, ready[0], { joinWsPath: f.wsPath, joinName: f.name }));
-         row.appendChild(b);
-         wrap.appendChild(row);
-       });
-       grid.parentNode.insertBefore(wrap, grid.nextSibling);
      }
      $('cs-back').textContent = '‹ Back to sign-in';
      $('cs-back').onclick = () => done(null);
@@ -472,102 +429,51 @@
  // Distinguishes "the platform is full / you are at your limit" from every other failure, so
  // the catch below can say which it was instead of guessing "unreachable".
  class CapacityError extends Error {}
- // A refusal that is a complete sentence on its own (#283): the "may be unreachable" guess must
- // not be appended to "that character no longer exists".
- class PlainError extends Error {}
 
- // Open the player's private world and boot the game with a login ticket + chosen character.
+ // Make sure the one world is up and boot the game with a login ticket + chosen character.
  // Shared by the fresh-SSO path and the #characters re-entry (Exit from the game).
  async function bootGame(sess, ticket, chosenChar){
-   let world, privId; // privId is read again below when building the boot fragment
+   let world;
    try {
-     // World ids are PUBLIC-ish: they label the world, travel in party/join flows, and name the
-     // world's data directory. This used to slug the account name, which for an SSO account is
-     // the person's REAL name — producing ids like "priv-jane-smith". Prefer the user-chosen
-     // public username (that is what onboarding collects it for) and fall back to an opaque
-     // hash, never to the account name.
-     const publicId = (sess.username || '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)
-       || Math.abs([...sess.account].reduce((a,c)=>(a*31+c.charCodeAt(0))|0,0)).toString(36);
-     // PER CHARACTER, not per account. A world holds CELL state — looted containers, opened
-     // doors, moved objects — and the character screen promises "their own solo world". Keying
-     // this by account alone gave every character on the account the same cell deltas, so a
-     // chest one character emptied was already empty for the next. Player state (journal,
-     // inventory) was always per-character; only the world was not. doc.positions is keyed by
-     // world id, so per-character worlds are what that was already built for.
-     privId = 'priv-' + publicId + '-' + String(chosenChar.id).slice(-8);
-     // A JOIN-FRIEND BOOT DOES NOT OPEN OUR OWN WORLD. We are dialling the host's world; our
-     // home only has to exist when we come back to it, and the gateway revives a world that
-     // is on disk the moment it is dialled (directory.ts revive-on-dial). Spawning it here
-     // meant a process nobody connected to, and the never-joined reaper took its directory
-     // with it after 15 min -- the guest's own cell state, gone (backlog 272). A character
-     // that has never played its home (no position recorded under this id) still asks, so
-     // the id is the server's and the dir exists to revive later.
-     if (chosenChar.joinWsPath && (chosenChar.positions || {})[privId]) {
-       world = { wsPath: '/w/' + privId };
-     } else {
      // The locker token is what identifies us: the server resolves the account from this
-     // header and IGNORES any account in the body, because a body-supplied name let one
-     // caller fabricate owners and exhaust every world slot. Sending it in the body only,
-     // as this did, is an unauthenticated request — the server answers 401 sign_in_first.
+     // header and ignores any account in the body. There is one world (OT3-28), so the body
+     // names nothing; the POST only makes sure it is running.
      const open = () => fetch(sess.gwHttp + '/worlds', { method:'POST',
        headers:{ 'content-type':'application/json', authorization: 'Bearer ' + sess.lockerToken },
-       // characterId lets the SERVER derive the world id and refuse a character that no
-       // longer exists — a stale tab computing privId locally is how worlds got minted for
-       // ghosts. privId stays as the fallback for older servers.
-       body: JSON.stringify({ mode:'private', id: privId, characterId: String(chosenChar.id) }) });
+       body: '{}' });
      let r = await open();
      world = await r.json();
-     // Continue within seconds of the idle reap finds the old process still draining; the
-     // gateway says "restarting" rather than "full", and it is back once that process exits
-     // (a few seconds). One retry covers it; a second refusal is reported as it comes.
+     // A restart finds the old process still draining; it is back within seconds. One retry.
      if (r.status === 503 && world && world.error === 'restarting') {
        await new Promise((res) => setTimeout(res, 3000));
        r = await open(); world = await r.json();
      }
-     // A FULL PLATFORM IS NOT AN UNREACHABLE ONE. Both used to land in the same catch and be
-     // reported as "the multiplayer server may be unreachable", which is wrong in the way that
-     // wastes a player's evening: they retry, it keeps failing, and nothing says the box is
-     // simply out of room. 503 means come back; 429 means this account already has its worlds.
+     // A busy server is not an unreachable one: say which it was.
+     if (r.status === 503 && world && world.error === 'maintenance') throw new CapacityError(world.message || 'The server is in maintenance.');
      if (r.status === 503 && world && world.error === 'restarting') throw new CapacityError(
-       'Your world is still shutting down from your last session. Try again in a few seconds.');
-     if (r.status === 503) throw new CapacityError('The server is full right now — every world '
-       + 'slot is in use. This is us running out of room, not anything wrong with your account. '
-       + 'Try again in a few minutes.');
-     if (r.status === 429) throw new CapacityError((world && world.error)
-       || 'You already have as many worlds open as this server allows. Exit one and try again.');
-     if (world.error === 'no_such_character') throw new PlainError('That character no longer exists — go back and pick another.');
-     if (!r.ok || !world.wsPath) throw new Error(world.error || 'the server could not open your world');
-     // The server may have derived a DIFFERENT id than we computed; its answer is the truth.
-     if (world.id) privId = 'priv-' + String(world.id).replace(/^priv-/, '');
-     }
+       'The world is restarting. Try again in a few seconds.');
+     if (r.status === 503) throw new CapacityError('The server is out of room right now. Try again in a few minutes.');
+     if (r.status === 429) throw new CapacityError('Too many tries. Wait a moment and try again.');
+     if (!r.ok || !world.wsPath) throw new Error(world.error || 'the server could not open the world');
    } catch(e){
-     // A capacity refusal is a complete sentence on its own; do not append the "unreachable"
-     // guess to it, which is what made a full server look like a broken one.
+     // A capacity refusal is a complete sentence on its own; do not append the "unreachable" guess.
      if (e instanceof CapacityError) { launcherError('The server is busy', e.message); return; }
-     if (e instanceof PlainError) { launcherError('Could not open your world', e.message); return; }
-     launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable, please try again in a moment.'); return;
+     launcherError('Could not open the world', (e && e.message || e) + '. The multiplayer server may be unreachable, please try again in a moment.'); return;
    }
-   // Every world is its own process on an internal port that NOTHING publishes, so the only
+ // Every world is its own process on an internal port that NOTHING publishes, so the only
    // reachable address is a path on this origin that the gateway splices through (/w/<id>).
    // There is deliberately no address fallback: the server used to hand back a host it had
    // been configured with, defaulting to 127.0.0.1 — which for a remote player is their own
    // machine. A path we join to our OWN origin cannot be wrong for whoever is holding it.
    const wsProto = /^wss:/.test(sess.gwUrl) ? 'wss' : 'ws';
    const worldWs = wsProto + '://' + location.host + world.wsPath;
-   // A JOIN FROM THE LAUNCHER: dial the friend's world directly; our own world (just opened
-   // above, so it is up to come home to) rides as mphome exactly as on a normal boot. The
-   // destination admits us if it is still open to friends and places us beside the host
-   // (server.ts guestSpawn); if it closed meanwhile, the refused dial goes home (net.lua).
-   const dialWs = chosenChar.joinWsPath ? (wsProto + '://' + location.host + chosenChar.joinWsPath) : worldWs;
    // EVERYTHING rides in the fragment now, mp and locker included. Fragments are not logged,
    // cached or sent as a Referer, and they do not sit in the address bar inviting a player to
    // retype the world address. The ticket is single-use and the server authorises every
    // connection regardless — this is blast-radius, not a security boundary.
    // mpnew=1 = this slot has never been played: boot runs Morrowind's own character creation.
    // An existing character skips the title menu AND chargen — the server restores their state.
-   // mphome: the player's OWN world, so the switcher can come back to it after a reboot into
-   // some other world. Same value as mp= on this first boot; a switch rewrites mp= and keeps
-   // this untouched, which is the whole point.
+   // mphome and mp are the same one world (a character switch rejoins it).
    // DOES THIS SERVER HAND OUT THE GAME? index.html has always understood #mwdata=1 -- "the
    // server holds the data; the token still rides along and still buys saves" -- and nothing
    // ever set it, so the multiplayer boot always took the locker path. On a server-hosted
@@ -597,7 +503,7 @@
      launcherError('Session expired', 'Please sign in again to keep playing.'); return;
    }
    const frag = (hosted ? '#mwdata=1&mphome=' : '#mphome=') + encodeURIComponent(worldWs)
-     + '&mp=' + encodeURIComponent(dialWs)
+     + '&mp=' + encodeURIComponent(worldWs)
      + '&locker=' + encodeURIComponent(sess.gwHttp)
      + '&mpticket=' + encodeURIComponent(ticket)
      + (sess.lockerToken ? '&mplocker=' + encodeURIComponent(sess.lockerToken) : '')
@@ -684,8 +590,7 @@
    try { chosenChar = await runCharacterSelect(gwHttp, lockerToken); }
    catch(e){ chosenChar = null; }
    if (!chosenChar) return leaveDoor(); // backed out
-   // A new player lands in their own PRIVATE world — that is where character creation happens.
-   // Party and public come after (a fresh character must be created in private first).
+   // Everyone boots into the one world; a new character runs chargen there (mpnew=1).
    let username = '';
    try { username = (JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}')).username || ''; } catch(e){}
    await bootGame({ gwHttp, gwUrl, account, lockerToken, username }, decodeURIComponent(tk[1]), chosenChar);

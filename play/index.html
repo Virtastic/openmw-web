@@ -33,12 +33,6 @@ window.omw = (function(){
   function on(name, fn){ (listeners[name] = listeners[name] || []).push(fn); }
   return { state: state, queue: queue, send: send, emit: emit, on: on, pending: pending };
 })();
-// A world switch's queued intent, carried across the reload by rebootIntoWorld. Queued now;
-// Lua drains the queue once the game runs, so the wait is the engine's boot, not ours.
-try {
-  var omwCarry = sessionStorage.getItem('omwmp:carry');
-  if (omwCarry) { sessionStorage.removeItem('omwmp:carry'); window.omw.send('carry:' + omwCarry, 300000); }
-} catch (e) {}
 </script>
 <script>/* Lock the tab title: the engine calls SDL_SetWindowTitle (document.title=...) on boot; shadow the property so those writes are ignored and the tab always reads OpenMW-Web. The only writer is window.__omwBadge(n): an unread count prefix "(n) " for the alt-tabbed player (backlog 350); 0 clears it. */(function(){var LOCK="OpenMW-Web",badge=0;function paint(){var t=document.getElementsByTagName("title")[0];if(t)t.textContent=(badge>0?"("+badge+") ":"")+LOCK;}try{Object.defineProperty(document,"title",{configurable:true,get:function(){return LOCK},set:function(){}});}catch(e){}try{paint();}catch(e){}window.__omwBadge=function(n){badge=n>0?n:0;try{paint();}catch(e){}};})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
@@ -3758,11 +3752,6 @@ try {
   cursor:pointer; font:inherit; font-size:12.5px; letter-spacing:.05em; }
 #omw-social .seg button:hover{ color:var(--ink); }
 #omw-social .seg button.on{ background:var(--gold); color:#1a1207; font-weight:600; }
-#omw-social .whererow{ display:flex; align-items:center; gap:12px; flex-wrap:wrap;
-  padding:12px 14px; margin-bottom:16px; border:1px solid var(--line-soft); border-radius:8px;
-  background:rgba(0,0,0,.16); }
-#omw-social .whererow .lb{ font:600 10.5px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.14em;
-  text-transform:uppercase; color:var(--faint); }
 #omw-social h3{ margin:4px 0 10px; font:600 11px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.16em;
   text-transform:uppercase; color:var(--faint); }
 #omw-social .card{ border:1px solid rgba(198,154,78,.4); background:rgba(211,168,78,.07);
@@ -4043,23 +4032,6 @@ try {
     // ...and the data source stays what it was: a token alone would put the next page on the
     // locker stream, so a page that ran on hosted data says so for the destination.
     if (!window.__omwMpLocker && !keep.some(function(kv){ return kv.split('=')[0] === 'mwdata'; })) keep.push('mwdata=1');
-    // WHY WE ARE GOING. An eviction ("X sent you home", "the host has gone solo") is shown
-    // as a modal and, a few hundred milliseconds later, this navigation wipes it -- the
-    // player lands at home with no idea what happened. Carry the reason; the new page says
-    // it once it is standing.
-    var wcNow = String((window.omw && window.omw.state && window.omw.state.worldClosed) || '');
-    if (wcNow) {
-      keep.push('mpclosed=' + encodeURIComponent(wcNow));
-      var wcBy = String((window.omw && window.omw.state && window.omw.state.worldClosedBy) || '');
-      if (wcBy) keep.push('mpclosedby=' + encodeURIComponent(wcBy));
-    }
-    // What the switcher queued for the far side (a Party flip for home, Offline's way back).
-    // Lua state dies with this reload; the next boot hands it back (see 'carry:' below).
-    try {
-      var carryNow = String((window.omw && window.omw.state && window.omw.state.switchCarry) || '');
-      if (carryNow && carryNow !== '|') sessionStorage.setItem('omwmp:carry', carryNow);
-      else sessionStorage.removeItem('omwmp:carry');
-    } catch (e) {}
     // Flush saves and settings before the navigation, exactly as a tab close would.
     try { if (window.__omwSync) window.__omwSync(); } catch (e) {}
     // The beforeunload guard asks "leave site?" whenever the engine is running. This IS a
@@ -4578,12 +4550,6 @@ try {
   // Set by the chargen gate below; chat exists only once the character does.
   var chatReady = false;
   var netHold = false;
-  // NOT persisted, and not a guess. Which world you are in is the server's fact, delivered
-  // as the whereNow mirror; this is only the latest value of it. Keeping a localStorage copy
-  // meant the panel could assert "Public" while the connection was to your own world — and it
-  // survived reloads, so nothing could clear it. UI state that describes the server belongs
-  // to the server.
-  var lastWhere = '';
   var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
   var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
   var sStatus = document.getElementById('omw-social-status');
@@ -4593,7 +4559,7 @@ try {
   function setStatus(t){ sStatusText = t || ''; sStatus.textContent = sStatusText; }
   // The server answers refusals with a CODE. Showing it raw ("Couldn't PartyInvite:
   // party_full.") tells a player nothing about what to do next, and reads like a crash.
-  // THE SAME SENTENCES AS social.lua (SOCIAL_FAIL + MP_JoinFriend): the engine toasts one and
+  // THE SAME SENTENCES AS social.lua (SOCIAL_FAIL): the engine toasts one and
   // this footer showed another for the same refusal (backlog 104). One table, Lua's wording;
   // the fallback is Lua's too ("op: code").
   var FAILURE = {
@@ -4607,28 +4573,10 @@ try {
     private: 'They are not accepting invitations.',
     not_friends: 'You are not friends with them.',
     in_chargen: 'Finish creating your character first.',
-    not_open: 'Their world is not open to friends yet. Ask them to switch to Party.',
-    host_not_friend: 'They are in someone else\'s party, and you are not friends with that host.',
-    host_away: 'They have just disconnected. Try again in a moment.',
-    no_gateway: 'This server runs a single world, so there is nowhere else to join.',
   };
   var SUCCESS = { InviteSend: 'Invitation sent.' };
   function failureText(code, op){
     return FAILURE[code] || (op + ': ' + (code || '?'));
-  }
-  // Optimistic only, and always overwritten by the next whereNow mirror. Nothing persists.
-  function setWhere(v){ lastWhere = v; }
-  // "Joining X…" until the server answers (joinFriendResult mirror) or 30 s pass. Success
-  // reboots the page into the friend's world, so only a refusal ever has to clear it here.
-  // ponytail: the mirror is a value, not a sequence, so the same refusal twice in a row is
-  // only cleared by the timer; the engine's own toast still names the reason both times.
-  var joinSeen = '', joinTimer = 0;
-  function watchJoin(name){
-    setStatus('Joining ' + name + '…');
-    window.__omwSwitchLabel = { title: 'Joining ' + name, arrive: 'Joining ' + name + "'s world", at: Date.now() };
-    joinSeen = String(mpState().joinFriendResult || '');
-    clearTimeout(joinTimer);
-    joinTimer = setTimeout(function(){ if (sStatusText.indexOf('Joining ') === 0){ setStatus(''); renderSocial(); } }, 30000);
   }
   function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); premintTicket(); }
   // Every world switch starts here, so the ticket it will need is fetched now, off the click's
@@ -4666,12 +4614,9 @@ try {
     // destroyed and recreated ~7x/second. That silently ate focus, every typed character, and
     // any click that landed between two renders: the "it flashes and I can't click or type"
     // report. Measured before the fix: the input element was replaced 5 times in 2 seconds.
-    // lastWhere and the status line are LOCAL state, but this render DRAWS them, so they
-    // belong in the signature. Leaving lastWhere out meant clicking Solo updated the variable,
-    // called renderSocial(), and then hit the unchanged-signature early return: the segment
-    // stayed on the old choice and the panel looked hung even though the switch had happened.
-    var sig = [sTab, lastWhere, String(m.whereNow || ''), sStatusText, m.friends, m.players, m.friendRequests,
-      m.invites, m.availability, m.presenceMode, m.worldMode, m.blocked, m.muted, m.amHost, m.worldHost].join(' ')
+    // The status line is LOCAL state, but this render DRAWS it, so it belongs in the signature.
+    var sig = [sTab, sStatusText, m.friends, m.players, m.friendRequests,
+      m.invites, m.availability, m.presenceMode, m.blocked, m.muted].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
     var friends = pj(m.friends)||[], players = pj(m.players)||[];
@@ -4717,46 +4662,6 @@ try {
       });
     // content
     sBody.innerHTML = '';
-    // The switcher renders from where we ARE, not from what was last clicked: whereNow is
-    // the world actually dialled. Only solo-vs-party (a mode flip on the SAME world) still
-    // comes from local memory, because both look identical from the client's side.
-    var wn = m.whereNow == null ? '' : String(m.whereNow);
-    if (wn) lastWhere = wn;
-    var where = el('div','whererow');
-    var amHost = String(m.amHost || '') === 'true';
-    var hostName = String(m.worldHost || '');
-    if (!amHost && hostName) {
-      // A GUEST. This is somebody else's game: say whose, and offer the one thing a guest
-      // can do about it -- leave. (Solo/Party are the host's controls; a guest clicking them
-      // went home anyway, which read as the switcher being broken.)
-      where.appendChild(el('span','lb','Visiting <b>' + esc(hostName) + "</b>'s world"));
-      var leave = el('button','btn','Leave');
-      leave.onclick = function(){
-        closeSocial();
-        window.__omwSwitchLabel = { title: 'Going home', arrive: 'Arriving home', at: Date.now() };
-        cmd('where:home'); // leave the friend's world; our own world's mode is untouched
-        window.__omwLoading.show('Going home', 'Back to your own world…');
-        setStatus('');
-      };
-      where.appendChild(leave);
-      sBody.appendChild(where);
-    } else {
-    where.appendChild(el('span','lb','Playing'));
-    where.appendChild(seg([['solo','Solo'],['party','Party']], lastWhere, async function(v){
-      // Solo closes your world to guests; Party opens it to your friends. Both are in-place
-      // flips of the SAME world — no reconnect, no travel. Closing on guests is their
-      // business too, but the server narrates it to them (WorldClosed), so no confirm here.
-      // No loading screen: the flip does not move anyone, and SimReady is only sent at
-      // join, so holding for it here sat every click on a black "waiting for the world" for
-      // the full ceiling (backlog 273). The server's SocialResult toast is the ack.
-      setWhere(v);
-      closeSocial();
-      cmd('where:' + v);
-      setStatus('');
-      renderSocial();
-    }));
-    sBody.appendChild(where);
-    }
     var sec = el('div');
     if (sTab === 'friends'){
       reqs.forEach(function(q){ var c = el('div','card');
@@ -4776,14 +4681,9 @@ try {
       friends.forEach(function(f){
         var acts = [];
         if (f.online){
-          // "join" only where a join can succeed: the server marks a friend joinable when they
-          // are in ANOTHER world that is open to friends (backlog 103). A friend here, or one
-          // playing solo, gets no button rather than a refusal.
-          if (f.joinable) acts.push(['join', function(){ cmd('joinfriend:'+f.acct); watchJoin(f.name); }, true]);
-          // "come to me": the same InviteSend the O-key hub sends (backlog 105). HOST ONLY
-          // (backlog 354): a guest's invite routed the invitee to the guest's idle home
-          // world, which answered not_open.
-          if (amHost) acts.push(['invite', function(){ cmd('social:InviteSend:'+f.acct); setStatus('Inviting '+f.name+'…'); }]);
+          // "come to me": the same InviteSend the O-key hub sends (backlog 105). One world
+          // (OT3-58): everyone can invite, there is no host.
+          acts.push(['invite', function(){ cmd('social:InviteSend:'+f.acct); setStatus('Inviting '+f.name+'…'); }]);
           if (f.playerId != null) acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.acct; openChat(); renderChans(); }]);
         }
         acts.push(['remove', function(){ cmd('social:FriendRemove:'+f.acct); }]);
@@ -4833,11 +4733,6 @@ try {
           cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true]);
         // Everything that targets a PERSON goes by name for the same reason.
         acts.push(['mute', function(){ cmd('social:MuteAdd:'+p.name); }]);
-        // THE HOST'S KICK. Sends that one guest home, keeps the friendship and the open
-        // door -- the ordinary lobby control, next to the harsher block. Only on a guest IN
-        // YOUR WORLD: this list is the whole server's (broadcastServerRoster), and only rows
-        // from your own world carry an id. Elsewhere the server refuses it (no_such_player).
-        if (amHost && p.id != null) acts.push(['send home', function(){ cmd('social:WorldKick:'+p.name); setStatus('Sent home.'); }]);
         acts.push(['block', function(){ cmd('social:BlockAdd:'+p.name); }]);
         // REPORT, one click from the row. The typed /report is gone; this is the only way,
         // and it files the same report with the same chat context attached.
@@ -5070,14 +4965,6 @@ try {
     if (tourIdx < tourDeck.length - 1){ tourIdx++; renderTour(); } else closeTour(); });
   document.getElementById('omw-tour-x').addEventListener('click', closeTour);
 
-  // Watch the mirrors for things that were done TO this player and narrate them once each.
-  // All three are edge-triggered against a remembered value, never level-triggered, or the
-  // 150ms poll would reopen the modal forever.
-  // EDGE-TRIGGERED ON A SEQUENCE, not on the payload. The payloads repeat verbatim — the
-  // public world's id is a constant, so is the kick reason — so comparing values could not
-  // tell a second occurrence from an unchanged mirror, and every kick or trip after the first
-  // in a session was silently swallowed while the player really was redialed.
-  var seenNoticeSeq = null;
   // DECLARED, because reading an undeclared identifier THROWS. These two were assigned but
   // never declared, so noticeWatch threw a ReferenceError on its very first tick — and it runs
   // every 150 ms from the mirror poll, gated on `ready`, which turns true the moment chargen
@@ -5087,36 +4974,7 @@ try {
   // the "I cannot send messages" bug, and it was invisible to every test because nothing in
   // CI ever loads this page. See pagescope.test.ts, which now fails on undeclared identifiers.
   var seenNetState = null, everJoinedOnce = false;
-  // The eviction copy, shared by the live notice and the one carried across a reboot.
-  function worldClosedCopy(wc, byRaw){
-    var by = esc(String(byRaw || ''));
-    return (wc === 'kicked' ? (by ? '<b>' + by + '</b> sent you home.' : 'The host sent you home.')
-        : wc === 'unfriended' ? 'You are no longer on the friends list that let you into that world.'
-        : wc === 'not_open' ? 'That world is no longer open to you: the host has gone solo.'
-        : by ? '<b>' + by + '</b> has closed their world.'
-          : 'The world you were in has closed.')
-      + ' You are back in your own world. Nothing you did there is lost.';
-  }
-  // Said ONCE the new page is standing (not behind the loading screen): the reason the
-  // previous page carried in its fragment (see rebootIntoWorld).
-  var carriedClosedShown = false;
-  function carriedNoticeWatch(m){
-    if (carriedClosedShown) return;
-    if (String(m.state || '') !== 'Joined') return;
-    var frag = String(window.__omwBootFrag || '');
-    var mc = /(^|&)mpclosed=([^&]+)/.exec(frag);
-    if (!mc) { carriedClosedShown = true; return; }
-    carriedClosedShown = true;
-    var byM = /(^|&)mpclosedby=([^&]+)/.exec(frag);
-    // What the scenarios read (s102, s141): a fast client is home and rebooted before the
-    // old page's worldClosed mirror can be read, and this is the notice it was told there.
-    window.__omwWorldClosedShown = { why: decodeURIComponent(mc[2]), by: byM ? decodeURIComponent(byM[2]) : '' };
-    showNotice('Back in your own world', worldClosedCopy(decodeURIComponent(mc[2]), byM ? decodeURIComponent(byM[2]) : ''), GLYPH_WORLD);
-    // Do not carry it a second time.
-    window.__omwBootFrag = frag.split('&').filter(function(kv){ return !/^mpclosed(by)?=/.test(kv); }).join('&');
-  }
   function noticeWatch(m){
-    carriedNoticeWatch(m);
     var ns = m.netstate == null ? '' : String(m.netstate);
     if (ns !== seenNetState){
       seenNetState = ns;
@@ -5149,17 +5007,6 @@ try {
       }
       // Failed has exactly ONE owner: the mpErrorModal watcher below. Handling it here too
       // stacked two different-looking modals on the same event.
-    }
-    var seq = m.noticeSeq == null ? '' : String(m.noticeSeq);
-    if (seenNoticeSeq === null) { seenNoticeSeq = seq; }
-    else if (seq !== seenNoticeSeq) {
-      seenNoticeSeq = seq;
-      var wc = m.worldClosed == null ? '' : String(m.worldClosed);
-      if (wc) {
-        // The name is optional on purpose: the server sends it only when the owner is still
-        // visible, so the copy has to read correctly without one.
-        showNotice('Returning to your own world', worldClosedCopy(wc, m.worldClosedBy), GLYPH_WORLD);
-      }
     }
   }
 
@@ -5305,21 +5152,11 @@ try {
       if (res && res.op) {
         if (res.ok === true) {
           if (res.op === 'PresenceMode') setStatus('Now visible to: ' + res.detail + '.');
-          else if (res.op === 'SetWorldMode') setStatus(String(res.detail) === 'party'
-            ? 'Your world is open to your friends.' : 'Your world is solo again.');
           else if (SUCCESS[res.op]) setStatus(SUCCESS[res.op]);
         } else {
           setStatus(failureText(String(res.detail || ''), String(res.op)));
         }
       }
-    }
-    // The join answer (global.lua mirrors the server's JoinFriend). A refusal replaces
-    // "Joining X…"; success never reaches here because the page reboots into their world.
-    var jr = String(m.joinFriendResult || '');
-    if (joinTimer && jr !== joinSeen) {
-      joinSeen = jr;
-      var jres = pj(jr);
-      if (jres && jres.ok !== true) { clearTimeout(joinTimer); joinTimer = 0; setStatus(failureText(String(jres.error || ''), 'JoinFriend')); }
     }
     // ---- connection state: reconnect must PAUSE the game -------------------------------
     // Moving while disconnected and re-syncing on return is a cheat vector, and a frozen-
