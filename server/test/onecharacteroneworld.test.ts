@@ -91,3 +91,17 @@ test('an account banned in one world is dropped from another within a heartbeat'
   await guest.waitDisconnect('BANNED');
 });
 
+
+// OT3-22: a gateway-spawned world (OMW_WORLD_ID set) has no owner; it used to admit admins
+// only. One public world: any player gets in.
+test('a gateway-spawned ownerless world admits a non-admin player', async (t) => {
+  const prev = process.env.OMW_WORLD_ID;
+  process.env.OMW_WORLD_ID = 'gw-ownerless';
+  t.after(() => { if (prev === undefined) delete process.env.OMW_WORLD_ID; else process.env.OMW_WORLD_ID = prev; });
+  const s = await startServer({ requireGameData: false, port: 0, host: '127.0.0.1', dataDir: tmpDataDir() });
+  t.after(() => s.close());
+  const c = await TestClient.connect(s.port);
+  t.after(() => c.close());
+  await c.joinAsNew('Stranger', 'hunter22');
+  await c.waitEvent('PlayerList');
+});
