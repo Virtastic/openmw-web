@@ -273,6 +273,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     broadcastChat(roster, { channel: 'server', text });
   });
   schedule.start();
+  // OT3-177: the swap writes both docs; the ledger sits next to them in the shared dir.
+  // Built before Admin: /restoreitem (OT3-181) writes to it too.
+  const tradeLedger = new TradeLedger(sharedDir);
   const admin = new Admin({
     questRepair,
     roster,
@@ -293,6 +296,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     schedule, // OT3-190
     restore: (charKey, at) => playerStore.restoreTo(charKey, at), // OT3-184
     setMuted: (acct, muted, until, reason) => socialRef?.setServerMuted(acct, muted, until, reason), // OT3-185
+    ledger: (e) => tradeLedger.write(e), // OT3-181
+    chars: { // OT3-180..182
+      async resolve(who) {
+        const account = await accounts.get(accounts.keyForUsername(who) ?? who.toLowerCase());
+        const latest = account?.characters?.slice().sort((x, y) => (y.lastPlayedAt ?? '').localeCompare(x.lastPlayedAt ?? ''))[0];
+        if (latest) return latest.id;
+        return (await playerStore.get(who)) ? who : undefined;
+      },
+      edit: (charKey, fn) => playerStore.update(charKey, fn, 'now'),
+      safePoint: () => ({ cellKey: config.rules.respawnCellKey, x: config.rules.respawnX, y: config.rules.respawnY, z: config.rules.respawnZ }),
+    },
   });
   const m7 = new WorldM7({
     roster,
@@ -725,8 +739,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   socialRef = social;
 
-  // OT3-177: the swap writes both docs; the ledger sits next to them in the shared dir.
-  const tradeLedger = new TradeLedger(sharedDir);
   const trades = new Trades({
     findByName: (name) => roster.findByName(name),
     inventoryOf: (charId) => playerStore.getCached(charId)?.inventory ?? [],

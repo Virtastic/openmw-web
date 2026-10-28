@@ -40,6 +40,8 @@ export interface LedgerEntry {
   id: number; ts: number;
   a: { char: string; name: string; gave: Item[] };
   b: { char: string; name: string; gave: Item[] };
+  // OT3-181: a staff restoration (id 0, `a` is the staff member) says why.
+  reason?: string;
 }
 
 interface Side { p: Player; offer: Item[]; stage: 0 | 1 | 2 }

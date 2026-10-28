@@ -18,6 +18,8 @@
 
 import type { AuditRow, LoginLog } from './admin-audit';
 import type { Schedule } from './schedule';
+import type { LedgerEntry } from './trade';
+import type { PlayerDoc } from '../persist/playerstore';
 import type { Player, Roster } from './players';
 import type { AccountStore, DashboardRole } from './accounts';
 import type { BanStore } from '../persist/banstore';
@@ -98,6 +100,31 @@ interface AdminCtx {
   logins?: LoginLog;
   // OT3-190: scheduled broadcasts / MOTD (schedule.ts). Absent = /schedule reports it is off.
   schedule?: Schedule;
+  // OT3-181: the item ledger (trade.ts TradeLedger) -- restorations sit next to trades.
+  ledger?(e: LedgerEntry): void;
+  // OT3-180..182: offline character edits. resolve = online name, account (its most recently
+  // played character) or a raw charKey; edit writes the doc and flushes it now.
+  chars?: {
+    resolve(who: string): Promise<string | undefined>;
+    edit(charKey: string, fn: (doc: PlayerDoc) => void): void;
+    safePoint(): { cellKey: string; x: number; y: number; z: number };
+  };
+}
+
+// OT3-180..182: resolve a character for an offline edit. An online target is disconnected
+// first: a live client would write its own state straight back over the edit.
+async function offlineChar(ctx: AdminCtx, actor: Player, who: string): Promise<{ charKey: string; label: string } | string> {
+  if (!ctx.chars) return 'Offline character tools are not available on this world.';
+  const online = ctx.roster.findByName(who);
+  if (online && outranks(online.rank, online.name, actor)) return `${online.name} is not below your rank.`;
+  const charKey = online?.charId ?? await ctx.chars.resolve(who);
+  if (!charKey) return `No character "${who}".`;
+  if (online) {
+    // Synchronous: the logout flush lands now, so the edit after this is the last write.
+    online.peer.disconnect('KICKED', `${actor.name} is fixing your character; rejoin to continue.`);
+    ctx.resume.revokeAccount(online.accountKey);
+  }
+  return { charKey, label: online?.name ?? who };
 }
 
 const MAX_MUTE_MINUTES = 60 * 24 * 30;
@@ -220,25 +247,38 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
   // and is the fastest way for them to tell a moderator what is wrong.
   quest: {
     minRank: 0,
-    usage: '/quest [player] | /quest set <player> <questId> <index>',
-    help: 'inspect quest state, or (moderator) force a stage when a quest is stuck',
+    usage: '/quest [player] | /quest set <player|charKey> <questId> <index> | /quest clear <player|charKey> <questId>',
+    help: 'inspect quest state, or (moderator) force or clear a stage when a quest is stuck',
     async run(ctx, actor, args) {
       if (!ctx.questRepair) return 'Quest repair is not available on this world.';
       const sub = args[0] ?? '';
-      if (sub === 'set') {
+      if (sub === 'set' || sub === 'clear') {
+        // OT3-182: works offline; an online target is disconnected so its rejoin's JournalSync
+        // carries the change (a live client would otherwise keep its own journal).
         if (actor.rank < 1) return 'Only a moderator can force a quest stage.';
-        const [, who, questId, raw] = args;
-        if (!who || !questId || raw === undefined) return 'usage: /quest set <player> <questId> <index>';
-        const target = ctx.roster.findByName(who);
-        if (!target) return `${who} is not online.`;
-        const index = Number(raw);
-        if (!ctx.questRepair.setStage(target.charId, questId, index, actor.name)) {
-          return 'Index must be a whole number.';
-        }
+        const [, who, rawQuest, raw] = args;
+        const usage = sub === 'set' ? 'usage: /quest set <player|charKey> <questId> <index>' : 'usage: /quest clear <player|charKey> <questId>';
+        if (!who || !rawQuest || (sub === 'set') !== (raw !== undefined)) return usage;
+        const questId = rawQuest.toLowerCase();
+        const index = sub === 'set' ? Number(raw) : 0;
+        if (!Number.isInteger(index) || index < 0 || index > 0x7fffffff) return 'Index must be a whole number.';
+        const got = await offlineChar(ctx, actor, who);
+        if (typeof got === 'string') return got;
+        ctx.chars!.edit(got.charKey, (doc) => {
+          if (sub === 'set') {
+            (doc.journal ??= {})[questId] = index;
+            return;
+          }
+          if (doc.journal) delete doc.journal[questId];
+          if (doc.journalLog) doc.journalLog = doc.journalLog.filter((e) => e.q.toLowerCase() !== questId);
+        });
         // Cooldowns go too: the usual reason a stage is forced is that an encounter never
         // appeared, and leaving the cooldown would block the retry.
-        ctx.questRepair.clearSpawnCooldowns(target.charId, actor.name);
-        return `Set ${target.name}'s ${questId} to ${index} (spawn cooldowns cleared).`;
+        ctx.questRepair.clearSpawnCooldowns(got.charKey, actor.name);
+        audit(actor, 'quest', { sub, target: got.charKey, questId, ...(sub === 'set' ? { index } : {}) });
+        return sub === 'set'
+          ? `Set ${got.label}'s ${questId} to ${index} (spawn cooldowns cleared; applies on their next login).`
+          : `Cleared ${got.label}'s ${questId} (applies on their next login).`;
       }
       const who = sub === '' ? actor.name : sub;
       if (sub !== '' && actor.rank < 1 && who.toLowerCase() !== actor.name.toLowerCase()) {
@@ -343,6 +383,53 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       target.peer.disconnect('KICKED', reason);
       audit(actor, 'kick', { target: target.name, reason });
       return `Kicked ${target.name}: ${reason}`;
+    },
+  },
+  // OT3-180: the "stuck" fix that works offline -- the saved position goes to the respawn
+  // point ([rules] respawnCellKey), where the next login spawns.
+  unstick: {
+    minRank: 1,
+    usage: '/unstick <player|account|charKey> <reason>',
+    help: 'move a character (online or offline) to the respawn point for their next login',
+    async run(ctx, actor, args) {
+      const who = arg(args, 0);
+      const reason = args.slice(1).join(' ').slice(0, MAX_ARG);
+      if (!who || !reason) return 'usage: /unstick <player|account|charKey> <reason>';
+      const got = await offlineChar(ctx, actor, who);
+      if (typeof got === 'string') return got;
+      const safe = ctx.chars!.safePoint();
+      ctx.chars!.edit(got.charKey, (doc) => { doc.position = { ...safe }; });
+      audit(actor, 'unstick', { target: got.charKey, cellKey: safe.cellKey, reason });
+      return `Moved ${got.label} to ${safe.cellKey}; they spawn there on their next login.`;
+    },
+  },
+  // OT3-181: put an item back on a character, online or offline, through the item ledger.
+  // /give stays the live tool; this one is for restitution and always leaves a trail.
+  restoreitem: {
+    minRank: 2,
+    usage: '/restoreitem <player|account|charKey> <recordId> <count> <reason>',
+    help: 'add an item to a character (online or offline); ledgered with the reason',
+    async run(ctx, actor, args) {
+      const who = arg(args, 0);
+      const recordId = arg(args, 1)?.toLowerCase();
+      const count = Number(args[2]);
+      const reason = args.slice(3).join(' ').slice(0, MAX_ARG);
+      if (!who || !recordId || !reason) return 'usage: /restoreitem <player|account|charKey> <recordId> <count> <reason>';
+      if (!Number.isInteger(count) || count < 1 || count > 10000) return 'count must be an integer 1-10000.';
+      if (!ctx.ledger) return 'The item ledger is not available on this world.';
+      const got = await offlineChar(ctx, actor, who);
+      if (typeof got === 'string') return got;
+      ctx.chars!.edit(got.charKey, (doc) => {
+        const inv = (doc.inventory ??= []);
+        const stack = inv.find((i) => i.id.toLowerCase() === recordId);
+        if (stack) stack.n += count;
+        else inv.push({ id: recordId, n: count });
+      });
+      ctx.ledger({ id: 0, ts: Date.now(), reason: `restore by ${actor.name}: ${reason}`,
+        a: { char: `staff:${actor.accountKey}`, name: actor.name, gave: [{ id: recordId, n: count }] },
+        b: { char: got.charKey, name: got.label, gave: [] } });
+      audit(actor, 'restoreitem', { target: got.charKey, recordId, count, reason });
+      return `Restored ${count}x ${recordId} to ${got.label}; it is there on their next login.`;
     },
   },
   tp: {
