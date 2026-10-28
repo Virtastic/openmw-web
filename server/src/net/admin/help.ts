@@ -58,6 +58,7 @@ export const HELP: Record<string, FieldHelp> = {
 
   // --- login ----------------------------------------------------------------------------
   'login.allowRegistration': { text: 'Off means nobody new can sign up; existing accounts still work. Use with an invite code for a closed group.' },
+  'login.allowPasswordSignup': { text: 'Lets new players create their own account with a username and password on the front page ("Create an account"). Needs registration on and password sign-in allowed; when an invite code is set they must enter it (an invite link fills it in). Off means the owner creates password accounts in the dashboard.' },
   'login.inviteCode': { text: 'When set, registration also requires this code. A simple way to run a friends-only server without managing accounts by hand.' },
   // Not offered any more — a handle is always required (see DERIVED_FIELDS). Kept because the
   // wizard explains the same thing when it asks for the first account.

@@ -2,6 +2,19 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## Unreleased
+
+**New players can sign up with a username and password.** A server whose only sign-in method is
+a password had no way for a new player to make an account: the invite link the dashboard hands
+out opened a sign-in form nobody new could pass, and the owner had to create every account by
+hand. Turn on **Player accounts → allowPasswordSignup** (`[login] allowPasswordSignup = true`;
+off by default, so no server gains a public sign-up form on update) and the front page gets a
+"Create an account" option wherever registration is open. On an invite-only server it asks for
+the invite code, and an invite link fills the code in and opens straight on account creation.
+The code is checked with the same guess limits as Discord, Google and Microsoft sign-up, and the
+password follows the dashboard's rule (at least 12 characters, not the username). With the switch
+off, a password-only front page now tells new players to ask the owner for an account.
+
 ## 1.7.18
 
 **Other players look like themselves again.** Since 1.7.0 every other player in multiplayer was
