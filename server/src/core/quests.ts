@@ -129,10 +129,13 @@ function index(v: LValue | undefined): number | undefined {
   return n !== undefined && Number.isInteger(n) && n >= 0 && n <= MAX_INDEX ? n : undefined;
 }
 
+export const DIALOGUE_IDLE_MS = 5 * 60_000;
+
 export class Quests {
   // refKey -> everyone talking to that NPC right now (OT3-155: a conversation is not a lock;
   // twenty new players all talk to Fargoth at once), each with the cell it started in.
-  private dialogueLocks = new Map<string, Map<number, { cellKey: string; ref: ObjRef }>>();
+  // `at`: the talker's last quest activity (OT3-168: a stalled talker stops parking the NPC).
+  private dialogueLocks = new Map<string, Map<number, { cellKey: string; ref: ObjRef; at: number }>>();
 
   constructor(private readonly ctx: QuestCtx) {}
 
@@ -188,6 +191,7 @@ export class Quests {
       this.drop(player, name, 'malformed body');
       return true;
     }
+    if (!player.system) this.touchDialogue(player.id, Date.now());
     switch (name) {
       case 'JournalEntry': this.journal(player, body); break;
       case 'GlobalVarUpdate': this.globalVar(player, body); break;
@@ -773,7 +777,7 @@ export class Quests {
     if (!player.system) { this.releaseDialogueLocks(player.id); player.lastDialogueAt = Date.now(); }
     let map = this.dialogueLocks.get(ref.key);
     if (!map) this.dialogueLocks.set(ref.key, (map = new Map()));
-    map.set(player.id, { cellKey, ref });
+    map.set(player.id, { cellKey, ref, at: Date.now() });
     // Parked while anyone talks; it turns to face the latest talker.
     this.holdForDialogue(ref, cellKey, true, player.id);
     player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: true });
@@ -803,6 +807,26 @@ export class Quests {
       if (!mine) continue;
       if (onlyCellKey !== undefined && mine.cellKey !== onlyCellKey) continue;
       this.endTalk(key, playerId);
+    }
+  }
+
+  // OT3-168: any quest event (topic, journal, disposition-bearing dialogue) is the talker
+  // still talking. A conversation with none for DIALOGUE_IDLE_MS is over: an AFK player or a
+  // stalled bot no longer parks a quest NPC for everyone. Disconnect already releases.
+  private touchDialogue(playerId: number, now: number): void {
+    for (const talkers of this.dialogueLocks.values()) {
+      const mine = talkers.get(playerId);
+      if (mine) mine.at = now;
+    }
+  }
+
+  expireIdleDialogue(now = Date.now()): void {
+    for (const [key, talkers] of [...this.dialogueLocks]) {
+      for (const [playerId, t] of [...talkers]) {
+        if (now - t.at < DIALOGUE_IDLE_MS) continue;
+        log('info', 'quests.dialogue_idle_released', { ref: key, playerId, idleMs: now - t.at });
+        this.endTalk(key, playerId);
+      }
     }
   }
 

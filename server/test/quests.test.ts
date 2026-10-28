@@ -471,3 +471,19 @@ test('the journal log drops its oldest entry only past MAX_JOURNAL_LOG', async (
   assert.equal(doc.journalLog![0]!.q, 'q1', `entry 1 is gone at ${MAX_JOURNAL_LOG + 1}`);
   assert.equal(doc.journalLog![MAX_JOURNAL_LOG - 1]!.q, 'over', 'the newest entry is kept');
 });
+
+// OT3-168: a talker with no quest activity for DIALOGUE_IDLE_MS stops parking the NPC.
+test('an idle dialogue lock is released; activity keeps it', async () => {
+  const { Quests, DIALOGUE_IDLE_MS } = await import('../src/core/quests');
+  const q = new Quests({ roster: { get: () => undefined } } as unknown as ConstructorParameters<typeof Quests>[0]);
+  const locks = (q as unknown as { dialogueLocks: Map<string, Map<number, unknown>> }).dialogueLocks;
+  const touch = (q as unknown as { touchDialogue(id: number, now: number): void }).touchDialogue.bind(q);
+  const ref = { kind: 'ref', key: 'c:1:0' };
+  locks.set('c:1:0', new Map([[1, { cellKey: '0,0', ref, at: 0 }], [2, { cellKey: '0,0', ref, at: 0 }]]));
+  touch(2, DIALOGUE_IDLE_MS - 1);
+  q.expireIdleDialogue(DIALOGUE_IDLE_MS);
+  assert.equal(q.holdsDialogue(1), false, 'the stalled talker is released');
+  assert.equal(q.holdsDialogue(2), true, 'the active talker keeps the conversation');
+  q.expireIdleDialogue(2 * DIALOGUE_IDLE_MS);
+  assert.equal(locks.size, 0, 'the NPC is let go with the last talker');
+});

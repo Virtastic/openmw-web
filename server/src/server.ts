@@ -1777,6 +1777,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // this is already the once-per-10s social heartbeat, and sweepExpired had NO production
       // caller at all — only a test — so the rows accumulated forever.
       socialStore.sweepExpired(Date.now());
+      quests.expireIdleDialogue(); // OT3-168
       socialStore.prunePresence(Date.now());
       // A BAN REACHES EVERY WORLD. /ban in world A wrote the shared bans.db and kicked the
       // roster of A; a guest sitting in world B played on until they next disconnected.
