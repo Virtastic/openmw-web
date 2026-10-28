@@ -140,9 +140,9 @@ function combat.onPuppetSpellHit(data)
         note('no-victim')
         return
     end
-    -- WHICH effects of the record hit, when the engine named every one (an older engine names
-    -- none, and the owner then applies the whole record as before). Without this a Self+Touch
-    -- record cast at a friend gave them the caster's Fortify too (backlog 250).
+    -- WHICH effects of the record hit. Without this a Self+Touch record cast at a friend gave
+    -- them the caster's Fortify too (backlog 250). An effect with no index sends none, which
+    -- the wire defines as the whole record.
     local indexes = {}
     for _, e in ipairs(effects) do
         if type(e.index) ~= 'number' then indexes = nil break end

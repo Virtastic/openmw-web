@@ -4636,7 +4636,7 @@ do
   for i = 2, #wrap.buf do wworst = math.max(wworst, math.abs((wrap.buf[i].t - wrap.buf[i - 1].t) - 0.05)) end
   check('the u16 stamp wrapping at 65536 ms is not a gap', wworst < 0.002, string.format('%.4f', wworst))
   local old = feed(false, 0)
-  check('no stamp (an older peer): the arrival-time path, unchanged', old.buf[#old.buf].su == nil and old.buf[#old.buf].st == nil)
+  check('no stamp (a player's pose): the arrival-time path, unchanged', old.buf[#old.buf].su == nil and old.buf[#old.buf].st == nil)
   local function worstSpeed(s)
     local w = 0
     local t0 = s.buf[#s.buf].at - 0.55 -- the 16-sample buffer holds the last ~0.8 s

@@ -65,7 +65,7 @@ function Interp:push(s)
     -- between samples is then KNOWN, not estimated, and replaces the estimate above. Sample time =
     -- the stamp on our clock (s.su) plus an offset that follows the least-delayed arrival -- it
     -- drops to a smaller lag at once and creeps up after a route or clock change -- so it is never
-    -- later than the arrival itself. An unstamped sample (an older peer), a backwards or repeated
+    -- later than the arrival itself. An unstamped sample (a player's pose), a backwards or repeated
     -- stamp, or a gap past GAP_MAX keeps the estimate and re-bases the stamp clock on it.
     if s.st then
         local d = (last and last.su and last.st) and ((s.st - last.st) % 65536) / 1000 or 0

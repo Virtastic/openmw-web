@@ -103,7 +103,7 @@ local function chargenTick()
     end
     -- Tell the server creation FINISHED for this slot: until this lands the character is
     -- provisional, and abandoning creation resets it instead of saving a half-made one.
-    -- Re-sent each session (idempotent) so pre-flag characters self-migrate.
+    -- Re-sent each session (idempotent): the server's flag is the record, this only confirms it.
     if chargenDone and not chargenReported and net.state == 'Joined' then
         mp.sendEvent('ChargenComplete', {})
         -- ...AND THE PLAYER SCRIPT, every connection, not only the first. identity.reset() runs

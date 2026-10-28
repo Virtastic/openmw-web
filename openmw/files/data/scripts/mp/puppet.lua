@@ -50,7 +50,6 @@ local TIER_NEAR, TIER_MID = 0, 1
 -- the puppet teleported at every 1 s cooldown (#211).
 local SNAP_BY_TIER = { [0] = 256, [1] = 1024, [2] = 2048 }
 local SNAP_COOLDOWN_BY_TIER = { [0] = 1.0, [1] = 2.0, [2] = 3.0 }
-local SNAP_DISTANCE = 256 -- near-tier divergence before asking for a teleport (legacy name)
 local RUN_HOLD_S = 0.3 -- keep the run flag this long after the target stops advancing (#211: anim popping per burst)
 local runUntil = 0
 local STUCK_SECONDS = 0.7 -- commanded to move but no progress this long -> snap
@@ -535,7 +534,7 @@ local function onUpdate(dt)
         return
     end
 
-    if dist3d > (SNAP_BY_TIER[tier] or SNAP_DISTANCE) then
+    if dist3d > (SNAP_BY_TIER[tier] or SNAP_BY_TIER[0]) then
         requestSnap(target, 'distance')
         zeroControls()
         return
@@ -757,7 +756,7 @@ return {
             -- swept the line between them, the distance snap put the body on a point of it, and
             -- the 1 s snap cooldown left it standing there. Start the buffer over at the new spot.
             local last = interp.buf[#interp.buf]
-            local far = SNAP_BY_TIER[tier] or SNAP_DISTANCE
+            local far = SNAP_BY_TIER[tier] or SNAP_BY_TIER[0]
             if last and e.x and ((e.x - last.x) ^ 2 + (e.y - last.y) ^ 2 + (e.z - last.z) ^ 2) > far * far then
                 interp:clear()
             end

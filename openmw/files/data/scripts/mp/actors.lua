@@ -608,10 +608,8 @@ actors.handlers.MP_ActorAuthorityInfo = function(data)
             return
         end
         holderOfCell[data.cellKey] = data.holderId
-        -- M5 needs the LIVE epoch to address actor targets, and a non-holder only ever sees
-        -- Info. Read it defensively: older servers omit it (combat on non-held cells is then
-        -- undeliverable — see the M5 note in the report).
-        if data.epoch then infoEpoch[data.cellKey] = data.epoch end
+        -- M5 needs the LIVE epoch to address actor targets, and a non-holder only ever sees Info.
+        infoEpoch[data.cellKey] = data.epoch
         -- A cell we're in already has a holder: puppet its actors.
         if data.holderId ~= deps.ownIdFn() then
             attachActorPuppets(data.cellKey)

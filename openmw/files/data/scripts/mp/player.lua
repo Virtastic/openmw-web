@@ -45,7 +45,7 @@ local function pushMessage(data)
     mp.set('chatSeq', tostring(chatSeq))
     -- lastChatLine keeps its long-standing contract: the FORMATTED line as shown, carrying
     -- the sender's attribution (s03-chat asserts on it). The HTML overlay renders from
-    -- chatLog's structured fields instead; this mirror is for the harness and legacy checks.
+    -- chatLog's structured fields instead; this mirror is the harness's (s03, s81, s92).
     local ch = tostring(data.channel or 'say')
     local line
     if ch == 'server' then
