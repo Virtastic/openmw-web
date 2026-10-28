@@ -710,6 +710,8 @@ export class WorldState {
   private static readonly MAX_FOLLOWERS = 8;
   private static readonly MAX_ACTOR_SPAWNS_PER_MIN = 10; // a sleeper ambush is one or two
   private actorSpawnsBy = new Map<number, number[]>(); // playerId -> recent request times (spawn)
+  private static readonly SCRIPT_SPAWN_DEDUPE_MS = 5_000; // OT3-109: one script, N clients
+  private recentScriptSpawns = new Map<string, { at: number; by: number }>(); // cellKey|recordId -> first asker
   private positionClaimsBy = new Map<number, number[]>(); // #363: playerId -> recent lock-less claims
   private travelClaimsBy = new Map<number, number[]>(); // scripted travel legs, same shape
 
@@ -1215,6 +1217,20 @@ export class WorldState {
       }
       recent.push(now);
       this.actorSpawnsBy.set(player.id, recent);
+      // OT3-109: N clients in the cell run the same local script, so one PlaceAtPC arrives N
+      // times (each at its own PC). The first client's ask goes to the holder; ANOTHER client
+      // asking for the same record in that cell within the window is that same spawn. The same
+      // client asking again is its script really running twice (the rate cap governs that).
+      // ponytail: keyed on record+cell; key on the script stage if two players ever really
+      // trigger the same summon seconds apart.
+      const dupKey = `${cellKey}|${recordId}`;
+      for (const [k, v] of this.recentScriptSpawns) if (now - v.at > WorldState.SCRIPT_SPAWN_DEDUPE_MS) this.recentScriptSpawns.delete(k);
+      const first = this.recentScriptSpawns.get(dupKey);
+      if (first && first.by !== player.id) {
+        log('debug', 'world.actor_spawn_deduped', { recordId, cellKey, by: player.name });
+        return;
+      }
+      this.recentScriptSpawns.set(dupKey, first ?? { at: now, by: player.id });
       const holder = this.authority.holderOf(cellKey);
       const to = (holder === undefined ? undefined : this.roster.get(holder)) ?? player; // no simulator: the asker's own engine
       to.peer.sendEvent('QuestSpawn', { recordId, cellKey, x, y, z, count, forId: player.id });
@@ -1596,6 +1612,9 @@ export class WorldState {
     // stronghold stages), and a stored `true` is what replays that reveal to the next
     // entrant instead of the disable it undid. A row per touched ref, not per object.
     const map = (doc.enabled ??= {});
+    // OT3-109: every client in the cell runs the same local script and reports the same
+    // toggle. The first one changes the world; the rest are the same fact again.
+    if (map[ref.key] === on) return;
     if (cellMapFull(map, ref.key, cellKey, 'enabled', player.name)) return;
     map[ref.key] = on;
     this.cells.markDirty(cellKey);

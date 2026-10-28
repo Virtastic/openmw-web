@@ -626,6 +626,41 @@ test("a human's actor spawn request is forwarded to the holder; the 11th in a mi
   assert.equal(peer.inbox.events.filter((e) => e.name === 'QuestSpawn').length, 9, 'the cap did not hold'); // 10 forwarded, the first consumed above
 });
 
+// OT3-109: three clients in one cell run the same local script. Its PlaceAtPC and its Disable
+// arrive three times; the world gets one spawn and one toggle.
+test('the same script effect from three clients in a cell applies once', async (t) => {
+  const PEER_PASS = 'peer-secret-1';
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS } },
+  });
+  t.after(() => server.close());
+  const clients: TestClient[] = [];
+  for (const name of ['Ann', 'Ben', 'Cal']) {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    await c.joinAsNew(name);
+    c.sendCellChange('0,0', 0, 0, 0);
+    await c.waitEvent('PlayerCellChange');
+    clients.push(c);
+  }
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+
+  const ref = { __refnum: { index: 7109, contentFile: 0 } };
+  clients.forEach((c, i) => {
+    c.sendEvent('ObjectSpawnRequest', { tempId: 0, actor: true, recordId: 'dremora_lord', cellKey: '0,0',
+      x: 100 * i, y: 0, z: 0, rotZ: 0, count: 1 });
+    c.sendEvent('ObjectEnabled', { ref, cellKey: '0,0', enabled: false });
+  });
+  await peer.waitEvent('QuestSpawn');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'QuestSpawn').length, 0, 'one spawn, not three');
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ObjectEnabled').length, 1, 'one toggle relayed, not three');
+});
+
 // Backlog 216: a PositionCell from a player-gated script moved a puppet on one client; the
 // holder is told and moves the real actor.
 test('ActorAI kind position from a non-holder reaches the holder', async (t) => {
