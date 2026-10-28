@@ -775,7 +775,11 @@ export class Connection implements Peer {
       this.sendText(profileResult(false, result === 'badformat' ? 'badformat-username' : result));
       return;
     }
-    this.ctx.accounts.setEmail(this.account, msg.email, msg.marketingOptIn === true);
+    // OT3-47: an address already on file is kept. ProfileSetup is unverified input, and a
+    // session that could repoint the contact address (a stolen ticket, a shared machine)
+    // would own every mail sent to it from then on. The opt-in still updates.
+    const email = this.account.email ?? msg.email;
+    this.ctx.accounts.setEmail(this.account, email, msg.marketingOptIn === true, email === this.account.email && this.account.emailVerified === true);
     // The public handle IS the display name from now on; a session already in the roster
     // updates live so nametags/chat pick it up on the next frame they render it.
     if (this.player) this.player.name = this.account.username ?? this.player.name;

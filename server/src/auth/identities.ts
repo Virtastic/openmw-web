@@ -127,7 +127,7 @@ export async function resolveSsoAccount(
     }
     const acc = await accounts.get(accountKey);
     if (acc && acc.email === undefined) {
-      accounts.setEmail(acc, identity.email);
+      accounts.setEmail(acc, identity.email, undefined, true); // provider-verified (oidc.ts)
       await accounts.flush();
     }
   };

@@ -77,6 +77,10 @@ export interface Account {
   // username is the unique public handle shown everywhere in-game (nametags, chat,
   // friends, admin views); account `name` remains the login identifier only.
   email?: string;
+  // OT3-47: true only when the address came from a provider that verified it (OIDC
+  // email_verified / Discord verified). A typed address is a contact hint, never proof of
+  // ownership: nothing may link, ban or recover an account by it.
+  emailVerified?: boolean;
   username?: string;
   marketingOptIn?: boolean;
   usernameChangedAt?: string; // rename rate-limit anchor
@@ -670,11 +674,13 @@ export class AccountStore {
     return 'ok';
   }
 
-  setEmail(account: Account, email: string, marketingOptIn?: boolean): void {
+  setEmail(account: Account, email: string, marketingOptIn?: boolean, verified = false): void {
     // Write-through: this takes a CALLER-HELD Account, so the dirty queue could write a
     // different object than the one just mutated. See setUsername.
     this.mutate(account, (doc) => {
       doc.email = email;
+      if (verified) doc.emailVerified = true;
+      else delete doc.emailVerified;
       if (marketingOptIn !== undefined) doc.marketingOptIn = marketingOptIn;
       return 'ok';
     });

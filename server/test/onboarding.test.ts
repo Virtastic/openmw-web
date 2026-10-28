@@ -47,6 +47,13 @@ test('ProfileSetup: validates, stores, and makes the username the display name',
   assert.equal(prof.username, 'AliceTheBrave');
   assert.equal(prof.email, 'alice@example.com');
 
+  // OT3-47: a second ProfileSetup cannot repoint the address on file.
+  profile(c2, 'mallory@example.com', 'AliceTheBrave');
+  await c2.waitJson('ProfileResult');
+  const acc = await server.accounts.get('alice');
+  assert.equal(acc?.email, 'alice@example.com');
+  assert.equal(acc?.emailVerified, undefined); // typed, so never verified
+
   // The email must appear in NO peer-visible payload: a second player's entire inbox
   // (json + events) after both are in-world must not contain it.
   const c3 = await TestClient.connect(server.port);
