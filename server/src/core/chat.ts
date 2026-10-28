@@ -143,11 +143,11 @@ function recordChat(mod: Moderation | undefined, player: Player, channel: string
   });
 }
 
-// Whisper: a directed line to exactly one recipient (chosen from the friend dropdown, so
-// `to` is their account key). Delivered only if the recipient is co-resident in this world
-// process — cross-world whisper waits on a platform relay that does not exist yet.
-// The recipient's mute of the sender silently drops their copy, but
-// the sender always gets their own echo so the UI never looks broken.
+// Whisper: a directed line to exactly one recipient. `to` is an account key or (OT3-134)
+// the name typed in the whisper box, any case. Delivered only if the recipient is in this
+// world process — cross-world whisper waits on a platform relay that does not exist yet.
+// A mute or a block either way (isMuted covers both) silently drops the recipient's copy,
+// but the sender always gets their own echo so a block is not revealed.
 function deliverWhisper(
   ctx: ChatContext,
   player: Player,
@@ -159,9 +159,13 @@ function deliverWhisper(
     serverWhisper(player, 'Pick someone to whisper.');
     return;
   }
-  const target = ctx.roster.activeForAccount(toAcct);
+  const target = ctx.roster.activeForAccount(toAcct) ?? ctx.roster.findByName(toAcct);
+  if (target === player) {
+    serverWhisper(player, 'Pick someone to whisper.');
+    return;
+  }
   if (!target || !target.inWorld) {
-    serverWhisper(player, 'That friend is not reachable from here.');
+    serverWhisper(player, `Nobody called ${toAcct} is online here.`);
     return;
   }
   recordChat(mod, player, 'whisper', line);

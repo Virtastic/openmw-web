@@ -3708,11 +3708,11 @@ window.omw = (function(){
 #omw-chat .chan.on[data-c="novice"]{ border-color:var(--c-novice); color:var(--c-novice); }
 #omw-chat .r2{ display:flex; align-items:center; gap:7px; padding:7px 9px 9px; }
 #omw-chat .clab{ font-weight:700; font-size:12px; white-space:nowrap; }
-#omw-chat select.wto{ background:rgba(0,0,0,.45); border:1px solid var(--line); color:var(--c-whisper);
+#omw-chat input.wto{ background:rgba(0,0,0,.45); border:1px solid var(--line); color:var(--c-whisper);
   border-radius:4px; padding:6px 6px; font:inherit; font-size:12.5px; max-width:130px; }
 #omw-chat input.tx{ flex:1; min-width:0; background:rgba(0,0,0,.45); border:1px solid var(--line);
   color:var(--ink); border-radius:4px; padding:7px 10px; font:inherit; }
-#omw-chat input.tx:focus, #omw-chat select.wto:focus{ outline:none; border-color:var(--gold); }
+#omw-chat input.tx:focus, #omw-chat input.wto:focus{ outline:none; border-color:var(--gold); }
 #omw-chat .hint{ padding:0 10px 7px; font-size:10.5px; letter-spacing:.06em; color:var(--faint); }
 
 /* ================= SOCIAL — settings-style panel ================= */
@@ -3859,7 +3859,7 @@ window.omw = (function(){
   <div class="bar">
     <div class="chans" id="omw-chans"></div>
     <div class="r2"><span class="clab" id="omw-clab">[World]</span>
-      <select class="wto" id="omw-wto" style="display:none"></select>
+      <input class="wto" id="omw-wto" list="omw-wto-list" placeholder="Name" autocomplete="off" style="display:none"><datalist id="omw-wto-list"></datalist>
       <input class="tx" id="omw-tx" maxlength="1024" placeholder="Type a message…"></div>
     <div class="hint">Enter send &middot; Tab channel &middot; Esc close</div>
   </div></div>
@@ -4454,7 +4454,7 @@ window.omw = (function(){
   var chChan = 'world', chWhisper = '', chatOpen = false, seenChatSeq = 0, seenOpenChat = 0;
   var feed = document.getElementById('omw-feed'), chatEl = document.getElementById('omw-chat');
   var chansEl = document.getElementById('omw-chans'), tx = document.getElementById('omw-tx');
-  var wto = document.getElementById('omw-wto'), clab = document.getElementById('omw-clab');
+  var wto = document.getElementById('omw-wto'), wtoList = document.getElementById('omw-wto-list'), clab = document.getElementById('omw-clab');
   var IDLE_LINES = 8, IDLE_FADE_MS = 20000, CHAT_KEEP = 200;
   chatEl.style.display = 'none'; // hidden until chargen completes (the poll below reveals it)
   // Backlog 102: a world switch reboots the page, and the engine's rolling log (player.lua,
@@ -4504,17 +4504,20 @@ window.omw = (function(){
     clab.style.color = 'var(--c-'+chChan+')';
     wto.style.display = (chChan === 'whisper') ? '' : 'none';
     if (chChan === 'whisper'){
-      // Friends in THIS world only: playerId is the local connection id, present only for a
-      // friend this process holds. A whisper to another world has nobody to land on.
-      var fr = (pj(mpState().friends)||[]).filter(function(f){return f.online && f.playerId != null;});
-      wto.innerHTML = fr.length ? fr.map(function(f){ return '<option value="'+esc(f.acct)+'">'+esc(f.name)+'</option>'; }).join('')
-        : '<option value="">(no friends here)</option>';
-      if (fr.length){ if (!chWhisper || !fr.some(function(f){return f.acct===chWhisper;})) chWhisper = fr[0].acct;
-        wto.value = chWhisper; }
+      // OT3-134: any online player by typed name; the server resolves it and enforces blocks.
+      // Suggestions: online friends, party members, then everyone the player list shows.
+      var m = mpState(), seen = {}, names = [];
+      [(pj(m.friends)||[]).filter(function(f){return f.online;}), (pj(m.party)||{}).members, pj(m.players)]
+        .forEach(function(l){ (Array.isArray(l) ? l : []).forEach(function(p){
+          var k = String(p.name||'').toLowerCase(); if (k && !seen[k]){ seen[k] = true; names.push(p.name); } }); });
+      wtoList.innerHTML = names.map(function(n){ return '<option value="'+esc(n)+'">'; }).join('');
+      wto.value = chWhisper;
     }
   }
   chansEl.addEventListener('click', function(e){ var c = e.target.getAttribute('data-c'); if (c){ chChan = c; renderChans(); tx.focus(); } });
-  wto.addEventListener('change', function(){ chWhisper = wto.value; });
+  wto.addEventListener('input', function(){ chWhisper = wto.value.trim(); });
+  // Called by the key shield too (it runs a field's onkeydown). Enter moves on to the line.
+  wto.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter'){ e.preventDefault(); tx.focus(); } };
   function openChat(){ if (chatOpen) return; chatOpen = true; chatEl.classList.add('active'); renderChans(); renderFeed(); uiHold(true);
     // Focus now AND after the pointer-lock exit settles (it is async; the engine may pull
     // focus back to the canvas in between — the guard interval then keeps it here).
@@ -4821,7 +4824,7 @@ window.omw = (function(){
           // (OT3-58): everyone can invite, there is no host.
           acts.push(['invite', function(){ cmd('social:InviteSend:'+f.acct); setStatus('Inviting '+f.name+'…'); }]);
           if (canInvite && !inParty[String(f.name).toLowerCase()]) acts.push(partyInviteAct(f.name));
-          if (f.playerId != null) acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.acct; openChat(); renderChans(); }]);
+          if (f.playerId != null) acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.name; openChat(); renderChans(); }]);
         }
         acts.push(['remove', function(){ cmd('social:FriendRemove:'+f.acct); }]);
         sec.appendChild(personRow(f.name, f.online ? (f.cellKey || 'Online') : 'Offline', f.online, acts));

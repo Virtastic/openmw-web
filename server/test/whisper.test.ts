@@ -76,6 +76,18 @@ test('whispering an offline / absent account says so instead of vanishing', asyn
   a.sendEvent('ChatSend', { text: 'you around?', channel: 'whisper', to: 'ghost' });
   await a.waitEvent('ChatMessage',
     (v) => (v as { channel?: string }).channel === 'server'
-      && /not reachable/i.test(String((v as { text?: string }).text ?? '')));
+      && /online here/i.test(String((v as { text?: string }).text ?? '')));
   a.close();
+});
+
+test('OT3-134: a typed name (any case) whispers that player', async (t) => {
+  const { a, b } = await two(t);
+  a.sendEvent('ChatSend', { text: 'by name', channel: 'whisper', to: 'bOB' });
+  const heard = await b.waitEvent('ChatMessage', (v) => (v as { channel?: string }).channel === 'whisper');
+  assert.equal((heard.value as { text: string }).text, 'by name');
+  a.sendEvent('ChatSend', { text: 'me', channel: 'whisper', to: 'alice' });
+  await a.waitEvent('ChatMessage', (v) => (v as { channel?: string }).channel === 'server'
+    && /pick someone/i.test(String((v as { text?: string }).text ?? '')));
+  a.close();
+  b.close();
 });
