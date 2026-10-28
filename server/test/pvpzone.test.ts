@@ -15,6 +15,8 @@ function api(opts: {
   zone?: 'all' | 'wilderness' | 'none';
   safeCells?: string[];
   cell?: string;
+  attackerCell?: string;
+  levels?: Record<number, number>;
 }): PluginApi {
   return {
     config: {
@@ -25,7 +27,8 @@ function api(opts: {
       },
     } as unknown as Config,
     log: () => {},
-    cellOfPlayer: () => opts.cell,
+    cellOfPlayer: (id: number) => (id === 1 && opts.attackerCell !== undefined ? opts.attackerCell : opts.cell),
+    ...(opts.levels ? { levelOfPlayer: (id: number) => opts.levels![id] ?? 1 } : {}),
   } as unknown as PluginApi;
 }
 
@@ -54,4 +57,19 @@ test('wilderness zone fails CLOSED when the cell is unknown', () => {
 
 test('zone "all" keeps the pre-Phase-3 behaviour', () => {
   assert.equal(hit(api({ zone: 'all', cell: 'Some Interior' })), true);
+});
+
+// OT3-162: onboarding protection holds under every zoning, 'all' included.
+test('no player damage in Seyda Neen, either side of the hit', () => {
+  assert.equal(hit(api({ cell: '-2,-9' })), false, 'the census office street');
+  assert.equal(hit(api({ cell: 'Seyda Neen, Arrille\'s Tradehouse' })), false);
+  assert.equal(hit(api({ cell: '12,4', attackerCell: '-3,-9' })), false, 'nor shooting out of it');
+  assert.equal(hit(api({ cell: '12,4' })), true);
+});
+
+test('sprouts below level 5 neither take nor deal player damage', () => {
+  assert.equal(hit(api({ cell: '12,4', levels: { 1: 20, 2: 4 } })), false, 'a level-4 victim');
+  assert.equal(hit(api({ cell: '12,4', levels: { 1: 3, 2: 20 } })), false, 'a level-3 attacker');
+  assert.equal(hit(api({ cell: '12,4', levels: {} })), false, 'unknown stats count as level 1');
+  assert.equal(hit(api({ cell: '12,4', levels: { 1: 5, 2: 5 } })), true);
 });

@@ -232,11 +232,13 @@ test('a PvP hit on a driving victim routes to the peer; an idle victim keeps it'
   const atk = await TestClient.connect(server.port);
   t.after(() => atk.close());
   await atk.joinAsNew('Attacker');
+  atk.sendEvent('PlayerLevel', { level: 5 }); // OT3-162: below 5 is sprout-protected from PvP
   await atk.waitEvent('PlayerList');
   atk.sendCellChange('0,0', 0, 0, 0);
   const vic = await TestClient.connect(server.port);
   t.after(() => vic.close());
   const wv = await vic.joinAsNew('Victim');
+  vic.sendEvent('PlayerLevel', { level: 5 }); // OT3-162: below 5 is sprout-protected from PvP
   const vicId = wv['playerId'] as number;
   await vic.waitEvent('PlayerList');
   vic.sendCellChange('0,0', 0, 0, 0);

@@ -68,6 +68,7 @@ async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
 
   const atk = await TestClient.connect(server.port);
   const { playerId: atkId, welcome } = await atk.joinAsNew('Attacker');
+  atk.sendEvent('PlayerLevel', { level: 5 }); // OT3-162: below 5 is sprout-protected from PvP
   await atk.waitEvent('PlayerList');
   atk.sendCellChange('0,0', 0, 0, 0);
   await atk.waitEvent('PlayerCellChange');
@@ -75,6 +76,7 @@ async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
 
   const vic = await TestClient.connect(server.port);
   const { playerId: vicId } = await vic.joinAsNew('Victim');
+  vic.sendEvent('PlayerLevel', { level: 5 }); // OT3-162: below 5 is sprout-protected from PvP
   await vic.waitEvent('PlayerList');
   vic.sendCellChange('0,0', 0, 0, 0);
   await vic.waitEvent('PlayerCellChange');

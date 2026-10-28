@@ -40,6 +40,8 @@ export interface PluginApi {
   // Phase 3 rule helpers. Optional so an embedder can supply a partial api in tests
   // without every plugin needing to care.
   cellOfPlayer?(playerId: number): string | undefined;
+  /** The character's level (1 until their stats are known). OT3-162 sprout protection. */
+  levelOfPlayer?(playerId: number): number;
   /** Where a player currently is, or undefined if they have not reported a pose yet. Needed by
    *  any rule that has to put somebody NEXT TO somebody else — summons, travel. */
   posOfPlayer?(playerId: number): { cellKey: string; x: number; y: number; z: number } | undefined;

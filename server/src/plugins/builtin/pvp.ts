@@ -6,6 +6,14 @@
 
 import type { Plugin } from '../api';
 
+// OT3-162, onboarding: whatever the operator's zoning, nobody is killed by a player where
+// chargen leaves them, or before they have found their feet. (UO lost most of its new players
+// to open PvP.) Seyda Neen's exterior grid plus every interior named for it.
+const SEYDA_NEEN = new Set(['-2,-9', '-3,-9', '-2,-10', '-3,-10']);
+const inSeydaNeen = (cellKey: string | undefined): boolean =>
+  cellKey !== undefined && (SEYDA_NEEN.has(cellKey) || /^seyda neen\b/i.test(cellKey));
+const SPROUT_LEVEL = 5; // below this a character neither takes nor deals player damage
+
 export const pvp: Plugin = {
   name: 'pvp',
   onPlayerHit(api, attacker, victimId, name) {
@@ -14,6 +22,11 @@ export const pvp: Plugin = {
       return false;
     };
     if (!api.config.rules.pvp) return block('disabled');
+    if (inSeydaNeen(api.cellOfPlayer?.(victimId)) || inSeydaNeen(api.cellOfPlayer?.(attacker.id)))
+      return block('seyda neen');
+    // Both ways: a protected character who could still hit others would grief with impunity.
+    if (api.levelOfPlayer && (api.levelOfPlayer(victimId) < SPROUT_LEVEL || api.levelOfPlayer(attacker.id) < SPROUT_LEVEL))
+      return block('sprout');
 
     const zone = api.config.rules.pvpZone;
     if (zone === 'none') return block('zone none');
