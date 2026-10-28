@@ -152,10 +152,10 @@ redirectUri = "https://<your-host>/auth/google/callback"
 
 | Provider | Where to register | Notes |
 | --- | --- | --- |
-| `discord` | discord.com/developers/applications → OAuth2 → Redirects | OAuth 2.0, **not** OIDC: identity comes from `GET /users/@me` over the access token, scope `identify` |
-| `google` | console.cloud.google.com/apis/credentials → OAuth client, type **Web** | OIDC discovery; scope `openid profile` |
-| `microsoft` | entra.microsoft.com → App registrations → Authentication → **Web** | OIDC discovery via the `/common` endpoint; the per-tenant issuer is validated against the templated one |
-| `custom` | any OIDC issuer (Keycloak, Authentik, Auth0…) | `issuer` is **required** and must serve `/.well-known/openid-configuration` |
+| `discord` | discord.com/developers/applications → OAuth2 → Redirects | OAuth 2.0, **not** OIDC: identity comes from `GET /users/@me` over the access token, scope `identify email` |
+| `google` | console.cloud.google.com/apis/credentials → OAuth client, type **Web** | OIDC discovery; scope `openid profile email` |
+
+These are the only two providers; an enabled `[auth.<anything else>]` table refuses to boot.
 
 The callback sends the browser back to `returnUrl` with the result in the URL **fragment**
 (`#mpticket=…`, `#mperror=<code>`, `#mplink=<provider>`) — a fragment is never logged,

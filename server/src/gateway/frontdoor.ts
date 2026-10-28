@@ -386,7 +386,7 @@ export async function buildFrontDoor(
   await ensureVanillaManifest(sharedDir, gameDataDir(sharedDir));
   locker.configureAccepted(await loadVanillaManifest(sharedDir), { esmHashes: config.locker.esmHashes });
 
-  const providers = ['google', 'discord', 'microsoft'].filter(
+  const providers = ['google', 'discord'].filter(
     (p) => (config.auth as unknown as Record<string, { enabled?: boolean }>)[p]?.enabled,
   );
   log('info', 'frontdoor.ready', { requireSso: config.auth.requireSso, providers, locker: locker.enabled });

@@ -233,9 +233,8 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       if (!config.login.allowRegistration)
         return fail(req, res, 'registration_disabled', 'this server does not accept new accounts', ip);
       // Google and Discord tell us whether the address is verified (oidc.ts keeps it only
-      // then), so an unverified throwaway is refused there. Microsoft id_tokens carry no
-      // email_verified claim at all and custom IdPs vary, so those are not gated.
-      if ((provider === 'google' || provider === 'discord') && !identity.email)
+      // then), so an unverified throwaway is refused.
+      if (!identity.email)
         return fail(req, res, 'email_unverified', 'a new account needs a verified email at the provider', ip);
       // Budgeted per IP, per identity and server-wide (auth/invite.ts): a wrong passphrase
       // used to cost nothing beyond the general 5-a-minute auth budget.

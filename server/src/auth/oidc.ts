@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Phase B SSO: OAuth 2.0 Authorization Code + PKCE (S256) against Discord/Google/
-// Microsoft (or any OIDC issuer via [auth.custom]).
+// Phase B SSO: OAuth 2.0 Authorization Code + PKCE (S256) against Discord and Google, the
+// only two providers v2 signs in with (CL7).
 //
 // WHY this shape, and not the obvious alternatives:
 //   * Authorization Code + PKCE, never implicit. RFC 9700 §2.1.2 deprecates implicit
@@ -23,8 +23,8 @@ import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify as ve
 import type { AuthConfig, AuthProviderConfig } from '../config';
 import { log } from '../log';
 
-export type ProviderId = 'discord' | 'google' | 'microsoft' | 'custom';
-export const PROVIDER_IDS: readonly ProviderId[] = ['discord', 'google', 'microsoft', 'custom'];
+export type ProviderId = 'discord' | 'google';
+export const PROVIDER_IDS: readonly ProviderId[] = ['discord', 'google'];
 
 export function isProviderId(s: string): s is ProviderId {
   return (PROVIDER_IDS as readonly string[]).includes(s);
@@ -80,13 +80,10 @@ const DEFAULTS: Record<ProviderId, ProviderDefaults> = {
   // email can be captured at login and the onboarding email step skipped. Only a provider-
   // VERIFIED address is used (email_verified / Discord `verified`).
   google: { kind: 'oidc', issuer: 'https://accounts.google.com', scope: 'openid profile email' },
-  // The common endpoint's discovery issuer is templated per tenant; see matchIssuer().
-  microsoft: { kind: 'oidc', issuer: 'https://login.microsoftonline.com/common/v2.0', scope: 'openid profile email' },
-  custom: { kind: 'oidc', issuer: '', scope: 'openid profile email' },
 };
 
 interface Endpoints {
-  issuer: string; // may contain {tenantid}
+  issuer: string;
   authorizeUrl: string;
   tokenUrl: string;
   jwksUri?: string;
@@ -193,7 +190,6 @@ export class OidcService {
     const p = this.cfg[id];
     if (!p.enabled) return false;
     if (p.clientId === '' || p.clientSecret === '' || p.redirectUri === '') return false;
-    if (id === 'custom' && p.issuer === '') return false;
     return true;
   }
 
@@ -208,15 +204,16 @@ export class OidcService {
     const cfgIssuer = this.cfg[id].issuer;
     let endpoints: Endpoints;
     if (d.kind === 'oauth2') {
+      // A configured issuer moves the whole API (the test suite's mock); the paths stay Discord's.
+      const base = cfgIssuer.replace(/\/+$/, '');
       endpoints = {
         issuer: cfgIssuer || d.issuer,
-        authorizeUrl: d.authorizeUrl!,
-        tokenUrl: d.tokenUrl!,
-        userinfoUrl: d.userinfoUrl!,
+        authorizeUrl: base ? `${base}/oauth2/authorize` : d.authorizeUrl!,
+        tokenUrl: base ? `${base}/api/oauth2/token` : d.tokenUrl!,
+        userinfoUrl: base ? `${base}/api/users/@me` : d.userinfoUrl!,
       };
     } else {
-      // OIDC discovery. The issuer an operator configures wins, so a self-hoster (or the
-      // test suite) can point `custom` at their own IdP.
+      // OIDC discovery. A configured issuer wins, so the test suite can point Google at a mock.
       const base = (cfgIssuer || d.issuer).replace(/\/+$/, '');
       const doc = await fetchJson(`${base}/.well-known/openid-configuration`);
       const issuer = str(doc, 'issuer');
@@ -345,7 +342,7 @@ export class OidcService {
     const iss = str(claims, 'iss');
     if (!sub || !iss) throw new OidcError('idtoken', 'id_token has no sub/iss');
     const nameHint = str(claims, 'preferred_username') ?? str(claims, 'name') ?? str(claims, 'given_name');
-    // Capture the email only when the provider asserts it is verified (Google/Microsoft send
+    // Capture the email only when the provider asserts it is verified (Google sends
     // email_verified as a boolean, some IdPs as the string "true"). An unverified address is
     // not trustworthy as contact data, so we drop it and onboarding still asks.
     const verified = (claims as Record<string, unknown>).email_verified;
@@ -356,13 +353,8 @@ export class OidcService {
 
   // ------------------------------------------------------------- id_token
 
-  // Microsoft's /common discovery advertises a templated issuer; the real one is per
-  // tenant. Anything else must match exactly.
   private issuerMatches(want: string, got: string): boolean {
-    if (want === got) return true;
-    if (!want.includes('{tenantid}')) return false;
-    const re = new RegExp(`^${want.split('{tenantid}').map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[0-9a-fA-F-]{36}')}$`);
-    return re.test(got);
+    return want === got;
   }
 
   private async verifyIdToken(

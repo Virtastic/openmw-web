@@ -504,11 +504,8 @@ returnUrl = ""
 # Per provider: register `redirectUri` with the provider EXACTLY as written here.
 #   discord   -> https://discord.com/developers/applications  (OAuth2 -> Redirects)
 #   google    -> https://console.cloud.google.com/apis/credentials  (OAuth client, type "Web")
-#   microsoft -> https://entra.microsoft.com  (App registrations -> Authentication -> Web)
-#   custom    -> any OIDC issuer (Keycloak, Authentik, Auth0...); `issuer` is REQUIRED and
-#                must serve /.well-known/openid-configuration.
-# `issuer` overrides the well-known issuer (leave "" for the three named providers).
-# `scope` overrides the default ("identify" for Discord, "openid profile" otherwise).
+# Google and Discord are the only providers. `issuer` stays "" (it exists for the test suite).
+# `scope` overrides the default ("identify email" for Discord, "openid profile email" for Google).
 
 [auth.discord]
 enabled = false
@@ -519,22 +516,6 @@ issuer = ""
 scope = ""
 
 [auth.google]
-enabled = false
-clientId = ""
-clientSecret = ""
-redirectUri = ""
-issuer = ""
-scope = ""
-
-[auth.microsoft]
-enabled = false
-clientId = ""
-clientSecret = ""
-redirectUri = ""
-issuer = ""
-scope = ""
-
-[auth.custom]
 enabled = false
 clientId = ""
 clientSecret = ""

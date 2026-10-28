@@ -40,10 +40,9 @@ against a new origin: providers match the redirect URI exactly.
 ```
 https://morrowind.virtastic.app/auth/google/callback
 https://morrowind.virtastic.app/auth/discord/callback
-https://morrowind.virtastic.app/auth/microsoft/callback
 ```
 
-Google Cloud console, Discord developer portal, Azure app registration. Use separate production
+Google Cloud console, Discord developer portal. Use separate production
 credentials rather than reusing the dev ones, so revoking one does not take the other down.
 
 ## 2. `/opt/openmw-mp/data/config.toml`
@@ -65,7 +64,7 @@ clientId = "..."
 clientSecret = "..."
 redirectUri = "https://morrowind.virtastic.app/auth/google/callback"
 
-# ...and the same three keys for [auth.discord] and [auth.microsoft].
+# ...and the same three keys for [auth.discord].
 
 [limits]
 trustCloudflareIp = true                 # production IS behind Cloudflare. Do not skip this.

@@ -21,7 +21,7 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const NICE = { google: 'Google', discord: 'Discord', microsoft: 'Microsoft' };
+  const NICE = { google: 'Google', discord: 'Discord' };
   const ICONS = window.PROVIDER_ICONS || {}; // providers.js; absent = plain labelled buttons
 
   const note = (msg, kind = '') => {
@@ -87,7 +87,7 @@
     return;
   }
 
-  // In NICE's order (the launcher's: Google, Discord, Microsoft), not the config's.
+  // In NICE's order (the launcher's: Google, Discord), not the config's.
   const providers = Object.keys(NICE).filter((p) => (auth.providers || []).includes(p));
   // Password sign-in is for the harness and the peer only (CL13), never offered here.
   if (!providers.length) {

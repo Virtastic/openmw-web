@@ -89,7 +89,7 @@ The server owns the world: NPCs, combat resolution and loot are simulated server
 headless copy of the engine, so a modified client cannot author what an NPC did. Friends,
 whisper/mute/block, in-game reporting and server-side saves are all there.
 
-On the hosted service, sign-in is SSO only (Google / Discord / Microsoft - no passwords to
+On the hosted service, sign-in is SSO only (Google / Discord - no passwords to
 leak; accounts are keyed on the provider's stable ID, never your email). A server you run
 chooses its own sign-in in the setup
 wizard. Provider-side SSO steps (redirect URIs, client ids) are in

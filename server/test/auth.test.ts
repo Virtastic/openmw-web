@@ -19,7 +19,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startServer, type RunningServer } from '../src/server';
-import type { DeepPartial, Config } from '../src/config';
+import { loadConfig, type DeepPartial, type Config } from '../src/config';
 import { LoginTicketStore } from '../src/auth/identities';
 import { checkInvite, resetInviteBudgets } from '../src/auth/invite';
 import { TestClient, tmpDataDir } from './helpers';
@@ -54,6 +54,7 @@ class MockIdp {
   private readonly key: KeyObject;
   private readonly jwk: Record<string, unknown>;
   private readonly codes = new Map<string, PendingCode>();
+  private readonly tokens = new Map<string, PendingCode>(); // Discord access_token -> identity
   private http!: Server;
   issuer = '';
   lastAuthorize?: URL;
@@ -86,14 +87,19 @@ class MockIdp {
         json(200, { keys: [this.jwk] });
         return;
       }
-      if (url.pathname === '/authorize') {
+      if (url.pathname === '/api/users/@me') {
+        const spec = this.tokens.get((req.headers.authorization ?? '').replace(/^Bearer /, ''));
+        if (!spec) return json(401, { error: 'invalid_token' });
+        return json(200, { id: spec.sub, username: spec.nameHint, email: spec.email, verified: !!spec.email });
+      }
+      if (url.pathname === '/authorize' || url.pathname === '/oauth2/authorize') {
         // A real IdP would show a consent screen here; the test records the request and
         // mints codes explicitly via issueCode() so it can control every claim.
         this.lastAuthorize = url;
         json(200, { ok: true });
         return;
       }
-      if (url.pathname === '/token' && req.method === 'POST') {
+      if ((url.pathname === '/token' || url.pathname === '/api/oauth2/token') && req.method === 'POST') {
         this.tokenRequests++;
         let raw = '';
         req.on('data', (c: Buffer) => (raw += c.toString('utf8')));
@@ -110,7 +116,9 @@ class MockIdp {
           const verifier = form.get('code_verifier') ?? '';
           const challenge = createHash('sha256').update(verifier).digest('base64url');
           if (verifier === '' || challenge !== pending.challenge) return json(400, { error: 'invalid_grant_pkce' });
-          return json(200, { access_token: 'mock-access-token', token_type: 'Bearer', id_token: this.idToken(pending) });
+          const access = randomBytes(12).toString('hex');
+          this.tokens.set(access, pending);
+          return json(200, { access_token: access, token_type: 'Bearer', id_token: this.idToken(pending) });
         });
         return;
       }
@@ -143,6 +151,7 @@ class MockIdp {
     const code = randomBytes(12).toString('hex');
     this.codes.set(code, {
       ...spec,
+      email: spec.email ?? `${spec.sub}@example.test`,
       challenge: authorize.searchParams.get('code_challenge') ?? '',
       nonce: spec.nonce ?? authorize.searchParams.get('nonce') ?? '',
       redirectUri: authorize.searchParams.get('redirect_uri') ?? '',
@@ -179,8 +188,8 @@ interface Harness {
   base: string;
 }
 
-// Two mock issuers: `custom` and `google` (its issuer is overridden to point at the second
-// mock), which is what makes the linking tests possible without live credentials.
+// Two mock issuers: `google` (OIDC, id_token) and `discord` (OAuth 2.0, userinfo), each with
+// its issuer overridden to point at a mock, which is what makes the linking tests possible without live credentials.
 async function boot(
   t: { after(fn: () => unknown): void },
   override: DeepPartial<Config> = {},
@@ -215,8 +224,8 @@ async function boot(
       allowPasswordLogin: true,
       returnUrl: RETURN_URL,
       ...override.auth,
-      custom: { ...provider(idp, 'custom'), ...override.auth?.custom },
-      google: { ...provider(idp2, 'google'), ...override.auth?.google },
+      google: { ...provider(idp, 'discord'), ...override.auth?.google },
+      discord: { ...provider(idp2, 'discord'), ...override.auth?.discord },
     },
   };
   const server = await startServer({ requireGameData: false, dataDir, port, host: '127.0.0.1', configOverride });
@@ -260,7 +269,7 @@ async function callback(h: Harness, provider: string, code: string, state: strin
 async function ssoLogin(
   h: Harness,
   spec: CodeSpec,
-  provider = 'custom',
+  provider = 'google',
   idp = h.idp,
 ): Promise<{ ticket?: string; error?: string; link?: string; location: string }> {
   const { authorize, cookie } = await startFlow(h, provider);
@@ -326,7 +335,7 @@ test('a full authorization-code + PKCE round trip creates an account and logs in
   const h = await boot(t);
 
   await t.test('the authorize request is code+PKCE(S256)+state+nonce, never implicit', async () => {
-    const { authorize, cookie, res } = await startFlow(h, 'custom');
+    const { authorize, cookie, res } = await startFlow(h, 'google');
     assert.equal(res.status, 302);
     assert.equal(authorize.origin, h.idp.issuer);
     assert.equal(authorize.pathname, '/authorize');
@@ -413,7 +422,7 @@ test('identities are keyed on (iss,sub), never on email', async (t) => {
     const j = await joinWithTicket(h, e.ticket!);
     const online = (await onlineNames(h))[0]!;
     assert.ok(!online.includes('@') && !online.toLowerCase().includes('someone'), `leaked the email: ${online}`);
-    assert.match(online, /^User-[0-9a-f]{6}$/);
+    assert.match(online, /^Google-[0-9a-f]{6}$/);
     j.client.close();
     await j.client.closed;
   });
@@ -445,44 +454,44 @@ test('the state parameter is enforced against the browser cookie', async (t) => 
   const h = await boot(t);
 
   await t.test('a callback with no cookie is refused', async () => {
-    const { authorize } = await startFlow(h, 'custom');
+    const { authorize } = await startFlow(h, 'google');
     const code = h.idp.issueCode(authorize, { sub: 'state-1' });
-    const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', '');
+    const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', '');
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'state');
   });
 
   await t.test('a callback whose cookie belongs to another flow is refused', async () => {
-    const a = await startFlow(h, 'custom');
-    const b = await startFlow(h, 'custom');
+    const a = await startFlow(h, 'google');
+    const b = await startFlow(h, 'google');
     const code = h.idp.issueCode(a.authorize, { sub: 'state-2' });
-    const res = await callback(h, 'custom', code, a.authorize.searchParams.get('state') ?? '', b.cookie);
+    const res = await callback(h, 'google', code, a.authorize.searchParams.get('state') ?? '', b.cookie);
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'state');
   });
 
   await t.test('an unknown state is refused', async () => {
-    const res = await callback(h, 'custom', 'whatever', 'made-up-state', 'made-up-state');
+    const res = await callback(h, 'google', 'whatever', 'made-up-state', 'made-up-state');
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'state');
   });
 
   await t.test('replaying a completed callback is refused (state is single use)', async () => {
-    const { authorize, cookie } = await startFlow(h, 'custom');
+    const { authorize, cookie } = await startFlow(h, 'google');
     const state = authorize.searchParams.get('state') ?? '';
-    const first = await callback(h, 'custom', h.idp.issueCode(authorize, { sub: 'state-3' }), state, cookie);
+    const first = await callback(h, 'google', h.idp.issueCode(authorize, { sub: 'state-3' }), state, cookie);
     assert.ok(fragment(first.headers.get('location')).get('mpticket'));
-    const replay = await callback(h, 'custom', h.idp.issueCode(authorize, { sub: 'state-3' }), state, cookie);
+    const replay = await callback(h, 'google', h.idp.issueCode(authorize, { sub: 'state-3' }), state, cookie);
     assert.equal(fragment(replay.headers.get('location')).get('mperror'), 'state');
   });
 
   await t.test('a state minted for one provider cannot be redeemed at another', async () => {
-    const { authorize, cookie } = await startFlow(h, 'custom');
+    const { authorize, cookie } = await startFlow(h, 'google');
     const code = h.idp.issueCode(authorize, { sub: 'state-4' });
-    const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
+    const res = await callback(h, 'discord', code, authorize.searchParams.get('state') ?? '', cookie);
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'state');
   });
 
   await t.test('a provider error response never becomes a login', async () => {
-    const { cookie } = await startFlow(h, 'custom');
-    const res = await fetch(`${h.base}/auth/custom/callback?error=access_denied&state=x`, {
+    const { cookie } = await startFlow(h, 'google');
+    const res = await fetch(`${h.base}/auth/google/callback?error=access_denied&state=x`, {
       redirect: 'manual',
       headers: { cookie: `omwmp_oauth=${cookie}` },
     });
@@ -567,7 +576,7 @@ test('a banned account is refused through the SSO path', async (t) => {
 });
 
 // Backlog 125: the link flow starts from a one-use ticket, never from the session in a URL.
-async function linkPath(h: { base: string }, sessionToken: string, provider = 'google'): Promise<string> {
+async function linkPath(h: { base: string }, sessionToken: string, provider = 'discord'): Promise<string> {
   const res = await fetch(h.base + '/auth/link/' + provider + '/ticket', { method: 'POST', headers: { authorization: 'Bearer ' + sessionToken } });
   if (res.status !== 200) return '/auth/link/' + provider + '?ticket=expired';
   return ((await res.json()) as { path: string }).path;
@@ -581,9 +590,9 @@ test('one account, several providers', async (t) => {
   const sessionToken = welcome['sessionToken'] as string;
 
   await t.test('linking requires a live game session', async () => {
-    const res = await fetch(`${h.base}/auth/link/google`, { redirect: 'manual' });
+    const res = await fetch(`${h.base}/auth/link/discord`, { redirect: 'manual' });
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'not_signed_in');
-    const bogus = await fetch(`${h.base}/auth/link/google?session=${randomBytes(16).toString('hex')}`, { redirect: 'manual' });
+    const bogus = await fetch(`${h.base}/auth/link/discord?session=${randomBytes(16).toString('hex')}`, { redirect: 'manual' });
     assert.equal(fragment(bogus.headers.get('location')).get('mperror'), 'not_signed_in');
   });
 
@@ -593,7 +602,7 @@ test('one account, several providers', async (t) => {
     assert.equal(first.status, 302, 'the first use starts the link flow');
     const again = await fetch(h.base + path, { redirect: 'manual' });
     assert.equal(fragment(again.headers.get('location')).get('mperror'), 'not_signed_in', 'a used ticket is dead');
-    const inUrl = await fetch(h.base + '/auth/link/google?session=' + sessionToken, { redirect: 'manual' });
+    const inUrl = await fetch(h.base + '/auth/link/discord?session=' + sessionToken, { redirect: 'manual' });
     assert.equal(fragment(inUrl.headers.get('location')).get('mperror'), 'not_signed_in', 'a session in the URL is not a credential');
   });
 
@@ -603,13 +612,13 @@ test('one account, several providers', async (t) => {
     const authorize = new URL(start.headers.get('location')!);
     assert.equal(authorize.origin, h.idp2.issuer);
     const code = h.idp2.issueCode(authorize, { sub: 'google-sub-1', nameHint: 'Some Other Name' });
-    const done = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookieOf(start));
-    assert.equal(fragment(done.headers.get('location')).get('mplink'), 'google');
+    const done = await callback(h, 'discord', code, authorize.searchParams.get('state') ?? '', cookieOf(start));
+    assert.equal(fragment(done.headers.get('location')).get('mplink'), 'discord');
 
     // Now log in through the freshly linked provider: same account, no new one.
     client.close();
     await client.closed;
-    const viaGoogle = await ssoLogin(h, { sub: 'google-sub-1' }, 'google', h.idp2);
+    const viaGoogle = await ssoLogin(h, { sub: 'google-sub-1' }, 'discord', h.idp2);
     assert.ok(viaGoogle.ticket, viaGoogle.location);
     const back = await joinWithTicket(h, viaGoogle.ticket!);
     assert.deepEqual(await onlineNames(h), ['Linker']);
@@ -628,11 +637,11 @@ test('one account, several providers', async (t) => {
     const start = await fetch(`${h.base}${await linkPath(h, token2)}`, { redirect: 'manual' });
     const authorize = new URL(start.headers.get('location')!);
     const code = h.idp2.issueCode(authorize, { sub: 'google-sub-1' }); // already Linker's
-    const done = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookieOf(start));
+    const done = await callback(h, 'discord', code, authorize.searchParams.get('state') ?? '', cookieOf(start));
     assert.equal(fragment(done.headers.get('location')).get('mperror'), 'link_conflict');
 
     // And the victim's identity still points where it did.
-    const viaGoogle = await ssoLogin(h, { sub: 'google-sub-1' }, 'google', h.idp2);
+    const viaGoogle = await ssoLogin(h, { sub: 'google-sub-1' }, 'discord', h.idp2);
     assert.ok(viaGoogle.ticket);
     session2.client.close();
     await session2.client.closed;
@@ -737,7 +746,7 @@ test('an SSO-only server can turn the password path off', async (t) => {
     const res = await fetch(`${h.base}/auth/providers`);
     assert.equal(res.status, 200);
     const body = (await res.json()) as { providers: string[]; allowPasswordLogin: boolean };
-    assert.deepEqual(body.providers.sort(), ['custom', 'google']);
+    assert.deepEqual(body.providers.sort(), ['discord', 'google']);
     assert.equal(body.allowPasswordLogin, false);
   });
 });
@@ -756,9 +765,9 @@ test('SSO respects the server registration policy', async (t) => {
     const without = await ssoLogin(h, { sub: 'invite-1', nameHint: 'NoInvite' });
     assert.equal(without.error, 'invite_required', without.location);
 
-    const { authorize, cookie } = await startFlow(h, 'custom', '?invite=letmein');
+    const { authorize, cookie } = await startFlow(h, 'google', '?invite=letmein');
     const code = h.idp.issueCode(authorize, { sub: 'invite-2', nameHint: 'Invited' });
-    const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', cookie);
+    const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
     assert.ok(fragment(res.headers.get('location')).get('mpticket'), res.headers.get('location') ?? '');
     assert.deepEqual(await accountNames(h.dataDir), ['invited.json']);
   });
@@ -769,9 +778,9 @@ test('SSO respects the server registration policy', async (t) => {
     // what is under test, so it is widened here and the passphrase budget stands alone.
     const h = await boot(tt, { login: { inviteCode: 'letmein' }, limits: { loginPerMinPerIp: 1000 } });
     const guess = async (sub: string, invite: string): Promise<string | null> => {
-      const { authorize, cookie } = await startFlow(h, 'custom', `?invite=${invite}`);
+      const { authorize, cookie } = await startFlow(h, 'google', `?invite=${invite}`);
       const code = h.idp.issueCode(authorize, { sub, nameHint: sub });
-      const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', cookie);
+      const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
       return fragment(res.headers.get('location')).get('mperror');
     };
     for (let i = 0; i < 5; i++) assert.equal(await guess('guesser', `wrong-${i}`), 'invite_required');
@@ -793,15 +802,15 @@ test('SSO respects the server registration policy', async (t) => {
       const out = await ssoLogin(h, { sub: `stranger-${i}`, nameHint: `S${i}` });
       assert.equal(out.error, 'invite_required', out.location);
     }
-    const { authorize, cookie } = await startFlow(h, 'custom', '?invite=letmein');
+    const { authorize, cookie } = await startFlow(h, 'google', '?invite=letmein');
     const code = h.idp.issueCode(authorize, { sub: 'friend', nameHint: 'Friend' });
-    const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', cookie);
+    const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
     assert.ok(fragment(res.headers.get('location')).get('mpticket'), res.headers.get('location') ?? '');
   });
 });
 
 test('the /auth routes do not disturb the rest of the HTTP surface', async (t) => {
-  const h = await boot(t, { metrics: { enabled: true, token: 'scrape-me' } });
+  const h = await boot(t, { metrics: { enabled: true, token: 'scrape-me' }, auth: { discord: { enabled: false } } });
 
   await t.test('/status is still public, CORS-enabled JSON', async () => {
     const res = await fetch(`${h.base}/status`);
@@ -828,7 +837,7 @@ test('the /auth routes do not disturb the rest of the HTTP surface', async (t) =
     assert.equal((await fetch(`${h.base}/auth`)).status, 404);
     assert.equal((await fetch(`${h.base}/auth/nope/start`, { redirect: 'manual' })).status, 302); // -> #mperror
     assert.equal(fragment((await fetch(`${h.base}/auth/nope/start`, { redirect: 'manual' })).headers.get('location')).get('mperror'), 'unknown_provider');
-    assert.equal((await fetch(`${h.base}/auth/custom/start`, { method: 'POST' })).status, 404);
+    assert.equal((await fetch(`${h.base}/auth/google/start`, { method: 'POST' })).status, 404);
     assert.equal((await fetch(`${h.base}/nonsense`)).status, 404);
   });
 
@@ -852,12 +861,12 @@ test('H6: a verified email matching a role holder does not sign in as that accou
   });
   assert.equal(owner.status, 200);
 
-  const { authorize, cookie } = await startFlow(h, 'google', '?return=admin');
+  const { authorize, cookie } = await startFlow(h, 'discord', '?return=admin');
   const code = h.idp2.issueCode(authorize, { sub: 'owner-google', email: 'RealOwner@example.com' });
-  const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
+  const res = await callback(h, 'discord', code, authorize.searchParams.get('state') ?? '', cookie);
   assert.doesNotMatch(res.headers.get('location') ?? '', /#t=/, 'an email match minted a dashboard session');
 
-  const play = await ssoLogin(h, { sub: 'owner-google', email: 'realowner@example.com' }, 'google', h.idp2);
+  const play = await ssoLogin(h, { sub: 'owner-google', email: 'realowner@example.com' }, 'discord', h.idp2);
   assert.equal(play.error, 'invite_required', 'an email match signed in as the owner');
   assert.deepEqual(await accountNames(h.dataDir), ['realowner@example.com.json']);
 });
@@ -871,9 +880,9 @@ test('SSO into the admin dashboard: role required, session lands as /admin#t=', 
   const h = await boot(t);
 
   const adminSso = async (sub: string) => {
-    const { authorize, cookie } = await startFlow(h, 'custom', '?return=admin');
+    const { authorize, cookie } = await startFlow(h, 'google', '?return=admin');
     const code = h.idp.issueCode(authorize, { sub, nameHint: 'DashUser' });
-    const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', cookie);
+    const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
     return res.headers.get('location') ?? '';
   };
 
@@ -936,12 +945,12 @@ test('the providers answer carries the invite help link, https only', async (t) 
 });
 
 test('H2: new SSO accounts need a verified email (Google/Discord) and are budgeted per IP', async (t) => {
-  await t.test('Google with no verified address creates nothing; with one it does', async (tt) => {
+  await t.test('Discord with no verified address creates nothing; with one it does', async (tt) => {
     const h = await boot(tt);
-    const bare = await ssoLogin(h, { sub: 'g-unverified' }, 'google', h.idp2);
+    const bare = await ssoLogin(h, { sub: 'g-unverified', email: '' }, 'discord', h.idp2);
     assert.equal(bare.error, 'email_unverified', bare.location);
     assert.deepEqual(await accountNames(h.dataDir), []);
-    const ok = await ssoLogin(h, { sub: 'g-verified', nameHint: 'Verified', email: 'v@example.com' }, 'google', h.idp2);
+    const ok = await ssoLogin(h, { sub: 'g-verified', nameHint: 'Verified', email: 'v@example.com' }, 'discord', h.idp2);
     assert.ok(ok.ticket, ok.location);
   });
 
@@ -951,4 +960,12 @@ test('H2: new SSO accounts need a verified email (Google/Discord) and are budget
     assert.equal((await ssoLogin(h, { sub: 'farm-10', nameHint: 'Farm10' })).error, 'signup_limited');
     assert.ok((await ssoLogin(h, { sub: 'farm-0' })).ticket, 'an existing account still signs in');
   });
+});
+
+// CL7: v2 signs in with Google or Discord. A leftover disabled table is harmless; an enabled
+// one is an operator waiting for a button that never appears, so boot stops and says so.
+test('an enabled provider other than Google or Discord refuses to boot', () => {
+  const dir = tmpDataDir();
+  assert.doesNotThrow(() => loadConfig(dir, { auth: { microsoft: { enabled: false } } } as never));
+  assert.throws(() => loadConfig(dir, { auth: { microsoft: { enabled: true } } } as never), /\[auth\.microsoft\]\.enabled/);
 });

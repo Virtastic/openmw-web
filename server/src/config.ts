@@ -294,8 +294,6 @@ export interface AuthConfig {
   returnUrl: string; // the game page the callback sends the browser back to
   discord: AuthProviderConfig;
   google: AuthProviderConfig;
-  microsoft: AuthProviderConfig;
-  custom: AuthProviderConfig;
 }
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
@@ -447,10 +445,15 @@ function validateAuth(t: Tree): AuthConfig {
     returnUrl,
     discord: provider(auth, 'discord'),
     google: provider(auth, 'google'),
-    microsoft: provider(auth, 'microsoft'),
-    custom: provider(auth, 'custom'),
   };
-  const anyEnabled = [cfg.discord, cfg.google, cfg.microsoft, cfg.custom].some((p) => p.enabled);
+  // CL7: v2 signs in with Google or Discord only. A leftover disabled [auth.microsoft] or
+  // [auth.custom] table (older configs, the frozen wizard) is ignored; an ENABLED one is an
+  // operator expecting a sign-in button that will never appear, so refuse to boot.
+  for (const [k, v] of Object.entries(auth)) {
+    if (isTree(v) && k !== 'discord' && k !== 'google' && v['enabled'] === true)
+      fail(`[auth.${k}].enabled`, 'false: this server signs in with Google or Discord only');
+  }
+  const anyEnabled = [cfg.discord, cfg.google].some((p) => p.enabled);
   // Empty is now the RECOMMENDED setting: the callback derives its return target from the
   // origin the browser actually used, so one build serves any hostname. Setting it pins the
   // permitted origin — useful when several names front one deployment, and a liability

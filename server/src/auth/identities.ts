@@ -94,8 +94,6 @@ export class IdentityStore {
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   discord: 'Discord',
   google: 'Google',
-  microsoft: 'Microsoft',
-  custom: 'User',
 };
 
 // Never the email — it is mutable, it is not ours to publish in a player list, and it is
@@ -148,8 +146,8 @@ export async function resolveSsoAccount(
     if (!identity.email) return;
     // VALIDATE, even though it came from a provider. Every other setEmail caller runs this
     // check; this path skipped it because the value arrives from an OIDC `email` claim and
-    // that felt trustworthy. It is not: [auth.custom] accepts any issuer an operator points
-    // it at, so the claim is attacker-controlled on a hostile or compromised provider. It
+    // that felt trustworthy. It is not: a compromised provider account or a misconfigured
+    // issuer makes the claim attacker-controlled. It
     // then flows into an SMTP envelope on the password-reset path, where a line break buys
     // an extra recipient. Two guards now — here and at the sink in admin/notify.ts.
     if (!validEmail(identity.email)) {
