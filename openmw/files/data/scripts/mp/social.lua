@@ -47,6 +47,7 @@ local invitesSaid = {} -- acct -> true once toasted; forgotten when the invite l
 local party = { id = 0, leader = '', members = {} } -- OT3-106: the server's PartyState, verbatim
 local partyInvites = {} -- acct -> name (pending party invites)
 local finderSeq = 0 -- OT3-73: bumped per PartyFinder so the overlay sees a fresh nudge
+local followSeq = 0 -- OT3-79: bumped per follow prompt
 local requestsSaid = {} -- same, for friend requests (the snapshot is their only cross-world path)
 local presence = 'friends'
 -- Availability (Online/Offline) — a SEPARATE axis from presence (which is "who sees my
@@ -117,6 +118,7 @@ local SOCIAL_FAIL = {
 local SOCIAL_FAIL_BY_OP = {
     PartyAccept = { in_party = 'Leave your current party first.' },
     PartyLeave = { not_in_party = 'You are not in a party.' },
+    PartyFollow = { no_request = 'That travel offer has expired.', not_online = 'Your leader is offline.' },
 }
 
 local SOCIAL_OK = {
@@ -138,6 +140,7 @@ local SOCIAL_OK = {
     PartyKick     = 'Removed from the party.',
     PartyLead     = 'Party lead passed.',
     SetLfg        = 'Looking-for-group updated.',
+    PartyFollowDecline = 'You stay here.',
 }
 
 local SOCIAL_SILENT = {}
@@ -396,6 +399,14 @@ return {
             mirror()
         end,
         -- OT3-73: who is looking for a group. nudge = we just left the census office.
+        -- OT3-79: the party leader took a strider/boat/guide from here.
+        MP_PartyFollowPrompt = function(data)
+            followSeq = followSeq + 1
+            mp.set('partyFollow', json.encode({
+                seq = followSeq, acct = data.leaderAcct, name = data.leaderName, fare = data.fare or 0,
+            }))
+            notice(tostring(data.leaderName) .. ' is travelling. Follow? (O)')
+        end,
         MP_PartyFinder = function(data)
             finderSeq = finderSeq + 1
             mp.set('partyFinder', json.encode({

@@ -75,6 +75,8 @@ type SocialFailure =
 export const PARTY_MAX = 6;
 /** OT3-73: how many looking-for-group players the party finder lists. */
 const FINDER_MAX = 10;
+/** OT3-79: how long a "follow the leader?" prompt stays answerable. */
+export const FOLLOW_TTL_MS = 60_000;
 
 /** How long a presence row stays believable without a refresh. Comfortably longer than the
  *  heartbeat, so a hiccup does not blink everyone offline, and short enough that a world which
@@ -740,6 +742,21 @@ export class Social {
       case 'LfgQuery':
         this.sendPartyFinder(player, false);
         return true;
+      case 'PartyTravel': {
+        // OT3-79: the leader's client saw itself travel. state = the cell it left, value = fare.
+        const fare = body?.get('value');
+        this.partyTravel(player, str('state'), typeof fare === 'number' ? fare : 0);
+        return true;
+      }
+      case 'PartyFollow': {
+        const r = this.partyFollow(player, str('acct'));
+        if (r !== 'ok') this.reply(player, 'PartyFollow', false, r);
+        return true;
+      }
+      case 'PartyFollowDecline':
+        this.follows.delete(player.accountKey);
+        this.reply(player, 'PartyFollowDecline', true, str('acct'));
+        return true;
       case 'MentorOptIn': {
         const state = str('state') || str('acct');
         const r = this.setMentor(player, state);
@@ -911,6 +928,48 @@ export class Social {
     }
     out.sort((x, y) => Number(y.near) - Number(x.near) || x.level - y.level);
     return out.slice(0, FINDER_MAX);
+  }
+
+  // ------------------------------------------------------------ group travel (OT3-79)
+  private follows = new Map<AccountKey, { leader: AccountKey; fare: number; expires: number }>();
+
+  /** The leader took a travel service out of `from`. Members standing in that cell (or one
+   *  visible from it) are offered to follow; each pays the fare the leader paid, out of
+   *  their own purse, on their own client (a member who cannot pay stays). */
+  partyTravel(player: Player, from: string, fare: number): void {
+    const me = player.accountKey;
+    const party = this.d.store.partyOf(me);
+    if (!party || party.leader !== me || !from) return;
+    fare = Math.max(0, Math.min(Math.round(fare), 100_000));
+    const expires = this.d.now() + FOLLOW_TTL_MS;
+    for (const m of party.members) {
+      if (m === me) continue;
+      const p = this.onlinePlayer(m);
+      const there = p?.cellKey;
+      if (!p || !there) continue;
+      const near = there === from
+        || (parseExterior(there) !== null && parseExterior(from) !== null && cellsVisible(there, from));
+      if (!near) continue;
+      this.follows.set(m, { leader: me, fare, expires });
+      p.peer.sendEvent('PartyFollowPrompt', { leaderAcct: me, leaderName: player.name, fare });
+    }
+  }
+
+  /** A member said yes: send them to where the leader is NOW (the server's copy, as with
+   *  InviteAccept), carrying the fare their client deducts before it moves them. */
+  partyFollow(player: Player, leaderAcct: AccountKey): SocialFailure | 'ok' {
+    const me = player.accountKey;
+    const offer = this.follows.get(me);
+    if (!offer || offer.leader !== leaderAcct || offer.expires < this.d.now()) return 'no_request';
+    this.follows.delete(me);
+    if (!this.d.store.partyOf(me)?.members.includes(leaderAcct)) return 'not_in_party';
+    const leader = this.onlinePlayer(leaderAcct);
+    if (!leader?.cellKey || !leader.pose) return 'not_online';
+    player.lastDoorAt = Date.now(); // the teleport this asks for is explained (#361)
+    player.peer.sendEvent('PartyFollowGo', {
+      cellKey: leader.cellKey, x: leader.pose.x, y: leader.pose.y, z: leader.pose.z, fare: offer.fare,
+    });
+    return 'ok';
   }
 
   private sendPartyFinder(player: Player, nudge: boolean): void {

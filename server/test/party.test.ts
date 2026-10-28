@@ -147,3 +147,31 @@ test('party finder: a solo sprout leaving the census office is nudged with LFG p
   assert.equal((w.sent.get('far') ?? []).filter((e) => e.name === 'PartyFinder' && e.body.nudge === true).length, 0);
   w.stop(); w.store.close();
 });
+
+test('group travel: the leader takes the strider; members in the cell are offered to follow at the fare', () => {
+  const w = world();
+  const a = w.add('a'); const b = w.add('b'); const c = w.add('c'); const far = w.add('far');
+  join(w, a, b); join(w, a, c); join(w, a, far);
+  for (const p of [a, b, c]) (p as { cellKey: string }).cellKey = '-2,-9'; // Seyda Neen
+  (far as { cellKey: string }).cellKey = '10,10';
+  (b as { pose: unknown }).pose = { x: 1, y: 1, z: 1 };
+  w.social.partyTravel(b, '-2,-9', 20); // not the leader: nothing
+  assert.equal((w.sent.get('c') ?? []).filter((e) => e.name === 'PartyFollowPrompt').length, 0);
+  (a as { cellKey: string }).cellKey = '-3,-2'; // landed in Balmora
+  (a as { pose: unknown }).pose = { x: -20000, y: -10000, z: 500 };
+  w.social.partyTravel(a, '-2,-9', 20);
+  const prompt = (who: string) => (w.sent.get(who) ?? []).find((e) => e.name === 'PartyFollowPrompt')?.body;
+  assert.deepEqual(prompt('b'), { leaderAcct: 'a', leaderName: 'a', fare: 20 });
+  assert.ok(prompt('c'));
+  assert.equal(prompt('far'), undefined, 'a member elsewhere is not asked');
+  // b follows: sent to the leader's live spot with the fare to pay; the offer is spent.
+  assert.equal(w.social.partyFollow(b, 'a'), 'ok');
+  assert.deepEqual((w.sent.get('b') ?? []).find((e) => e.name === 'PartyFollowGo')?.body,
+    { cellKey: '-3,-2', x: -20000, y: -10000, z: 500, fare: 20 });
+  assert.equal(w.social.partyFollow(b, 'a'), 'no_request');
+  // c declines: no Go, and a later accept finds nothing.
+  w.social.handleEvent(c, 'PartyFollowDecline', new Map([['acct', 'a']]));
+  assert.equal(w.social.partyFollow(c, 'a'), 'no_request');
+  assert.equal(w.social.partyFollow(far, 'a'), 'no_request');
+  w.stop(); w.store.close();
+});

@@ -115,6 +115,10 @@ local pressUntil = 0
 local pendingTestEquip = nil -- harness 'equip:<id>:<slot>': equip once the grant lands
 
 local function cellKey() return shared.cellKeyOf(self.cell) end
+-- OT3-79: a Travel window (strider, boat, guide, gondola) is open or just closed. The next
+-- cell change or jump is the trip; it is reported so the party can be offered to follow.
+local travelWatch = nil -- { cell, gold, until_ }
+local function goldCount() return types.Actor.inventory(self):countOf('gold_001') end
 
 local function poseFlags()
     local flags = 0
@@ -558,7 +562,13 @@ local function movementTick()
             latestSelf = nil -- the sample already in hand describes the old place: reconciling to it undoes the teleport
         end
         mp.sendEvent('PlayerCellChange', { cellKey = key, x = pos.x, y = pos.y, z = pos.z })
+        if travelWatch and (not travelWatch.until_ or now < travelWatch.until_) then
+            local fare = math.max(0, travelWatch.gold - goldCount())
+            core.sendGlobalEvent('mpSocial', { op = 'PartyTravel', state = travelWatch.cell, value = fare })
+            travelWatch = nil
+        end
     end
+    if travelWatch and travelWatch.until_ and now >= travelWatch.until_ then travelWatch = nil end
 
     -- Jump edge: send the same frame the jump control rises.
     local jumpCtl = self.controls.jump
@@ -1598,6 +1608,12 @@ local script = {
             -- the same conversation: releasing on the Dialogue->Barter edge let a second player
             -- open the merchant mid-trade and lost the bribe/admire made after the trade.
             local function talking(m) return m == 'Dialogue' or GOLD_SERVICE_MODES[m] ~= nil end
+            -- OT3-79: watch for the trip a Travel window buys (closes with the teleport).
+            if data.newMode == 'Travel' then
+                travelWatch = { cell = cellKey(), gold = goldCount() }
+            elseif data.oldMode == 'Travel' and travelWatch then
+                travelWatch.until_ = core.getRealTime() + 3
+            end
             -- ...and so does a pickpocket's Container window, which the lock opened too: no
             -- other edge released it, and the NPC stayed "talking to" the thief for everyone
             -- until they left the cell. A chest's close finds no lock: a no-op.

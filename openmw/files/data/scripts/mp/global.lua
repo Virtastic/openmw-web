@@ -1299,6 +1299,7 @@ local eventHandlers = {
     MP_PartyState = function(data) toPlayer('MP_PartyState', data) end,
     MP_PartyInviteReceived = function(data) toPlayer('MP_PartyInviteReceived', data) end,
     MP_PartyFinder = function(data) toPlayer('MP_PartyFinder', data) end,
+    MP_PartyFollowPrompt = function(data) toPlayer('MP_PartyFollowPrompt', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
 
@@ -1679,6 +1680,32 @@ local eventHandlers = {
             notice('Could not travel to them just now.')
         end
         mp.set('invitedTo', tostring(data.cellKey))
+    end,
+
+    -- OT3-79: following the party leader's travel. The member pays the leader's fare out of
+    -- their own purse here; short of it, they stay. The destination is the server's copy of
+    -- where the leader is now, as with MP_InviteAccepted.
+    MP_PartyFollowGo = function(data)
+        local player = playerScript()
+        if not player then return end
+        if not data.cellKey then notice('Could not work out where your leader went.') return end
+        local fare = math.max(0, math.floor(tonumber(data.fare) or 0))
+        if fare > 0 then
+            local inv = types.Actor.inventory(player)
+            if inv:countOf('gold_001') < fare then
+                notice('You cannot afford the ' .. fare .. ' gold fare.')
+                return
+            end
+            local gold = inv:find('gold_001')
+            if gold then gold:remove(fare) end
+        end
+        local ok, err = pcall(function()
+            player:teleport(inviteCellArg(tostring(data.cellKey)), util.vector3(data.x or 0, data.y or 0, data.z or 0))
+        end)
+        if not ok then
+            print('[mp] party follow teleport failed: ' .. tostring(err))
+            notice('Could not follow just now.')
+        end
     end,
 
     MP_ChatMessage = function(data)
@@ -2479,6 +2506,8 @@ local eventHandlers = {
             PartyLeave = true, PartyKick = true, PartyLead = true,
             -- OT3-73 party finder.
             SetLfg = true, LfgQuery = true,
+            -- OT3-79 group travel.
+            PartyTravel = true, PartyFollow = true, PartyFollowDecline = true,
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end

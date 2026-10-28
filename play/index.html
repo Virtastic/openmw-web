@@ -4524,7 +4524,7 @@ window.omw = (function(){
   tx.addEventListener('keydown', function(e){ e.stopPropagation(); chatKey(e); });
 
   // ================================ SOCIAL ================================
-  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '', seenFinderSeq = 0;
+  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '', seenFinderSeq = 0, answeredFollowSeq = 0, seenFollowSeq = 0;
   // CHAT VISIBILITY, remembered per browser. Some players want the world without a chat box
   // in the corner, and the only way to get that was not to look at it. localStorage rather
   // than a server setting: it is a per-PERSON display preference, not a property of the
@@ -4621,7 +4621,7 @@ window.omw = (function(){
     // report. Measured before the fix: the input element was replaced 5 times in 2 seconds.
     // The status line is LOCAL state, but this render DRAWS it, so it belongs in the signature.
     var sig = [sTab, sStatusText, m.friends, m.players, m.friendRequests,
-      m.invites, m.availability, m.presenceMode, m.blocked, m.muted, m.party, m.partyInvites, m.partyFinder].join(' ')
+      m.invites, m.availability, m.presenceMode, m.blocked, m.muted, m.party, m.partyInvites, m.partyFinder, m.partyFollow, answeredFollowSeq].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
     var friends = pj(m.friends)||[], players = pj(m.players)||[];
@@ -4707,6 +4707,18 @@ window.omw = (function(){
         });
         var lv = el('button','btn','Leave party'); lv.onclick = function(){ lv.disabled = true; cmd('social:PartyLeave:'); };
         sec.appendChild(lv);
+      }
+      // OT3-79: the leader took a strider/boat/guide from here; follow on your own fare.
+      var fol = pj(m.partyFollow);
+      if (fol && fol.seq > answeredFollowSeq && party.id){
+        var fc = el('div','card');
+        fc.appendChild(el('div','who','<div class="nm">'+esc(fol.name)+'</div><div class="st">is travelling'+(fol.fare>0?' · fare '+fol.fare+' gold':'')+'</div>'));
+        [['follow', function(){ cmd('social:PartyFollow:'+fol.acct); }, true],
+         ['stay', function(){ cmd('social:PartyFollowDecline:'+fol.acct); }]].forEach(function(a){
+          var b = el('button','btn'+(a[2]?' pri':''),a[0]);
+          b.onclick = function(){ answeredFollowSeq = fol.seq; b.disabled = true; a[1](); };
+          fc.appendChild(b); });
+        sec.appendChild(fc);
       }
       // OT3-73: the party finder, for anyone not yet in a party (or leading one with room).
       if (canInvite){
@@ -5213,6 +5225,9 @@ window.omw = (function(){
       // OT3-73: leaving the census office as a solo sprout opens the party finder once.
       var pfs = pj(m.partyFinder);
       if (pfs && pfs.nudge && pfs.seq > seenFinderSeq){ seenFinderSeq = pfs.seq; sTab = 'friends'; if (!socialOpen) openSocial(); }
+      // OT3-79: a follow prompt is time-limited, so it opens the panel too.
+      var pfw = pj(m.partyFollow);
+      if (pfw && pfw.seq > seenFollowSeq){ seenFollowSeq = pfw.seq; sTab = 'friends'; if (!socialOpen) openSocial(); }
     }
     if (cs > seenChatSeq){ seenChatSeq = cs; lastChatAt = Date.now(); feed.classList.remove('idle'); renderFeed(); persistChat(); }
     // The engine mirrors the server's ack for every social action. Surface it: an action that
