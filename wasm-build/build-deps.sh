@@ -33,10 +33,8 @@ SRC="$ROOT/deps/src"
 # killer picks the biggest process it can find, which is not necessarily this build.
 JOBS="${JOBS:-$( (nproc 2>/dev/null) || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
-# --- WASM64 (MEMORY64) -----------------------------------------------------------------------
-# OFF by default: the wasm32 stack in deps/wasm and everything that reads it stay exactly as they
-# were, so this is reversible by unsetting one variable rather than by rebuilding.
-# The stack builds into deps/wasm64; wasm32 is no longer a target (OMW_WASM64=0 refuses).
+# --- WASM64 (MEMORY64) IS THE ONLY TARGET ---------------------------------------------------
+# The stack builds into deps/wasm64.
 #
 # -m64, NOT -sMEMORY64=1: emscripten 6.0.1 accepts both but warns the -s spelling is deprecated
 # ("prefer the standard -m64 or --target=wasm64 flags"). -m64 is a clang-style flag, so unlike a
@@ -52,10 +50,6 @@ JOBS="${JOBS:-$( (nproc 2>/dev/null) || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 # BOTH --extra-cflags and --extra-ldflags (see build_ffmpeg). ffmpeg prints
 # "WARNING: unknown architecture wasm64" and falls back to generic C -- that warning is
 # expected and is not the reason for any failure.
-if [ "${OMW_WASM64:-1}" != "1" ]; then
-  echo "FATAL: wasm32 is no longer a target. The engine is wasm64 (MEMORY64) only." >&2
-  exit 1
-fi
 WASM_ARCH="wasm64"; ARCH_FLAG="-m64"; DW="$ROOT/deps/wasm64"; BUILD_DIR="build-wasm64"
 # GL archive name. emcc encodes the build variant into the filename, and under -pthread the
 # port materialises as libGL-mt-getprocaddr.a rather than libGL-getprocaddr.a. The wasm32 stack
@@ -74,7 +68,7 @@ mkdir -p "$DW/lib" "$DW/include"
 stage_lib() { cp -f "$@" "$DW/lib/"; }
 
 # ffmpeg, lz4 and boost build IN-TREE, so unlike the CMake deps above they cannot simply be
-# given a per-model build directory. Switching OMW_WASM64 would leave wasm32 objects sitting in
+# given a per-model build directory. Switching pointer model would leave wasm32 objects sitting in
 # the tree for `make` to consider up to date, and they would be archived into a wasm64 .a --
 # the same stale-object fault the root Dockerfile:26-40 refuses a ninja cache mount over. Here
 # wasm-ld would eventually catch it, but only after a long build and with a confusing message.

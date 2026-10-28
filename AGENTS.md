@@ -421,11 +421,9 @@ The toolchain image `openmw-builder64:1` is prebuilt on the build server from
 
 **wasm64 is the ONLY target.** It lifts the heap past the 4 GiB the old wasm32 build maxed
 out (`link-openmw.sh` links `-sMAXIMUM_MEMORY=4294967296`), which is what a Tamriel Rebuilt
-load order needs, and the client gates on MEMORY64 to match. `OMW_WASM64` survives only as a
-guard in `wasm-build/build-deps.sh`, `wasm-build/build-osg.sh`, `configure-openmw.sh`,
-`wasm-build/link-openmw.sh` and `ci/jenkins/build-engine.sh`: setting it to `0` refuses with
-an error, because the first v1.2.0 release cut silently built wasm32 under a wasm64 client
-and the choice existing was the whole bug.
+load order needs, and the client gates on MEMORY64 to match. There is no switch: the first
+v1.2.0 release cut silently built wasm32 under a wasm64 client, and the choice existing was
+the whole bug (the `OMW_WASM64` guards went in OT3-240).
 
 The fixed set everything now uses (the models could never share anything compiled):
 
@@ -455,10 +453,6 @@ Things that will bite, in the order they bit:
   `WARNING: unknown architecture wasm64` is expected and harmless.
 - Browsers need Chrome/Edge 133+ or Firefox 134+; `play/index.html` and `play/launcher.html`
   feature-detect memory64 and show the unsupported overlay otherwise.
-
-`wasm-build/memory64-gate.sh` answers "does this toolchain do wasm64 at all" in about a minute
-without building the engine — threads, >4 GiB allocation, wasm-EH, the JS pointer ABI and (with
-`--browser`) cross-origin isolation. Run it before blaming the engine.
 
 `Dockerfile.builder64.dockerignore` exists because the main `.dockerignore` excludes `deps/`
 (correct for `Dockerfile`, fatal for `Dockerfile.builder64`, which must bake deps in). BuildKit

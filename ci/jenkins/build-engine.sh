@@ -7,11 +7,7 @@ SRC="${SRC:-/src}"
 TAG="${TAG:-morrowind:test}"
 
 # WASM64 (MEMORY64) is the only target: a wasm32 engine cannot hold a Tamriel Rebuilt load
-# order and the client is built for MEMORY64. OMW_WASM64 survives only as a guard.
-if [ "${OMW_WASM64:-1}" != "1" ]; then
-  echo "FATAL: wasm32 is no longer a target. The engine is wasm64 (MEMORY64) only." >&2
-  exit 1
-fi
+# order and the client is built for MEMORY64.
 DEPS_DIR=deps/wasm64; BUILDER_IMAGE=openmw-builder64:1
 
 cd "$SRC"

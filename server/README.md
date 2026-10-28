@@ -218,7 +218,7 @@ interpolate every avatar. That is what the render-LOD tiers address.
 
 ### Client cost per avatar (render LOD)
 
-Measured with `wasm-build/measure-avatar-cost.sh`, which runs all three arms back to back so
+Measured with `wasm-build/measure-avatar-cost.sh` (removed in OT3-240; in git history), which runs all three arms back to back so
 they share contention conditions. Host load 4-8 throughout (an idle workstation); one
 browser client in a retail cell with protocol bots ramped into it.
 

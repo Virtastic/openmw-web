@@ -1,6 +1,6 @@
 # Linux runner for the multiplayer browser suite WITH a real, SIMULATING sim peer.
 #
-# WHY THIS EXISTS. `Dockerfile.harness` runs the browsers but nothing that needs a cell to be
+# WHY THIS EXISTS. The old browser-only `Dockerfile.harness` (removed, OT3-240) ran the browsers but nothing that needs a cell to be
 # SIMULATED. Since `canSimulate` became `p.system === true`, only a sim peer may hold cell
 # authority, and `s40-npc`, `s42-crowded-cell` and `s51-npc-combat` assert that NPCs actually move
 # and fight — which `server/dist/testpeer.mjs` cannot do, because it answers the wire without
@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget gnupg ca-c
 # CHROME_BIN is what mp-harness.mjs launches; --no-sandbox is added whenever it is set, which is
 # required in a container.
 #
-# SMOKE_GL=angle-swiftshader, NOT the raw swiftshader Dockerfile.harness uses, and that
+# SMOKE_GL=angle-swiftshader, NOT the raw swiftshader the old Dockerfile.harness used, and that
 # difference is why this image could not run a single scenario. mp-harness.mjs says it in its
 # own comment: raw SwiftShader GL does not implement every entry point the engine probes, the
 # engine resolves GL dynamically, and a missing one comes back null. The symptom is not an
@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget gnupg ca-c
 # crashpad process beside it, while the native sim peer ran perfectly at 21.5% and 491 MB. The
 # half everyone expects to be fragile was fine; the browser was the problem.
 #
-# Raw swiftshader survives in Dockerfile.harness only because that image ships Debian's older
+# Raw swiftshader survived in the old Dockerfile.harness only because that image ships Debian's older
 # chromium. This one carries google-chrome 152, where it does not. angle-swiftshader runs ANGLE
 # -- the translator the engine targets in a real browser -- over SwiftShader's Vulkan, which is
 # what mp-harness.mjs already recommends for a GPU-less Linux box.

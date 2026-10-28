@@ -13,7 +13,7 @@
 # is the only target. A wasm32 engine cannot hold a Tamriel Rebuilt load order, and the client
 # is built for MEMORY64, so offering the choice only offered a way to build the wrong thing —
 # which is exactly what the v1.2.0 release did the first time it was cut. The builder image
-# sets ENV OMW_WASM64=1; the build scripts refuse =0 outright.
+# sets ENV OMW_WASM64=1, which nothing reads any more (OT3-240).
 FROM openmw-builder64:1 AS builder
 # ROOT + EM_LIBEXEC drive configure-openmw.sh; EMSDK_BIN drives link-openmw.sh (emcc/em++ + sysroot).
 ENV ROOT=/build EM_LIBEXEC=/emsdk/upstream/emscripten EMSDK_BIN=/emsdk/upstream/emscripten

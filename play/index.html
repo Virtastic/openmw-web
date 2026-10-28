@@ -1192,7 +1192,7 @@ try {
  // than a stack trace.
  //
  // Feature-detected, not version-sniffed: constructing a 64-bit memory is precisely the
- // capability required, and it is the same probe wasm-build/memory64-gate.html verifies.
+ // capability required, and it is the same probe the old memory64 gate verified.
  // Probes the EXACT descriptor openmw.js requests: shared, 64-bit, and the 16 GiB maximum
  // (262144 pages) the build declares. A weaker probe -- just asking whether u64 memory exists --
  // passes on a browser that supports memory64 but caps the maximum lower, which then fails at
@@ -1444,7 +1444,7 @@ try {
        // "TypeError: Cannot convert <n> to a BigInt". The catch below is silent, so that would
        // not surface as an error at all: paste would simply stop working, with nothing logged.
        // ccall marshals the string itself, which also removes the malloc/free pair entirely.
-       // Verified both ways by wasm-build/memory64-gate (the raw form passes on wasm32 and
+       // Verified both ways by the old memory64 gate (the raw form passes on wasm32 and
        // breaks on wasm64; ccall passes on both).
        if (t && window.Module && Module.ccall){
          Module.ccall('omw_set_clipboard', null, ['string'], [t]);

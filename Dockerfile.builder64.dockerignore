@@ -22,7 +22,6 @@ build-wasm.good
 build-native
 build-bullet-native
 build-mygui-native
-build-memory64-gate
 deps/native
 deps/wasm
 .wasm32-backup

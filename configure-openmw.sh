@@ -12,17 +12,12 @@ SR="$EM_LIBEXEC/cache/sysroot"
 # --- WASM64 (MEMORY64) IS THE ONLY TARGET ------------------------------------------------------
 # A 32-bit build tops out at the 4 GiB it can address, and a Tamriel Rebuilt load order does not
 # fit in it; the client (play/index.html) gates on MEMORY64 and hands raw i64 exports around, so
-# a wasm32 engine under it is a mismatch, not an option. OMW_WASM64 survives only as a guard: =0
-# refuses loudly instead of silently producing the pointer size nothing ships any more.
+# a wasm32 engine under it is a mismatch, not an option.
 #
 # -m64 rather than -sMEMORY64=1: emscripten 6.0.1 warns the -s spelling is deprecated, and -m64
 # is a compiler flag, so it reaches CMake try_compile probes -- which matters a great deal here,
 # because a probe compiled for the wrong pointer size fails in ways that read like a missing
 # dependency rather than a wrong flag.
-if [ "${OMW_WASM64:-1}" != "1" ]; then
-  echo "FATAL: wasm32 is no longer a target. The engine is wasm64 (MEMORY64) only." >&2
-  exit 1
-fi
 WASM_ARCH=wasm64; ARCH_FLAG=-m64; DW=$ROOT/deps/wasm64
 WARCH=$SR/lib/$WASM_ARCH-emscripten
 # build-wasm64, never a shared tree: a dir half-populated with objects of another pointer size
@@ -78,13 +73,8 @@ emcmake cmake -S "$ROOT/openmw" -B "$ROOT/$BUILD_DIR" -G Ninja \
   -DOPENMW_USE_SYSTEM_SQLITE3=OFF -DOPENMW_USE_SYSTEM_YAML_CPP=OFF -DOPENMW_USE_SYSTEM_ICU=ON \
   `# -msimd128: every hand-built dep (build-deps.sh, build-osg.sh) already compiles with it; the` \
   `# engine's own TUs did not, so skinning/NIF/terrain/mechanics got no autovectorisation at all.` \
-  `# F10 (OMW_PROXY=1): compile the emscripten GL path that creates the context itself instead` \
-  `# of asking SDL for it. SDL2's emscripten backend goes through EGL, which is hard-wired to` \
-  `# the MAIN-THREAD canvas -- proven by stack trace: _eglCreateContext -> Browser.createContext` \
-  `# -> getContext on the transferred canvas, which throws once it belongs to the worker.` \
-  `# Off by default so the shipping build keeps SDL's context exactly as it is.` \
   `# OT3-13 (OMW_TEST_HOOKS=1): compile the omw_debug_* QA exports in. Release bakes leave it unset.` \
-  -DCMAKE_CXX_FLAGS="${OMW_PROXY:+-DOPENMW_PROXY_GL} $([ "${OMW_TEST_HOOKS:-0}" = 1 ] && echo -DOMW_TEST_HOOKS) -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION $ARCH_FLAG -fwasm-exceptions -msimd128 -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
+  -DCMAKE_CXX_FLAGS="$([ "${OMW_TEST_HOOKS:-0}" = 1 ] && echo -DOMW_TEST_HOOKS) -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION $ARCH_FLAG -fwasm-exceptions -msimd128 -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
   -DCMAKE_C_FLAGS="-pthread -msimd128 $ARCH_FLAG" \
   -DBoost_INCLUDE_DIR="$BOOST" -DBoost_NO_BOOST_CMAKE=OFF \
   -DBoost_USE_STATIC_RUNTIME=ON -DBoost_USE_STATIC_LIBS=ON \

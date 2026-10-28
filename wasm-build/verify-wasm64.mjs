@@ -4,7 +4,7 @@
 // and checks the things the wasm32 build could not do, plus the JS<->C++ pointer boundaries
 // that MEMORY64 changes.
 //
-// wasm-build/memory64-gate.* proves the TOOLCHAIN can do all this with a toy program. This
+// The memory64 gate (removed, OT3-240) proved the TOOLCHAIN can do all this with a toy program. This
 // proves the SHIPPING ENGINE does, which is a different claim: the gate links none of OSG,
 // Bullet, MyGUI or ffmpeg, and it is not the thing players run.
 //

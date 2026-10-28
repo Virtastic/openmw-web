@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // Engine frame-time sampler, for comparing two builds in the SAME scene.
 //
-// Written for the wasm32 -> wasm64 cut-over. The microbenchmark inside memory64-gate.cpp is
+// Written for the wasm32 -> wasm64 cut-over. The old memory64 gate microbenchmark was
 // noise-dominated and must not be quoted; this samples the engine's own per-frame cost
 // (window.__frameMs / window.__fps, maintained by play/index.html's HUD) which is the number
 // that actually decides whether MEMORY64's bounds-checking costs anything a player would feel.

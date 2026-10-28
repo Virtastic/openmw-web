@@ -24,7 +24,7 @@ cp build-wasm64/openmw.{js,wasm,data} play/
 
 The engine is built for wasm64 and nothing else: it lifts the heap above the 4 GiB a 32-bit
 module can address, which a Tamriel Rebuilt load order needs, and the client gates on
-MEMORY64 to match. `OMW_WASM64=0` refuses with an error. Browsers need memory64:
+MEMORY64 to match. Browsers need memory64:
 Chrome/Edge 133+ or Firefox 134+ (the pages feature-detect and say so).
 
 Notes, all learned the hard way:
@@ -34,8 +34,6 @@ Notes, all learned the hard way:
 - Pointer models **cannot share a build tree or dep prefix**. A mixed archive fails only at
   the final link (`wasm32 object file can't be linked in wasm64 mode`); `build-deps.sh`
   stamps each source tree with its model and cleans on change.
-- `wasm-build/memory64-gate.sh` checks the toolchain, threads, >4 GiB allocation and the JS
-  pointer ABI without building the engine - run it first when something looks wrong.
 
 ## The link step is scripted for reasons
 

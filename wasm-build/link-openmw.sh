@@ -44,10 +44,6 @@ EMSDK_BIN="${EMSDK_BIN:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 # does not ("wasm32 object file cannot be linked in wasm64 mode") -- the GOOD failure mode,
 # unlike a stale archive, which links cleanly and ships a broken engine (see the ninja note
 # further down).
-if [ "${OMW_WASM64:-1}" != "1" ]; then
-  echo "FATAL: wasm32 is no longer a target. The engine is wasm64 (MEMORY64) only." >&2
-  exit 1
-fi
 WASM_ARCH=wasm64; ARCH_FLAG=-m64; LIB="$ROOT/deps/wasm64/lib"
 SYSROOT="$EMSDK_BIN/cache/sysroot/lib/$WASM_ARCH-emscripten"
 # Must match configure-openmw.sh, which configures into build-wasm64 for the same reason: a
@@ -72,11 +68,7 @@ BUILD_DIR="${OMW_BUILD_DIR:-build-wasm64}"
 #
 # This was 8 GiB for one build. That was an arbitrary number of mine and it could only cost
 # headroom, so it is now the real ceiling.
-if [ "$WASM_ARCH" = "wasm64" ]; then
-  MAX_MEMORY="${OMW_MAX_MEMORY:-17179869184}"  # 16 GiB -- V8's hard maximum for wasm64
-else
-  MAX_MEMORY="${OMW_MAX_MEMORY:-4294967296}"   # 4 GiB, the wasm32 wall
-fi
+MAX_MEMORY="${OMW_MAX_MEMORY:-17179869184}"  # 16 GiB -- V8's hard maximum for wasm64
 
 # See configure-openmw.sh: under -pthread the GL port is libGL-mt-getprocaddr.a, and only the
 # variant actually built exists in a freshly-populated wasm64 sysroot.
@@ -161,32 +153,11 @@ cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscr
 ICU_TARGET="$ROOT/fsroot/icu/icudt68l.dat"
 ICU_STAGED="$ROOT/fsroot/icudt68l.dat"
 ICU_DAT="${EMSDK_BIN}/cache/ports/icu/icu/source/data/in/icudt68l.dat"
-# TRIM -- DISABLED. See wasm-build/trim-icu-data.py.
-# The finding is real (28.6 MB of a 32 MB openmw.data, for six locales and a MessageFormat), but
-# the naive TOC filter is NOT a safe way to get it, and this was proven by running it:
-#
-#   With the trim, the engine boots normally all the way to "Reserving texture unit for sky RTT"
-#   and then dies with `unhandled rejection: null function`. Restoring the full package with every
-#   other change in place boots clean. Bisected: dropping FEATURE GROUPS (coll/zone/curr/...) alone
-#   is fine; dropping other LOCALES is what breaks it.
-#
-# Why: the package still contains ICU's locale INDEX resources, which continue to advertise the
-# ~800 locales whose .res entries were removed. ICU opens one, gets nothing back, and calls a
-# virtual on the null -- the same bare "null function" this data caused when it was absent
-# entirely. Filtering the built .dat cannot fix that; the index has to be regenerated, which is
-# exactly what upstream's ICU_DATA_FILTER_FILE does and what the script's header wrongly dismissed.
-#
-# To land this properly: build the ICU data with ICU_DATA_FILTER_FILE (needs a native ICU build in
-# the deps stack), or extend trim-icu-data.py to rewrite res_index.res for every kept tree. Until
-# then ship the full package -- 26 MB is worth having, but not at the cost of a boot crash.
-ICU_TRIM="${ICU_TRIM:-0}"
-trim_icu() {   # trim_icu <src> <dst>
-  if [ "$ICU_TRIM" = "1" ]; then
-    python3 "$ROOT/wasm-build/trim-icu-data.py" "$1" "$2"       --verify-l10n "$ROOT/fsroot/resources/vfs/l10n"
-  else
-    cp "$1" "$2"
-  fi
-}
+# The full package ships. Trimming it (28.6 MB of a 32 MB openmw.data) needs the data rebuilt with
+# ICU_DATA_FILTER_FILE: filtering the built .dat leaves the locale index pointing at removed
+# entries and the engine dies with `null function` (bisected; the filter script was removed in
+# OT3-240).
+trim_icu() { cp "$1" "$2"; }   # trim_icu <src> <dst>
 
 if [ -s "$ICU_TARGET" ]; then
   echo "   ICU data already staged at fsroot/icu/icudt68l.dat"
@@ -250,12 +221,6 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   `# machines that cannot pay it. Revisit with a measured TR peak, not on principle.` \
   "-sMAXIMUM_MEMORY=$MAX_MEMORY" \
   -sASSERTIONS=0 -sMALLOC=mimalloc \
-  `# F10 SPIKE (OMW_PROXY=1): run main() -- and therefore the whole engine -- on a pthread` \
-  `# instead of the browser main thread. The gate for this is answered (wasm-build/f10-gate.html):` \
-  `# a real blocking Atomics.wait works off-main-thread, and WebGL2 on a transferred` \
-  `# OffscreenCanvas works on the real ANGLE D3D11 path. Behind an env flag so the default` \
-  `# build is untouched while this is being brought up.` \
-  ${OMW_PROXY:+-sPROXY_TO_PTHREAD -sOFFSCREENCANVAS_SUPPORT=1 -sOFFSCREENCANVASES_TO_PTHREAD=#canvas} \
   -sENVIRONMENT=web,worker \
   ${OMW_PROFILING:+--profiling-funcs} \
   `# openmw.js.symbols: function index -> name. A browser crash names wasm-function[N] only` \
@@ -295,7 +260,7 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   -lidbfs.js -lwebsocket.js -sFORCE_FILESYSTEM=1 \
   `# ccall: play/index.html calls omw_set_clipboard, which takes a POINTER. Under MEMORY64 a` \
   `# raw export takes an i64 and a JS Number throws 'Cannot convert .. to a BigInt', so that` \
-  `# call goes through ccall, which marshals the string. Proven by wasm-build/memory64-gate.` \
+  `# call goes through ccall, which marshals the string. Proven by the memory64 gate (removed, OT3-240).` \
   `# wasmMemory: the only way to read the live heap size (wasmMemory.buffer.byteLength). The` \
   `# device tiering in play/index.html sizes itself against the heap, and on wasm64 the` \
   `# ceiling is no longer a constant that can be assumed -- so it has to be observable.` \

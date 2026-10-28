@@ -141,9 +141,6 @@ minimap-*.png
 /client/
 /.env
 
-# MEMORY64 gate build output (wasm-build/memory64-gate.sh). Same rule as build-wasm/ above:
-# compiler artifacts, plus a --preload-file .data that can run to hundreds of MB.
-build-memory64-gate/
 
 # Local rollback copy of the wasm32 engine artifacts, kept while the wasm64 cut-over is
 # being validated. Same category as play/openmw.* -- build output, never committed.

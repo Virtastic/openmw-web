@@ -40,17 +40,12 @@ wasm-build/smoke.mjs
 wasm-build/p3.mjs
 wasm-build/perf-ab.mjs
 wasm-build/selftest.mjs
-wasm-build/memory64-gate-browser.mjs
-wasm-build/memory64-gate-run.mjs
-wasm-build/Dockerfile.harness
 wasm-build/Dockerfile.harness-peer
 # The rest of the dev/measurement/verification tooling in wasm-build/, for the same reason: none of
 # it is read by any image build (checked against every Dockerfile, configure-openmw.sh and ci/).
 wasm-build/dev-local.sh
 wasm-build/f39-native-baseline.sh
 wasm-build/make-navmesh-template.sh
-wasm-build/measure-256.sh
-wasm-build/measure-avatar-cost.sh
 wasm-build/refresh-harness-engine.sh
 wasm-build/test-loadorder.mjs
 wasm-build/verify-browser.mjs
