@@ -33,6 +33,8 @@ function fakeApi(over: {
     sendEvent: (target: 'all' | number, name: string, body: unknown) => { events.push({ target, name, body }); },
     chat: (target: 'all' | number, msg: { text: string }) => { chats.push({ target, text: msg.text }); },
     posOfPlayer: (id: number) => over.positions?.[id],
+    players: () => [DEAD, ...Object.keys(over.positions ?? {}).map((id) => ({ id: Number(id), name: `p${id}`, rank: 0 }))],
+    cellOfPlayer: (id: number) => over.positions?.[id]?.cellKey,
   } as unknown as PluginApi;
   return { api, events, chats, logs };
 }

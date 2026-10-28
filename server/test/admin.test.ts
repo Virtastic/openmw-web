@@ -219,6 +219,7 @@ test('session resume', async (t) => {
     await first.waitEvent('WorldCellState');
     // A peer who stays connected must see the rejoin.
     const { c: peer } = await join(server, 'Peer');
+    peer.sendCellChange('7,8'); // a viewer of the cell (OT3-78)
 
     first.close();
     await first.closed;

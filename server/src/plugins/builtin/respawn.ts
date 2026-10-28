@@ -19,6 +19,7 @@
 // the browser harness config. An operator who sets a point set it on purpose: no warning.
 
 import type { Plugin } from '../api';
+import { cellsVisible } from '../../core/movement';
 
 export const respawn: Plugin = {
   name: 'respawn',
@@ -56,6 +57,11 @@ export const respawn: Plugin = {
 
     // TELL THE WORLD. A friend vanishing mid-fight with no message reads as a bug or a
     // disconnect rather than as a death. One line is the whole fix.
-    api.chat('all', { channel: 'server', text: `${player.name} has fallen.` });
+    // Viewers of where they fell only (OT3-78), not the world.
+    for (const p of api.players()) {
+      if (p.id === player.id || cellsVisible(api.cellOfPlayer?.(p.id), whereTheyFell?.cellKey ?? dest.cellKey)) {
+        api.chat(p.id, { channel: 'server', text: `${player.name} has fallen.` });
+      }
+    }
   },
 };

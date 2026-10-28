@@ -115,7 +115,9 @@ test('movement relay over real clients', async (t) => {
   const { playerId: bId } = await b.joinAsNew('Bob');
   await b.waitEvent('PlayerList');
 
-  await t.test('PlayerCellChange relays to everyone with id added', async () => {
+  await t.test('PlayerCellChange relays to viewers with id added', async () => {
+    b.sendCellChange('3,-1', 0, 0, 0); // a viewer of 3,-2 (OT3-78: cell changes are not world-wide)
+    await b.waitEvent('PlayerCellChange');
     a.sendCellChange('3,-2', 100, 200, 300);
     const seenByB = await b.waitEvent('PlayerCellChange');
     assert.deepEqual(seenByB.value, { id: aId, cellKey: '3,-2', x: 100, y: 200, z: 300 });
