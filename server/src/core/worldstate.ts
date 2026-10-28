@@ -1650,6 +1650,15 @@ export class WorldState {
     const nowMs = Date.now();
     if (player.system === true) this.peerEnabledAt.set(ref.key, nowMs);
     else {
+      // OT3-166: a content ref in a cell a sim peer holds is the peer's alone -- its scripts
+      // decide what is revealed, so a client's toggle (stale script copy or a forged message)
+      // is refused outright, not just inside the window below. Cells no simulator holds keep
+      // last-writer-wins between humans (a far quest cell's Startup disables, 213/218).
+      const holder = ref.kind === 'ref' ? this.authority.holderOf(cellKey) : undefined;
+      if (holder !== undefined && this.roster.get(holder)?.system === true) {
+        log('debug', 'world.enabled_peer_only', { key: ref.key, cellKey, from: player.name });
+        return;
+      }
       const at = this.peerEnabledAt.get(ref.key);
       if (at !== undefined && nowMs - at <= INPUT_DRIVING_MS) {
         log('debug', 'world.enabled_peer_owned', { key: ref.key, cellKey, from: player.name });

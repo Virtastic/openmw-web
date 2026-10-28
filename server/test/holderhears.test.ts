@@ -61,7 +61,7 @@ test('a door opened in a held cell reaches the holder standing elsewhere, and th
 // client runs a local copy; two engines disagreeing on a global flipped the same ref opposite
 // ways once a second through this relay, forever. The peer's write wins for a window; a
 // client's contrary write inside it is dropped, exactly as quest globals already work.
-test("a client's enable/disable of a ref the peer just wrote is dropped; after the window it lands", async (t) => {
+test("a client's enable/disable of a content ref in a peer-held cell is refused; the peer's applies", async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
     configOverride: { server: { password: PEER_PASS } },
@@ -95,6 +95,15 @@ test("a client's enable/disable of a ref the peer just wrote is dropped; after t
   bob.sendEvent('ResyncRequest', { cellKey: '0,0' });
   const state = (await bob.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { disabled: string[] };
   assert.deepEqual(state.disabled, ['c:700:0']);
+
+  // OT3-166: not a window -- a content ref the peer never touched is refused too.
+  const other = { __refnum: { index: 701, contentFile: 0 } };
+  watcher.inbox.events.length = 0;
+  bob.sendEvent('ObjectEnabled', { ref: other, cellKey: '0,0', enabled: false });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(watcher.inbox.events.filter((e) => e.name === 'ObjectEnabled').length, 0, 'a client toggled a content ref in a held cell');
+  peer.sendEvent('ObjectEnabled', { ref: other, cellKey: '0,0', enabled: false });
+  await watcher.waitEvent('ObjectEnabled', (v) => (v as { enabled: boolean }).enabled === false);
 });
 
 // WHAT YOU CAN SEE, NOT ONLY WHERE YOU STAND. An exterior loads its 3x3, and an item dropped

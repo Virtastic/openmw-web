@@ -658,7 +658,9 @@ test('the same script effect from three clients in a cell applies once', async (
   await peer.waitEvent('QuestSpawn');
   await new Promise((r) => setTimeout(r, 400));
   assert.equal(peer.inbox.events.filter((e) => e.name === 'QuestSpawn').length, 0, 'one spawn, not three');
-  assert.equal(peer.inbox.events.filter((e) => e.name === 'ObjectEnabled').length, 1, 'one toggle relayed, not three');
+  // OT3-166: the peer holds 0,0, so no client toggle of a content ref lands at all; its own
+  // script makes the change. (In a cell nobody simulates the first of the three would land.)
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ObjectEnabled').length, 0, 'client toggles in a peer-held cell are refused');
 });
 
 // Backlog 216: a PositionCell from a player-gated script moved a puppet on one client; the
