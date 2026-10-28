@@ -35,6 +35,7 @@ import type { AdminSessionStore } from '../auth/identities';
 import { Moderation, reportView } from '../core/moderation';
 import { gameDataDir } from '../core/gamedata';
 import { deleteAccount } from '../persist/erase';
+import { operatorRank, PLATFORM_ACTOR } from '../core/admin';
 import { BanStore } from '../persist/banstore';
 import { log, logHistory } from '../log';
 import { IpRateLimiter } from '../net/ratelimit';
@@ -186,6 +187,8 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     // Every other kind acts on the players of one game, and stays refused here.
     action: async (kind, target, _detail, by) => {
       if (kind !== 'unban') return refuse;
+      // OT3-191: the world's /unban is rank 2; the platform-level one is no looser.
+      if (await operatorRank(deps.accounts, by) < 2) return { ok: false, message: '/unban requires rank 2 (admin).' };
       const bans = new BanStore(deps.sharedDir);
       const lifted = bans.unbanAccount(target);
       await bans.close();
@@ -213,7 +216,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${token()}`,
-            [h.key]: '(platform)', [h.name]: 'the multiplayer server', [h.role]: 'owner',
+            [h.key]: PLATFORM_ACTOR, [h.name]: PLATFORM_ACTOR, [h.role]: 'owner',
           },
           body: JSON.stringify({ kind: 'kick', target: key, detail: 'account erased' }),
           signal: AbortSignal.timeout(3000),

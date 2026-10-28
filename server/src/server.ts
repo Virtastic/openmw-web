@@ -41,7 +41,7 @@ import { Roster, type Player } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
 import type { ChatContext } from './core/chat';
 import { Moderation, reportView } from './core/moderation';
-import { Admin, ADMIN_COMMANDS } from './core/admin';
+import { Admin, ADMIN_COMMANDS, dashboardRank, operatorRank } from './core/admin';
 import { ResumeStore } from './core/resume';
 import { broadcastChat, makeChatFilter, noviceEligible, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
@@ -810,13 +810,18 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // a Player shaped just enough for the command table to rank-check and name them in the
       // audit line. Commands that move the actor's own body (/tp, /tpto) are refused rather
       // than given a fake position — see commandCatalog's inGameOnly below.
-      const online = roster.activeForAccount(actor.accountKey);
+      // OT3-191: the rank is the DASHBOARD role's (routes.ts hands 2 to every moderator;
+      // a plain moderator is a rank-1 helper unless their account holds 2), never the
+      // in-game rank of a character the operator happens to have online.
+      const rank = actor.rank >= 3 ? 3 : actor.rank >= 2 ? dashboardRank('moderator', (await accounts.get(actor.accountKey))?.rank) : 0;
+      const live = roster.activeForAccount(actor.accountKey);
+      const online = live && (Object.create(live, { rank: { value: rank } }) as Player);
       const synthetic = online ?? ({
         id: -1,
         name: actor.name,
         accountKey: actor.accountKey,
         charId: actor.accountKey,
-        rank: actor.rank,
+        rank,
         ip: '(dashboard)',
         inWorld: false,
         moveSeq: 0,
@@ -927,29 +932,28 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     }),
     action: async (kind, target, detail, by) => {
       const online = target === '' ? undefined : roster.activeForAccount(target.toLowerCase());
+      // OT3-191: every action on a PERSON goes through the command table, so the dashboard
+      // obeys the same rank ladder and outrank rule as /kick and lands in admin_audit. The
+      // operator's rank comes from their account (operatorRank), not the route's role.
+      const asStaff = async (cmd: string, args: string[], done: RegExp) => {
+        const name = by || 'dashboard';
+        const actor = { id: -1, name, accountKey: name.toLowerCase(), charId: '', ip: '(dashboard)',
+          rank: await operatorRank(accounts, name), inWorld: false, peer: { disconnect: () => {}, send: () => {} } } as unknown as Player;
+        const message = await admin.exec(actor, cmd, args);
+        return { ok: done.test(message), message };
+      };
       switch (kind) {
         case 'kick':
           if (!online) return { ok: false, message: `${target} is not online` };
-          online.peer.disconnect('KICKED', detail || 'kicked by a moderator');
-          return { ok: true, message: `kicked ${target}` };
+          return asStaff('kick', [online.name, ...(detail ? [detail] : [])], /^Kicked /);
         case 'ban':
-          // The OPERATOR's name, not "dashboard": a ban row that names its issuer is the
-          // one a later moderator can ask about.
-          bans.banAccount(target, by || 'dashboard', detail || 'banned by a moderator');
-          online?.peer.disconnect('BANNED', detail || 'banned by a moderator');
-          return { ok: true, message: `banned ${target}` };
-        case 'unban': {
-          const lifted = bans.unbanAccount(target);
-          if (lifted) log('info', 'moderation.unban', { target: target.toLowerCase(), by });
-          return { ok: lifted, message: `unban ${target}` };
-        }
+          return asStaff('ban', [target, ...(detail ? [detail] : [])], /^Banned /);
+        case 'unban':
+          return asStaff('unban', [target], /^Unbanned /);
         case 'mute':
-        case 'unmute': {
-          // Server-side mute rides the same account-level list the voice/chat client
-          // controls use, so a moderator mute and a player mute mean the same thing.
-          socialRef?.setServerMuted(target.toLowerCase(), kind === 'mute');
-          return { ok: true, message: `${kind}d ${target}` };
-        }
+          return asStaff('mute', [target, 'perm', ...(detail ? [detail] : [])], /^Muted /);
+        case 'unmute':
+          return asStaff('unmute', [target], /^Unmuted /);
         case 'broadcast':
           if (detail === '') return { ok: false, message: 'nothing to say' };
           broadcastChat(roster, { channel: 'server', text: detail });

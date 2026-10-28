@@ -18,15 +18,41 @@
 
 import type { AuditRow } from './admin-audit';
 import type { Player, Roster } from './players';
-import type { AccountStore } from './accounts';
+import type { AccountStore, DashboardRole } from './accounts';
 import type { BanStore } from '../persist/banstore';
 import type { ResumeStore } from './resume';
 import type { Moderation } from './moderation';
 import { broadcastChat } from './chat';
 import { log } from '../log';
 
-const RANK_NAMES: Record<number, string> = { 0: 'player', 1: 'moderator', 2: 'admin', 3: 'owner' };
+// OT3-191: 1 is the helper tier (kick, mute, reports); 2 adds bans, give and restore.
+// 4 is the platform itself (the gateway's erase-kick) and is never assignable.
+const RANK_NAMES: Record<number, string> = { 0: 'player', 1: 'moderator', 2: 'admin', 3: 'owner', 4: 'platform' };
 const MAX_RANK = 3;
+
+export const PLATFORM_ACTOR = '(platform)';
+const SHARED_TOKEN_ACTOR = '(shared-token)';
+
+// OT3-191: what a dashboard role may do in game terms. A plain dashboard moderator is a
+// rank-1 helper; one whose account ALSO holds in-game rank 2 keeps it. Only owner is 3.
+export function dashboardRank(role: DashboardRole | undefined, accountRank = 0): number {
+  return role === 'owner' ? 3 : role === 'moderator' ? Math.min(2, Math.max(1, accountRank)) : 0;
+}
+
+// The rank of a dashboard principal, from its ACCOUNT -- never from a role the request
+// carried. An unknown name is rank 0: fail closed.
+export async function operatorRank(accounts: Pick<AccountStore, 'get' | 'keyForUsername'>, name: string): Promise<number> {
+  if (name === PLATFORM_ACTOR) return 4;
+  if (name === SHARED_TOKEN_ACTOR) return 1;
+  const a = await accounts.get(accounts.keyForUsername(name) ?? name.toLowerCase());
+  return dashboardRank(a?.dashboardRole, a?.rank);
+}
+
+// OT3-191: staff act only on people BELOW them; equal rank is refused too (a moderator
+// cannot kick or mute another moderator). Acting on yourself stays allowed.
+function outranks(rank: number, name: string, actor: Player): boolean {
+  return rank >= actor.rank && name.toLowerCase() !== actor.name.toLowerCase();
+}
 
 const MAX_ARG = 256;
 const MAX_SCRIPT = 4096;
@@ -72,7 +98,7 @@ async function muteTarget(ctx: AdminCtx, actor: Player, name: string): Promise<{
   const account = await ctx.accounts.get(key);
   if (!account) return `No account named "${name}".`;
   const online = ctx.roster.findByName(account.name);
-  if ((online?.rank ?? account.rank) > actor.rank) return `${account.name} outranks you.`;
+  if (outranks(Math.max(online?.rank ?? 0, account.rank), account.name, actor)) return `${account.name} is not below your rank.`;
   return { key, name: account.name, online };
 }
 
@@ -301,7 +327,7 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       const name = arg(args, 0);
       const target = targetOf(ctx, name);
       if (!target) return name ? `No player named "${name}".` : 'usage: /kick <player> [reason]';
-      if (target.rank > actor.rank) return `${target.name} outranks you.`;
+      if (outranks(target.rank, target.name, actor)) return `${target.name} is not below your rank.`;
       const reason = args.slice(1).join(' ').slice(0, MAX_ARG) || `kicked by ${actor.name}`;
       target.peer.disconnect('KICKED', reason);
       audit(actor, 'kick', { target: target.name, reason });
@@ -340,17 +366,19 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
   },
   give: {
     minRank: 2,
-    usage: '/give <player> <recordId> [count]',
-    help: 'add an item to a player\'s inventory',
+    usage: '/give <player> <recordId> <count> <reason>',
+    help: 'add an item to a player\'s inventory (the reason is audited)',
     run(ctx, actor, args) {
       const name = arg(args, 0);
       const recordId = arg(args, 1);
       const target = targetOf(ctx, name);
-      if (!target || !recordId) return 'usage: /give <player> <recordId> [count]';
-      const count = args[2] === undefined ? 1 : Number(args[2]);
+      // OT3-191: item creation is an economy event, so it always says why (the audit row keeps it).
+      const reason = args.slice(3).join(' ').slice(0, MAX_ARG);
+      if (!target || !recordId || !reason) return 'usage: /give <player> <recordId> <count> <reason>';
+      const count = Number(args[2]);
       if (!Number.isInteger(count) || count < 1 || count > 10000) return 'count must be an integer 1-10000.';
       target.peer.sendEvent('AdminGive', { recordId, count });
-      audit(actor, 'give', { target: target.name, recordId, count });
+      audit(actor, 'give', { target: target.name, recordId, count, reason });
       return `Gave ${count}x ${recordId} to ${target.name}.`;
     },
   },
@@ -359,17 +387,17 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
   // loads the restored doc. Offline characters go by character key.
   restore: {
     minRank: 2,
-    usage: '/restore <player|charKey> <minutesAgo> [reason]',
+    usage: '/restore <player|charKey> <minutesAgo> <reason>',
     help: 'restore one character to a snapshot from N minutes ago',
     run(ctx, actor, args) {
       const who = arg(args, 0);
       const minutes = Number(args[1]);
-      if (!who || !Number.isInteger(minutes) || minutes < 1 || minutes > 7 * 24 * 60) {
-        return 'usage: /restore <player|charKey> <minutesAgo 1-10080> [reason]';
+      if (!who || !Number.isInteger(minutes) || minutes < 1 || minutes > 7 * 24 * 60 || !arg(args, 2)) {
+        return 'usage: /restore <player|charKey> <minutesAgo 1-10080> <reason>';
       }
       if (!ctx.restore) return 'Restore is not available on this world.';
       const online = ctx.roster.findByName(who);
-      if (online && online.rank > actor.rank) return `${online.name} outranks you.`;
+      if (online && outranks(online.rank, online.name, actor)) return `${online.name} is not below your rank.`;
       const charKey = online?.charId ?? who;
       if (online) {
         // Synchronous: the logout flush lands now, so the restore below is the last write.
@@ -392,8 +420,7 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       const account = await ctx.accounts.get(ctx.accounts.keyForUsername(name) ?? name);
       if (!account) return `No account named "${name}".`;
       const online = ctx.roster.findByName(account.name);
-      if (online && online.rank > actor.rank) return `${online.name} outranks you.`;
-      if (account.rank > actor.rank) return `${account.name} outranks you.`;
+      if (outranks(Math.max(online?.rank ?? 0, account.rank), account.name, actor)) return `${account.name} is not below your rank.`;
       const reason = args.slice(1).join(' ').slice(0, MAX_ARG) || `banned by ${actor.name}`;
       ctx.bans.banAccount(account.name, actor.name, reason);
       ctx.accounts.setBanned(account.name, true);
@@ -430,7 +457,7 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       if (!who) return 'usage: /ipban <player|ip> [reason]';
       const target = ctx.roster.findByName(who);
       const ip = target?.ip ?? who;
-      if (target && target.rank > actor.rank) return `${target.name} outranks you.`;
+      if (target && outranks(target.rank, target.name, actor)) return `${target.name} is not below your rank.`;
       if (!target && !looksLikeIp(who)) return `No online player named "${who}" and "${who}" is not an IP.`;
       const reason = args.slice(1).join(' ').slice(0, MAX_ARG) || `ip-banned by ${actor.name}`;
       ctx.bans.banIp(ip, actor.name, reason);

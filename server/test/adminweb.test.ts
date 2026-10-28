@@ -93,13 +93,11 @@ test('dashboard kick and ban act on a live player; anomalies surface per account
   assert.equal(kicked.status, 200);
   await a.waitDisconnect('KICKED');
 
-  const banned = await act('ban', 'nobody-here', 'spam');
-  assert.equal(banned.status, 200, 'banning an offline account is legitimate');
-  const b = await TestClient.connect(server.port);
-  b.hello();
-  await b.waitJson('SessionHelloOk');
-  b.register('nobody-here', 'hunter22');
-  await b.waitDisconnect('BANNED');
+  // OT3-191: the shared token is a rank-1 helper -- kick and mute, never ban -- and a ban
+  // names an existing account (the same /ban the console runs).
+  const banned = await act('ban', 'alice', 'spam');
+  assert.equal(banned.status, 400);
+  assert.match(((await banned.json()) as { message: string }).message, /requires rank 2/);
 });
 
 test('mutes persist and are enforced at delivery, including moderator mutes', async () => {

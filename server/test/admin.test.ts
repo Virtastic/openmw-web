@@ -86,18 +86,22 @@ test('rank gating', async (t) => {
 
   await t.test('rank 2 unlocks state changes but not escalation or console', async () => {
     assert.match(await slash(owner, '/setrank Player 2', /admin/), /admin/);
-    assert.match(await slash(player, '/give Victim gold_001 5', /Gave 5x gold_001 to Victim/), /Gave 5x gold_001 to Victim/);
+    assert.match(await slash(player, '/give Victim gold_001 5 event prize', /Gave 5x gold_001 to Victim/), /Gave 5x gold_001 to Victim/);
     assert.deepEqual((await victim.waitEvent('AdminGive')).value, { recordId: 'gold_001', count: 5 });
     assert.match(await slash(player, '/motd from an admin', /MOTD set to: from an admin/), /MOTD set to: from an admin/);
     assert.match(await slash(player, '/console Victim print(1)', /requires rank 3/), /requires rank 3/);
     assert.match(await slash(player, '/setrank Victim 1', /requires rank 3/), /requires rank 3/);
   });
 
-  await t.test('a lower rank cannot act on someone who outranks them', async () => {
-    assert.match(await slash(owner, '/setrank Victim 3', /owner/), /owner/);
-    assert.match(await slash(player, '/kick Victim', /outranks you/), /outranks you/);
-    assert.match(await slash(player, '/ban Victim', /outranks you/), /outranks you/);
-    assert.match(await slash(player, '/ipban Victim', /outranks you/), /outranks you/);
+  await t.test('staff act only on ranks below their own (OT3-191: equal rank is refused too)', async () => {
+    for (const r of ['2', '3']) {
+      assert.match(await slash(owner, `/setrank Victim ${r}`, /is now/), /is now/);
+      for (const cmd of ['kick', 'ban', 'ipban', 'mute']) {
+        const answer = await slash(player, `/${cmd} Victim${cmd === 'mute' ? ' perm' : ''}`, /not below your rank|usage|not available/);
+        assert.match(answer, /not below your rank|not available/, `/${cmd} on rank ${r}: ${answer}`);
+      }
+    }
+    assert.match(await slash(player, '/give Victim gold_001 5', /usage: \/give/), /usage: \/give/, 'give needs a reason');
     assert.match(await slash(owner, '/setrank Victim 0', /player/), /player/);
   });
 
@@ -105,7 +109,7 @@ test('rank gating', async (t) => {
     assert.match(await slash(owner, '/nonsense', /Unknown command/), /Unknown command/);
     assert.match(await slash(owner, '/kick', /usage: \/kick/), /usage: \/kick/);
     assert.match(await slash(owner, '/kick Nobody', /No player named "Nobody"/), /No player named "Nobody"/);
-    assert.match(await slash(owner, '/give Victim gold_001 0', /count must be an integer/), /count must be an integer/);
+    assert.match(await slash(owner, '/give Victim gold_001 0 oops', /count must be an integer/), /count must be an integer/);
     assert.match(await slash(owner, '/setrank Victim 9', /usage: \/setrank/), /usage: \/setrank/);
     assert.match(await slash(owner, '/ban Nobody', /No account named/), /No account named/);
   });
