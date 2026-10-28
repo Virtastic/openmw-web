@@ -1233,18 +1233,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // to a cell only a bot stands in would hold a headless engine on an empty world.
     const humans = roster.humansInWorld()
       .filter((p) => p.cellKey !== undefined && !p.bot);
-    // START THE PEER WHEN A HUMAN CONNECTS, NOT WHEN ONE REACHES A CELL. humanCount counts
-    // authed players who are still loading or in character creation; the peer takes 2-4s to
-    // become ready (simpeer.ready startupMs), so waiting for a cell meant the player was
-    // handed control BEFORE anything held authority over where they stood. Booting it against
-    // the loading client spends that startup on time the player is already waiting through.
+    // THE PEER IS ALWAYS UP (OT3-131). One public world, booted with the gateway: its peer
+    // starts on the first pass and is never idled for being empty, so a deploy's first join
+    // (and every resume after it) lands on a world that already holds authority instead of
+    // waiting out ~11 s of peer start. Empty, it simply holds nothing: the anchors are dropped
+    // here and the claimed-diff below releases every cell it held.
     if (roster.humanCount === 0) {
       heldAnchors.clear();
       heldRing.clear();
-      claimed.clear();
-      simPeers.markIdle(WORLD_KEY);
-      simPeers.sweep();
-      return;
     }
 
     // CHARGEN CELLS ARE NEVER SIMULATED BY THE PEER, and this is not an optimisation.
