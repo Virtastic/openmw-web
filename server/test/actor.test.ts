@@ -524,6 +524,37 @@ test('a follow claim is re-issued to the holder for the character\'s new session
   assert.deepEqual((rebound.value as { ref: unknown }).ref, ACTOR_REF, 'the same companion, told to follow the new session');
 });
 
+// OT3-119: the server grants one follower owner; a second recruiter is refused.
+test('a companion already following one player refuses a second claimer', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', configOverride: { server: { password: PEER_PASS } } });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant');
+  const recruit = async (name: string) => {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    const { playerId } = await c.joinAsNew(name);
+    await c.waitEvent('PlayerList');
+    c.sendCellChange('0,0', 0, 0, 0);
+    await c.waitEvent('PlayerCellChange');
+    c.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: true });
+    await c.waitEvent('DialogueLockResult', (v) => (v as { granted?: boolean }).granted !== false);
+    c.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: playerId });
+    return { c, playerId };
+  };
+  const first = await recruit('Owner');
+  await peer.waitEvent('ActorAI', (v) => (v as { follow?: number }).follow === first.playerId);
+  first.c.sendEvent('DialogueLock', { ref: ACTOR_REF, cellKey: '0,0', want: false });
+  await new Promise((r) => setTimeout(r, 200));
+  peer.inbox.events.length = 0;
+  const second = await recruit('Poacher');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorAI' && (e.value as { follow?: number }).follow === second.playerId).length, 0,
+    'a second player took over a companion that already follows someone');
+});
+
 // OT3-118: a claim whose character stayed away past the idle window lets the companion go.
 test('a follow claim expires once its character has been away past the idle window', async (t) => {
   const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', configOverride: { server: { password: PEER_PASS } } });

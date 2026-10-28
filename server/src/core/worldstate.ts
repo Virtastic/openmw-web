@@ -825,6 +825,13 @@ export class WorldState {
       this.followedBy.delete(ref.key);
       await this.storeFollow(cellKey, ref.key);
     } else {
+      // OT3-119: ONE OWNER. The server arbitrates: a companion already following someone else
+      // (a claim not yet expired, OT3-118) refuses the second recruiter.
+      const owner = this.followedBy.get(ref.key);
+      if (owner && owner.charId !== player.charId) {
+        log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follower owned', key: ref.key });
+        return;
+      }
       // A recruit needs a conversation; a claim needs a message. Vanilla has no cap because
       // it has no forged claims. Eight is more companions than any quest hands out at once,
       // and it stops "every guard in Balmora follows me" from being one loop on a modified client.
