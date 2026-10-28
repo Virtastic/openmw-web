@@ -51,6 +51,17 @@ test('serve mode publishes a manifest of every file, nested paths included', asy
   } finally { await s.stop(); }
 });
 
+test('OT3-48: an unchanged manifest revalidates to a 304', async () => {
+  const s = await serve(fixture(), 'serve');
+  try {
+    const first = await fetch(`${s.base}/mwdata-manifest.json`);
+    const etag = first.headers.get('etag');
+    assert.ok(etag);
+    const again = await fetch(`${s.base}/mwdata-manifest.json`, { headers: { 'if-none-match': etag } });
+    assert.equal(again.status, 304);
+  } finally { await s.stop(); }
+});
+
 test('files are served, and RANGED — the engine reads slices, never whole archives', async () => {
   const s = await serve(fixture(), 'serve');
   try {

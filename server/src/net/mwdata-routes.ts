@@ -23,6 +23,7 @@
 // takes effect on the next request rather than at the next restart.
 
 import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -80,7 +81,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
   // The manifest is a directory walk over thousands of files, and the client asks for it once
   // per boot. Cached until the folder's own mtime moves, so a dashboard upload invalidates it
   // without anything having to remember to.
-  let cache: { at: number; body: string } | undefined;
+  let cache: { at: number; body: string; etag: string } | undefined;
   // The mod sidecar is its own walk over every installed mod's tree. Tamriel Rebuilt is around
   // 40,000 files, and this was rebuilt from scratch on every request — the client asks once per
   // boot, but nothing stops anything else asking. Same mtime key as the manifest above.
@@ -111,10 +112,15 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
       try { mtime += (await stat(join(deps.gameDataDir, MODS_SUBDIR))).mtimeMs; } catch { /* no mods yet */ }
       if (!cache || cache.at !== mtime) {
         const files = await walk(deps.gameDataDir, deps.gameDataDir, [], MODS_SUBDIR);
-        cache = { at: mtime, body: JSON.stringify(files) };
+        const body = JSON.stringify(files);
+        cache = { at: mtime, body, etag: `"${createHash('sha256').update(body).digest('hex').slice(0, 16)}"` };
         log('info', 'mwdata.manifest_built', { files: files.length });
       }
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': noCache });
+      // OT3-48: an unchanged library is a 304, and the client's per-file ?v= keys (index.html)
+      // then hit its own cache: a returning player refetches nothing.
+      const mh = { 'content-type': 'application/json', 'cache-control': noCache, etag: cache.etag };
+      if (req.headers['if-none-match'] === cache.etag) { res.writeHead(304, mh); res.end(); return true; }
+      res.writeHead(200, mh);
       res.end(req.method === 'HEAD' ? undefined : cache.body);
       return true;
     }
