@@ -49,6 +49,14 @@ test('H2: a new account chats at most one line per 5 s past a burst of 3', async
   c.close();
 });
 
+test('OT3-23: a new account cannot post to global chat and is told why', async (t) => {
+  const c = await boot(t, 24);
+  const toldGlobal = told(c, /cannot use global chat/);
+  c.sendEvent('ChatSend', { channel: 'global', text: 'hello everyone' });
+  await toldGlobal;
+  c.close();
+});
+
 test('H2: probationHours = 0 turns probation off', async (t) => {
   const c = await boot(t, 0);
   assert.ok(await drop(c, 2), 'with probation off a fresh account drops normally');

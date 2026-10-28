@@ -80,7 +80,7 @@ test('MuteRemove lifts a mute: the speaker is heard again', async (t) => {
   assert.equal(heardMuted, false, 'a muted speaker was heard');
   quiet.sendEvent('MuteRemove', { acct: 'loud' });
   assert.equal((await result(quiet, 'MuteRemove')).ok, true);
-  loud.sendEvent('ChatSend', { channel: 'global', text: 'heard again' });
+  loud.sendEvent('ChatSend', { text: 'heard again' });
   await quiet.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'heard again');
 });
 

@@ -76,6 +76,24 @@ test('a bare tier prefix is treated as a typo, not an empty message', async (t) 
   b.close();
 });
 
+test('global chat: one line per account per cooldown, and a shorter cap (OT3-23)', async (t) => {
+  const world = await two(t);
+  world.a.sendEvent('ChatSend', { channel: 'global', text: 'x'.repeat(600) });
+  const first = await world.b.waitEvent('ChatMessage', (v) => (v as { channel?: string }).channel === 'global');
+  assert.equal((first.value as { text: string }).text.length, 256, 'a global line is capped at 256 chars');
+  world.a.sendEvent('ChatSend', { channel: 'global', text: 'second too soon' });
+  await world.a.waitEvent('ChatMessage', (v) => {
+    const m = v as { channel?: string; text?: string };
+    return m.channel === 'server' && /wait \d+ s/.test(m.text ?? '');
+  });
+  // say is not on the global cooldown, and it fences: the refused line never reached Bob.
+  world.a.sendEvent('ChatSend', { text: 'plain say' });
+  await world.b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'plain say');
+  assert.equal(said(world.b, 'second too soon').length, 0);
+  world.a.close();
+  world.b.close();
+});
+
 test('chat is rate limited, the flooder is told, and it refills', async (t) => {
   // Chat is the one tier where one client's message budget is spent on everybody else: a
   // single inbound line becomes one outbound event PER PLAYER. The general budget only

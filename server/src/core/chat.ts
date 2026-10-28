@@ -19,11 +19,33 @@ export interface ChatContext {
   partyOf?(accountKey: string): string[];
   // Phase 2.5: is plain 'say' proximity-scoped in THIS world? True for public worlds.
   sayProximity?: boolean;
+  // OT3-23: accountKey -> when it last spoke on global. Per server, created on first use.
+  lastGlobalAt?: Map<string, number>;
 }
 import { cellsVisible } from './movement';
 import { log } from '../log';
 
 const MAX_CHAT_CHARS = 1024;
+// GLOBAL reaches every player on the server, so it is held to a tighter budget than say or
+// world chat (OT3-23): a shorter line, one line per account per cooldown -- keyed on the
+// ACCOUNT, so reconnecting does not reset it -- and nothing at all while on probation.
+const MAX_GLOBAL_CHARS = 256;
+const GLOBAL_COOLDOWN_MS = 10_000;
+
+// Returns the refusal to whisper back, or null when the line may go out.
+function globalRefusal(lastGlobalAt: Map<string, number>, player: Player, now: number): string | null {
+  if ((player.probationUntil ?? 0) > now) return 'New accounts cannot use global chat for their first day.';
+  const last = lastGlobalAt.get(player.accountKey) ?? 0;
+  if (now - last < GLOBAL_COOLDOWN_MS) {
+    return `Global chat: wait ${Math.ceil((GLOBAL_COOLDOWN_MS - (now - last)) / 1000)} s before the next line.`;
+  }
+  // ponytail: one entry per account that ever spoke globally; prune when it passes 10k.
+  if (lastGlobalAt.size > 10_000) {
+    for (const [k, t] of lastGlobalAt) if (now - t >= GLOBAL_COOLDOWN_MS) lastGlobalAt.delete(k);
+  }
+  lastGlobalAt.set(player.accountKey, now);
+  return null;
+}
 
 // Type alias (not interface) so it structurally satisfies JsLike's index signature.
 export type ChatMessageBody = {
@@ -163,6 +185,15 @@ export function handleChatSend(
     line = trimmed.slice(1).trim();
   }
   if (line === '') return; // a bare prefix is a typo, not a message
+  if (channel === 'global') {
+    const refused = globalRefusal(ctx.lastGlobalAt ??= new Map(), player, Date.now());
+    if (refused !== null) {
+      serverWhisper(player, refused);
+      log('info', 'chat.global_refused', { from: player.name });
+      return;
+    }
+    line = line.slice(0, MAX_GLOBAL_CHARS);
+  }
 
   if (channel === 'whisper') {
     deliverWhisper(ctx, player, whisperTo, line, mod);
