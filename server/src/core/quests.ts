@@ -686,6 +686,15 @@ export class Quests {
     });
   }
 
+  // OT3-115: a crime the PEER saw raises the criminal's bounty server-side, so a client that
+  // never reports its own CrimeUpdate is still wanted. The record is the character's own (OT3-51).
+  raiseBounty(player: Player, delta: number): void {
+    if (delta <= 0) return;
+    const bounty = (player.bounty ?? 0) + delta;
+    player.bounty = bounty;
+    if (player.charId !== undefined) this.ctx.players.update(player.charId, (doc) => (doc.bounty = bounty));
+  }
+
   private crime(player: Player, body: LTable): void {
     const bounty = finite(body.get('bounty'));
     const kind = body.get('kind');

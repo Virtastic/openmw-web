@@ -603,3 +603,25 @@ test('#369 does not apply in chargen: the class pick after a mid-creation reload
   assert.deepEqual(doc.stats?.attributes, { strength: 50, endurance: 50 }, 'the class attributes were refused');
   assert.deepEqual(doc.stats?.skills, { axe: 30 }, 'the class skills were refused');
 });
+
+// OT3-115: a personal bounty is the server's. The peer's crime raises only the criminal's own
+// record; a bare clear is refused; the fine paid in a guard's dialogue clears it.
+test("OT3-115 the server owns a character's own bounty", async (t) => {
+  const { server } = await boot(t);
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const { c: a } = await join(t, server, 'Crook');
+  const { c: b } = await join(t, server, 'Bystander');
+  peer.sendEvent('PlayerCrime', { id: a.playerId, bounty: 40, kind: 'assault' });
+  await a.waitEvent('PlayerCrime');
+  assert.equal(server.roster.get(a.playerId!)!.bounty, 40, "the peer's crime did not raise the server's record");
+  assert.equal(server.roster.get(b.playerId!)!.bounty ?? 0, 0, "another character's bounty moved");
+  a.sendEvent('CrimeUpdate', { bounty: 0 }); // patched client clears itself
+  assert.deepEqual((await a.waitEvent('CrimeUpdate')).value, { bounty: 40 });
+  assert.equal(server.roster.get(a.playerId!)!.bounty, 40);
+  a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
+  await a.waitEvent('DialogueLockResult');
+  a.sendEvent('CrimeUpdate', { bounty: 0 }); // the fine, paid to the guard
+  await fence(a, b);
+  assert.equal(server.roster.get(a.playerId!)!.bounty, 0);
+});

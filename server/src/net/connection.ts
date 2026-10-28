@@ -906,6 +906,7 @@ export class Connection implements Peer {
       if (!target || target.system === true || !target.inWorld || bounty === undefined) return;
       // The victim's faction (backlog 144): the owner's client expels itself from it.
       const faction = typeof fv === 'string' && fv.length > 0 && fv.length <= 64 ? fv : undefined;
+      this.ctx.quests.raiseBounty(target, bounty);
       target.peer.sendEvent('PlayerCrime', {
         bounty,
         ...(typeof kv === 'string' ? { kind: kv.slice(0, 16) } : {}),
