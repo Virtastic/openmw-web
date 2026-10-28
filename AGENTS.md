@@ -94,7 +94,7 @@ place -- which looks exactly like a deploy that is still running. (Learned the e
 Either path fetches the ref, restages the build inputs git cannot carry, builds, and deploys --
 stopping at the first failure. The deploy runs the contract gate and fails on any miss.
 
-**CLIENT LUA IS BAKED INTO THE ENGINE.** `fsroot/resources/vfs/scripts/mp/*.lua` is packed into
+**CLIENT LUA IS BAKED INTO THE ENGINE.** `openmw/files/data/scripts/mp/*.lua` (copied to the untracked `fsroot/resources/vfs/scripts/mp/` at link) is packed into
 `openmw.data`, so the browser scenario suite runs whatever was in the engine at BUILD time, not
 what is on disk. Editing a client script and re-running `mp-harness.mjs` tests the OLD code and
 passes, which is worse than not running it. Rebuild the engine (~13 min) before believing a

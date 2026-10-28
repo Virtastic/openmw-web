@@ -105,7 +105,7 @@ BUILD="$ROOT/$BUILD_DIR"
 cd "$BUILD"
 
 # The multiplayer Lua package is authored in openmw/files/data but packed from the fsroot
-# preload mirror — sync it here so the two can never drift (the rest of resources/vfs is a
+# preload mirror (untracked since OT3-242) — sync it here so the two can never drift (the rest of resources/vfs is a
 # deliberately-divergent manual mirror; mp/ is exact by construction).
 #
 # cp, not rsync: the release image (Dockerfile) has no rsync, so this line exited 127 and took
