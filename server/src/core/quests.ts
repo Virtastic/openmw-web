@@ -739,6 +739,10 @@ export class Quests {
       log('debug', 'quest.member_in_chargen', { name, ref: ref.key, from: player.name });
       return;
     }
+    // NOT SHARED, NOT RELAYED (OT3-113): an NPC local can hold a quest flag, so with quest vars
+    // unshared a human's write must not be filed in the cell doc or shown to anyone else. The
+    // peer's own simulation of the NPC still flows.
+    if (player.system !== true && !this.ctx.isShared('questVars')) return;
     const memberKey = `${cellKey}|${ref.key}|${name}`;
     const nowMs = Date.now();
     if (player.system === true) {

@@ -205,3 +205,26 @@ test("a member var is filed under the object's own cell, which must be in the wr
   assert.equal(val(got, 'value'), 3, "filed under 0,1, the write reaches a player who sees 0,1 but not the writer's 0,0");
   assert.equal(c.inbox.events.filter((e) => e.name === 'MemberVarUpdate' && mv('far_state')(e.value)).length, 0);
 });
+
+// OT3-113: with quest vars unshared, a player's NPC local is not relayed to anyone else.
+test('an NPC local var is not relayed when quest vars are not shared', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, sharing: { questVars: false } },
+  });
+  t.after(() => server.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Writer');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  await c.joinAsNew('Bystander');
+  await c.waitEvent('PlayerList');
+  c.sendCellChange('0,0', 0, 0, 0);
+  await sleep(200);
+  a.sendEvent('MemberVarUpdate', { net: 41, name: 'quest_flag', value: 1, cellKey: '0,0' });
+  await sleep(500);
+  assert.equal(c.inbox.events.filter((e) => e.name === 'MemberVarUpdate').length, 0);
+});
