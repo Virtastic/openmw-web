@@ -69,6 +69,9 @@ local timeRequests = 0 -- WorldTimeRequests WE originated (mechanism evidence)
 -- refusal hands them back (see worldmp.timeRefused); a WorldTime clears them, whichever way
 -- it went, because the server's clock is the truth from then on.
 local pendingJump = 0
+-- OT3-108: hours THIS character has rested past the shared clock (the server's TimeOffset).
+-- Our sky runs this far ahead of the world's; the world's clock never moves for a rest.
+local personalOffset = 0
 local timeRefused = 0 -- refusals received (mechanism evidence)
 local timeApplied = 0 -- WorldTime bodies applied
 
@@ -556,7 +559,7 @@ local handlers = {}
 handlers.MP_WorldTime = function(data)
     if type(data.gameHour) ~= 'number' then return end
     target = data
-    targetAbs = targetAbsOf(data)
+    targetAbs = targetAbsOf(data) + personalOffset
     timeApplied = timeApplied + 1
     pendingJump = 0
     -- ADOPT THE WORLD'S CLOCK OUTRIGHT ON ARRIVAL. The server's clock free-runs whether or
@@ -686,6 +689,16 @@ worldmp.handlers = handlers
 -- else until the next periodic WorldTime slewed them back. Hand the hours back now; the
 -- slew rolls the sky back over a couple of seconds, the same way another player's rest
 -- rolls it forward. social.lua tells the player why.
+-- OT3-108: the server took our rest as personal and says what our offset is now. The jump
+-- the detector already adopted (pendingJump) is part of it, so swap one for the other; this
+-- holds whether or not a WorldTime landed in between and cleared pendingJump.
+handlers.MP_TimeOffset = function(data)
+    local hours = tonumber(data.hours) or 0
+    if targetAbs then targetAbs = targetAbs - pendingJump + (hours - personalOffset) end
+    pendingJump = 0
+    personalOffset = hours
+end
+
 function worldmp.timeRefused()
     if targetAbs and pendingJump > 0 then targetAbs = targetAbs - pendingJump end
     pendingJump = 0
@@ -799,6 +812,7 @@ function worldmp.reset()
     timeRequests = 0
     timeRefused = 0
     pendingJump = 0
+    personalOffset = 0
     timeApplied = 0
     ownRegion = nil
     regionHolder = {}

@@ -69,13 +69,14 @@ test('server-owned clock', async (t) => {
     await c.closed;
   });
 
-  await t.test('one player resting advances time for EVERYONE', async () => {
+  // OT3-108: a rest is personal now; a SCRIPT skip (timeSkip="anyone") is still shared.
+  await t.test('a script time skip advances time for EVERYONE', async () => {
     const { c: a } = await join(server, 'Rester');
     const before = (await a.waitEvent('WorldTime')).value as TimeBody;
     const { c: b } = await join(server, 'Sleeper');
     await b.waitEvent('WorldTime');
 
-    a.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
+    a.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'script' });
     const aTime = (await a.waitEvent('WorldTime')).value as TimeBody;
     const bTime = (await b.waitEvent('WorldTime')).value as TimeBody;
     assert.deepEqual(aTime, bTime, 'the clock is one shared value, not per player');
@@ -288,9 +289,9 @@ test('a world where time does not skip refuses a rest, and says so', async (t) =
   await b.closed;
 });
 
-// OT3-53: the one world has no owning player, so the default timeSkip="owner" keys on staff
-// rank. A plain player is refused and told; an admin moves the clock for everyone.
-test('on the ownerless world only staff may skip time', async (t) => {
+// OT3-108: rest and wait are PERSONAL. Nobody's rest moves the shared clock, staff included;
+// each rester's own offset grows and is handed back on the next join.
+test('a rest moves only the resting character clock offset, never the world clock', async (t) => {
   const { server } = await boot(t, { rules: { timeSkip: 'owner' } });
   const { c: a } = await join(server, 'PlainSleeper');
   const { c: s } = await join(server, 'StaffSleeper');
@@ -299,16 +300,16 @@ test('on the ownerless world only staff may skip time', async (t) => {
   const before = server.api.world.time();
 
   a.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
-  const refusal = (await a.waitEvent('WorldTimeRefused')).value as { reason: string };
-  assert.match(refusal.reason, /staff/);
-  await fence(a, s);
-  assert.deepEqual(server.api.world.time(), before, 'a plain player must not move the shared clock');
-
+  assert.equal(((await a.waitEvent('TimeOffset')).value as { hours: number }).hours, 8);
+  a.sendEvent('WorldTimeRequest', { advanceHours: 2, reason: 'wait' });
+  assert.equal(((await a.waitEvent('TimeOffset', (v) => (v as { hours: number }).hours === 10)).value as { hours: number }).hours, 10);
   server.accounts.setRank('StaffSleeper', 2);
   server.roster.findByName('StaffSleeper')!.rank = 2;
   s.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
-  await a.waitEvent('WorldTime');
-  assert.notDeepEqual(server.api.world.time(), before, 'an admin moves it for everyone');
+  await s.waitEvent('TimeOffset');
+  await fence(a, s);
+  assert.deepEqual(server.api.world.time(), before, 'no rest moves the shared clock, staff included');
+  assert.equal(a.inbox.events.filter((e) => e.name === 'WorldTimeRefused').length, 0, 'a personal rest is not a refusal');
   a.close();
   s.close();
   await a.closed;

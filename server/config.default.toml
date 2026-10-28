@@ -94,6 +94,8 @@ sayScope = "world"
 # "owner" (default: only staff of rank admin or above may skip it; the one world has no
 # owning player), "anyone" (any rest moves the clock for all), "off" (time flows
 # continuously). A refused rest is told to the player.
+# OT3-108: a Rest/Wait never moves the shared clock under "owner"/"anyone" -- it heals and
+# levels the rester and moves only their own clock offset. Only a script skip is shared.
 timeSkip = "owner"
 # Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
 # own combat pipeline (the server never computes damage). Morrowind scale: -100..100.

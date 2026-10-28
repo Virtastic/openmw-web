@@ -280,6 +280,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       }
       return { may: true, why: '' };
     },
+    restsPersonal: () => config.rules.timeSkip !== 'off', // OT3-108
     // Phase 3.7: a reset hands the restored cell truth straight to whoever is standing
     // there, so it never needs the TES3MP kick-everyone workaround.
     world,

@@ -98,6 +98,8 @@ function recordWithinCaps(data: unknown, kind?: string): boolean {
   return true;
 }
 
+// OT3-108: one personal rest/wait; the engine's own wait dialog tops out at 24 h, travel ~a day.
+const MAX_PERSONAL_HOURS = 30 * 24;
 const M7_EVENTS = new Set([
   'WorldTimeRequest',
   'WorldRegionChange',
@@ -119,6 +121,8 @@ interface M7Ctx {
   world?: { sendCellSnapshot(cellKey: string, doc: CellDoc): void };
   // Phase 2.5 time-skip policy. Absent = unrestricted (M7 behaviour).
   maySkipTime?(player: Player): { may: boolean; why: string };
+  /** OT3-108: rest/wait move a personal clock offset instead of asking for the world's. */
+  restsPersonal?(): boolean;
 }
 
 export class WorldM7 {
@@ -185,6 +189,15 @@ export class WorldM7 {
         // hundred people into the night); party worlds let the leader decide for the
         // group; a solo world is unrestricted. Refusals are TOLD to the player — a Rest
         // that silently does nothing gets pressed again and then reported as a bug.
+        // OT3-108: REST AND WAIT ARE PERSONAL. 200 resting players skipped months of restocks,
+        // respawns and schedules for everyone. A rest now heals and levels on the resting
+        // client and moves only that character's clock offset; the shared sky never skips.
+        // timeSkip="off" still refuses outright (restsPersonal false: no rest in that world).
+        const reason = body.get('reason');
+        if ((reason === 'rest' || reason === 'wait') && this.ctx.restsPersonal?.()) {
+          this.personalRest(player, body.get('advanceHours'));
+          break;
+        }
         const verdict = this.ctx.maySkipTime?.(player) ?? { may: true, why: '' };
         if (!verdict.may) {
           log('info', 'time.skip_refused', { from: player.name, why: verdict.why });
@@ -206,9 +219,29 @@ export class WorldM7 {
   // Join: clock + every known region's weather + the full custom-record set, before the
   // player can be handed any object referencing a custom record.
   onJoinWorld(player: Player): void {
+    // Offset first, so the arrival adoption of the clock already includes it (OT3-108).
+    const offset = this.ctx.players?.getCached(player.charId)?.timeOffsetHours;
+    if (offset) player.peer.sendEvent('TimeOffset', { hours: offset });
     this.clock.sendTo((name, body) => player.peer.sendEvent(name, body));
     this.weather.sendSyncTo(player);
     this.sendRecordsSync(player);
+  }
+
+  /** OT3-108: a rest/wait moves this character's clock offset, never the world's. */
+  private personalRest(player: Player, hours: unknown): void {
+    if (typeof hours !== 'number' || !Number.isFinite(hours) || hours <= 0 || hours > MAX_PERSONAL_HOURS) {
+      log('warn', 'time.request_dropped', { from: player.name, hours: String(hours) });
+      return;
+    }
+    let total = 0;
+    this.ctx.players?.update(player.charId, (doc) => {
+      // ponytail: kept modulo one MW year so it never grows without bound; the calendar date a
+      // long rester sees wraps with it. A per-character restock/respawn clock would read this.
+      total = ((doc.timeOffsetHours ?? 0) + hours) % (365 * 24);
+      doc.timeOffsetHours = total;
+    });
+    log('info', 'time.personal', { from: player.name, hours, total });
+    player.peer.sendEvent('TimeOffset', { hours: total });
   }
 
   onDisconnect(playerId: number): void {

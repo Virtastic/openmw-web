@@ -129,6 +129,9 @@ export interface PlayerDoc {
   // Backlog 260: exterior cells this character (or the campaign, when the map is shared)
   // has discovered, replayed on the welcome so the world map survives a relog.
   explored?: string[];
+  /** OT3-108: hours this character has rested/waited past the shared clock. Its own sky runs
+   *  this far ahead of the world's; the world's clock never moves for a rest. */
+  timeOffsetHours?: number;
   // Phase 4: character-shadowed mwscript globals — quest progress variables that must NOT
   // travel between players (see quests.ts WORLD_GLOBALS). Restored on join/world-hop.
   globals?: Record<string, number>;
