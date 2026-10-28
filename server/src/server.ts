@@ -603,6 +603,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     worldGlobals: config.sharing.worldGlobals,
     worldPeer: () => worldPeerImpl(),
     holderOf: (cellKey) => world.holderOf(cellKey),
+    inQueue: (fn) => world.inQueue(fn),
     noteAnomaly: (accountKey, kind) => moderation.noteAnomaly(accountKey, kind), // #366
     partyMembers: (acct) => social.partyMembers(acct), // OT3-90; social is built below, called later
   });

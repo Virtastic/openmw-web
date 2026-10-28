@@ -117,6 +117,8 @@ export interface QuestCtx {
   noteAnomaly?(accountKey: string, kind: string): void;
   // OT3-90: party accounts for an account, itself included (social.ts partyMembers).
   partyMembers?(accountKey: string): string[];
+  // OT3-102: run a cell-doc mutation in the world's serial queue (worldstate.inQueue).
+  inQueue?(fn: () => Promise<void> | void): Promise<void>;
 }
 
 /** OT3-90: a party member who has not pressed anything for this long earns no party credit. */
@@ -648,7 +650,12 @@ export class Quests {
     this.relayCell(cellKey, player.id, 'MemberVarUpdate', { ...(lToJs(body) as Record<string, JsLike>) });
   }
 
-  private async storeMemberVar(cellKey: string, ref: ObjRef, name: string, value: number, by: string): Promise<void> {
+  private storeMemberVar(cellKey: string, ref: ObjRef, name: string, value: number, by: string): Promise<void> {
+    const work = (): Promise<void> => this.storeMemberVarNow(cellKey, ref, name, value, by);
+    return this.ctx.inQueue ? this.ctx.inQueue(work) : work();
+  }
+
+  private async storeMemberVarNow(cellKey: string, ref: ObjRef, name: string, value: number, by: string): Promise<void> {
     const doc = await this.ctx.cells.get(cellKey);
     const vars = (doc.memberVars ??= {});
     const own = (vars[ref.key] ??= {});

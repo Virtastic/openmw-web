@@ -514,15 +514,15 @@ export class CellStore {
     this.dirty.add(cellKey);
   }
 
-  // KNOWN, DELIBERATELY NOT FIXED HERE: this cache is never evicted, so a long-lived world
-  // retains every cell any player entered (placements, container contents, actor overrides,
-  // memberVars) and the gateway's memory governor prices a world as a constant. The obvious
-  // fix -- release on onCellVacated -- is NOT safe: worldstate's queue serialises its own
-  // mutations, but quests.storeMemberVar mutates a doc on a DETACHED promise, so a release
-  // landing between its get() and markDirty() would leave the mutation on an orphaned object
-  // and flushKey would then find no cache entry and clear the dirty flag -- a silently lost
-  // write. Doing this properly needs every mutation path serialised (or an LRU that keys off
-  // live references) and is not worth trading a data-loss race for a slow leak.
+  /** OT3-102: drop a cell from the cache once it is on disk. Only a CLEAN cell goes (a dirty
+   *  one still has unwritten deltas), and only the world queue may call this -- every mutation
+   *  of a cached doc (storeMemberVar included) runs in that queue, so none can hold the doc
+   *  across the eviction. The next get() reloads the row. */
+  evictClean(cellKey: string): boolean {
+    if (this.dirty.has(cellKey)) return false;
+    return this.cache.delete(cellKey);
+  }
+
   async flushKey(cellKey: string): Promise<void> {
     await timeFlush('cells', async () => this.writeKey(cellKey));
   }

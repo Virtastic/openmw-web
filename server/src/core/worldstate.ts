@@ -2107,6 +2107,15 @@ export class WorldState {
     if (this.roster.inWorld().some((p) => p.cellKey === cellKey)) return;
     this.actorBatchNo.delete(cellKey); // no occupants -> no holder -> no stride phase to keep
     this.actorRefs.delete(cellKey);
-    this.enqueue(() => this.cells.flushKey(cellKey));
+    this.enqueue(async () => {
+      await this.cells.flushKey(cellKey);
+      // OT3-102: an empty, clean cell leaves memory; somebody who entered meanwhile keeps it.
+      if (!this.roster.inWorld().some((p) => p.cellKey === cellKey)) this.cells.evictClean(cellKey);
+    });
+  }
+
+  /** Runs `fn` in the world queue and resolves when it has applied (OT3-102). */
+  inQueue(fn: () => Promise<void> | void): Promise<void> {
+    return new Promise((resolve) => this.enqueue(async () => { try { await fn(); } finally { resolve(); } }));
   }
 }
