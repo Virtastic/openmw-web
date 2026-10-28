@@ -28,6 +28,16 @@ const DEFAULT_PROBE_MS = 5_000;
 interface SocketRtt {
   rttMs?: number;
   lastPongAt: number;
+  sentStamp?: number; // the one stamp an echo may carry; anything else is forged or stale
+}
+
+// A pong yields an RTT only when it echoes the exact stamp this server last sent, so a
+// client cannot shorten its measured latency by echoing a later (forged) stamp.
+export function pongRtt(st: SocketRtt, data: Buffer, now: number): number | undefined {
+  if (data.length !== 8 || st.sentStamp === undefined) return undefined;
+  if (data.readDoubleLE(0) !== st.sentStamp) return undefined;
+  st.sentStamp = undefined; // one sample per nonce
+  return now - data.readDoubleLE(0);
 }
 const rttState = new WeakMap<WebSocket, SocketRtt>();
 
@@ -77,7 +87,9 @@ export function attachWss(
       // performance.now() (not Date.now) so a wall-clock step cannot fabricate an RTT.
       // Fresh buffer per frame: `ws` may queue the payload past this tick.
       const stamp = Buffer.allocUnsafe(8);
-      stamp.writeDoubleLE(performance.now(), 0);
+      const sent = performance.now();
+      stamp.writeDoubleLE(sent, 0);
+      if (st) st.sentStamp = sent;
       ws.ping(stamp);
     }
   }, probeMs);
@@ -99,10 +111,8 @@ export function attachWss(
       st.lastPongAt = Date.now();
       // A client that echoes garbage (or nothing) still counts as alive, it just yields no
       // RTT sample — warn+drop, never throw, and never fall back to a client-supplied value.
-      if (data.length !== 8) return;
-      const rtt = performance.now() - data.readDoubleLE(0);
-      if (!Number.isFinite(rtt) || rtt < 0) return; // echoed stamp was not ours
-      st.rttMs = rtt;
+      const rtt = pongRtt(st, data, performance.now());
+      if (rtt !== undefined) st.rttMs = rtt;
     });
     ws.on('close', () => rttState.delete(ws));
     onSocket(ws, clientIp(req));
