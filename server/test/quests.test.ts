@@ -17,7 +17,8 @@ const NPC2_REF = { __refnum: { index: 301, contentFile: 0 } };
 
 async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartial<Config>, dataDir = tmpDataDir()) {
   // All test clients share 127.0.0.1; the per-IP cap is not what these tests exercise.
-  const configOverride = { ...override, limits: { ...override?.limits, maxConnsPerIp: 16 } };
+  // These tests cover SHARED progression, an operator opt-in since OT3-19 (personal is default).
+  const configOverride = { ...override, sharing: { journal: true, questVars: true, factions: true, ...override?.sharing }, limits: { ...override?.limits, maxConnsPerIp: 16 } };
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride });
   t.after(() => server.close());
   return { server, dataDir };
@@ -507,7 +508,7 @@ test('the journal sync carries the entries in the order they were earned, with t
 
 test('dialogue topics reach the other player, and never bounce back to the sender', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride: { sharing: { journal: true, questVars: true, factions: true } } });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);

@@ -23,7 +23,7 @@ async function party(t: T, sharing?: Record<string, unknown>) {
   new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
   const server = await startServer({
     requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    configOverride: { server: { password: PEER_PASS }, login: { allowHarnessAuth: true }, ...(sharing ? { sharing } : {}) } as never,
+    configOverride: { server: { password: PEER_PASS }, login: { allowHarnessAuth: true }, sharing: { journal: true, questVars: true, factions: true, ...sharing } } as never,
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);
@@ -44,7 +44,7 @@ async function party(t: T, sharing?: Record<string, unknown>) {
 test("standalone: the peer's journal advance lands in the shared map; a new peer is seeded with globals and scripts", async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, sharing: { journal: true, questVars: true, factions: true } },
   });
   t.after(() => server.close());
   const peer = await TestClient.simPeer(server.port, PEER_PASS);
@@ -140,7 +140,7 @@ test('a rejoiner is given world globals with their seqs, and a stale write is an
 test("a member var is filed under the object's own cell, which must be in the writer's reach", async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, sharing: { journal: true, questVars: true, factions: true } },
   });
   t.after(() => server.close());
   const a = await TestClient.connect(server.port);

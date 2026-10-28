@@ -101,3 +101,35 @@ test("a human's campaign global reaches the other human live", async (t) => {
   assert.equal((gp.value as { value: number }).value, 4, 'and so does the simulator');
 });
 
+
+// OT3-19: under personal progression (the default) a peer quest write credits only the
+// character it names, never every human in the world.
+test("a peer journal write naming a character credits that character only", async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  const { welcome } = await a.joinAsNew('Causer');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Bystander');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('0,0', 0, 0, 0);
+
+  const isQ = (v: unknown) => (v as { questId?: string })?.questId === 'mp_ot3_19';
+  peer.sendEvent('JournalEntry', { questId: 'mp_ot3_19', index: 10, charId: welcome['characterId'] as string });
+  const got = await a.waitEvent('JournalEntry', isQ);
+  assert.equal((got.value as { index: number }).index, 10);
+  const leaked = await Promise.race([
+    b.waitEvent('JournalEntry', isQ).then(() => true),
+    new Promise<false>((r) => setTimeout(() => r(false), 800)),
+  ]);
+  assert.equal(leaked, false, 'the bystander is not credited with the causer\'s quest');
+});

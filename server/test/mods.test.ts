@@ -305,7 +305,7 @@ test('a gateway world sees the shared modlist and the shared dashboard layer', (
   writeModDoc(shared, { ...emptyDoc(), entries: [{ file: 'Morrowind.esm', enabled: true }], mods: [
     mod({ slug: 'tr', plugins: [{ file: 'TR_Mainland.esm', enabled: true }] }),
   ] });
-  writeFileSync(join(shared, DASHBOARD_FILE), '[sharing]\njournal = false\n');
+  writeFileSync(join(shared, DASHBOARD_FILE), '[sharing]\njournal = true\n');
 
   // What server.ts does with sharedDir: the mod stack and the base load order both come from
   // the shared document, and the world's own (empty) dir contributes nothing.
@@ -315,12 +315,12 @@ test('a gateway world sees the shared modlist and the shared dashboard layer', (
   assert.deepEqual(orderedContent(gd, world), []);
 
   const cfg = loadConfig(world, undefined, shared);
-  assert.equal(cfg.sharing.journal, false, 'the shared dashboard layer reaches the world');
+  assert.equal(cfg.sharing.journal, true, 'the shared dashboard layer reaches the world');
   assert.equal(cfg.dashboardFallback, undefined);
   // Single-world mode is unchanged: the layer next to config.toml is read as before, and a
   // world with no shared dir sees only its own files.
-  assert.equal(loadConfig(shared, undefined, shared).sharing.journal, false);
-  assert.equal(loadConfig(world).sharing.journal, true);
+  assert.equal(loadConfig(shared, undefined, shared).sharing.journal, true);
+  assert.equal(loadConfig(world).sharing.journal, false);
 });
 
 // The same, THROUGH startServer: the helpers above answer for whatever dir they are handed, so
@@ -337,7 +337,7 @@ test('a gateway world serves the shared mod stack and boots on the shared dashbo
   writeModDoc(shared, { ...emptyDoc(), entries: [{ file: 'Morrowind.esm', enabled: true }], mods: [
     mod({ slug: 'tr', plugins: [{ file: 'TR_Mainland.esm', enabled: true }] }),
   ] });
-  writeFileSync(join(shared, DASHBOARD_FILE), '[sharing]\njournal = false\n');
+  writeFileSync(join(shared, DASHBOARD_FILE), '[sharing]\njournal = true\n');
 
   const server = await startServer({ requireGameData: false, dataDir: world, sharedDir: shared, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
@@ -345,7 +345,7 @@ test('a gateway world serves the shared mod stack and boots on the shared dashbo
   const r = await fetch(`http://127.0.0.1:${server.port}/mwdata-mods.json`);
   assert.equal(r.status, 404);
   assert.deepEqual(presentMods(gd, readModDoc(shared)).mods.map((m) => m.slug), ['tr'], 'the shared modlist is found');
-  assert.equal(server.config.sharing.journal, false, 'the shared dashboard layer reached the world');
+  assert.equal(server.config.sharing.journal, true, 'the shared dashboard layer reached the world');
 });
 
 // Backlog 302: the browser cascades a plugin whose master is not loaded out of the list; the

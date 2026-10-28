@@ -147,6 +147,23 @@ export class Quests {
     for (const p of this.ctx.roster.inWorld()) if (p.id !== exceptId) p.peer.sendEvent(name, body);
   }
 
+  // WHO A PEER WRITE BELONGS TO (OT3-19). The peer runs ONE MWScript state for the whole world,
+  // so its journal/global/script writes used to land in every online human's doc. A peer event
+  // may name the causing character (`charId`); that human alone is credited. Without one, the
+  // fallback decides: the journal credits the humans who already have that quest (the peer is
+  // advancing THEIR quest), globals and scripts credit nobody (the shared seed still keeps
+  // them for the peer). Never everyone: one player's progress is not another's.
+  private peerCredit(body: LTable, fallback: (h: Player) => boolean): Player[] {
+    const humans = this.ctx.roster.humansInWorld().filter((q) => !q.bot);
+    const named = str(body.get('charId'));
+    if (named !== undefined) {
+      const h = humans.find((q) => q.charId === named);
+      if (!h) log('debug', 'quest.peer_credit_offline', { charId: named });
+      return h ? [h] : [];
+    }
+    return humans.filter(fallback);
+  }
+
   // The same predicate as worldstate.ts hears(): the holder anchors far cells while its own
   // avatar stands elsewhere, and an NPC's locals written in one of them must reach the
   // engine that runs that NPC's script (backlog 222).
@@ -229,7 +246,7 @@ export class Quests {
     shared.scripts = apply(shared.scripts);
     this.ctx.cells.saveShared();
     if (player.system === true) {
-      for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
+      for (const h of this.peerCredit(body, () => false)) {
         this.ctx.players.update(h.charId, (doc) => { doc.scripts = apply(doc.scripts); });
       }
       return;
@@ -294,14 +311,21 @@ export class Quests {
         return;
       }
       if (shared) { shared.journal[questId] = idx; this.ctx.cells.saveShared(); }
-      for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
+      const credited = this.peerCredit(body,
+        (h) => this.ctx.players.getCached(h.charId)?.journal?.[questId] !== undefined);
+      const out = { questId, index: idx, ...(regress ? { regress: true } : {}) };
+      for (const h of credited) {
         this.ctx.players.update(h.charId, (doc) => {
           const log = (doc.journal ??= {});
           log[questId] = regress ? idx : Math.max(log[questId] ?? -1, idx);
           this.logEntry(doc, questId, idx);
         });
       }
-      this.relayAll(player.id, 'JournalEntry', { questId, index: idx, ...(regress ? { regress: true } : {}) });
+      // A shared journal is one log, so everyone hears it; a personal one reaches only the
+      // characters it was written to.
+      if (shared) this.relayAll(player.id, 'JournalEntry', out);
+      else for (const h of credited) h.peer.sendEvent('JournalEntry', out);
+      if (credited.length === 0) log('info', 'quest.peer_journal_unattributed', { questId, index: idx });
       return;
     }
     // INDIVIDUAL MODE IS THE PLAYER'S OWN LOG (backlog 320): it used to write to the host's
@@ -496,7 +520,7 @@ export class Quests {
       if (player.system === true) {
         // Humans only -- a bot's doc is not a campaign. The journal half does the same (and
         // keeps shared.journal), and the shared campaign map seeds the peer itself (1.7.1).
-        for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
+        for (const h of this.peerCredit(body, () => false)) {
           this.ctx.players.update(h.charId, (doc) => { (doc.globals ??= {})[name] = value; });
         }
         this.noteCampaignGlobal(name, value);

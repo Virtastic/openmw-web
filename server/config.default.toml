@@ -103,9 +103,9 @@ difficulty = 0
 # M6 per-family sharing policy, enforced by the `sharing` plugin (swap it to implement
 # party/faction-scoped rules). true = relay to everyone and keep one shared copy;
 # false = "individual" mode, stored per-player and never relayed.
-journal = true
-questVars = true      # MWScript globals (the time globals are owned by M7, never here)
-factions = true
+journal = false
+questVars = false     # MWScript globals (the time globals are owned by M7, never here)
+factions = false
 # Personal by default (backlog 353): a guest's guards hunt the guest, and the host is not
 # arrested for a guest's theft after the guest has gone home. true = one record for the
 # party, persisted on the host's campaign.
