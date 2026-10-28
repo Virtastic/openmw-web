@@ -1272,6 +1272,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   ctx.simPeers = simPeers;
   ctx.gameDataOk = gameData.ok;
+  // OT3-30: a world whose peer has ever reported its list starts pinned to it, so the gap
+  // before this boot's peer says hello is not an adopt-first window for a modified client.
+  // The peer's hello still re-pins (connection.ts), so a changed data folder wins.
+  const lastList = cellStore.contentList();
+  if (gameData.ok && lastList?.length) {
+    contentGate.setAuthoritative(lastList.map((name, idx) => ({ name, idx, size: 0 })), false);
+  }
   // ONE PEER, EVERY OCCUPIED CELL. A peer used to be one ~450 MB engine process per occupied
   // cell (3dd85a68), deployed because anchored cells LOADED but never TICKED: the engine's
   // animation/movement gate still measured range from the peer's own avatar. That gate is

@@ -1597,7 +1597,7 @@ export class Connection implements Peer {
     //
     // Safe because it is gated on gameDataOk — the server's data validated on disk — and a
     // world configured [simPeer] mode = "on" refuses to boot at all if that validation fails.
-    if (this.isSystem && this.ctx.gameDataOk && !this.ctx.content.isAuthoritative) {
+    if (this.isSystem && this.ctx.gameDataOk && !this.ctx.content.peerPinned) {
       this.ctx.content.setAuthoritative(msg.manifest);
       this.ctx.world.adoptContentList(msg.manifest); // backlog 298: remap cell docs on a list change
     }

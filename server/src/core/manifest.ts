@@ -19,6 +19,7 @@ export class ContentGate {
   // by the same code as every player's — and is never adopted from a client nor dropped when
   // the server empties.
   private authoritative = false;
+  private fromPeer = false;
 
   constructor(private readonly mode: 'strict' | 'names' | 'off') {}
 
@@ -52,7 +53,13 @@ export class ContentGate {
   // client sends `builtin.omwscripts#0, openmw-template.omwgame#1, ...`, and both of those
   // live in the ENGINE's resources, not in the game data folder. Any folder scan or cfg
   // parse would omit them and refuse 100% of clients.
-  setAuthoritative(entries: ManifestEntry[]): void {
+  /** True once the live peer (not a list remembered from an earlier boot) set the pin. */
+  get peerPinned(): boolean {
+    return this.fromPeer;
+  }
+
+  setAuthoritative(entries: ManifestEntry[], fromPeer = true): void {
+    this.fromPeer = fromPeer;
     const hashes = this.hashes?.() ?? new Map<string, string>();
     this.canonical = entries.map((e) => {
       const sha256 = e.sha256 || hashes.get(ContentGate.key(e.name));

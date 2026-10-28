@@ -246,3 +246,13 @@ test('tier 2: the pinned list carries the server\'s hashes, and strict uses them
   const unhashedBuiltin = honest.map((e) => (e.name === 'builtin.omwscripts' ? { ...e } : e));
   assert.equal(gate.check(unhashedBuiltin).ok, true);
 });
+
+test('OT3-30: a remembered peer list refuses a first client that differs, and the peer re-pins', () => {
+  const gate = new ContentGate('names');
+  gate.setAuthoritative([{ name: 'Morrowind.esm', idx: 0, size: 0 }], false);
+  assert.equal(gate.peerPinned, false);
+  assert.equal(gate.check([{ name: 'Evil.esm', idx: 0, size: 0 }]).ok, false);
+  gate.setAuthoritative([{ name: 'Morrowind.esm', idx: 0, size: 0 }]);
+  assert.equal(gate.peerPinned, true);
+  assert.equal(gate.check([{ name: 'Morrowind.esm', idx: 0, size: 0 }]).ok, true);
+});
