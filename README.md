@@ -1,16 +1,16 @@
-# openmw-web
+# OpenTES3
 
-**Play Morrowind in your browser.** The OpenMW engine, compiled to WebAssembly, by [Virtastic](https://virtastic.app).
+**One seamless public Morrowind world, in your browser.** The OpenMW engine, compiled to
+WebAssembly, with a server that owns the world. By [Virtastic](https://virtastic.app).
 
 <p align="center">
-  <a href="https://morrowind.virtastic.app"><img src="docs/hero-seyda-neen.jpg" alt="Morrowind running in a desktop Chrome tab at morrowind.virtastic.app: the opening town of Seyda Neen, with the Census office, a silt strider, and the player on the dock" width="850"></a>
+  <a href="https://opentes3.com"><img src="docs/hero-seyda-neen.jpg" alt="Morrowind running in a desktop Chrome tab: the opening town of Seyda Neen, with the Census office, a silt strider, and the player on the dock" width="850"></a>
 </p>
 
 <p>
-  <a href="https://morrowind.virtastic.app"><b>▶ Play now at morrowind.virtastic.app</b></a> ·
+  <a href="https://opentes3.com"><b>▶ Play at opentes3.com</b></a> ·
   <a href="https://discord.gg/PzFfDkbSue">Discord</a> ·
   <a href="https://www.youtube.com/@Virtastic-Apps">YouTube</a> ·
-  <a href="https://github.com/Virtastic/openmw-web/releases">Releases</a> ·
   <a href="https://github.com/Virtastic/openmw-web/issues">Issues</a> ·
   <a href="https://github.com/Virtastic/openmw-web/discussions">Discussions</a>
 </p>
@@ -22,20 +22,14 @@
 [![Reddit](https://img.shields.io/badge/Reddit-r%2Fvirtastic-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/virtastic)
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPLv3-blue)
 ![Platform: Chrome desktop](https://img.shields.io/badge/browser-Chrome%20%2F%20Chromium-brightgreen)
-[![Latest release](https://img.shields.io/github/v/release/Virtastic/openmw-web)](https://github.com/Virtastic/openmw-web/releases)
 
-openmw-web is a WebAssembly build of [OpenMW](https://openmw.org/), the open-source
-reimplementation of *The Elder Scrolls III: Morrowind*. The whole engine runs client-side in
-a desktop browser - no plugins, no streaming service, and no game data included: you bring
-your own legally-owned copy.
+OpenTES3 (v2 of openmw-web, branch `OpenTES3`) is a WebAssembly build of
+[OpenMW](https://openmw.org/), the open-source reimplementation of *The Elder Scrolls III:
+Morrowind*, joined to one shared world that everyone plays in. The engine runs client-side in a
+desktop browser - no plugins, no streaming service, and no game data included: you prove you
+own Morrowind once and the server does the rest.
 
-**New in 1.2.0: the admin dashboard.** Run your own server entirely from a browser - a setup
-wizard, a mod manager with drag-to-order, Tamriel Rebuilt support, savegame export, backups,
-logs and accounts. Multiplayer (added in 1.1.0) is there too, behind an experimental flag.
-
-<p align="center">
-  <img src="docs/dashboard-mods.jpg" alt="The admin dashboard's mod manager: the Morrowind Optimization Patch installed as six orderable parts alongside Weapon Sheathing, each with a toggle, drag handle, and badges showing which files it replaces or has overridden" width="850">
-</p>
+v1 (the single-player and self-hosted openmw-web at morrowind.virtastic.app) lives on `main`.
 
 ## Running the world (v2)
 
@@ -48,52 +42,32 @@ proxy details are in [`docs/ADVANCED.md`](docs/ADVANCED.md). Stuck? Ask in
 
 ## Playing
 
-On your own server, open **http://localhost** in desktop Chrome - or just play the hosted
-site at [morrowind.virtastic.app](https://morrowind.virtastic.app). The launcher offers:
+Open [opentes3.com](https://opentes3.com) in desktop Chrome and sign in with Google or
+Discord - those are the only sign-ins, and accounts are keyed on the provider's stable ID,
+never your email. The first time, upload `Morrowind.esm`, `Tribunal.esm` and `Bloodmoon.esm` as proof
+that you own the game (Game of the Year edition); after that the server streams the game data to your browser, on any machine. Create a
+character and you are in the world with everyone else.
 
-- **The example world** - a small free demo, no Morrowind required.
-- **Bring your own Morrowind** - point the browser at your `Data Files` folder; files stream
-  from disk on demand, nothing is uploaded.
-- **This server's copy** - when the host has game data staged, play it with nothing to pick.
-- **Your own Morrowind, from anywhere** - sign in and upload once; it follows your account
-  to any machine, saves included.
-
-Settings and keybindings persist in the browser. Saves go with how you play: to real files
-inside your picked folder ("bring your own"), to the server when signed in, or to browser
-storage for the offline demo. In-game, **Options → Video** has a resolution-scale setting -
-drop it a notch on lighter hardware.
+Settings and keybindings persist in the browser; your character and progress live on the
+server. In-game, **Options → Video** has a resolution-scale setting - drop it a notch on
+lighter hardware.
 
 ### Troubleshooting
 
-- **"Can't open this folder because it contains system files."** Chromium refuses folders
-  under `Program Files`, where Steam's default library lives. Copy `Data Files` to your
-  Desktop or Documents and pick it there. GOG installs are unaffected.
-- **"Doesn't look like a Data Files folder."** Pick the folder actually containing
-  `Morrowind.esm` and `Morrowind.bsa` (or its parent `Morrowind` folder).
-- **No sound, music, or intro video.** Your copy is missing the loose `Sound`/`Music`/`Video`
-  folders that live beside the archives. A normal Steam or GOG install has them.
+- **The ownership check refuses my file.** Upload the three `.esm` files from your own
+  install's `Data Files` folder (Steam, GOG or disc); mods and edited masters are refused.
+- **Stuck on loading.** Check the browser requirement below; Firefox, Safari and mobile do
+  not work.
 
 More help: [Discord](https://discord.gg/PzFfDkbSue).
 
-## Multiplayer
+## The world
 
-**Experimental.** Playable, but young - expect rough edges.
-
-Two ways to play, switched from inside the game: **Solo** (your own world, yours alone)
-and **Party** (your world, open to your friends — up to 32 of them). There is no public
-world and no separate party concept: you are always the host of your own world, and joining
-a friend means joining *their* world through your friends list. Visiting advances *their*
-campaign; you keep the skills you used and what you carry out.
+There is one world and everyone is in it: no instances, no private servers, no world to
+create. You can group up with friends, whisper, mute, block and report in-game.
 
 The server owns the world: NPCs, combat resolution and loot are simulated server-side by a
-headless copy of the engine, so a modified client cannot author what an NPC did. Friends,
-whisper/mute/block, in-game reporting and server-side saves are all there.
-
-On the hosted service, sign-in is SSO only (Google / Discord - no passwords to
-leak; accounts are keyed on the provider's stable ID, never your email). A server you run
-chooses its own sign-in in the setup
-wizard. Provider-side SSO steps (redirect URIs, client ids) are in
-[`docs/ADVANCED.md`](docs/ADVANCED.md).
+headless copy of the engine, so a modified client cannot author what an NPC did.
 
 ## What's in this repo
 
@@ -102,8 +76,8 @@ A code-only repo - game assets, dependency caches and build outputs are gitignor
 | Path | Purpose |
 |------|---------|
 | `openmw/` | OpenMW engine source (upstream plus local WASM changes) |
-| `play/` | Browser front-end: launcher, game page, dev server |
-| `server/` | The server (TypeScript/Node): admin dashboard, worlds, SSO, storage, savegames |
+| `play/` | Browser front-end: sign-in door, game page, dev server |
+| `server/` | The server (TypeScript/Node): the world, SSO, the ownership check, admin |
 | `wasm-build/` | Build scripts, patches and tooling for the WASM engine |
 | `deploy/` | Container and reverse-proxy config |
 
@@ -111,20 +85,18 @@ The `openmw/` tree tracks upstream at the commit recorded in
 [`.openmw-base-commit.txt`](.openmw-base-commit.txt); how the desktop engine was made to run
 in a browser tab is written up in [`WASM_ADAPTATIONS.md`](WASM_ADAPTATIONS.md).
 
-## Releases
+## Testing
 
-Every [release](https://github.com/Virtastic/openmw-web/releases) ships two archives:
-
-- **`openmw-web-<tag>.zip`** - the prebuilt engine and web front-end. It feeds the Docker
-  quick start (unzip into `play/`).
-- **`openmw-web-src-<tag>.tar.gz`** - the exact source snapshot (GPLv3 Corresponding
-  Source).
+- Server: `cd server && npm test` (TypeScript check plus the unit suite).
+- Lua: `bash wasm-build/lua-tests/run.sh` (needs Docker).
+- End to end: the multiplayer browser harness (`server/bots/`), run on the build server by
+  the `openmw-web-dev` Jenkins job with `BRANCH=OpenTES3` - see [`AGENTS.md`](AGENTS.md).
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what changed.
 
 ## Building from source
 
-Only needed if you are changing the engine itself - the releases ship it prebuilt. The
+Only needed if you are changing the engine itself. The
 toolchain (Emscripten 6.0.1), the dependency stack, the wasm64 story and every hard-won
 gotcha live in [`docs/BUILDING.md`](docs/BUILDING.md). Questions:
 [Discord](https://discord.gg/PzFfDkbSue).

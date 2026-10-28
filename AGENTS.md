@@ -33,9 +33,9 @@ It will make the machine unusable. Run it on the build server.
 
 **DO NOT test by running the app locally.** Deploy to the test app server and test there.
 
-**DO NOT push to `ovhcloud` to test.** That branch deploys to *production*
-(morrowind.virtastic.app) via the self-hosted runner on the OVH VPS. The local build server
-exists precisely so testing never touches production. Note `mp.virtastic.app` is **not** a
+**OpenTES3 (v2) deploys nowhere yet.** v2 work commits to `OpenTES3` only; it never goes to
+`main`, `dev` or `ovhcloud`, which belong to v1. The `dev` flow below is the v1 flow, kept for
+v1 maintenance. The local build server exists precisely so testing never touches production. Note `mp.virtastic.app` is **not** a
 thing: the design that wanted it is dead, and the vhost that kept the name alive has been
 deleted (see "One origin" below).
 
@@ -48,9 +48,8 @@ network's hosts and key paths.
 no deletion. Admins are not forced through it (`enforce_admins` is off), so the maintainer keeps
 a direct push for emergencies — use it as one.
 
-**Contributors open a PR against `dev`.** The maintainer approves and merges. `main` and
-`ovhcloud` are NOT touched by this flow: `ovhcloud` deploys production and is a separate,
-deliberate promotion.
+**Contributors open a PR against `dev`** (v1) or `OpenTES3` (v2). The maintainer approves and
+merges. Production promotion is the maintainer's, never part of a contributor's flow.
 
 ---
 
@@ -415,8 +414,8 @@ The engine build needs three **gitignored** inputs that are not in the repo. The
 - `fsroot/gamedata/` — game data. Build fails loud if empty.
 - `fsroot/icudt68l.dat`
 
-The toolchain image `openmw-builder:1` (4.4GB) is prebuilt on the build server from
-`Dockerfile.builder`. It pins **emscripten 6.0.1** — a mismatch breaks the prebuilt deps.
+The toolchain image `openmw-builder64:1` is prebuilt on the build server from
+`Dockerfile.builder64` (the wasm32 `Dockerfile.builder` / `openmw-builder:1` is retired). It pins **emscripten 6.0.1** — a mismatch breaks the prebuilt deps.
 
 ### wasm64 (MEMORY64)
 
@@ -461,8 +460,8 @@ Things that will bite, in the order they bit:
 without building the engine — threads, >4 GiB allocation, wasm-EH, the JS pointer ABI and (with
 `--browser`) cross-origin isolation. Run it before blaming the engine.
 
-`Dockerfile.builder.dockerignore` exists because the main `.dockerignore` excludes `deps/`
-(correct for `Dockerfile`, fatal for `Dockerfile.builder`, which must bake deps in). BuildKit
+`Dockerfile.builder64.dockerignore` exists because the main `.dockerignore` excludes `deps/`
+(correct for `Dockerfile`, fatal for `Dockerfile.builder64`, which must bake deps in). BuildKit
 picks the per-Dockerfile ignore file automatically.
 
 All docker builds need `--network=host` — CMake FetchContent (recastnavigation) and `npm ci`

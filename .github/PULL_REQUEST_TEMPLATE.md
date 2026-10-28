@@ -13,5 +13,5 @@
 
 - [ ] Tested in **desktop Chrome / Chromium** (the only supported target — Firefox/Safari/mobile are out of scope).
 - [ ] No Morrowind (or other proprietary) game data is included in this change.
-- [ ] Docs updated if behavior changed (README / WASM_ADAPTATIONS / SELF_HOSTING).
+- [ ] Docs updated if behavior changed (README / WASM_ADAPTATIONS / docs/BUILDING).
 - [ ] I understand deployment/CI to the maintainers' servers is maintainer-only.

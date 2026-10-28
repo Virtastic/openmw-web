@@ -1,5 +1,8 @@
 # TR night runbook (2026-09-15 build)
 
+> **Archived v1 record (CL17).** This took a v1 build to the v1 prod box. Nothing here applies
+> to v2 (OpenTES3); do not follow it.
+
 What the operator does, in order, to take `test/posture-seen` to prod and play Tamriel Rebuilt
 with a friend. Every item points at the backlog row that explains it.
 

@@ -328,7 +328,7 @@ itself. If it fails, the nightly cron is not a backup, it is a tarball.
 
 ## Deploys and connected players
 
-`.github/workflows/deploy-mp.yml` drains before it swaps: the running container is stopped
+A deploy drains before it swaps: the running container is stopped
 with `docker compose stop -t 29`, which sends `SIGTERM` and lets the server broadcast
 `SessionDisconnect SHUTDOWN` to every session and flush all state within the compose
 `stop_grace_period` (30 s). Players see a shutdown notice and reconnect, rather than having

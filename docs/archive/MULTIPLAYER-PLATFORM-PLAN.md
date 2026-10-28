@@ -3,7 +3,7 @@
 > **Historical planning document** from the multiplayer build-out. Kept for the reasoning;
 > the shipped behaviour has moved on (there is an admin dashboard and a setup wizard now, and
 > self-hosted sign-in is a choice rather than SSO-only). Do not read this as current usage
-> documentation — that is [`../SELF_HOSTING.md`](../SELF_HOSTING.md).
+> documentation — that is the README's "Running the world (v2)" section.
 
 Status of the current layer: **M0–M8 complete** on branch `multiplayer` (27 commits).
 26/26 browser scenarios twice consecutively, 173/173 server tests (incl. 11 adversarial),

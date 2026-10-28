@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 //
-// Shared SQLite open/migrate helper (docs/SQLITE-CONSOLIDATION.md step 1). Every store that
+// Shared SQLite open/migrate helper (docs/archive/SQLITE-CONSOLIDATION.md step 1). Every store that
 // moves off JSON goes through here so the pragmas and the migration runner exist in ONE place.
 //
 // WAL is not optional. The shared dir (accounts, identities, locker, players) is opened by the

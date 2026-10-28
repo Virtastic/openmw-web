@@ -22,7 +22,7 @@ if relevant, the browser/GPU involved.
   modified client can make the server believe. Findings that let one account
   reach another's data, or let a client author world state it should not be
   able to, are the ones we most want to hear about.
-- The hosted instance at morrowind.virtastic.app is in scope for
+- The hosted world at opentes3.com is in scope for
   responsible disclosure (no automated scanning / load testing, please).
 - Upstream OpenMW engine issues that are not specific to this port should go
   to the [OpenMW project](https://gitlab.com/OpenMW/openmw/-/issues).

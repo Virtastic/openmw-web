@@ -31,7 +31,7 @@ second. On a slower box that read a GRANTED drop as refused — which is why `de
 failed on the OVH runner at its Docker test gate since 2026-09-02 and prod's multiplayer server
 was ten days stale. The client now puts the item back in the inventory and says why; the test
 awaits ack-or-refusal and treats silence as a hard failure. Reproduce that gate locally before
-any `ovhcloud` push: `DOCKER_BUILDKIT=1 docker build --target test -f server/Dockerfile server/`.
+any release: `DOCKER_BUILDKIT=1 docker build --target test -f server/Dockerfile server/`.
 
 **One world-pickup path is still outside the request: drag-and-drop with the inventory window
 open.** `ActionTake` in GUI mode goes to `InventoryWindow::pickUpObject`, which fires no Lua

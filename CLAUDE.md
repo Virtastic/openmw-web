@@ -4,11 +4,11 @@
 
 **Heavy builds do NOT run on the laptop.** The engine bake (wasm64, ~15-35 min), the native
 sim-peer image (tier2, ~25 min cold) and the multiplayer browser-harness sweeps all run on the
-LAN Jenkins box (`builder`, 192.168.1.130: 32 cores, 38 GB). That box is **dev/test only** —
-it deploys to the test app server (192.168.1.131) and never to prod.
+LAN Jenkins box (`builder`: 32 cores, 38 GB; hosts live in the gitignored `ci/jenkins/config.env`).
+That box is **dev/test only** and never reaches any production deployment.
 
-**Prod is GitHub Actions**: `deploy-ovh` / `deploy-mp` run on push to `ovhcloud` (NOT `main`) and ship to OVH.
-Nothing in Jenkins reaches prod.
+**This branch is OpenTES3 (v2).** Its deploy path is not settled yet, so nothing on OpenTES3
+deploys anywhere. Jenkins builds of OpenTES3 run with `DEPLOY=false`: the test app server runs v1.
 
 ### The Jenkins job: `openmw-web-dev`
 
@@ -62,16 +62,13 @@ sweep running on a head you already know is broken (stop it and fix instead).
 
 ## Process
 
-feature branch → PR to protected `main` → `gh pr merge --rebase --delete-branch` → fast-forward
-`dev` and `ovhcloud` to `main`. **Merging to `main` alone deploys nothing**:
-`deploy-ovh` / `deploy-mp` trigger on push to `ovhcloud`, so prod ships only when `ovhcloud` is
-fast-forwarded. Before pushing `ovhcloud`, tag the running prod image on the box for rollback
-(`docker tag openmw-mp:ovh openmw-mp:prev`) — the deploy overwrites `:ovh` and keeps no previous.
+All v2 work commits to `OpenTES3` (one commit per ticket, `CLn (OT3-nnn): …`). It never goes
+to `main` (v1), `dev` or `ovhcloud`, and OpenTES3 is pushed only when the maintainer asks.
 Client-Lua or C++ edits need an engine rebake
 (browser Lua is baked into openmw.data); peer C++ edits need a tier2 rebuild; both before trusting
 a harness verdict.
 
-Commits end `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`; PR bodies end
+Commits end `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; PR bodies end
 `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 
-Never commit or paste private keys or tokens (prod SSH key and CF token live outside the repo).
+Never commit or paste private keys or tokens; they live outside the repo.

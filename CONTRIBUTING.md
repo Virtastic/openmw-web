@@ -37,5 +37,5 @@ PRs are welcome. A few ground rules:
 
 ## What maintainers handle
 
-Deployment (morrowind.virtastic.app), release publishing, and CI on the
+Deployment (opentes3.com), release publishing, and CI on the
 self-hosted runner are maintainer-only for security reasons.

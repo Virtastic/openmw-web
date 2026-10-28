@@ -2,6 +2,9 @@
      SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # Persistence consolidation: JSON stores → SQLite
 
+> **Archived (CL17).** The consolidation shipped in v1; kept for the reasoning behind
+> `server/src/persist/sqlite.ts`.
+
 ## Why
 
 The server persists through **two mechanisms**, which is non-standard and was flagged as

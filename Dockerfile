@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # syntax=docker/dockerfile:1
 # =============================================================================================
-# Per-push deploy image for morrowind.virtastic.app.
+# Engine web image for OpenTES3 (v2).
 #  - builder stage: incremental openmw-web build (fast, FROM the prebaked openmw-builder image).
 #  - runtime stage: caddy:alpine serving the web root with the app's serving contract.
-# Built + tagged `morrowind:ovh` by .github/workflows/deploy-ovh.yml on the Virtastic self-hosted runner.
+# Built by ci/jenkins/build-engine.sh for the harness; the v2 deploy path is not settled yet.
 # =============================================================================================
 
 # ---- builder ---------------------------------------------------------------------------------

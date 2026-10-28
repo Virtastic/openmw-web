@@ -2,8 +2,9 @@
 // to the test app server. Replaces the former OpenMW-Web-Engine-WASM and OpenMW-Web-MP-Server
 // jobs, so there is exactly one button to press for this repo.
 //
-// This is the DEV/TEST box. Prod is GitHub Actions (deploy-ovh / deploy-mp on push to main)
-// and nothing here reaches it.
+// This is the DEV/TEST box and nothing here reaches any production deployment. On OpenTES3
+// (v2) the build is for a bake + harness sweep only: DEPLOY defaults off so a v2 build never
+// lands on the v1 test app server.
 //
 // Lives in the REPO, not in Jenkins' own config, so it is versioned, reviewable through a PR
 // against dev, and survives the Jenkins container being rebuilt. It is also what lets polling
@@ -33,8 +34,8 @@ def GPU_AVAILABLE = false
 pipeline {
   agent any
   parameters {
-    string(name: 'BRANCH', defaultValue: 'dev', description: 'branch to build')
-    booleanParam(name: 'DEPLOY', defaultValue: true, description: 'deploy engine + server to the test app server')
+    string(name: 'BRANCH', defaultValue: 'OpenTES3', description: 'branch to build')
+    booleanParam(name: 'DEPLOY', defaultValue: false, description: 'deploy engine + server to the test app server')
     booleanParam(name: 'RUN_HARNESS', defaultValue: false, description: 'run the multiplayer browser harness after the build (IGNORED while GPU_AVAILABLE is false: the builder GPU needs replacing, see the top of the Jenkinsfile)')
     string(name: 'SCENARIOS', defaultValue: '', description: 'harness scenarios (e.g. "s149 s152"); empty = full suite')
   }

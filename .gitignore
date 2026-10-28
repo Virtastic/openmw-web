@@ -1,6 +1,7 @@
 # === Large binary assets & copyrighted game data (kept local only) ===
 source-mw/
 archive/
+!docs/archive/
 content/
 fsroot/gamedata/
 fsroot/gamedata.old-retail-DONOTSHIP/
