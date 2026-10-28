@@ -75,6 +75,7 @@ const MAX_TRAVEL_CLAIMS_PER_MIN = 12;
 // Two thousand each is far past any honest cell and leaves half the ceiling for the rest.
 const MAX_PLACED_PER_CELL = 2000;
 const MAX_DELETED_PER_CELL = 2000;
+const MAX_TAKEN_PER_CELL = 20_000; // OT3-165 per-character takes, summed over the cell's refs
 const MAX_MEMBER_VARS_PER_CELL = 2000;
 // The per-map caps do not add up to a cell that fits: every map merely AT its cap is past
 // 65,536 nodes (placed alone is ~40k), and a doc that cannot be decoded makes every
@@ -186,6 +187,12 @@ export function containerView(cont: CellDoc['containers'][string], charId: strin
   return (cont.views[charId] = { items: cont.items.map((i) => ({ ...i })), stateSeq: cont.stateSeq });
 }
 
+/** OT3-165: the content refs this character took here (gone for them, nobody else). */
+function takenBy(doc: CellDoc, charId: string | undefined): string[] {
+  if (!charId || !doc.taken) return [];
+  return Object.keys(doc.taken).filter((k) => doc.taken![k]!.includes(charId));
+}
+
 export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], withMemberVars: boolean,
   charId?: string): Record<string, JsLike> {
   const locks: Record<string, JsLike> = {};
@@ -193,7 +200,7 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
   const body: Record<string, JsLike> = {
     cellKey,
     placed: Object.values(doc.placed).map(({ byAccount: _owner, ...p }) => p), // the owner stays server-side
-    deleted: [...doc.deleted],
+    deleted: [...doc.deleted, ...takenBy(doc, charId)],
     moved: { ...doc.moved },
     locks,
     doors: { ...doc.doors },
@@ -1493,8 +1500,27 @@ export class WorldState {
     // tombstone needed or written. Content refs are tombstoned, and when the cell cannot
     // hold another the take is REFUSED rather than answered ok and forgotten on reload --
     // an ok that does not persist is the loot duping on every reload.
-    if (doc.deleted.includes(ref.key) || (ref.kind === 'net' && !(ref.key in doc.placed))) {
+    if (doc.deleted.includes(ref.key) || (ref.kind === 'net' && !(ref.key in doc.placed))
+      || (!player.system && doc.taken?.[ref.key]?.includes(player.charId))) {
       reply(false, 'gone'); // the losing racer, or a stale client view
+      return;
+    }
+    // OT3-165: a placed content item -- Fargoth's ring, a quest note, an artifact on its
+    // stand -- is there once PER CHARACTER. A human's take is recorded against their
+    // character and answered to them alone: nobody else's copy goes, so a griefer camping
+    // the spot denies no one. Spawned (net) objects and the peer's takes stay shared.
+    if (ref.kind === 'ref' && !player.system) {
+      // ponytail: one flat cap per cell; per-ref pruning of long-gone characters if it bites.
+      const total = Object.values(doc.taken ?? {}).reduce((n, ids) => n + ids.length, 0);
+      if (total >= MAX_TAKEN_PER_CELL) {
+        log('warn', 'world.takes_full', { cellKey, by: player.name, cap: MAX_TAKEN_PER_CELL });
+        reply(false, 'cell_full');
+        return;
+      }
+      ((doc.taken ??= {})[ref.key] ??= []).push(player.charId);
+      this.cells.markDirty(cellKey);
+      player.questTriggerAt = Date.now();
+      reply(true); // the client runs the real take; nothing to relay
       return;
     }
     if (ref.kind === 'ref' && !this.tombstone(doc, ref.key, cellKey, player.name)) {

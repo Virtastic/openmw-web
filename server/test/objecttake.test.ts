@@ -80,6 +80,7 @@ test('a take in a cell whose tombstones are full is refused; a net ref never tom
   const seed = new CellStore(dataDir);
   const doc = await seed.get('0,0');
   for (let i = 0; i < 2000; i++) doc.deleted.push(`c:${i}:0`); // MAX_DELETED_PER_CELL
+  doc.taken = { 'c:1:0': Array.from({ length: 20_000 }, (_, i) => `ch${i}`) }; // MAX_TAKEN_PER_CELL
   seed.markDirty('0,0');
   await seed.close();
 
@@ -119,4 +120,42 @@ test('a take in a cell whose tombstones are full is refused; a net ref never tom
   const state = (await a.waitEvent('WorldCellState')).value as { placed: unknown[]; deleted: string[] };
   assert.equal(state.deleted.length, 2000, 'no tombstone for the net ref');
   assert.deepEqual(state.placed, []);
+});
+
+// OT3-165: a placed content item is there once per character. Both take it; neither's take
+// reaches the other; the taker alone finds it gone on re-entry.
+test('two characters each take the same placed item; neither sees the other take', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const join = async (name: string) => {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    await c.joinAsNew(name);
+    await c.waitEvent('PlayerList');
+    c.sendCellChange('0,0', 0, 0, 0);
+    await c.waitEvent('WorldCellState');
+    return c;
+  };
+  const a = await join('Alice');
+  const b = await join('Bob');
+  const ring = { __refnum: { index: 77, contentFile: 0 } };
+
+  b.inbox.events.length = 0;
+  a.sendEvent('ObjectTakeRequest', { opId: 1, ref: ring, cellKey: '0,0' });
+  assert.equal(((await a.waitEvent('ObjectTakeResult')).value as { ok: boolean }).ok, true);
+  b.sendEvent('ObjectTakeRequest', { opId: 2, ref: ring, cellKey: '0,0' });
+  assert.equal(((await b.waitEvent('ObjectTakeResult')).value as { ok: boolean }).ok, true, "Alice's take denied Bob");
+  assert.equal(b.inbox.events.filter((e) => e.name === 'ObjectDelete').length, 0, "Alice's take reached Bob's world");
+
+  a.sendEvent('ObjectTakeRequest', { opId: 3, ref: ring, cellKey: '0,0' });
+  const again = (await a.waitEvent('ObjectTakeResult', (v) => (v as { opId: number }).opId === 3)).value as { ok: boolean; reason?: string };
+  assert.equal(again.reason, 'gone', 'one per character, not one per request');
+
+  a.inbox.events.length = 0;
+  a.sendEvent('ResyncRequest', { cellKey: '0,0' });
+  const mine = (await a.waitEvent('WorldCellState')).value as { deleted: string[] };
+  assert.deepEqual(mine.deleted, ['c:77:0']);
+  const c = await join('Carol');
+  const hers = (c.inbox.events.find((e) => e.name === 'WorldCellState')!.value) as { deleted: string[] };
+  assert.deepEqual(hers.deleted, [], 'a third character still finds it');
 });

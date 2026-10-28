@@ -109,6 +109,9 @@ export interface CellDoc {
   // Who follows whom, refKey -> the CHARACTER followed (a session id dies with the process;
   // WorldState.hydrateFollows resolves it back to one). Escort rides along as claimed.
   follows?: Record<string, { charId: string; escort?: Record<string, number> }>;
+  // OT3-165: content-ref world items a CHARACTER took, refKey -> charIds. Gone for them only;
+  // `deleted` stays the shared tombstone (the peer's, and anything a script removed).
+  taken?: Record<string, string[]>;
 }
 
 export function emptyCellDoc(): CellDoc {
@@ -205,6 +208,7 @@ function remapCellDoc(doc: CellDoc, idxMap: Map<number, number>): { changed: num
   };
   rekey(doc.moved); rekey(doc.locks); rekey(doc.doors); rekey(doc.containers);
   rekey(doc.actorDeaths); rekey(doc.memberVars); rekey(doc.enabled); rekey(doc.follows);
+  rekey(doc.taken);
   const deleted: string[] = [];
   for (const k of doc.deleted) {
     const nk = rk(k);
