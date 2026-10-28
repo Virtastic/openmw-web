@@ -148,6 +148,9 @@ maxBytesPerAccount = 6442450944   # 6 GiB — Morrowind GOTY + a few mods
 # from. Wrong or empty and the browser cannot reach the URLs the server hands it (the server
 # itself still can). Set it whenever players are not on this machine.
 publicBase = ""                   # e.g. https://mp.example.com
+# Hosts this server answers on. A link minted during a request uses the request's host when it is
+# listed here; mail and other out-of-request links use [setup].domain / publicBase.
+hosts = ["opentes3.com"]
 # Server-side savegames, a separate budget from the game-data library above: a full library
 # must never be the reason a player cannot save. 512 MiB is many .omwsave slots.
 maxSaveBytesPerAccount = 536870912

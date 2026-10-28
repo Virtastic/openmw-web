@@ -30,7 +30,7 @@ import { IpRateLimiter } from '../net/ratelimit';
 import { createAuthRoutes } from '../auth/routes';
 import { Locker, loadVanillaManifest } from '../data/locker';
 import { ensureVanillaManifest } from '../data/vanilla-manifest';
-import { lockerPublicBase, lockerStorageFrom, blobRoutes, FsStorage } from '../data/fsstorage';
+import { lockerPublicBase, lockerStorageFrom, blobRoutes, FsStorage, requestBase } from '../data/fsstorage';
 import { eraseSaves } from '../data/save-routes';
 import { lockerRoutes, esmOwnerGate } from '../data/locker-routes';
 import { corsOrigin, json as sendJson, readJsonBody, type HttpRoute } from '../net/http';
@@ -359,6 +359,8 @@ export async function buildFrontDoor(
     locker, sessions: lockerSessions,
     requiredContent: () => (worldContent.ok ? worldContent.contentFiles : []),
     eraseSaves: (acct) => eraseSaves(sharedDir, acct, storage),
+    baseFor: (req) => requestBase(req, config.locker.hosts,
+      lockerPublicBase(config.setup.domain, gatewayPort, config.locker.publicBase)),
   });
   // Blob routes go BEFORE the locker's: these URLs carry their capability in the path and
   // have no Bearer header, which lockerRoutes would reject.

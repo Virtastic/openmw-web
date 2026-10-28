@@ -22,7 +22,7 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { rm, mkdir, rename, stat } from 'node:fs/promises';
 import { join, resolve, sep, dirname } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { corsOrigin, type HttpRoute } from '../net/http';
+import { corsOrigin, isSecureRequest, type HttpRoute } from '../net/http';
 import { log } from '../log';
 
 const EXPIRY_SEC = 3600; // long enough for a multi-hundred-MB PUT
@@ -151,6 +151,14 @@ export function lockerPublicBase(setupDomain: string, port: number, explicit = '
   // path the dashboard exists to provide instead of a shell on the box.
   if (explicit !== '') return explicit;
   return setupDomain ? `https://${setupDomain}` : `http://127.0.0.1:${port}`;
+}
+
+/** Origin for a link minted while serving `req`: the request's own host when it is one of
+ *  `hosts` (so a player on either domain gets links on that domain), else `fallback`. */
+export function requestBase(req: IncomingMessage, hosts: string[], fallback: string): string {
+  const h = String(req.headers.host ?? '').toLowerCase();
+  return h !== '' && hosts.some((d) => d !== '' && d.toLowerCase() === h.replace(/:\d+$/, ''))
+    ? `${isSecureRequest(req) ? 'https' : 'http'}://${h}` : fallback;
 }
 
 export function fsStorageFrom(sharedDir: string, publicBase: string): FsStorage {

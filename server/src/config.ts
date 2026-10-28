@@ -126,7 +126,7 @@ export interface Config {
      *  is a real switch rather than "did you configure storage". */
     enabled: boolean;
     endpoint: string; region: string; bucket: string; maxBytesPerAccount: number;
-    acceptByNameAndSize: boolean; publicBase: string; maxSaveBytesPerAccount: number;
+    acceptByNameAndSize: boolean; publicBase: string; hosts: string[]; maxSaveBytesPerAccount: number;
     accessKeyId: string; secretAccessKey: string;
     /** deliveryModel "esm": extra accepted ESM hashes, "<Name>.esm:<sha256>". */
     esmHashes: string[];
@@ -571,6 +571,7 @@ function validate(t: Tree): Config {
       maxBytesPerAccount: reqNum(t, 'locker', 'maxBytesPerAccount'),
       acceptByNameAndSize: optBool(t, 'locker', 'acceptByNameAndSize', true),
       publicBase: optStr(t, 'locker', 'publicBase', ''),
+      hosts: optStrArray(t, 'locker', 'hosts', ['opentes3.com']),
       maxSaveBytesPerAccount: optNum(t, 'locker', 'maxSaveBytesPerAccount', 536870912),
       accessKeyId: optStr(t, 'locker', 'accessKeyId', ''),
       secretAccessKey: optStr(t, 'locker', 'secretAccessKey', ''),

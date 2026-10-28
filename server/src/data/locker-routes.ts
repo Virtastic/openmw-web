@@ -35,7 +35,15 @@ interface LockerRouteDeps {
   requiredContent?: () => string[];
   /** Delete-my-data must take the savegames with it; supplied where saveRoutes is mounted. */
   eraseSaves?: (accountKey: string) => Promise<number>;
+  /** Origin for links minted during this request; absent keeps the storage's own base. */
+  baseFor?: (req: IncomingMessage) => string;
 }
+
+// Filesystem blob URLs are `<base>/locker/blob/...`; swap the base for the request's.
+const rebase = (u: string, b?: string): string => {
+  const i = u.indexOf('/locker/blob/');
+  return b && i >= 0 ? b + u.slice(i) : u;
+};
 
 // The server streams the server's own copy through /mwdata/*. Those reads come from
 // the engine's StreamFS worker as plain same-origin Range fetches that cannot carry a Bearer
@@ -128,7 +136,7 @@ export function lockerRoutes(deps: LockerRouteDeps) {
         }
         const r = await deps.locker.authorizeUpload(accountKey, file);
         if (!r.ok) { json(res, 200, { ok: false, reason: r.reason }); return true; }
-        json(res, 200, { ok: true, url: r.url, key: r.key });
+        json(res, 200, { ok: true, url: rebase(r.url, deps.baseFor?.(req)), key: r.key });
         return true;
       }
 
@@ -176,7 +184,7 @@ export function lockerRoutes(deps: LockerRouteDeps) {
         }
         const dl = await deps.locker.authorizeDownload(accountKey, name);
         if (!dl) { json(res, 404, { error: 'not_yours' }); return true; }
-        json(res, 200, { url: dl });
+        json(res, 200, { url: rebase(dl, deps.baseFor?.(req)) });
         return true;
       }
 

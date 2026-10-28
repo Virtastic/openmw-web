@@ -59,7 +59,7 @@ import { IdentityStore, LoginTicketStore, SessionIndex } from './auth/identities
 import { createAuthRoutes } from './auth/routes';
 import { ensureVanillaManifest } from './data/vanilla-manifest';
 import { Locker, loadVanillaManifest } from './data/locker';
-import { lockerStorageFrom, blobRoutes, FsStorage, lockerPublicBase } from './data/fsstorage';
+import { lockerStorageFrom, blobRoutes, FsStorage, lockerPublicBase, requestBase } from './data/fsstorage';
 import { mwDataRoutes } from './net/mwdata-routes';
 import { createSysInfo } from './net/admin/sysinfo';
 /** Just the parts of the storage backend the saves API needs. */
@@ -1100,6 +1100,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     lockerRoutes({
       locker, sessions: lockerSessions,
       eraseSaves: (acct) => eraseSaves(sharedDir, acct, lockerStorage),
+      baseFor: (req) => requestBase(req, config.locker.hosts, lockerBase),
     }),
     // Last: the player app, for any path nothing above claimed (issue #203).
     ...(clientDir ? [clientRoutes({
