@@ -20,6 +20,7 @@ import { cellMapFull, type CellStore, type FactionState } from '../persist/cells
 import type { PlayerDoc, PlayerStore } from '../persist/playerstore';
 import { daysPassed } from './worldtime';
 import { log } from '../log';
+import { hintGold } from './economy';
 
 // 5000 (backlog 321): 2000 dropped the BEGINNING of a long campaign (Tamriel Rebuilt passes it).
 // The bound is the JournalSync frame: an entry is 12 LSER nodes ({q,i,d,m,dm}), so 5000 is
@@ -269,6 +270,7 @@ export class Quests {
   // ---------------------------------------------------------------- journal
 
   private journal(player: Player, body: LTable): void {
+    hintGold(player, 'quest'); // OT3-189: a reward lands in the next declaration
     const questId = str(body.get('questId'));
     const idx = index(body.get('index'));
     const actorRefId = body.get('actorRefId');

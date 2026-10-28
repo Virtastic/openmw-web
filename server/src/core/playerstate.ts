@@ -14,6 +14,7 @@ import { parseObjRef } from '../proto/ref';
 import { log } from '../log';
 import { serverWhisper } from './chat';
 import { metrics } from '../metrics';
+import { countInventory } from './economy';
 
 const MAX_RECORD_ID = 64;
 // A DoS BOUND, NOT A GAMEPLAY BOUND -- and the difference is the whole point. This was 512
@@ -730,6 +731,7 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   // how entries aggregate would make that subtraction duplicate or destroy real items. States
   // are keyed by record id, one entry per stack (#234), and are advisory: a bad state costs
   // fidelity, never an item. Bounded by the same entry cap so it cannot grow unchecked.
+  countInventory(player, before, out); // OT3-189
   const states = parseItemStatesL(tbl(body.get('itemStates')));
   ctx.store.update(player.charId, (doc) => {
     doc.inventory = out;

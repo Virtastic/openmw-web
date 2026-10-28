@@ -205,6 +205,48 @@ export class Gauge extends Metric {
   }
 }
 
+// OT3-189: the items gained most (by count) over the current and previous window, top N only,
+// so the label set stays bounded whatever ids arrive. Ids are inventory record ids that passed
+// the declaration checks (known records wherever the content table is loaded).
+export class TopMovers extends Metric {
+  private cur = new Map<string, number>();
+  private prev = new Map<string, number>();
+  private rolledAt?: number;
+
+  constructor(name: string, help: string, readonly top = 10, readonly windowMs = 3_600_000) {
+    super(name, help, ['item']);
+  }
+
+  private roll(now: number): void {
+    this.rolledAt ??= now;
+    if (now - this.rolledAt < this.windowMs) return;
+    this.prev = now - this.rolledAt >= 2 * this.windowMs ? new Map() : this.cur;
+    this.cur = new Map();
+    this.rolledAt = now;
+  }
+
+  add(item: string, n: number, now = Date.now()): void {
+    this.roll(now);
+    this.cur.set(item, (this.cur.get(item) ?? 0) + n);
+  }
+
+  render(out: string[], now = Date.now()): void {
+    this.roll(now);
+    const sum = new Map(this.prev);
+    for (const [k, v] of this.cur) sum.set(k, (sum.get(k) ?? 0) + v);
+    out.push(`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} gauge`);
+    for (const [item, n] of [...sum].sort((a, b) => b[1] - a[1]).slice(0, this.top)) {
+      out.push(`${this.name}${renderLabels({ item })} ${n}`);
+    }
+  }
+
+  reset(): void {
+    this.cur.clear();
+    this.prev.clear();
+    this.rolledAt = undefined;
+  }
+}
+
 const registry: Metric[] = [];
 
 function reg<T extends Metric>(m: T): T {
@@ -279,6 +321,12 @@ export const metrics = {
   // #361: same-cell jumps beyond a room with no cast/door/conversation/respawn to explain them.
   cellChangeRefused: reg(
     new Counter('omwmp_cell_change_refused_total', 'Same-cell teleports refused: nothing seen that explains the jump.', [])),
+
+  // OT3-189 (core/economy.ts): gold into / out of player inventories by source (loot |
+  // merchant | quest | trade | admin | other). A dupe is a spike, usually on 'other'.
+  goldIn: reg(new Counter('omwmp_gold_in_total', 'Gold entering player inventories, by source.', ['source'])),
+  goldOut: reg(new Counter('omwmp_gold_out_total', 'Gold leaving player inventories, by source.', ['source'])),
+  itemMovers: reg(new TopMovers('omwmp_item_top_movers', 'Items gained most across players over the last 1-2 hours (top 10).')),
 
   movesRefused: reg(
     new Counter('omwmp_moves_refused_total', 'Player move frames refused for sustained implausible speed.', [])),

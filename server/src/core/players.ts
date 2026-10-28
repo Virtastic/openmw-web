@@ -219,6 +219,8 @@ export interface Player {
   pendingAcquired?: Map<string, number>;
   // P4: gold accepted from inventory declarations in the current minute (playerstate.ts).
   goldWindow?: { at: number; gained: number };
+  // OT3-189: the last server-seen event that explains a gold change (economy.ts).
+  goldHint?: { source: import('./economy').GoldSource; at: number };
   // Backlog 337/384: the distinct far cells this session's ObjectEnabled messages have named.
   // A far exterior must be well-formed; at most MAX_FAR_ENABLE_CELLS distinct far cells.
   farEnableCells?: Set<string>;

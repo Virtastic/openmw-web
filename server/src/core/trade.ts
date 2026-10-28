@@ -20,6 +20,7 @@ import { openDb } from '../persist/sqlite';
 import type { Player } from './players';
 import type { LValue } from '../proto/lser';
 import { log } from '../log';
+import { countTrade } from './economy';
 
 export type Item = { id: string; n: number };
 
@@ -148,6 +149,7 @@ export class Trades {
     this.d.ledger(entry);
     this.d.setInventory(t.a.p.charId, nextA);
     this.d.setInventory(t.b.p.charId, nextB);
+    countTrade([t.a.offer, t.b.offer]); // OT3-189
     for (const [s, o] of [[t.a, t.b], [t.b, t.a]] as const) {
       for (const i of s.offer) this.d.binding?.handedOver(s.p.charId, o.p.charId, i.id);
     }

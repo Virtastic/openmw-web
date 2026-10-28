@@ -25,6 +25,7 @@ import type { ResumeStore } from './resume';
 import type { Moderation } from './moderation';
 import { broadcastChat } from './chat';
 import { log } from '../log';
+import { GOLD_ID, hintGold } from './economy';
 
 // OT3-191: 1 is the helper tier (kick, mute, reports); 2 adds bans, give and restore.
 // 4 is the platform itself (the gateway's erase-kick) and is never assignable.
@@ -387,6 +388,7 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       if (!target || !recordId || !reason) return 'usage: /give <player> <recordId> <count> <reason>';
       const count = Number(args[2]);
       if (!Number.isInteger(count) || count < 1 || count > 10000) return 'count must be an integer 1-10000.';
+      if (recordId.toLowerCase() === GOLD_ID) hintGold(target, 'admin'); // OT3-189
       target.peer.sendEvent('AdminGive', { recordId, count });
       audit(actor, 'give', { target: target.name, recordId, count, reason });
       return `Gave ${count}x ${recordId} to ${target.name}.`;

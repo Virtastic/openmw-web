@@ -19,6 +19,7 @@ import { CellStore, cellMapFull, emptyCellDoc, type CellDoc, type ContainerItems
 import { log } from '../log';
 import { serverWhisper } from './chat';
 import { metrics } from '../metrics';
+import { hintGold } from './economy';
 
 const MAX_RECORD_ID = 64;
 const MAX_COUNT = 10000;
@@ -1802,6 +1803,7 @@ export class WorldState {
       return;
     }
     if (isGold) {
+      hintGold(player, 'merchant'); // OT3-189
       // A DELTA, not an absolute. Two players trading with the same merchant at once would
       // each compute a different absolute from their own stale view and the later write would
       // erase the earlier trade; deltas commute, so both land.
@@ -1843,6 +1845,7 @@ export class WorldState {
       return;
     }
     // OT3-82: take/put land on this character's own copy (shared for merchants and the peer).
+    if (itemId.toLowerCase() === GOLD) hintGold(player, 'loot'); // OT3-189
     const view = containerView(cont, player.charId, player.system === true, true);
     const shared = view === cont;
     const item = view.items.find((i) => i.id === itemId);
