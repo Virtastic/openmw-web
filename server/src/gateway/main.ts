@@ -100,9 +100,7 @@ const worlds = new WorldSupervisor({
     basePort: Number(values['base-port'] ?? 9000),
     gatewayPort: port,
     // A count cap only. One public world runs; the cap is a backstop, not a plan.
-    maxWorlds: positiveInt(values['max-worlds'],
-      config.worlds.maxWorlds > 0 ? config.worlds.maxWorlds : config.server.maxPlayers,
-      'max-worlds'),
+    maxWorlds: positiveInt(values['max-worlds'], config.server.maxPlayers, 'max-worlds'),
     // 300 s, not 120: on the shared builder LXC a neighbour's load starves a world's boot for
     // tens of seconds at a time (mp-harness.mjs's own /healthz wait, #175 s117), and a rolling
     // restart used this same number to decide a world was gone (#175 s175: 120630 ms, one world

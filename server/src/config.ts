@@ -32,16 +32,6 @@ export interface Config {
    *  none at all) was used instead. The dashboard surfaces this and the notifier reports it:
    *  a silent revert is precisely the thing an operator must not discover by accident. */
   dashboardFallback?: string;
-  // Read by the GATEWAY process only (dist/gateway.mjs); a single world server ignores it.
-  worlds: {
-    maxWorlds: number; // hard count ceiling (0 = [server] maxPlayers)
-    // Is the shared PUBLIC world offered at all? Default FALSE: it is the most experimental
-    // surface here -- strangers, lobby containment, PvP zoning, movement correction -- and a
-    // deployment should have to opt into it rather than discover it is live. When off the
-    // gateway starts no public world and the directory does not list one, so the client's
-    // Worlds tab has nothing to show and the Public button disappears on its own.
-
-  };
   simPeer: {
     /** Always true once boot succeeds; boot fails otherwise. Kept so call sites read clearly. */
     enabled: boolean;
@@ -512,11 +502,6 @@ function validate(t: Tree): Config {
       password: reqStr(t, 'server', 'password'),
     },
     gateway: { url: reqStr(t, 'gateway', 'url'), serverToken: optStr(t, 'gateway', 'serverToken', '') },
-    worlds: {
-      // All optional: a config.toml written before the governor existed must keep booting,
-      // and a single world server never reads this table at all.
-      maxWorlds: optNum(t, 'worlds', 'maxWorlds', 0),
-    },
     simPeer: {
       // Resolved in startServer once the game data has been inspected; the raw config cannot
       // know whether a peer is actually runnable.
@@ -877,6 +862,9 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
   // CL8: the Attio CRM hook is gone. A leftover [integrations] table changes nothing; say so.
   if (operatorTrees.some((t) => t && isTree(t['integrations'])))
     log('warn', 'config.ignored_integrations', { fix: 'delete the [integrations] table: the CRM hook was removed' });
+  // OT3-49: the per-world [worlds] table is gone (one world; the count cap is [server] maxPlayers).
+  if (operatorTrees.some((t) => t && isTree(t['worlds'])))
+    log('warn', 'config.ignored_worlds', { fix: 'delete the [worlds] table: one world runs, capped by [server] maxPlayers' });
   // THE GATEWAY CREDENTIAL GENERATES ITSELF. A world process proves to the gateway that it is
   // part of the platform with a shared secret, and without one a player cannot create a world
   // from inside the game at all. Requiring an operator to invent and paste a string into

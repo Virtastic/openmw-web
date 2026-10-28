@@ -141,19 +141,9 @@ OOM kill.
 x86-64, full retail data, one player): peer 487 MB + world 136 MB ≈ **640 MB per occupied
 world**. Re-measure on your hardware with `server/scripts/measure-capacity.ts`.
 
-The ceiling lives on the gateway:
-
-```toml
-[worlds]
-memBudgetMb = 8192      # total RAM for worlds and their peers
-worldCostMb = 640       # measured cost of one occupied world
-gatewayReserveMb = 256  # held back for the gateway itself
-```
-
-`GET /healthz` reports the live ceiling; a refused player is told the server is full.
-**`memBudgetMb = 0` disables the memory governor entirely** - the combination that gets a
-container OOM-killed while every per-world cap reads as satisfied. Keep
-`memBudgetMb + gatewayReserveMb` at or below the container's own limit.
+One world runs; there is no per-world memory governor. Size the host for the peers the
+occupied cells need. A leftover `[worlds]` table in an old config.toml is ignored with a
+`config.ignored_worlds` warning.
 
 **Rolling restart: `kill -HUP` the gateway.** Worlds restart one at a time, emptiest first,
 each drained and verified back before the next - a world-code deploy is not an outage.
