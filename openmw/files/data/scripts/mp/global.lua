@@ -2078,7 +2078,7 @@ local eventHandlers = {
     MP_PlayerResurrect = function(data)
         -- standUp: a death the peer never confirmed (playerstate.ts) -- up where we lie.
         if not data.standUp then teleportPlayerTo(data) end
-        toPlayer('MP_DoResurrect', { restoreHp = data.restoreHp == true, standUp = data.standUp == true, hp = data.hp })
+        toPlayer('MP_DoResurrect', { restoreHp = data.restoreHp == true, standUp = data.standUp == true, hp = data.hp, weakened = data.weakened == true })
     end,
 
     -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)

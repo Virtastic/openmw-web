@@ -36,6 +36,25 @@ const downedOf = (api: PluginApi) => {
 
 const EXTERIOR = /^-?\d+,-?\d+$/;
 
+// OT3-175: the only cost of dying. A SECOND return to a shrine within REPEAT_MS comes back at
+// half health, magicka and fatigue (and nothing is ever lost). Keyed by character name so a
+// relog does not dodge it; a re-sent PlayerDeath (< RESEND_MS apart) is the same death.
+export const REPEAT_MS = 5 * 60_000;
+const RESEND_MS = 10_000;
+const WEAKEN_FROM_LEVEL = 5;
+const lastRespawnBy = new WeakMap<PluginApi, Map<string, number>>();
+
+function weakened(api: PluginApi, player: PluginPlayer, now = Date.now()): boolean {
+  let m = lastRespawnBy.get(api);
+  if (!m) lastRespawnBy.set(api, (m = new Map()));
+  const key = player.name.toLowerCase();
+  const prev = m.get(key);
+  if (prev !== undefined && now - prev < RESEND_MS) return false;
+  m.set(key, now);
+  if (prev === undefined || now - prev >= REPEAT_MS) return false;
+  return (api.levelOfPlayer?.(player.id) ?? 1) >= WEAKEN_FROM_LEVEL;
+}
+
 /** OT3-174: the visited shrine nearest to where they fell (outdoors), or to the last outdoor
  *  spot they left (indoors). Shrines with no outdoor reference lose to any that have one;
  *  with no reference point at all, the most recently visited wins. */
@@ -81,10 +100,12 @@ function respawnNow(api: PluginApi, player: PluginPlayer) {
     return;
   }
 
-  api.sendEvent(player.id, 'PlayerResurrect', { ...dest, restoreHp: true });
+  const weak = weakened(api, player);
+  api.sendEvent(player.id, 'PlayerResurrect', { ...dest, restoreHp: true, ...(weak ? { weakened: true } : {}) });
+  if (weak) api.chat(player.id, { channel: 'server', text: 'You died again so soon: you return weakened (half health, magicka and fatigue).' });
   api.log('info', 'respawn.sent', {
     id: player.id, cellKey: dest.cellKey,
-    via: configured ? 'configured' : shrine ? 'shrine' : surfaced ? 'surfaced' : 'where_they_fell',
+    via: configured ? 'configured' : shrine ? 'shrine' : surfaced ? 'surfaced' : 'where_they_fell', weakened: weak,
   });
 }
 

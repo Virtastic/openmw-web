@@ -158,3 +158,32 @@ test('downed and never revived: the shrine after the window, with all items', (t
   assert.equal(res.restoreHp, true); // nothing about inventory crosses: items stay where they are
   assert.equal(respawn.onPlayerRevive!(api, { id: 2, name: 'Friend', rank: 0 }, 1), undefined, 'too late to revive');
 });
+
+// OT3-175: first death free; a second within 5 min (level 5+) comes back weakened; a re-sent
+// PlayerDeath is not a second death; below level 5 never.
+test('a repeat death within 5 minutes returns weakened, from level 5', (t) => {
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const run = (level: number, name: string) => {
+    const { api, events } = fakeApi({ positions: { 1: { cellKey: 'x', x: 9, y: 9, z: 9 } } });
+    (api as { levelOfPlayer?: () => number }).levelOfPlayer = () => level;
+    const who = { ...DEAD, name };
+    const weak = () => {
+      events.length = 0;
+      respawn.onPlayerDeath!(api, who);
+      return (events.find((e) => e.name === 'PlayerResurrect')!.body as { weakened?: boolean }).weakened === true;
+    };
+    return weak;
+  };
+  const vet = run(10, 'Vet');
+  assert.equal(vet(), false, 'first death');
+  now += 5_000;
+  assert.equal(vet(), false, 'a resend is the same death');
+  now += 60_000;
+  assert.equal(vet(), true, 'second death within 5 min');
+  now += 6 * 60_000;
+  assert.equal(vet(), false, 'after 5 min it is free again');
+  const sprout = run(3, 'Sprout');
+  sprout(); now += 60_000;
+  assert.equal(sprout(), false, 'below level 5 never');
+});

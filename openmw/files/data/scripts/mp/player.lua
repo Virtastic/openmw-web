@@ -1595,6 +1595,12 @@ local script = {
                 d.health(self).current = d.health(self).base
                 d.magicka(self).current = d.magicka(self).base
                 d.fatigue(self).current = d.fatigue(self).base
+                -- OT3-175: a repeat death within minutes comes back at half.
+                if data.weakened then
+                    for _, s in ipairs({ d.health(self), d.magicka(self), d.fatigue(self) }) do
+                        s.current = math.max(1, math.floor(s.base / 2))
+                    end
+                end
             end
         end,
         UiModeChanged = function(data)
