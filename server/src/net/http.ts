@@ -175,10 +175,14 @@ export function clientIp(req: IncomingMessage): string {
 // True when the browser reached us over TLS, directly or through a terminating proxy.
 // Only used to decide whether a Secure cookie is safe to set: setting Secure on a plain
 // http:// dev listener makes the browser DROP the cookie, which breaks the state check.
+// OT3-39: the header counts only from a trusted proxy (the same boundary as clientIp); a
+// client reaching us directly cannot pick its own scheme.
 export function isSecureRequest(req: IncomingMessage): boolean {
-  const proto = req.headers['x-forwarded-proto'];
-  const first = (Array.isArray(proto) ? proto[0] : proto)?.split(',')[0]?.trim();
-  if (first) return first === 'https';
+  if (proxyIsTrusted(req.socket.remoteAddress ?? '')) {
+    const proto = req.headers['x-forwarded-proto'];
+    const first = (Array.isArray(proto) ? proto[0] : proto)?.split(',')[0]?.trim();
+    if (first) return first === 'https';
+  }
   return 'encrypted' in req.socket;
 }
 

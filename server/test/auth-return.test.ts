@@ -10,7 +10,7 @@ import { __testing } from '../src/auth/routes';
 const { resolveReturn } = __testing;
 
 const req = (host: string, proto?: string): IncomingMessage =>
-  ({ headers: proto ? { host, 'x-forwarded-proto': proto } : { host }, socket: {} } as unknown as IncomingMessage);
+  ({ headers: proto ? { host, 'x-forwarded-proto': proto } : { host }, socket: { remoteAddress: '172.18.0.2' } } as unknown as IncomingMessage);
 
 // The default lands on "/", the server's own sign-in page, not on launcher.html. The
 // launcher is the hosted site's chooser; a self-hosted server's front door signs the player

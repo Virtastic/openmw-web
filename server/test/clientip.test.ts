@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { IncomingMessage } from 'node:http';
 import { clientIp, CLIENT_IP_HEADER } from '../src/net/ws';
+import { isSecureRequest } from '../src/net/http';
 
 const req = (remoteAddress: string, headers: Record<string, string> = {}): IncomingMessage =>
   ({ headers, socket: { remoteAddress } } as unknown as IncomingMessage);
@@ -90,4 +91,12 @@ test('an ignored cf-connecting-ip from a trusted proxy is still resolved by othe
     '198.51.100.9');
   // With nothing else to go on, the proxy address IS the answer.
   assert.equal(clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7' })), '172.18.0.2');
+});
+
+// OT3-39: X-Forwarded-Proto decides Secure cookies and the sign-in return origin, so it is read
+// only from a trusted (private) proxy, like X-Forwarded-For.
+test('X-Forwarded-Proto counts only from a trusted proxy', () => {
+  assert.equal(isSecureRequest(req('172.18.0.2', { 'x-forwarded-proto': 'https' })), true);
+  assert.equal(isSecureRequest(req('198.51.100.4', { 'x-forwarded-proto': 'https' })), false);
+  assert.equal(isSecureRequest(req('198.51.100.4', { 'x-forwarded-proto': 'http' })), false);
 });
