@@ -310,7 +310,7 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     const seg = url.pathname.split('/').filter((s) => s !== '');
     if (seg[0] !== 'auth') return also ? also(req, res, url) : false;
 
-    // PASSWORD SIGN-UP, from the front door.
+    // PASSWORD SIGN-UP, from the front door. Off unless [login].allowPasswordSignup.
     //
     // /auth/password below only ever signs an EXISTING account in, so a server whose only
     // sign-in method is a password had no way for a new player to get an account: the
@@ -340,6 +340,13 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       }
       if (!config.login.allowRegistration) {
         sendJson(res, 403, { error: 'this server is not taking new players' });
+        return true;
+      }
+      // Its own switch, off by default ([login].allowPasswordSignup): an open registration
+      // used to mean SSO sign-up and the in-game register only, and a server that never asked
+      // for a public sign-up form must not grow one on update.
+      if (!config.login.allowPasswordSignup) {
+        sendJson(res, 403, { error: 'new accounts are not made on this page; ask the server owner for one' });
         return true;
       }
       const body = await readBody(req);
@@ -468,8 +475,10 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
         // page knew to ask, so an invite-only server refused every SSO sign-up (invite_required).
         inviteRequired: config.login.allowRegistration && config.login.inviteCode !== '',
         // Whether the password form can also CREATE an account (POST /auth/password/register).
-        // Same switches as the in-game register: password sign-in on, registration open.
-        allowPasswordSignup: config.auth.allowPasswordLogin && config.login.allowRegistration,
+        // The route's own switches: password sign-in on, registration open, and the operator's
+        // [login].allowPasswordSignup (off by default).
+        allowPasswordSignup: config.auth.allowPasswordLogin && config.login.allowRegistration
+          && config.login.allowPasswordSignup,
         // Only a public link (an https URL), so a typo cannot turn the sign-in page into an open redirect.
         inviteHelpUrl: /^https:\/\/[^\s"<>]+$/.test(config.login.inviteHelpUrl) ? config.login.inviteHelpUrl : '',
       });

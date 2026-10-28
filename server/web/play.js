@@ -221,6 +221,11 @@
     // Password only: the code goes in the sign-up form's own field.
     note('This server is invite-only. New players: choose <b>Create an account</b> and enter your '
       + 'invite code. Returning players sign in as usual.' + help);
+  } else if (!providers.length && !canSignup) {
+    // Password only, sign-up off ([login].allowPasswordSignup): nothing on this page makes an
+    // account, so say where one comes from instead of leaving a new player at a sign-in form.
+    note('New players: the server owner creates accounts here, so ask them for yours. '
+      + 'Returning players sign in as usual.');
   }
 
   // SIGN IN or CREATE AN ACCOUNT. Starts on "create" for somebody who arrived on an invite link

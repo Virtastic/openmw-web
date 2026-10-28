@@ -86,6 +86,10 @@ export interface Config {
   };
   login: {
     allowRegistration: boolean;
+    /** The front page's password form may also CREATE accounts (POST /auth/password/register).
+     *  Off by default: it opens self-serve sign-up to anyone who can reach the page (behind
+     *  inviteCode when set), which an operator should choose, not inherit. */
+    allowPasswordSignup: boolean;
     inviteCode: string;
     /** Where a player without an invite is sent to get one (e.g. the server's Discord). "" = no link. */
     inviteHelpUrl: string;
@@ -547,6 +551,7 @@ function validate(t: Tree): Config {
     },
     login: {
       allowRegistration: reqBool(t, 'login', 'allowRegistration'),
+      allowPasswordSignup: optBool(t, 'login', 'allowPasswordSignup', false),
       inviteCode: reqStr(t, 'login', 'inviteCode'),
       inviteHelpUrl: reqStr(t, 'login', 'inviteHelpUrl'),
       resumeWindowSec: reqNum(t, 'login', 'resumeWindowSec'),

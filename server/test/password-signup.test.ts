@@ -6,8 +6,8 @@
 // Before it, /auth/password only signed EXISTING accounts in, so a server whose only sign-in
 // method was a password had no way in for a new player: the wizard's "invite only" answer gave
 // the owner an invite link that opened a sign-in form nobody new could pass. These pin the
-// gates (registration open, password sign-in on, the invite code, the name and password rules,
-// bans) and that success is an ordinary password sign-in.
+// gates (its own switch, off by default; registration open; password sign-in on; the invite
+// code; the name and password rules; bans) and that success is an ordinary password sign-in.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -28,7 +28,8 @@ async function boot(
     requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     configOverride: {
       auth: { allowPasswordLogin: true, ...auth },
-      login,
+      // Every test below runs with the switch on, unless it passes its own value.
+      login: { allowPasswordSignup: true, ...login },
       limits: { loginPerMinPerIp: 600 },
     },
   });
@@ -42,6 +43,26 @@ async function boot(
     { allowPasswordSignup?: boolean; inviteRequired?: boolean };
   return { server, post, register, providers };
 }
+
+test('off by default: an open server offers no sign-up form and refuses the route', async (t) => {
+  // No allowPasswordSignup in the override at all: config.default.toml decides.
+  resetInviteBudgets();
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { auth: { allowPasswordLogin: true }, login: { allowRegistration: true, inviteCode: '' } },
+  });
+  t.after(() => server.close());
+  assert.equal(server.config.login.allowPasswordSignup, false);
+  const base = `http://127.0.0.1:${server.port}`;
+  const p = await (await fetch(`${base}/auth/providers`)).json() as { allowPasswordSignup?: boolean };
+  assert.equal(p.allowPasswordSignup, false, 'the page must not offer it');
+  const r = await fetch(`${base}/auth/password/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Nerevar', password: PASS }),
+  });
+  assert.equal(r.status, 403);
+  assert.equal(await server.accounts.get('Nerevar'), undefined, 'no account was created');
+});
 
 test('an invite-only password server lets a new player in with the code, and only with it', async (t) => {
   const { post, register, providers } = await boot(t, { allowRegistration: true, inviteCode: 'Seyda Neen 427' });
@@ -90,6 +111,10 @@ test('name and password problems are answered without spending an invite guess',
   assert.equal(bad.status, 400);
   const own = await register({ name: 'Caius', password: 'caius-is-my-password', invite: 'right-code' });
   assert.equal(own.status, 400, 'a password holding the name is refused');
+  const common = await register({ name: 'Caius', password: 'Administrator', invite: 'right-code' });
+  assert.equal(common.status, 400);
+  assert.equal((await common.json() as { error: string }).error,
+    'password is one of the most common passwords in the world');
   const ok = await register({ name: 'Caius', password: PASS, invite: 'right-code' });
   assert.equal(ok.status, 200, 'the code still works after the typing mistakes');
 });
@@ -113,6 +138,10 @@ test('an open server needs no code', async (t) => {
 });
 
 test('closed registration and password sign-in off both refuse, and say so to the page', async (t) => {
+  const switchedOff = await boot(t, { allowRegistration: true, inviteCode: '', allowPasswordSignup: false });
+  assert.equal((await switchedOff.providers()).allowPasswordSignup, false);
+  assert.equal((await switchedOff.register({ name: 'Fargoth', password: PASS })).status, 403);
+
   const closed = await boot(t, { allowRegistration: false, inviteCode: '' });
   assert.equal((await closed.providers()).allowPasswordSignup, false);
   assert.equal((await closed.register({ name: 'Fargoth', password: PASS })).status, 403);
