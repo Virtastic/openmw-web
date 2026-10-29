@@ -154,6 +154,13 @@ function M.install(opts)
   package.loaded['openmw.mp'] = mp
   package.loaded['openmw.self'] = { id = 'self' }
   package.loaded['openmw.nearby'] = { actors = {} }
+  -- combat.lua / companion.lua share the story licence through a global storage section.
+  package.loaded['openmw.storage'] = {
+    globalSection = function()
+      local values = {}
+      return { set = function(_, k, v) values[k] = v end, get = function(_, k) return values[k] end }
+    end,
+  }
   package.loaded['openmw.types'] = types
   package.loaded['openmw.util'] = {
     vector2 = function(a, b) return { a, b } end,
