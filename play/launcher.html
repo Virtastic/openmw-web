@@ -1671,10 +1671,17 @@ html.door .topbar, html.door .wrap { display:none !important }
    // concept, so there is nothing to pick; boot straight into single player with the locker
    // mounted. index.html keys multiplayer off `mp=` alone, so omitting it is the whole mode.
    if (intent === 'cloud'){
+     // A SERVER THAT HANDS OUT THE GAME HAS NO LOCKER TO MOUNT. Same question bootGame asks, and
+     // the same #mwdata=1 answer: without it the boot opened an empty locker, read the server's
+     // empty needed-list as "no game manifest configured" and bounced back here (prod
+     // 2026-10-20: 9 sign-ins from 3 accounts, one of them brand new, never reached the game).
+     let hosted = false;
+     try { hosted = (await fetch('/mwdata-manifest.json', { method: 'HEAD' })).ok; } catch(e){}
      window.__omwAllowLeave = true;
      location.href = 'index.html#locker=' + encodeURIComponent(gwHttp)
        + '&mplocker=' + encodeURIComponent(lockerToken)
        + '&mpaccount=' + encodeURIComponent(account)
+       + (hosted ? '&mwdata=1' : '')
        + '&cloud=1';   // read by index.html's launcher gate; see the guard there
      return;
    }
