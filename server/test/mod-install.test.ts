@@ -128,6 +128,47 @@ test('two installs of the same name get distinct folders', () => {
     });
 });
 
+test('the same archive installed again replaces its copy and keeps the switches the operator set', async () => {
+  const dataDir = tmp(); const gameDataDir = tmp();
+  const again = (files: { name: string; data: string }[]) => {
+    stage(dataDir, TOKEN, files);
+    writeFileSync(join(dataDir, 'mod-staging', `${TOKEN}.json`), JSON.stringify({ archive: 'td.7z' }));
+    return commitInstall(dataDir, gameDataDir, TOKEN, [{ path: '00 Data Files', slug: 'td', name: 'TD' }]);
+  };
+  assert.ok((await again([{ name: '00 Data Files/TD.esm', data: 'v1' }, { name: '00 Data Files/old.txt', data: 'x' }])).ok);
+  stage(dataDir, TOKEN, [{ name: 'B.esp', data: 'x' }]);
+  assert.ok((await commitInstall(dataDir, gameDataDir, TOKEN, [{ path: '', slug: 'other', name: 'Other' }])).ok);
+  const d = readModDoc(dataDir);
+  d.mods = [d.mods[1]!, { ...d.mods[0]!, enabled: false, plugins: [{ file: 'TD.esm', enabled: false }] }];
+  writeModDoc(dataDir, d);
+
+  const res = await again([{ name: '00 Data Files/TD.esm', data: 'v2' }]);
+  assert.ok(res.ok, res.ok ? '' : res.error);
+  assert.equal(res.value[0]!.slug, 'td', 'no -2 copy');
+  const mods = readModDoc(dataDir).mods;
+  assert.deepEqual(mods.map((m) => m.slug), ['other', 'td'], 'same place in the load order');
+  assert.equal(mods[1]!.enabled, false);
+  assert.equal(mods[1]!.plugins[0]!.enabled, false);
+  assert.equal(readFileSync(join(gameDataDir, 'mods', 'td', 'TD.esm'), 'utf8'), 'v2');
+  assert.ok(!existsSync(join(gameDataDir, 'mods', 'td', 'old.txt')), 'the old copy is gone, not merged');
+  assert.ok(!existsSync(join(gameDataDir, 'mods', 'td-2')));
+  assert.ok(!existsSync(join(gameDataDir, 'mods', '.stage-replace-td')));
+});
+
+test('a reinstall that fails leaves the old copy playing', async () => {
+  const dataDir = tmp(); const gameDataDir = tmp();
+  const note = () => writeFileSync(join(dataDir, 'mod-staging', `${TOKEN}.json`), JSON.stringify({ archive: 'm.zip' }));
+  stage(dataDir, TOKEN, [{ name: 'M.esp', data: 'v1' }]); note();
+  assert.ok((await commitInstall(dataDir, gameDataDir, TOKEN, [{ path: '', slug: 'm', name: 'M' }])).ok);
+  stage(dataDir, TOKEN, [{ name: 'M.esp', data: 'v2' }]); note();
+  // A file where the reinstall unpacks: the failure lands mid-install, past the replace decision.
+  writeFileSync(join(gameDataDir, 'mods', '.stage-replace-m'), 'in the way');
+  const res = await commitInstall(dataDir, gameDataDir, TOKEN, [{ path: '', slug: 'm', name: 'M' }]);
+  assert.ok(!res.ok, 'the install must fail');
+  assert.equal(readFileSync(join(gameDataDir, 'mods', 'm', 'M.esp'), 'utf8'), 'v1');
+  assert.deepEqual(readModDoc(dataDir).mods.map((m) => m.slug), ['m']);
+});
+
 test('a slug that tries to escape is regenerated, not honoured', () => {
   // The browser sent it, and the browser is not where this decision lives.
   const dataDir = tmp(); const gameDataDir = tmp();
