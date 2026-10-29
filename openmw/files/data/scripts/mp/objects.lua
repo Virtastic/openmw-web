@@ -863,6 +863,7 @@ handlers.MP_ObjectSpawnRefused = function(data)
             unowned = 'That drop was refused: the world does not think you are carrying it.',
             contained = 'Your account cannot place items in a shared world right now.',
             cell_full = 'This place is too cluttered to drop anything more here.',
+            bound = 'That item is bound to you and cannot be dropped.',
             -- #399: a human ObjectSpawnRequest{actor} (a PlaceAtPC the engine declined) has tempId 0
             -- and no drop behind it; reach/rate are its refusals, not a drop's.
             reach = 'That summons was refused: too far away, or too many at once.',
@@ -1135,6 +1136,7 @@ handlers.MP_ContainerOpResult = function(data)
             rolling = 'The party is rolling for that one.',
             full = 'You cannot carry any more of that.',
             contained = 'That cannot be moved directly.',
+            bound = 'That item is bound to its owner and cannot be moved.',
             nostate = 'That container is still opening — try again.',
         }
         deps.noticeFn(why[tostring(data.reason or '')]
