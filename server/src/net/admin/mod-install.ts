@@ -461,20 +461,33 @@ async function commitInstallLocked(
   const doc = readModDoc(dataDir);
   const taken = new Set(doc.mods.map((m) => m.slug));
   const installed: InstalledMod[] = [];
+  // slug -> the mod it stands in for. A reinstall is unpacked beside the live copy and swapped
+  // in only once the whole request has succeeded, so a failure leaves the old one playing.
+  const replacing = new Map<string, InstalledMod>();
+  const newFiles = new Map<string, string[]>();
   let placed = 0;
 
   for (const choice of choices) {
     // The slug becomes a directory name and a URL segment, so it is regenerated here rather
     // than trusted: the browser sent it, and the browser is not where this decision lives.
     let slug = slugify(choice.slug || choice.name || 'mod');
-    if (taken.has(slug)) {
+    // THE SAME ARCHIVE AGAIN REPLACES, it does not stack. Re-uploading Tamriel Data after a
+    // failed or doubted install made a second and third full copy (-2, -3: 8.6 GB where 2.5
+    // was needed), all enabled, so the engine loaded the same plugins several times over.
+    const prev = archiveName === '' ? undefined
+      : doc.mods.find((m) => m.archive === archiveName && m.source === choice.path && !replacing.has(m.slug));
+    if (prev) {
+      slug = prev.slug;
+      replacing.set(slug, prev);
+    } else if (taken.has(slug)) {
       let n = 2;
       while (taken.has(`${slug}-${n}`)) n++;
       slug = `${slug}-${n}`;
     }
     taken.add(slug);
 
-    const root = join(gameDataDir, MODS_SUBDIR, slug);
+    // '.stage-' so a crash mid-reinstall is swept by the next install like any scratch.
+    const root = join(gameDataDir, MODS_SUBDIR, replacing.has(slug) ? `.stage-replace-${slug}` : slug);
     // The assertion that actually matters, after every path has been resolved.
     if (!resolve(root).startsWith(resolve(join(gameDataDir, MODS_SUBDIR)) + sep)) {
       return fail(400, 'refused: that mod name escapes the mods folder');
@@ -581,6 +594,10 @@ async function commitInstallLocked(
       // dashboard, with no way to remove it from there.
       await rm(root, { recursive: true, force: true });
       for (const done of installed) {
+        if (replacing.has(done.slug)) {
+          await rm(join(gameDataDir, MODS_SUBDIR, `.stage-replace-${done.slug}`), { recursive: true, force: true });
+          continue; // the live copy and its file list stay exactly as they were
+        }
         await rm(join(gameDataDir, MODS_SUBDIR, done.slug), { recursive: true, force: true });
         await rm(join(dataDir, MOD_META, `${done.slug}.json`), { force: true });
       }
@@ -605,6 +622,15 @@ async function commitInstallLocked(
       const masters = readMasters(join(root, p.file));
       return masters.length ? { ...p, masters } : p;
     });
+    const was = replacing.get(slug);
+    // A reinstall keeps the operator's decisions: its place in the load order, its switches,
+    // the plugins they turned off and the stock files it stands in for.
+    const keptPlugins = was
+      ? rootPlugins.map((p) => {
+        const old = was.plugins.find((o) => o.file.toLowerCase() === p.file.toLowerCase());
+        return old ? { ...p, enabled: old.enabled } : p;
+      })
+      : rootPlugins;
     installed.push({
       slug,
       name: (choice.name || slug).slice(0, 120),
@@ -612,22 +638,39 @@ async function commitInstallLocked(
       ...(release ? { release } : {}),
       source: choice.path,
       installedAt: new Date().toISOString(),
-      enabled: true,
-      plugins: rootPlugins,
+      enabled: was ? was.enabled : true,
+      ...(was?.replaces ? { replaces: was.replaces } : {}),
+      plugins: keptPlugins,
       archives: archives.filter((a) => files.includes(a)),
       files: files.length,
       bytes,
     });
-    // Not in STAGING: that folder is swept on a TTL, which would quietly delete the file lists
-    // conflict detection reads and leave every mod looking conflict-free.
-    mkdirSync(join(dataDir, MOD_META), { recursive: true });
-    writeFileSync(join(dataDir, MOD_META, `${slug}.json`), JSON.stringify(files));
+    if (!was) {
+      // Not in STAGING: that folder is swept on a TTL, which would quietly delete the file lists
+      // conflict detection reads and leave every mod looking conflict-free.
+      mkdirSync(join(dataDir, MOD_META), { recursive: true });
+      writeFileSync(join(dataDir, MOD_META, `${slug}.json`), JSON.stringify(files));
+    } else {
+      newFiles.set(slug, files);
+    }
   }
 
-  const next: ModDoc = { ...doc, mods: [...doc.mods, ...installed] };
+  // Every part unpacked: swap each reinstall in over its old copy, in place in the list.
+  for (const [slug] of replacing) {
+    const live = join(gameDataDir, MODS_SUBDIR, slug);
+    await rm(live, { recursive: true, force: true });
+    await rename(join(gameDataDir, MODS_SUBDIR, `.stage-replace-${slug}`), live);
+    mkdirSync(join(dataDir, MOD_META), { recursive: true });
+    writeFileSync(join(dataDir, MOD_META, `${slug}.json`), JSON.stringify(newFiles.get(slug)));
+  }
+  const fresh = installed.filter((m) => !replacing.has(m.slug));
+  const next: ModDoc = {
+    ...doc,
+    mods: [...doc.mods.map((m) => installed.find((n) => n.slug === m.slug && replacing.has(m.slug)) ?? m), ...fresh],
+  };
   const wrote = writeModDoc(dataDir, next);
   if (!wrote.ok) {
-    for (const m of installed) await rm(join(gameDataDir, MODS_SUBDIR, m.slug), { recursive: true, force: true });
+    for (const m of fresh) await rm(join(gameDataDir, MODS_SUBDIR, m.slug), { recursive: true, force: true });
     installProgress.delete(token);
     return fail(500, wrote.error);
   }
@@ -637,7 +680,7 @@ async function commitInstallLocked(
   await rm(join(dataDir, STAGING, `${token}.json`), { force: true });
   if (scratch) await rm(scratch, { recursive: true, force: true });
   installProgress.delete(token);
-  log('info', 'mods.installed', { slugs: installed.map((m) => m.slug) });
+  log('info', 'mods.installed', { slugs: installed.map((m) => m.slug), replaced: [...replacing.keys()] });
   return { ok: true, value: installed };
 }
 
