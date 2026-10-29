@@ -2,6 +2,16 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.19
+
+**Installing a mod again replaces it instead of adding another copy.** Uploading the same archive
+a second time (for example Tamriel Data after an install you weren't sure finished) used to
+install a whole second copy next to the first, as `-2`, then `-3`, each one switched on. That
+filled the disk and loaded the same plugins several times. Now the new install replaces the old
+one and keeps its place in the load order and its on/off switches. If the install fails, the old
+copy stays. Copies already made by earlier versions are not removed for you: uninstall the `-2`
+and `-3` entries in the dashboard's Mods list.
+
 ## 1.7.18
 
 **Other players look like themselves again.** Since 1.7.0 every other player in multiplayer was
