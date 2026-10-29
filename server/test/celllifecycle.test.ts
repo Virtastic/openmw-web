@@ -156,7 +156,7 @@ test('CellSnapshotReplace carries locks and deaths', async (t) => {
   assert.equal(snap.deaths.length, 0);
 });
 
-test('a journal advance is durable immediately, not on the 45s sweep', async (t) => {
+test('a journal advance is on disk by the time the player leaves, not on the 45s sweep', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
@@ -168,13 +168,15 @@ test('a journal advance is durable immediately, not on the 45s sweep', async (t)
   a.sendCellChange('0,0', 0, 0, 0);
 
   a.sendEvent('JournalEntry', { questId: 'A1_1_FindSpymaster', index: 10 });
-  await new Promise((r) => setTimeout(r, 400)); // no flush(), no sweep, still connected
+  await new Promise((r) => setTimeout(r, 400)); // no sweep, still connected
+  // OT3-94: steps coalesce in a 10 s debounce window; leaving flushes them at once.
+  a.close();
+  await a.closed;
+  await new Promise((r) => setTimeout(r, 400));
 
   const doc = readPlayerDoc(dataDir, charId) as
     { journal?: Record<string, number> };
-  assert.equal(doc.journal?.A1_1_FindSpymaster, 10,
-    'a quest stage must hit the disk at once — the Tribunal-MQ corruption is a crash before the sweep');
-  a.close();
+  assert.equal(doc.journal?.A1_1_FindSpymaster, 10, 'a quest stage survives the disconnect');
 });
 
 test('a SCHEDULED cell reset fires on its own and restocks, without kicking anyone', async (t) => {
