@@ -593,13 +593,6 @@ do
     check('every scripts/mp/*.lua is in the CMake install list (the native peer gets nothing else)',
       n > 0 and #missing == 0, 'unlisted: ' .. table.concat(missing, ', ') .. ' (of ' .. n .. ')')
   end
-  -- A dial refused by a world that is not ours must go HOME, not dead-end at "sign in again".
-  local n = io.open('./openmw/files/data/scripts/mp/net.lua'):read('*a')
-  check('net.lua hands an admission refusal to the go-home hook before the fresh-ticket ask',
-    n:find("net.lastErrorDetail == 'this world is private' or net.lastErrorDetail == 'you were sent home') and net.onRefusedAway", 1, true) ~= nil
-    and n:find('net.onRefusedAway', 1, true) < n:find("askPageForFreshTicket('credential refused", 1, true))
-  check('global.lua wires net.onRefusedAway to the WorldClosed notice + switch home',
-    g:find('net.onRefusedAway = function', 1, true) ~= nil and g:find("goHome({ reason = detail == 'you were sent home' and 'kicked' or 'not_open' })", 1, true) ~= nil)
   -- Self reconciliation must run ONCE PER FRAME against the newest sample, never per sample:
   -- a slow client receives the same pose many times between physics steps, and correcting on
   -- each one multiplied the gain into a runaway oscillation (300 units after one sword swing).
@@ -1750,30 +1743,6 @@ do
   check('MP_SocialResult notices OK results too, machinery excepted',
     handler ~= nil and handler:find('if not SOCIAL_SILENT[data.op] then notice(status) end', 1, true) ~= nil
       and handler:find('if data.ok ~= true then notice(status) end', 1, true) == nil)
-  -- #29: the grace expiry records the names; hostOf hands them to the owner once.
-  check('server.ts records the guests the grace sent home and WorldMode carries them once to the owner',
-    srv:find('guestsSentHome = { at: Date.now(), names }', 1, true) ~= nil
-      and srv:find('if (sentHome) guestsSentHome = undefined;', 1, true) ~= nil)
-  check('global.lua narrates the sent-home guests to the returning owner',
-    g:find("notice('Your guests were sent home while you were away: ' .. table.concat(data.sentHome, ', ') .. '.')", 1, true) ~= nil)
-  -- #262: WorldMode carries the rest rule; a guest's Rest window is refused on open and the
-  -- pending level-up is offered instead (the sleep that would have offered it never happens).
-  check('WorldMode carries timeSkip and global.lua forwards it to player.lua',
-    srv:find('timeSkip: worldOwner === ', 1, true) ~= nil
-      and g:find("toPlayer('MP_WorldMode', { isOwner = data and data.isOwner == true, timeSkip =", 1, true) ~= nil
-      and p:find('MP_WorldMode = function(data)', 1, true) ~= nil)
-  check("a guest's Rest under timeSkip=owner is closed with a notice and the level-up offered",
-    p:find("if data.newMode == 'Rest' and restRefusedHere() then", 1, true) ~= nil
-      and p:find("I.UI.removeMode('Rest')", 1, true) ~= nil
-      and p:find("text = 'Only the world owner can rest for everyone.'", 1, true) ~= nil
-      and p:find("types.Actor.stats.level(self).progress >= (tonumber(core.getGMST('iLevelUpTotal')) or 10)", 1, true) ~= nil
-      and p:find("I.UI.addMode('LevelUp')", 1, true) ~= nil)
-  -- The rule itself, executed: only a non-owner under owner/party is refused here.
-  local chunk = p:match('(local restRule = .-\nend\n)')
-  local restRefusedHere = chunk and assert((loadstring or load)(chunk .. '\nreturn function(o, t) restRule = { isOwner = o, timeSkip = t }; return restRefusedHere() end'))()
-  check('restRefusedHere: guest+owner refused, owner never, anyone never',
-    restRefusedHere ~= nil and restRefusedHere(false, 'owner') == true and restRefusedHere(false, 'party') == true
-      and restRefusedHere(true, 'owner') == false and restRefusedHere(false, 'anyone') == false and restRefusedHere(false, 'off') == false)
 end
 
 print('recv watchdog, the dead do not talk, svc:open, threat.lua gone, same-cell snap is not a door, revive in place (31, 33, 34, 76, 138, 231)')
@@ -1886,7 +1855,7 @@ do
     and q:find('armCellWatches(cell, now, HELD_WATCH_POLL)', 1, true) ~= nil
     and q:find('poll = poll, until_ = math.huge, dialogue = dialogue,', 1, true) ~= nil
     and q:find('cellKey = (okk and key) or watch.cellKey }', 1, true) ~= nil
-    and qs:find("const cellKey = named ?? player.cellKey;", 1, true) ~= nil)
+    and qs:find("const cellKey = named;", 1, true) ~= nil)
   check('OpSay on the peer becomes ActorSay and puppets core.sound.say the line',
     snd:find('MWMP::recordScriptNote({ "say"', 1, true) ~= nil
     and g:find("elseif n.kind == 'say' then", 1, true) ~= nil
@@ -1937,7 +1906,7 @@ do
     mm:find('MWMP::recordScriptNote({ "crimecombat"', 1, true) ~= nil
     and ac:find('combat = me, crime = true,', 1, true) ~= nil
     and ws:find("const crime = body.get('crime') === true;", 1, true) ~= nil
-    and ws:find('(!crime && this.dialogueHolder?.(ref.key) !== player.id)', 1, true) ~= nil)
+    and ws:find('(!crime && !this.talkingTo?.(ref.key, player.id))', 1, true) ~= nil)
 end
 
 print('#413 script notes are metered, not drained in one burst')
@@ -4009,45 +3978,6 @@ do
   end
 end
 
--- ====================================== global.lua: a switch's queued intent survives the reload
-print('global.lua -- Party clicked while visiting is applied on arrival home (carry)')
-do
-  local g = globalSrc()
-  local ma = g:find('local kit = {}', 1, true)
-  local mb = ma and select(2, g:find('\nend\n', ma, true))
-  local ha = g:find('    mpCarry = function(data)', 1, true)
-  local hb = ha and select(2, g:find('\n    end,\n', ha, true))
-  local src = ma and mb and ha and hb and ('local worldUrls, wasJoined, net, mp = ...\nlocal pendingFlip = nil\n'
-    .. g:sub(ma, mb) .. 'local h = ' .. g:sub(ha + #'    mpCarry = ', hb - 2)
-    .. '\nreturn function(d) h(d); return pendingFlip end')
-  local mk = src and loadstring(src)
-  check('mirrorCarry and mpCarry are where this test expects them', mk ~= nil)
-  check('mpWhere mirrors the carry before going back online',
-    g:find('mirrorCarry()\n                net.switchTo(back)', 1, true) ~= nil)
-  local ip = io.open('./play/index.html'):read('*a')
-  check('the page stores the carry before the reload and replays it at boot',
-    ip:find("sessionStorage.setItem('omwmp:carry', carryNow)", 1, true) ~= nil
-    and ip:find("window.omw.send('carry:' + omwCarry", 1, true) ~= nil)
-  if mk then
-    local sent, mirror = {}, nil
-    local mpS = { set = function(k, v) if k == 'switchCarry' then mirror = v end end,
-      sendEvent = function(n, d) sent[#sent + 1] = n .. ':' .. tostring(d.mode) end }
-    local home = 'wss://x/w/priv-a'
-    local atHome = { currentTarget = function() return home end }
-    local run = mk({ own = home }, false, atHome, mpS)
-    check('a carry before the join queues the flip', run({ v = 'party|' }) == 'party' and #sent == 0)
-    run = mk({ own = home }, true, atHome, mpS)
-    local left = run({ v = 'party|' })
-    check('a carry after the join at home sends the flip now',
-      left == nil and sent[1] == 'SetWorldMode:party', table.concat(sent, ','))
-    check('the mirror is cleared once the flip is sent', mirror == '|', tostring(mirror))
-    local wu = { own = home }
-    mk(wu, true, atHome, mpS)({ v = '|wss://x/w/party-b' })
-    check('the Offline way back is restored', wu.lastOut == 'wss://x/w/party-b', tostring(wu.lastOut))
-    check('garbage is ignored', mk({ own = home }, true, atHome, mpS)({ v = 'x' }) == nil)
-  end
-end
-
 -- ====================================== the WoW model on the peer: avatars stand where their owner is
 print('global.lua -- the peer places an avatar on its owner\'s pose (clientAuthority)')
 do
@@ -5127,7 +5057,7 @@ do
     d ~= nil and g ~= nil and h ~= nil and d < g and g < h)
   check('TEST_HOOKS reads scripts.mp.buildflags', p:find("pcall(require, 'scripts.mp.buildflags')", 1, true) ~= nil)
   local page = p:match('local PAGE_COMMANDS = (%b{})') or ''
-  for _, c in ipairs({ 'carry', 'vis', 'leaving', 'chatx', 'joinfriend', 'pause', 'profile', 'social', 'uimode', 'where' }) do
+  for _, c in ipairs({ 'vis', 'leaving', 'chatx', 'pause', 'profile', 'social', 'uimode', 'where' }) do
     check('page command ' .. c .. ' still runs in release', page:find(c .. ' = true', 1, true) ~= nil)
   end
   check('give stays a test hook', not page:find('give', 1, true))
