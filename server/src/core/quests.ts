@@ -349,7 +349,7 @@ export class Quests {
     this.ctx.players.update(player.charId, (doc) => {
       (doc.journal ??= {})[questId] = idx;
       this.logEntry(doc, questId, idx);
-    }, 'now');
+    }, 'debounced');
     if (!regressing) this.creditParty(player, questId, idx);
   }
 

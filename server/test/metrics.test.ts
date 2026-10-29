@@ -141,16 +141,6 @@ test('metrics: counters move through a real session', async (t) => {
     assert.equal(sample(text, 'omwmp_cell_authority_total{kind="grant"}'), 1);
   });
 
-  await t.test('persistence flush duration is observed', async () => {
-    // The cell change is a specced 'now' flush point for the player doc, but the write
-    // itself is fire-and-forget — hence the fresh render rather than the snapshot above.
-    await new Promise((r) => setTimeout(r, 50));
-    const fresh = renderMetrics();
-    assert.ok((sample(fresh, 'omwmp_persist_flush_seconds_count{store="players"}') ?? 0) >= 1);
-    assert.ok((sample(fresh, 'omwmp_persist_flush_seconds_sum{store="players"}') ?? -1) >= 0);
-    assert.equal(sample(fresh, 'omwmp_persist_flush_failed_total{store="players"}'), undefined);
-  });
-
   await t.test('the failed login is counted as an AUTH_FAILED disconnect', () => {
     assert.equal(sample(text, 'omwmp_disconnects_total{code="AUTH_FAILED"}'), 1);
   });
@@ -163,6 +153,15 @@ test('metrics: counters move through a real session', async (t) => {
     const after = renderMetrics();
     assert.equal(sample(after, 'omwmp_disconnects_total{code="CLIENT_CLOSE"}'), 1);
     assert.equal(sample(after, 'omwmp_sessions_in_world'), 0);
+  });
+
+  await t.test('persistence flush duration is observed', async () => {
+    // OT3-94: a cell change is debounced now; the disconnect below is what flushes the doc.
+    await new Promise((r) => setTimeout(r, 50));
+    const fresh = renderMetrics();
+    assert.ok((sample(fresh, 'omwmp_persist_flush_seconds_count{store="players"}') ?? 0) >= 1);
+    assert.ok((sample(fresh, 'omwmp_persist_flush_seconds_sum{store="players"}') ?? -1) >= 0);
+    assert.equal(sample(fresh, 'omwmp_persist_flush_failed_total{store="players"}'), undefined);
   });
 
   await t.test('a rate-limit trip is attributed to the budget that ran out', async () => {

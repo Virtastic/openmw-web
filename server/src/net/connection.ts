@@ -1521,7 +1521,7 @@ export class Connection implements Peer {
     player.moveAnchor = { x, y, z, at: Date.now() };
     player.implausibleRun = 0;
     // Cell change is a specced persistence flush point.
-    this.ctx.players.update(player.charId, (doc) => (doc.position = { cellKey, x, y, z }), 'now');
+    this.ctx.players.update(player.charId, (doc) => (doc.position = { cellKey, x, y, z }), 'debounced');
     log('info', 'player.cell_change', { id: player.id, cellKey });
     for (const p of this.ctx.roster.inWorld()) {
       // Never announce the SIM PEER's movements TO A PLAYER: a client that hears them spawns
