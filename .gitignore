@@ -66,7 +66,7 @@ __pycache__/
 # did ("prevent accidental commit", 18a171f) from before the server was real, and a
 # blanket rule now silently swallows new source files. The server source IS tracked
 # (server/src, test, Dockerfile, PROTOCOL.md, …); build artifacts are handled here.
-server/node_modules/
+server/node_modules
 server/dist/
 server/devdata/
 
