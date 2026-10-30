@@ -2060,14 +2060,14 @@ namespace MWMechanics
         }
     }
 
-    int Actors::nearestAvatarLevel(const osg::Vec3f& pos) const
+    int Actors::nearestAvatarLevel(const osg::Vec3f& pos, const MWWorld::CellStore* cell) const
     {
-        // The party leader's level, when the world has one (mwmp/puppets.hpp setPartyLevel):
-        // the host's game stays the host's game wherever a helper happens to be standing.
-        if (MWMP::partyLevel() > 0)
-            return MWMP::partyLevel();
+        // OT3-146: the world-wide party level is gone (one world, nothing sets it any more); the
+        // level is read per cell. Avatars in the spawn's own cell win; only when none is there
+        // does the nearest avatar anywhere stand in.
         int level = 0;
         float bestDist2 = std::numeric_limits<float>::max();
+        bool inCell = false;
         for (const Actor& actor : mActors)
         {
             if (actor.isInvalid())
@@ -2075,6 +2075,14 @@ namespace MWMechanics
             const MWWorld::Ptr& body = actor.getPtr();
             if (!MWMP::isAvatar(body.getCellRef().getRefNum()))
                 continue;
+            const bool here = cell != nullptr && body.getCell() == cell;
+            if (inCell && !here)
+                continue;
+            if (here && !inCell)
+            {
+                inCell = true;
+                bestDist2 = std::numeric_limits<float>::max();
+            }
             const float d2 = (body.getRefData().getPosition().asVec3() - pos).length2();
             if (d2 < bestDist2)
             {

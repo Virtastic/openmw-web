@@ -121,14 +121,14 @@ namespace MWClass
         // this process holds with nobody in it).
         const int avatarLevel
             = MWBase::Environment::get().getMechanicsManager()->nearestAvatarLevel(
-                ptr.getRefData().getPosition().asVec3());
+                ptr.getRefData().getPosition().asVec3(), ptr.getCell());
         const ESM::RefId& id = MWMechanics::getLevelledItem(
             store.get<ESM::CreatureLevList>().find(ptr.getCellRef().getRefId()), true, prng,
             avatarLevel > 0 ? std::optional<int>(avatarLevel) : std::nullopt);
         // Said once per roll so the harness can see which level the world was scaled to.
         if (avatarLevel > 0)
             Log(Debug::Info) << "[mp] levelled spawn " << ptr.getCellRef().getRefId() << " rolled at level "
-                             << avatarLevel << (MWMP::partyLevel() > 0 ? " (party leader)" : " (nearest avatar)")
+                             << avatarLevel << " (avatars in cell)"
                              << " -> " << id;
 
         // Multiplayer client: the peer rolls this list and its creature arrives as a net

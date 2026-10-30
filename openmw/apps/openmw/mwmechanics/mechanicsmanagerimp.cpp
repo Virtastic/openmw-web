@@ -402,9 +402,9 @@ namespace MWMechanics
         mActors.rest(hours, sleep);
     }
 
-    int MechanicsManager::nearestAvatarLevel(const osg::Vec3f& pos) const
+    int MechanicsManager::nearestAvatarLevel(const osg::Vec3f& pos, const MWWorld::CellStore* cell) const
     {
-        return mActors.nearestAvatarLevel(pos);
+        return mActors.nearestAvatarLevel(pos, cell);
     }
 
     void MechanicsManager::restoreDynamicStats(const MWWorld::Ptr& actor, double hours, bool sleep)

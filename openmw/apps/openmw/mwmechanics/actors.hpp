@@ -97,7 +97,9 @@ namespace MWMechanics
             spawns everywhere. Nearest, not highest: one peer simulates cells all over the
             world, and a level 40 player on the other side of it must not inflate the
             creatures that greet a level 2 one. */
-        int nearestAvatarLevel(const osg::Vec3f& pos) const;
+        int nearestAvatarLevel(const osg::Vec3f& pos, const MWWorld::CellStore* cell = nullptr) const;
+        /* PER CELL (OT3-146): when `cell` is given only avatars standing in THAT cell count, so a
+           high-level player elsewhere changes nothing; with none in it, the nearest avatar anywhere. */
         ///< Update actors while the player is waiting or sleeping.
 
         void updateSneaking(CharacterController* ctrl, float duration);
