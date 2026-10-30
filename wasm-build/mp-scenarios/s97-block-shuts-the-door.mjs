@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // s97: BLOCKING SOMEONE SHUTS THE DOOR, not just the chat window.
 //
-// A party world admits the owner's FRIENDS — mayJoinWorld asks areFriends and nothing else.
-// So "blocked" only keeps somebody out if blocking actually ends the friendship. It does
+// v2 (no party worlds, OT3-31): invites are friends-only. So "blocked" only keeps somebody
+// from being invited or located if blocking actually ends the friendship. It does
 // (social.ts block() calls removeFriend, with a comment explaining that a blocked person left
 // in the list keeps leaking presence and location), and that is a load-bearing detail no test
 // stated: change block() to a mute-like flag and every blocked player walks back into the
@@ -24,11 +24,11 @@ export const bootTimeoutMs = 420_000;
 
 export default async function run(ctx) {
   const host = await startGatewayAndClient(ctx, {
-    gwPort: GW_PORT, name: 'block-host', ownId: 'priv-block-host',
+    gwPort: GW_PORT, name: 'block-host',
   });
   try {
     const guest = await addClient(ctx, GW_PORT, {
-      name: 'block-guest', ownId: 'priv-block-guest',
+      name: 'block-guest',
     });
 
     // Handles, because that is what the panel's "add a friend" field takes and what a name
@@ -53,29 +53,19 @@ export default async function run(ctx) {
       'the host has a friend');
     ctx.log('ok: they are friends');
 
-    // The host opens the door and the guest walks in — the baseline this scenario needs, or
-    // the refusal below would prove nothing.
-    await host.client.cmd('worldmode:party');
-    await host.client.waitFor(
-      `JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP,
-      'the mode flip is answered');
-    const guestFriends = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"));
-    const hostAcct = guestFriends[0].acct;
-    await guest.client.cmd(`joinfriend:${hostAcct}`);
-    // joinFriendTo is set ONLY when the server said yes and the client is redialling, so it is
-    // the one signal that separates "allowed" from "refused". (The refusal text lives in a Lua
-    // local the panel renders and never mirrors, so there is nothing else to read.)
-    // joinFriendTo lives only until the page RELOADS for the new world (index.html: "the whole
-    // switch is already a page reload"), a few hundred ms after it is set -- a 250 ms poll
-    // caught it on lucky runs and missed it on the rest. Leaving the world is the same yes.
-    await guest.client.waitFor(`(window.omw.state.joinFriendTo||'') !== '' || String(window.omw.state.state||'') !== 'Joined'`, STEP,
-      'the server allowed the join while they were friends');
-    const guestRow =
-      `(JSON.parse(window.omw.state.players || '[]')
-        .find(function (p) { return p.name === ${JSON.stringify(guestHandle)}; }) || {})`;
-    await host.client.waitFor(`${guestRow}.id !== undefined`, 120_000,
-      "the guest is in the host's world before any block");
-    ctx.log('ok: the guest got in while welcome — the control this scenario needs');
+    // The control: while they are friends the host CAN invite the guest, or the refusal below
+    // would prove nothing. (v1 used joinfriend into the host's party world; that door is gone.)
+    const guestFriends = JSON.parse(await host.client.eval("window.omw.state.friends||'[]'"));
+    const guestAcct = guestFriends[0].acct;
+    const invite = async () => {
+      await host.client.eval("window.omw.state.socialResult = ''; 'cleared'");
+      await host.client.cmd(`social:InviteSend:${guestAcct}`);
+      await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'InviteSend'`, STEP, 'the invite is answered');
+      return JSON.parse(await host.client.eval("window.omw.state.socialResult||'{}'"));
+    };
+    const first = await invite();
+    assert.equal(first.ok, true, `a friend must be invitable before any block: ${JSON.stringify(first)}`);
+    ctx.log('ok: while welcome, the guest could be invited -- the control this scenario needs');
 
     // NOW BLOCK THEM.
     await host.client.cmd(`social:BlockAdd:${guestHandle}`);
@@ -93,24 +83,12 @@ export default async function run(ctx) {
     const blocked = JSON.parse(await host.client.eval("window.omw.state.blocked||'[]'"));
     assert.equal(blocked.length, 1, `the blocked list must name them: ${JSON.stringify(blocked)}`);
     ctx.log('ok: blocking ended the friendship on both sides');
-    // The block also SENDS THE GUEST HOME (s139), and the trip is a page navigation: #114 lost
-    // the guest's inspector mid-eval ("Inspected target navigated or closed"). Let them land
-    // in their own world before knocking again.
-    await guest.client.waitFor('window.omw.state.state === "Joined" && String(window.omw.state.worldClosed||"") === ""', 180_000, 'the blocked guest is back in their own world');
-
-    // And the door is shut. Asked the same way, by the same client, with the same account key
-    // it used a moment ago when it worked — only the friendship has changed.
-    //
-    // Cleared first so this cannot pass on the LAST join's leftover value: joinFriendTo is
-    // only ever written on success, so an empty one after a full round trip is the refusal.
-    await guest.client.eval("window.omw.state.joinFriendTo = ''; 'cleared'");
-    await guest.client.cmd(`joinfriend:${hostAcct}`);
-    await ctx.sleep(8000); // a bounded wait: there is no positive signal for "no"
-    const after = await guest.client.eval("window.omw.state.joinFriendTo||''");
-    assert.equal(after, '',
-      `a blocked player was told where to dial: ${after} — the block did not shut the door`);
-    ctx.log('ok: the door is shut, not just the chat window');
-    ctx.log('PASS: a block ends the friendship and the world stops admitting them');
+    // And the door is shut. Asked the same way, by the same client, about the same account it
+    // invited a moment ago -- only the friendship has changed.
+    const after = await invite();
+    assert.equal(after.ok, false, `a blocked player could still be invited: ${JSON.stringify(after)}`);
+    ctx.log(`ok: the invite is refused after the block (${after.detail})`);
+    ctx.log('PASS: a block ends the friendship and invites to them stop');
   } finally {
     host.stop();
   }

@@ -227,30 +227,25 @@ export default async function run(ctx) {
   ctx.log('ok: Enter sends the typed message');
   await a.key(ESC);
 
-  // Transition notices: being moved between worlds, or losing your party, must SAY so.
-  // Driven through the same mirror the engine writes, so this exercises the real watcher.
-  // noticeSeq TOO, because that is what actually gates the watcher. A notice reports an
-  // EVENT rather than a state, so the page fires only when the sequence moves -- otherwise
-  // every unrelated mirror update would replay the last eviction. global.lua bumps it
-  // alongside the fields, so setting the fields without it is not what the engine does.
-  await a.eval(`window.omw.state.worldClosedBy = 'Ada';
-    window.omw.state.worldClosed = 'owner_went_solo';
-    window.omw.state.noticeSeq = String(Number(window.omw.state.noticeSeq || 0) + 1)`)
+  // Notices: a failure the player is waiting on (a failed character switch, a lost sign-in)
+  // must SAY so. v1's world-eviction notice (worldClosed / noticeSeq) is gone with the world
+  // modes (OT3-31, OT3-58); the notice mechanism itself is index.html's showNotice, which
+  // rebootIntoWorld and the save-restore handler call through window.__omwNotice (s56 drives
+  // the real failure). Called directly here so the panel is checked without a switch.
+  await a.eval(`window.__omwNotice('Could not change world', 'Ada says the server did not hand this session over.', null, true); 'shown'`);
   await a.waitFor(`document.getElementById('omw-tour').classList.contains('show')
-    && /Returning to your own world/.test(document.getElementById('omw-tour-title').textContent)`,
-    4000, 'being evicted from a world shows a notice');
+    && /Could not change world/.test(document.getElementById('omw-tour-title').textContent)`,
+    4000, 'an urgent notice shows');
   // A notice must NOT be persisted: it reports an event, so the next one has to show too.
   assert.equal(await a.eval(`document.getElementById('omw-tour-dots').innerHTML`), '',
     'a notice must not render tour dots');
-  assert.match(await a.eval(`document.getElementById('omw-tour-body').textContent`), /Ada.+closed their world/,
-    'the notice must name who closed the world');
+  assert.match(await a.eval(`document.getElementById('omw-tour-body').textContent`), /Ada.+did not hand/,
+    'the notice carries its body');
   const noticeHit = await a.click('#omw-tour-next');
   await a.waitFor(`!document.getElementById('omw-tour').classList.contains('show')`, 3000,
     'the notice closed (click landed on: ' + noticeHit + ')');
 
-  // (the party-travel notice died with parties; the eviction notice above is the one
-  // transition notice the Solo/Party model still has)
-  ctx.log('ok: transition notices fire and do not persist');
+  ctx.log('ok: notices fire and do not persist');
 
   const luaErrs = a.luaErrors();
   assert.equal(luaErrs.length, 0, 'Lua errors during run:\n' + luaErrs.join('\n'));

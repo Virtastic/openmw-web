@@ -1,13 +1,14 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s154: A RETURNING GUEST LANDS BESIDE THE HOST, AND STAYS THERE. Every character doc has a
-// position (this world's, or the most recent anywhere), and a fresh join sends both the rejoin
-// restore (to that stored spot) and the invite (to the host). Both teleports queued; then the
-// rejoin position hold re-asserted the stored spot for eight seconds -- so a guest who came
-// back to help was put next to the host for a frame and teleported to wherever they last
-// logged out, unless they happened to press a key. The invite is where they meant to go.
+// s154: A RETURNING PLAYER WHO ACCEPTS AN INVITE LANDS BESIDE THE INVITER, AND STAYS THERE.
+// Every character doc has a position, and a join restores it. The rejoin position hold
+// re-asserted that stored spot for eight seconds -- so a player who came back to help and
+// accepted the invite at once was put next to the friend for a frame and teleported to wherever
+// they last logged out. The invite is where they meant to go (global.lua MP_InviteAccepted
+// releases the hold). v1 reached this through joinfriend; the invite path is what v2 keeps.
 import assert from 'node:assert/strict';
-import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
+import { startGatewayAndClient, addClient } from './_gateway.mjs';
+import { inviteAndAccept } from './_social.mjs';
 
 const STEP = 30_000;
 const GW_PORT = 19150; // ten apart from its neighbours (see s102)
@@ -17,9 +18,9 @@ const dist2 = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
 
 export default async function run(ctx) {
   const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'ret-host', ownId: 'priv-ret-host', boot: BOOT });
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'ret-host', boot: BOOT });
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'ret-guest', ownId: 'priv-ret-guest', boot: BOOT });
+    const guest = await addClient(ctx, GW_PORT, { name: 'ret-guest', boot: BOOT });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const H = `rhost${tag}`, G = `rguest${tag}`;
     await host.client.cmd(`profile:ret-host@example.com:${H}`);
@@ -32,19 +33,14 @@ export default async function run(ctx) {
     await guest.client.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
     await guest.client.cmd(`social:FriendAccept:${H}`);
     await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-    await host.client.cmd('worldmode:party');
-    await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
-    const friendAcct = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"))[0].acct;
     const guestRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(G)}; }) || {})`;
     const hostRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(H)}; }) || {})`;
 
-    const joinFriend = async (cli, what) => {
-      await cli.cmd(`joinfriend:${friendAcct}`);
+    const joinTo = async (cli, what) => {
       await host.client.waitFor(`${guestRow}.id !== undefined`, 300_000, `the host sees the guest ${what}`);
       await cli.waitFor('window.omw.state.state === "Joined"', 60_000, `the guest is joined ${what}`);
-      await grantLockerSession(cli, GW_PORT, guest.account);
     };
-    await joinFriend(guest.client, 'the first time');
+    await joinTo(guest.client, 'the first time');
     await guest.client.waitFor('String(window.omw.state.baselineReady||"") === "1"', 60_000, 'the guest is settled');
     // The guest goes far from the host (a teleport: the cell centre is walled by terrain),
     // so their stored position is nowhere near them.
@@ -63,11 +59,11 @@ export default async function run(ctx) {
     await ctx.sleep(65_000);
 
     // Back, straight to the friend. The stored position is 'far'; the invite is the host.
-    const ownUrl = `ws://127.0.0.1:${GW_PORT}/w/${guest.ownId}`;
-    const back = await ctx.launchClient('ret-guest', '', { mpUrl: ownUrl, homeUrl: ownUrl, ...BOOT }); // same name = same account
-    await grantLockerSession(back, GW_PORT, guest.account);
-    await back.waitFor('window.omw.state.state === "Joined"', 60_000, 'the guest is home');
-    await joinFriend(back, 'again');
+    const worldUrl = `ws://127.0.0.1:${GW_PORT}/w/${guest.ownId}`;
+    const back = await ctx.launchClient('ret-guest', '', { mpUrl: worldUrl, homeUrl: worldUrl, ...BOOT }); // same name = same account
+    await joinTo(back, 'again');
+    // The invite is accepted at once, while the rejoin position hold is still armed.
+    await inviteAndAccept(host.client, back, H, STEP);
     // Touch nothing for twelve seconds (past the 8 s restore hold) and watch where they are.
     const samples = [];
     for (let i = 0; i < 12; i++) {
