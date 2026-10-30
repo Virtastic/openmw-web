@@ -782,6 +782,18 @@ function objects.onItemActive(item)
     for _, obj in pairs(pendingSpawns) do
         if obj.id == item.id then return end
     end
+    -- OT3-75: a script's PlaceItem / PlaceItemCell / PlaceAt* made this. It is a placement (no
+    -- owner, no conservation debit), NOT something that left the player's pack -- reporting it
+    -- as a drop mis-attributed it to the player and would have debited them. The engine marks
+    -- the object at the opcode (mp.takeScriptPlaced answers once). Any distance: a script
+    -- places things the player is nowhere near.
+    if not mp.isSystem() and mp.takeScriptPlaced then
+        local okp, placed = pcall(mp.takeScriptPlaced, item)
+        if okp and placed then
+            objects.requestSpawn(item, nil, nil, false)
+            return
+        end
+    end
     -- ON THE PEER a runtime item is the WORLD's: an arrow the avatar shot and missed, ammo
     -- a creature dropped when it died, an item a script placed. Its own player is a dummy
     -- parked far from everyone, so the range test below never passed and every such item

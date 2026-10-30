@@ -367,6 +367,13 @@ namespace MWMP
         // The fall damage this engine measured but, the peer ruling the body, did not apply
         // (character.cpp). Taken once: the next call returns 0.
         api["takeFallDamage"] = []() -> float { return MWMP::takeFall(); };
+        // OT3-75: true once for an object a script's PlaceItem/PlaceAt* created.
+        api["takeScriptPlaced"] = [](const sol::object& obj) -> bool {
+            if (!obj.is<MWLua::Object>())
+                return false;
+            const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            return !ptr.isEmpty() && MWMP::takeScriptPlaced(ptr.getCellRef().getRefNum());
+        };
         api["takeFallKnockdown"] = []() -> bool { return MWMP::takeFallKnockdown(); };
         // The peer lays an avatar down when its owner's fall knocked the owner down (hp.kd).
         api["setKnockedDown"] = [](const sol::object& obj) {

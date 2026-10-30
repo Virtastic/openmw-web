@@ -600,6 +600,7 @@ namespace MWScript
                 ref.getPtr().getCellRef().setPosition(pos);
                 MWWorld::Ptr placed = MWBase::Environment::get().getWorld()->placeObject(ref.getPtr(), store, pos);
                 placed.getClass().adjustPosition(placed, true);
+                MWMP::markScriptPlaced(placed.getCellRef().getRefNum()); // OT3-75
             }
         };
 
@@ -646,6 +647,7 @@ namespace MWScript
                 ref.getPtr().getCellRef().setPosition(pos);
                 MWWorld::Ptr placed = MWBase::Environment::get().getWorld()->placeObject(ref.getPtr(), store, pos);
                 placed.getClass().adjustPosition(placed, true);
+                MWMP::markScriptPlaced(placed.getCellRef().getRefNum()); // OT3-75
             }
         };
 
@@ -704,6 +706,7 @@ namespace MWScript
                     MWWorld::Ptr ptr = MWBase::Environment::get().getWorld()->safePlaceObject(
                         ref.getPtr(), actor, actor.getCell(), direction, distance);
                     MWBase::Environment::get().getWorld()->scaleObject(ptr, actor.getCellRef().getScale());
+                    MWMP::markScriptPlaced(ptr.getCellRef().getRefNum()); // OT3-75
                 }
             }
         };

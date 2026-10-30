@@ -226,6 +226,12 @@ namespace MWMP
         float mRotZ = 0.f;
     };
     void recordScriptNote(ScriptNote note);
+    /** OT3-75: an MWScript PlaceItem / PlaceItemCell / PlaceAt* just created this object. The
+     *  scripts/mp item-active hook cannot tell it from an item the player dropped (both appear
+     *  near the player), so it reported a placement as a drop out of the player's pack. The
+     *  hook asks takeScriptPlaced, which answers once per object and forgets it. Bounded. */
+    void markScriptPlaced(ESM::RefNum ref);
+    bool takeScriptPlaced(ESM::RefNum ref);
     std::vector<ScriptNote> takeScriptNotes();
     /** The wire's cell key (scripts/mp cellKeyOfObj): "x,y" for an exterior, the lower-cased
      *  name otherwise. */

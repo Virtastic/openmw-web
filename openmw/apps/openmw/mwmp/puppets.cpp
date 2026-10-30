@@ -399,6 +399,35 @@ namespace MWMP
         }
     }
 
+    namespace
+    {
+        std::vector<ESM::RefNum>& scriptPlaced()
+        {
+            static std::vector<ESM::RefNum> v;
+            return v;
+        }
+    }
+
+    void markScriptPlaced(ESM::RefNum ref)
+    {
+        auto& v = scriptPlaced();
+        if (v.size() >= 256)
+            v.erase(v.begin());
+        v.push_back(ref);
+    }
+
+    bool takeScriptPlaced(ESM::RefNum ref)
+    {
+        auto& v = scriptPlaced();
+        for (auto it = v.begin(); it != v.end(); ++it)
+            if (*it == ref)
+            {
+                v.erase(it);
+                return true;
+            }
+        return false;
+    }
+
     void recordScriptNote(ScriptNote note)
     {
         // Singleplayer has nobody to tell and nothing draining the queue. Larger than the other

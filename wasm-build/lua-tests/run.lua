@@ -5206,5 +5206,21 @@ do
   objects.flushScriptItemOps(math.huge)
   check('an add then a remove in one frame, and engine-made moves, report nothing', #env.calls.events == before)
 end
+-- OT3-75: script placements are placements, not player drops.
+print('objects.lua -- PlaceItem is reported as a placement (OT3-75)')
+do
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  local fn = ob:match('function objects%.onItemActive%(item%)(.-)\nend') or ''
+  local at = fn:find('mp.takeScriptPlaced', 1, true)
+  local drop = fn:find('requestSpawn(item, nil, nil, true)', 1, true)
+  check('onItemActive asks the engine whether a script placed it, before the player-drop path',
+    at ~= nil and drop ~= nil and at < drop)
+  check('a script-placed item is requested with fromInventory=false',
+    (fn:match('takeScriptPlaced(.-)return') or ''):find('requestSpawn(item, nil, nil, false)', 1, true) ~= nil)
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  local tx = io.open('./openmw/apps/openmw/mwscript/transformationextensions.cpp'):read('*a')
+  check('PlaceItem, PlaceItemCell and PlaceAt mark their object; the binding exists',
+    select(2, tx:gsub('markScriptPlaced', '')) == 3 and lb:find('api["takeScriptPlaced"]', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
