@@ -1755,6 +1755,10 @@ namespace MWMechanics
                                 // (mechanicsmanagerimp.cpp actorAttacked) had the same blind
                                 // spot and is fixed beside this. See mwmp/puppets.hpp.
                                 const MWWorld::Ptr& other = otherActor.getPtr();
+                                // OT3-105: a player in a menu or dialogue is not picked as a
+                                // fresh target (a fight already running carries on).
+                                if (MWMP::isAvatarBusy(other.getCellRef().getRefNum()))
+                                    continue;
                                 engageCombat(actor.getPtr(), other, cachedAllies,
                                     other == player || MWMP::isAvatar(other.getCellRef().getRefNum()));
                             }

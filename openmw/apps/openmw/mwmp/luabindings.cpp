@@ -235,6 +235,12 @@ namespace MWMP
                 return;
             setAvatar(obj.as<MWLua::Object>().id(), on);
         };
+        // OT3-105: the avatar's player is busy (menu/dialogue) -- peer AI starts no fight with it.
+        api["setAvatarBusy"] = [](const sol::object& obj, bool busy) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            setAvatarBusy(obj.as<MWLua::Object>().id(), busy);
+        };
         // The owning player's bounty, mirrored onto their avatar so a guard has something real
         // to react to. Bounty is player-only in the engine's own API, which is why it lives in
         // the MP registry rather than on the avatar's NpcStats.

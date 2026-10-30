@@ -69,6 +69,13 @@ namespace MWMP
     /** True when this actor is a player's avatar on the sim peer. */
     bool isAvatar(ESM::RefNum ref);
 
+    /** OT3-105: the avatar's player is in a menu / dialogue (the server's PlayerBusy). Peer AI
+     *  does not START a fight with a busy avatar (Actors::engageCombat call site); a fight
+     *  already running is untouched, and the server clears the flag on damage and after a cap.
+     *  Cleared with the avatar (setAvatar false). */
+    void setAvatarBusy(ESM::RefNum ref, bool busy);
+    bool isAvatarBusy(ESM::RefNum ref);
+
     /** That avatar's crime bounty, 0 when unknown. Safe to call every frame. */
     int avatarBounty(ESM::RefNum ref);
 

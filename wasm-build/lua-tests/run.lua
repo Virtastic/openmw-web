@@ -5222,5 +5222,19 @@ do
   check('PlaceItem, PlaceItemCell and PlaceAt mark their object; the binding exists',
     select(2, tx:gsub('markScriptPlaced', '')) == 3 and lb:find('api["takeScriptPlaced"]', 1, true) ~= nil)
 end
+-- OT3-105 C++ half: peer AI ignores busy players.
+print('global.lua / actors.cpp -- a busy avatar is not picked as a fresh combat target (OT3-105)')
+do
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local ac = io.open('./openmw/apps/openmw/mwmechanics/actors.cpp'):read('*a')
+  local pp = io.open('./openmw/apps/openmw/mwmp/puppets.cpp'):read('*a')
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  check('MP_PlayerBusy mirrors the flag onto the avatar body', gl:find('pcall(mp.setAvatarBusy, p.obj, data.busy == true)', 1, true) ~= nil
+    and lb:find('api["setAvatarBusy"]', 1, true) ~= nil)
+  local i = ac:find('MWMP::isAvatarBusy(other', 1, true)
+  local j = ac:find('engageCombat(actor.getPtr(), other, cachedAllies', 1, true)
+  check('engageCombat is skipped for a busy avatar', i ~= nil and j ~= nil and i < j)
+  check('the busy mark goes with the avatar', (pp:match('void setAvatar%\(.-\n    }') or ''):find('busyAvatars().erase(ref)', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

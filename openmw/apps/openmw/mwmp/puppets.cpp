@@ -104,12 +104,37 @@ namespace MWMP
         pending().clear();
     }
 
+    namespace
+    {
+        std::unordered_set<ESM::RefNum, RefNumHash, RefNumEq>& busyAvatars()
+        {
+            static std::unordered_set<ESM::RefNum, RefNumHash, RefNumEq> s;
+            return s;
+        }
+    }
+
+    void setAvatarBusy(ESM::RefNum ref, bool busy)
+    {
+        if (busy && avatars().find(ref) != avatars().end())
+            busyAvatars().insert(ref);
+        else
+            busyAvatars().erase(ref);
+    }
+
+    bool isAvatarBusy(ESM::RefNum ref)
+    {
+        return !busyAvatars().empty() && busyAvatars().find(ref) != busyAvatars().end();
+    }
+
     void setAvatar(ESM::RefNum ref, bool on)
     {
         if (on)
             avatars().emplace(ref, 0);
         else
+        {
             avatars().erase(ref);
+            busyAvatars().erase(ref);
+        }
         Log(Debug::Info) << "[mp] avatar registry " << ref.mIndex << (on ? " +" : " -")
                          << " (now " << avatars().size() << ")";
     }

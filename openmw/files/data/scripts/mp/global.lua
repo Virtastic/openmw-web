@@ -2124,10 +2124,15 @@ local eventHandlers = {
     end,
 
     -- OT3-105: the server's busy flag for a player (menu/dialogue). The sim peer records it
-    -- here; the AI-target skip in actors.cpp reads it in a later C++ change (tier2).
+    -- here and mirrors it to the engine (mp.setAvatarBusy); actors.cpp skips a busy avatar.
     MP_PlayerBusy = function(data)
         if type(data.id) ~= 'number' then return end
         busyPlayers[data.id] = data.busy == true or nil
+        -- The C++ half: actors.cpp skips a busy avatar when choosing who to start a fight with.
+        local p = puppets[data.id]
+        if p and p.obj and p.obj:isValid() then
+            pcall(mp.setAvatarBusy, p.obj, data.busy == true)
+        end
     end,
 
     -- M2 respawn service: teleport self, then let player.lua revive/refill.
