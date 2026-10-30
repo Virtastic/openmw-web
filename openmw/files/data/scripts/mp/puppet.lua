@@ -735,6 +735,16 @@ return {
         onUpdate = onUpdate,
     },
     eventHandlers = {
+        -- OT3-103: an emote from the owner's chat line; playFresh over the idle, if the body
+        -- has the group at all (pcall: an unknown group throws in the engine).
+        MP_Emote = function(e)
+            pcall(function()
+                local anim = require('openmw.animation')
+                if anim.hasGroup(self, e.group) then
+                    playFresh(anim, e.group, { priority = anim.PRIORITY.Scripted or anim.PRIORITY.Weapon })
+                end
+            end)
+        end,
         MP_Pose = function(e)
             -- The peer is back and driving this actor again: re-arm. addScript on a script
             -- that is still attached is a silent no-op (no onInit), so this is the only

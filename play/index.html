@@ -3684,6 +3684,7 @@ window.omw = (function(){
 @keyframes omwln{ from{ opacity:0; transform:translateY(3px);} to{ transform:none; } }
 #omw-chat .ln .tag{ font-weight:700; letter-spacing:.02em; }
 #omw-chat .ln .who{ font-weight:600; color:var(--ink); }
+#omw-chat .ln.emote{ font-style:italic; }
 #omw-chat .c-say{ color:var(--c-say); } #omw-chat .c-world{ color:var(--c-world); } #omw-chat .c-party{ color:var(--c-party); }
 #omw-chat .c-global{ color:var(--c-global); }
 #omw-chat .c-whisper{ color:var(--c-whisper); } #omw-chat .c-novice{ color:var(--c-novice); }
@@ -4474,6 +4475,7 @@ window.omw = (function(){
   function lineHtml(m){
     var ch = m.channel || 'say';
     if (ch === 'server') return '<div class="ln c-server">'+esc(m.text)+'</div>';
+    if (m.emote) return '<div class="ln c-say emote">* '+esc(m.from||'?')+' '+esc(m.text)+'</div>'; // OT3-103
     if (ch === 'global' || ch === 'say') ch = 'world'; // one world, one channel
     var who = (ch === 'whisper')
       ? (m.to ? ('to '+esc(m.to)) : esc(m.from||'?'))

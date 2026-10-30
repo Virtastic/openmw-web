@@ -108,7 +108,36 @@ export type ChatMessageBody = {
   // render "-> Name: text" instead of "Name: text". Absent on the recipient's copy.
   to?: string;
   text: string;
+  // OT3-103: an action line ("Alice waves"): the client draws it as "* Alice waves" and, for a
+  // named emote, plays `anim` on the speaker's body if it has that animation group.
+  emote?: boolean;
+  anim?: string;
 };
+
+// OT3-103: the canned emotes. "/wave" shows "<name> waves." to everyone in range; `anim` is the
+// animation group the client tries on the speaker (a group the body lacks is simply skipped).
+export const EMOTES: Readonly<Record<string, { text: string; anim: string }>> = {
+  wave: { text: 'waves.', anim: 'idle2' },
+  bow: { text: 'bows.', anim: 'idle3' },
+  laugh: { text: 'laughs.', anim: 'idle4' },
+  cheer: { text: 'cheers.', anim: 'idle5' },
+  shrug: { text: 'shrugs.', anim: 'idle6' },
+  salute: { text: 'salutes.', anim: 'idle7' },
+  dance: { text: 'dances.', anim: 'idle8' },
+};
+
+/** "/me waves" -> {text:'waves'}; "/wave" -> the canned emote; anything else -> undefined. */
+export function parseEmote(line: string): { text: string; anim?: string } | { empty: true } | undefined {
+  const m = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(line);
+  if (!m) return undefined;
+  const cmd = m[1]!.toLowerCase();
+  if (cmd === 'me' || cmd === 'em') {
+    const t = (m[2] ?? '').trim();
+    return t === '' ? { empty: true } : { text: t };
+  }
+  const e = Object.prototype.hasOwnProperty.call(EMOTES, cmd) ? EMOTES[cmd] : undefined;
+  return e ? { text: e.text, anim: e.anim } : undefined;
+}
 
 // isMuted: Phase 3.8/2.5 — a listener who muted the speaker (or a moderator mute, which
 // is the same list under a server pseudo-muter) simply never receives the line. Enforced
@@ -227,6 +256,25 @@ export function handleChatSend(
     channel = explicitChannel;
   }
   if (line === '') return; // a blank line is not a message
+  // OT3-103: "/me waves" and "/wave": an action line to everyone whose interest bubble the
+  // speaker is in (always proximity, whatever sayScope says: an emote is a thing you SEE).
+  const emote = channel === 'say' || channel === 'world' || channel === 'global' ? parseEmote(line) : undefined;
+  if (emote !== undefined) {
+    if ('empty' in emote) { serverWhisper(player, 'Usage: /me <action>'); return; }
+    recordChat(mod, player, 'say', line);
+    const shown = ctx.filter ? ctx.filter(emote.text) : emote.text;
+    const msg: ChatMessageBody = {
+      channel: 'say', from: player.name, fromId: player.id, text: shown, emote: true,
+      ...(emote.anim !== undefined ? { anim: emote.anim } : {}),
+    };
+    for (const p of ctx.roster.inWorld()) {
+      if (p.accountKey !== player.accountKey && ctx.isMuted?.(p.accountKey, player.accountKey)) continue;
+      if (p.id !== player.id && !cellsVisible(p.cellKey, player.cellKey)) continue;
+      p.peer.sendEvent('ChatMessage', msg);
+    }
+    log('info', 'chat.emote', { from: player.name, chars: shown.length });
+    return;
+  }
   if (channel === 'global') {
     const refused = globalRefusal(ctx.lastGlobalAt ??= new Map(), ctx.globalCooldownMs ?? 0, player, Date.now());
     if (refused !== null) {

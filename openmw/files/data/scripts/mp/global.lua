@@ -1741,6 +1741,15 @@ local eventHandlers = {
     MP_ChatMessage = function(data)
         mp.set('lastChat', json.encode(data))
         toPlayer('MP_UiChatMessage', data)
+        -- OT3-103: a named emote animates the speaker's body (their puppet, or our own avatar
+        -- body is not needed: the speaker sees their own action line). pcall: a body without
+        -- that animation group is simply skipped, and a bad send must not stop chat.
+        if data.emote == true and data.anim and data.fromId and data.fromId ~= net.playerId then
+            local p = puppets[data.fromId]
+            if p and p.obj and p.obj:isValid() then
+                pcall(function() p.obj:sendEvent('MP_Emote', { group = tostring(data.anim) }) end)
+            end
+        end
     end,
 
     MP_PlayerJoinWorld = function(data)

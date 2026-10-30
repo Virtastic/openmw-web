@@ -5068,5 +5068,19 @@ do
   local gate, first = eng:find('#ifdef OMW_TEST_HOOKS', 1, true), eng:find('EMSCRIPTEN_KEEPALIVE void omw_debug_', 1, true)
   check('engine.cpp compiles the omw_debug_* exports only under OMW_TEST_HOOKS (OT3-13)', gate ~= nil and first ~= nil and gate < first)
 end
+-- ============================== OT3-103: emotes and /me (client side)
+print('chat -- action lines and emote animations')
+do
+  local function rd(f) return io.open(f):read('*a') end
+  local pl, gl, pu, html = rd('./openmw/files/data/scripts/mp/player.lua'), rd('./openmw/files/data/scripts/mp/global.lua'),
+    rd('./openmw/files/data/scripts/mp/puppet.lua'), rd('./play/index.html')
+  check('chat history keeps the emote flag', pl:find('emote = data.emote == true or nil', 1, true) ~= nil)
+  check("lastChatLine formats an action as '* Name text'", pl:find("line = '* ' .. tostring(data.from or '?') .. ' '", 1, true) ~= nil)
+  check('global sends MP_Emote to the speaker\'s puppet, never to ourselves',
+    gl:find("sendEvent('MP_Emote'", 1, true) ~= nil and gl:find('data.fromId ~= net.playerId', 1, true) ~= nil)
+  check('puppet plays an emote only for a group the body has', pu:find('MP_Emote = function', 1, true) ~= nil
+    and pu:find('anim.hasGroup(self, e.group)', 1, true) ~= nil)
+  check('the feed renders an emote as an italic action line', html:find("class=\"ln c-say emote\">* ", 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

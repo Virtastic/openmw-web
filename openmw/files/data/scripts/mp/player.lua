@@ -36,6 +36,7 @@ local function pushMessage(data)
         from = data.from and tostring(data.from) or nil,
         to = data.to and tostring(data.to) or nil,
         text = tostring(data.text or ''),
+        emote = data.emote == true or nil, -- OT3-103: "* Name waves." action line
     }
     if #chatHistory > CHAT_LOG_MAX then table.remove(chatHistory, 1) end
     chatSeq = chatSeq + 1
@@ -50,6 +51,8 @@ local function pushMessage(data)
     local line
     if ch == 'server' then
         line = '* ' .. tostring(data.text or '')
+    elseif data.emote == true then
+        line = '* ' .. tostring(data.from or '?') .. ' ' .. tostring(data.text or '')
     elseif ch == 'whisper' and data.to and data.to ~= '' then
         line = '-> ' .. tostring(data.to) .. ': ' .. tostring(data.text or '')
     else
