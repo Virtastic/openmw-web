@@ -547,6 +547,11 @@ do
   check('objects.onScriptNote asks the server for a scripted actor spawn',
     ob:find("mp.sendEvent%('ObjectSpawnRequest', {%s*tempId = 0, actor = true") ~= nil)
   check('WorldCellState applies persisted re-enables', ob:find('for _, refKey in ipairs(data.enabled or {}) do', 1, true) ~= nil)
+  check('WorldCellState never deletes or moves an item out of a pack',
+    ob:find('not recentPickups[obj.id] and inWorld(obj) then', 1, true) ~= nil
+      and ob:find('if obj and obj:isValid() and inWorld(obj) then\n            retry.teleport', 1, true) ~= nil
+      and ob:find('return not (ok and parent ~= nil)', 1, true) ~= nil,
+    'a carried pickup is removed from the inventory on the next cell entry')
   check('actors.notePosition rides ActorAI and the holder teleports on it',
     ac:find('position = { cell = tostring(cellName or ', 1, true) ~= nil and ac:find("retry.teleport(obj, tostring(p.cell or ''), util.vector3(p.x", 1, true) ~= nil)
   check('mpQuestSpawn places a forwarded PlaceAtPC at its spot',
