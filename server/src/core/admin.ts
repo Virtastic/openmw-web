@@ -108,6 +108,8 @@ interface AdminCtx {
     resolve(who: string): Promise<string | undefined>;
     edit(charKey: string, fn: (doc: PlayerDoc) => void): void;
     safePoint(): { cellKey: string; x: number; y: number; z: number };
+    // OT3-194: returns the old name, or the refusal sentence.
+    rename?(charKey: string, name: string): Promise<{ old: string } | string>;
   };
 }
 
@@ -401,6 +403,28 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       ctx.chars!.edit(got.charKey, (doc) => { doc.position = { ...safe }; });
       audit(actor, 'unstick', { target: got.charKey, cellKey: safe.cellKey, reason });
       return `Moved ${got.label} to ${safe.cellKey}; they spawn there on their next login.`;
+    },
+  },
+  // OT3-194: force a new name on a character (an offensive one). Online targets are
+  // disconnected first, like the other character edits, and see the new name on rejoin.
+  rename: {
+    minRank: 1,
+    usage: '/rename <player|account|charKey> <new name> -- <reason>',
+    help: 'force a new character name (online or offline); the old name stays in the audit',
+    async run(ctx, actor, args) {
+      const who = arg(args, 0);
+      const rest = args.slice(1).join(' ');
+      const [rawName = '', ...why] = rest.split(' -- ');
+      const newName = rawName.trim();
+      const reason = why.join(' -- ').trim().slice(0, MAX_ARG);
+      if (!who || !newName || !reason) return 'usage: /rename <player|account|charKey> <new name> -- <reason>';
+      if (!ctx.chars?.rename) return 'Renaming is not available on this world.';
+      const got = await offlineChar(ctx, actor, who);
+      if (typeof got === 'string') return got;
+      const res = await ctx.chars.rename(got.charKey, newName);
+      if (typeof res === 'string') return res;
+      audit(actor, 'rename', { target: got.charKey, oldName: res.old, newName, reason });
+      return `Renamed ${res.old} to ${newName}; others see it from their next login (old name kept in the audit).`;
     },
   },
   // OT3-181: put an item back on a character, online or offline, through the item ledger.

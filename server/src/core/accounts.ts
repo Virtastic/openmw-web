@@ -605,6 +605,28 @@ export class AccountStore {
     return characterNameProblem(name) ?? (this.characterNameTaken(name, accountKey) ? 'Another character already has that name.' : null);
   }
 
+  /** OT3-194: staff force a new name on a character (the nameCharacter placeholder guard does
+   *  not apply). Same rules and uniqueness as chargen. Returns the old name, or a refusal. */
+  async renameCharacter(charId: string, name: string): Promise<{ old: string } | string> {
+    const n = name.trim();
+    const row = this.db.prepare(
+      `SELECT accounts.key AS key FROM accounts, json_each(accounts.doc, '$.characters') c
+        WHERE json_extract(c.value, '$.id') = ? LIMIT 1`,
+    ).get(charId) as { key: string } | undefined;
+    if (!row) return `No character "${charId}" on any account.`;
+    const refusal = this.characterNameRefusal(n, row.key);
+    if (refusal) return refusal;
+    const account = await this.get(row.key);
+    if (!account) return `No character "${charId}" on any account.`;
+    return this.mutate(account, (doc) => {
+      const c = doc.characters?.find((x) => x.id === charId);
+      if (!c) return undefined;
+      const old = c.name;
+      c.name = n;
+      return { old };
+    }) ?? `No character "${charId}" on any account.`;
+  }
+
   touchCharacter(account: Account, charId: string): void {
     this.mutate(account, (doc) => {
       const char = doc.characters?.find((c) => c.id === charId);

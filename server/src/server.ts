@@ -304,6 +304,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         return (await playerStore.get(who)) ? who : undefined;
       },
       edit: (charKey, fn) => playerStore.update(charKey, fn, 'now'),
+      rename: (charKey, name) => accounts.renameCharacter(charKey, name), // OT3-194
       safePoint: () => ({ cellKey: config.rules.respawnCellKey, x: config.rules.respawnX, y: config.rules.respawnY, z: config.rules.respawnZ }),
     },
   });
