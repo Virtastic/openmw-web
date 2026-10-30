@@ -253,12 +253,12 @@ Payload: `[u8 nameLen][name: nameLen bytes, ASCII][body: LSER blob]`.
 
 Flow: `CONNECTED → (Hello ≤10 s) → HELLO_OK → (auth) → AUTHED → (Ready) → IN_WORLD`.
 
-### World modes
+### One world
 
-A world is `private` (one character's solo world) or `party` (that world opened to the
-owner's **friends**, up to 32 players). There is no public world and no party membership
-list: being in someone's world is the relationship, and the friends list is the only door.
-Every world has an owner.
+There is exactly one world (`vvardenfell`) and no owner, host or guest: every signed-in
+character is in it (OT3-31, OT3-58). Parties are a social layer on top of the one world
+(`PartyUpdate`, invites), not separate worlds. The older private/party world modes, the
+`WorldMode`/`WorldClosed` events and `joinfriend`-style entry no longer exist.
 
 - **Movement is measured, never enforced.** Sustained implausible speed is counted as an
   anomaly for moderation. Speed is measured over a **200 ms window**, not between consecutive
