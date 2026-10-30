@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s96: THE SERVER HANDS OUT THE GAME FILES — on the multiplayer server too.
+// s96: THE GAME-FILE ROUTES ARE MOUNTED ON THE GATEWAY, and fail closed (v2: ESM-ownership gate).
 //
 // This is the bug an operator actually hit. They set the server up for multiplayer, uploaded
 // 1.2 GB of Morrowind through the dashboard, were told it worked, went to play — and the game
@@ -19,11 +19,8 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startGatewayAndClient } from './_gateway.mjs';
+import { harnessSession, startGatewayAndClient } from './_gateway.mjs';
 
-// The wizard forces this on: the server always supplies the files. Spelled out here because
-// the harness writes its own config and a scenario is the only place to say what it needs.
-export const serverRules = '[setup]\ndeliveryModel = "serve"';
 
 // Spaced ten apart from its neighbours on purpose: the gateway puts each world it
 // spawns on GW_PORT + 200 upward, one per client, so adjacent scenarios were handing
@@ -46,38 +43,39 @@ export default async function run(ctx) {
   try {
     const base = `http://127.0.0.1:${GW_PORT}`;
 
-    // 1. THE MANIFEST. A player's page fetches this once per boot and mounts every entry; a
-    // 404 here is the whole bug.
-    const r = await fetch(`${base}/mwdata-manifest.json`);
-    assert.equal(r.status, 200,
-      `the multiplayer server must serve the operator's library (${r.status}) — a 404 here is`
-      + ' what asks the player to upload a game the operator already uploaded');
-    const files = await r.json();
-    const names = files.map((f) => f.p).sort();
-    assert.deepEqual(names, ['Fonts/demo.fnt', 'Morrowind.esm'],
-      `the manifest must list what is on disk, got ${JSON.stringify(names)}`);
-    const esm = files.find((f) => f.p === 'Morrowind.esm');
-    assert.equal(esm.s, 2048, 'and each entry carries its real size, which the client mounts by');
-    ctx.log(`ok: the manifest lists ${files.length} file(s) the operator uploaded`);
+    // v2 (OT3-216, OT3-219): the library is served only to a signed-in account that has PROVEN
+    // it owns the game (the three ESMs by exact hash, via /locker/needed + the attest route).
+    // To everyone else the paths do not exist: a 404, not a 403, which would confirm there is a
+    // library worth asking for. The positive side needs genuine Morrowind hashes, so it stays in
+    // the unit tier (server/test/mwdata-serve.test.ts, locker-esm.test.ts); what only a real
+    // gateway can show is that the routes are MOUNTED THERE and fail closed.
+    const token = await harnessSession(GW_PORT, host.account);
+    const authed = { authorization: `Bearer ${token}` };
 
-    // 2. THE FILES THEMSELVES, including one in a subdirectory — the client concatenates the
-    // manifest path onto mwdata/, so a separator handled wrongly breaks exactly these.
-    const one = await fetch(`${base}/mwdata/Morrowind.esm`);
-    assert.equal(one.status, 200, `the file itself must be served (${one.status})`);
-    assert.equal((await one.text()).length, 2048, 'and be the bytes on disk, whole');
-    const nested = await fetch(`${base}/mwdata/Fonts/demo.fnt`);
-    assert.equal(nested.status, 200, `a nested path must be served too (${nested.status})`);
-    ctx.log('ok: the files themselves come back, nested paths included');
+    // 1. THE MANIFEST: not a library you may ask about, anonymous or signed-in without ownership.
+    for (const [who, headers] of [['anonymous', {}], ['signed in, no ownership proof', authed]]) {
+      const r = await fetch(`${base}/mwdata-manifest.json`, { headers });
+      assert.equal(r.status, 404, `${who}: the manifest must not exist for a non-owner (${r.status})`);
+    }
+    ctx.log('ok: the manifest is a 404 to anyone who has not proven ownership');
 
-    // 3. NOT A LIBRARY YOU MAY ASK ABOUT. Walking out of the folder must not reach the disk.
+    // 2. THE FILES THEMSELVES, nested paths included.
+    for (const path of ['/mwdata/Morrowind.esm', '/mwdata/Fonts/demo.fnt']) {
+      for (const headers of [{}, authed]) {
+        const r = await fetch(`${base}${path}`, { headers });
+        assert.equal(r.status, 404, `${path} must not be served to a non-owner (${r.status})`);
+      }
+    }
+    ctx.log('ok: the files are a 404 to a non-owner too');
+
+    // 3. Walking out of the folder must not reach the disk either.
     for (const path of ['/mwdata/../config.toml', '/mwdata/..%2fconfig.toml']) {
-      const bad = await fetch(`${base}${path}`);
-      assert.ok(bad.status >= 400,
-        `${path} must not escape the library, got ${bad.status}`);
+      const bad = await fetch(`${base}${path}`, { headers: authed });
+      assert.ok(bad.status >= 400, `${path} must not escape the library, got ${bad.status}`);
     }
     ctx.log('ok: paths that climb out of the library are refused');
 
-    ctx.log('PASS: the multiplayer server hands out the game files the operator uploaded');
+    ctx.log('PASS: the gateway mounts the game-file routes and they fail closed for a non-owner');
   } finally {
     host.stop();
   }

@@ -73,10 +73,10 @@ async function waitHttp(url, timeoutMs, what) {
 // --- omw-mp game server (one per scenario) ---------------------------------------------------
 // `extraRules` = additional keys for the [rules] table, e.g. a scenario that needs PvP on
 // (`export const serverRules = 'pvp = true'`). Config is deep-merged over the defaults.
-// serverEnv lets a scenario shape WORLD IDENTITY, which is env-driven (OMW_WORLD_OWNER /
-// OMW_WORLD_MODE / OMW_WORLD_ID) rather than config-driven, so it cannot be set through
-// serverRules. Exported as a function receiving the run id, because an owner is an ACCOUNT
-// NAME and account names carry the run-id suffix.
+// serverEnv lets a scenario set process environment the config cannot carry (e.g.
+// OMWMP_NET_DELAY_MS). It may be a function receiving the run id, because account names carry
+// the run-id suffix. (v1 also used it for OMW_WORLD_OWNER / OMW_WORLD_MODE; there is one world
+// and no owner now, OT3-31.)
 async function startGameServer(extraRules = '', extraEnv = {}, opts = {}) {
   // testhost.mjs, NOT server.mjs. main.ts refuses to boot without real game data, a peer
   // binary and a server password (the tier-2 mandate) — right for a deployment, fatal for a
