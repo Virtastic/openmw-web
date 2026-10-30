@@ -728,6 +728,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     now: () => Date.now(),
     levelOf,
     journalOf: (p) => playerStore.getCached(p.charId)?.journal ?? {},
+    vitalsOf: (p) => {
+      const d = playerStore.getCached(p.charId)?.stats?.dynamic;
+      return d ? { hp: [d.hp.c, d.hp.b], mp: [d.mp.c, d.mp.b], ft: [d.ft.c, d.ft.b] } : undefined;
+    },
     // A4/3.8: the context-menu report writes to the same queue as /report.
     report: async (doc) => moderation.reports.write({
       ts: new Date().toISOString(),
@@ -1616,7 +1620,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     }));
     peer.peer.sendEvent('StoryLicense', contentTable.storyLicence(humans));
   };
-  const simPeerTick = setInterval(() => { simPeerPass(); pushStoryLicence(); }, 2_000);
+  const simPeerTick = setInterval(() => { simPeerPass(); pushStoryLicence(); social.pushPartyUpdates(); }, 2_000);
   // A peer finishing its hello should not wait up to a full tick to be put to work —
   // that is 5s of the player holding a loading screen for no reason.
   ctx.onPeerJoined = () => simPeerPass();

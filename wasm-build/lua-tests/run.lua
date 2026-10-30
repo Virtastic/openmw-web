@@ -5082,5 +5082,17 @@ do
     and pu:find('anim.hasGroup(self, e.group)', 1, true) ~= nil)
   check('the feed renders an emote as an italic action line', html:find("class=\"ln c-say emote\">* ", 1, true) ~= nil)
 end
+-- ============================== OT3-114 / OT3-120: party frame + compass (client side)
+print('social.lua -- PartyUpdate feeds the party frame and compass')
+do
+  local function rd(f) return io.open(f):read('*a') end
+  local so, gl, pl = rd('./openmw/files/data/scripts/mp/social.lua'), rd('./openmw/files/data/scripts/mp/global.lua'),
+    rd('./openmw/files/data/scripts/mp/player.lua')
+  check('social.lua mirrors MP_PartyUpdate as partyFrame', so:find("MP_PartyUpdate = function(data)", 1, true) ~= nil
+    and so:find("mp.set('partyFrame', json.encode(data.members or {}))", 1, true) ~= nil)
+  check('leaving the party clears the frame', so:find("mp.set('partyFrame', '[]')", 1, true) ~= nil)
+  check('global.lua forwards MP_PartyUpdate to the player script', gl:find("MP_PartyUpdate = function(data) toPlayer('MP_PartyUpdate', data) end", 1, true) ~= nil)
+  check('the pose mirror carries yaw for the compass', pl:find('yaw = okY and yaw or nil', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

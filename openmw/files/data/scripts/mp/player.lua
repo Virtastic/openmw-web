@@ -604,7 +604,9 @@ local function movementTick()
     if now - lastPoseMirror >= POSE_MIRROR_INTERVAL then
         lastPoseMirror = now
         local p = self.position
-        mp.set('pose', json.encode({ x = p.x, y = p.y, z = p.z }))
+        -- yaw: OT3-120, the party compass turns the bearing to a member by where we face.
+        local okY, yaw = pcall(function() return self.rotation:getYaw() end)
+        mp.set('pose', json.encode({ x = p.x, y = p.y, z = p.z, yaw = okY and yaw or nil }))
     end
 end
 

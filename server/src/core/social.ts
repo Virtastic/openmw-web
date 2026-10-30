@@ -97,6 +97,8 @@ interface SocialDeps {
   levelOf?(player: Player): number;
   // OT3-84: the character's journal (questId -> stage), for the party's out-of-phase hint.
   journalOf?(player: Player): Record<string, number>;
+  // OT3-114: the character's current/base health, magicka and fatigue, for the party frame.
+  vitalsOf?(player: Player): { hp: [number, number]; mp: [number, number]; ft: [number, number] } | undefined;
   // A4/3.8: file a report into the moderation queue (the same store /report writes).
   report?(doc: {
     reporter: { id: number; account: string; name: string };
@@ -1071,6 +1073,37 @@ export class Social {
   private pushParty(acct: AccountKey): void {
     const members = this.d.store.partyOf(acct)?.members ?? [acct];
     for (const m of members) this.sendPartyState(m);
+  }
+
+  /** OT3-114/OT3-120: the low-rate party frame. To each ONLINE member of a party of two or more:
+   *  the OTHER members' name, bars, cell and position (the compass reads the position). Only a
+   *  member's own party ever receives a row, so this is no way to track a stranger. Called from
+   *  the server's 2 s tick; cheap (<= PARTY_MAX^2 small rows per party, zero when nobody is
+   *  partied). */
+  pushPartyUpdates(): void {
+    const seen = new Set<number>();
+    for (const p of this.d.roster.inWorld()) {
+      const party = this.d.store.partyOf(p.accountKey);
+      if (!party || party.members.length < 2 || seen.has(party.id)) continue;
+      seen.add(party.id);
+      const rows = party.members.map((m) => {
+        const local = this.onlinePlayer(m);
+        const v = local ? this.d.vitalsOf?.(local) : undefined;
+        return {
+          acct: m,
+          name: this.d.displayName(m) ?? m,
+          ...(local ? { playerId: local.id } : {}),
+          ...(v ? { hp: v.hp, mp: v.mp, ft: v.ft } : {}),
+          ...(local?.cellKey !== undefined ? { cell: local.cellKey } : {}),
+          ...(local?.pose ? { x: Math.round(local.pose.x), y: Math.round(local.pose.y), z: Math.round(local.pose.z) } : {}),
+        };
+      });
+      for (const m of party.members) {
+        const to = this.onlinePlayer(m);
+        if (!to) continue;
+        to.peer.sendEvent('PartyUpdate', { id: party.id, members: rows.filter((r) => r.acct !== m) as unknown as never });
+      }
+    }
   }
 
   private sendPartyState(acct: AccountKey): void {

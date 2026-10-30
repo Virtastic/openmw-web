@@ -421,7 +421,13 @@ return {
             party = { id = data.id or 0, leader = data.leader or '', youLead = data.youLead == true,
                 members = data.members or {}, phase = data.phase }
             if party.id ~= 0 then partyInvites = {} end -- in a party: other invites are moot
+            if party.id == 0 then mp.set('partyFrame', '[]') end -- left or disbanded: frame and compass go
             mirror()
+        end,
+        -- OT3-114/OT3-120: the low-rate (2 s) frame of the OTHER members' bars, cell and position.
+        -- Mirrored verbatim; the page draws the party frame and the compass from it.
+        MP_PartyUpdate = function(data)
+            mp.set('partyFrame', json.encode(data.members or {}))
         end,
         -- OT3-73: who is looking for a group. nudge = we just left the census office.
         -- OT3-79: the party leader took a strider/boat/guide from here.

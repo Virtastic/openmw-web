@@ -1297,6 +1297,7 @@ local eventHandlers = {
     MP_FriendRequestReceived = function(data) toPlayer('MP_FriendRequestReceived', data) end,
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
     MP_PartyState = function(data) toPlayer('MP_PartyState', data) end,
+    MP_PartyUpdate = function(data) toPlayer('MP_PartyUpdate', data) end, -- OT3-114
     MP_PartyInviteReceived = function(data) toPlayer('MP_PartyInviteReceived', data) end,
     MP_PartyFinder = function(data) toPlayer('MP_PartyFinder', data) end,
     MP_PartyFollowPrompt = function(data) toPlayer('MP_PartyFollowPrompt', data) end,
