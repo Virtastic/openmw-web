@@ -5108,5 +5108,21 @@ do
     and pl:find("core.sendGlobalEvent('mpUiBusy', { busy = busyNow })", 1, true) ~= nil)
   check('global forwards mpUiBusy as the UiBusy event', gl:find("mp.sendEvent('UiBusy', { busy = data.busy == true })", 1, true) ~= nil)
 end
+-- ============================== OT3-91: partied skill-gain bonus + reward notice (client side)
+print('social.lua -- skill gain bonus while partied')
+do
+  local so = io.open('./openmw/files/data/scripts/mp/social.lua'):read('*a')
+  local hr = io.open('./server/src/core/helperrewards.ts'):read('*a')
+  local lua = so:match('local PARTY_SKILL_GAIN = ([%d%.]+)')
+  local ts = hr:match('PARTY_SKILL_GAIN = ([%d%.]+)')
+  check('PARTY_SKILL_GAIN is the same in Lua and the server', lua ~= nil and lua == ts, tostring(lua) .. ' vs ' .. tostring(ts))
+  check('the bonus applies only in a party of two or more',
+    so:find('party.id ~= 0 and #(party.members or {}) >= 2', 1, true) ~= nil
+    and so:find('params.skillGain * PARTY_SKILL_GAIN', 1, true) ~= nil)
+  check('registered under pcall (no SkillProgression must not break Social)', so:find('I.SkillProgression.addSkillUsedHandler', 1, true) ~= nil
+    and so:find('pcall(function()\n    if I.SkillProgression', 1, true) ~= nil)
+  local ad = io.open('./openmw/files/data/scripts/mp/admin.lua'):read('*a')
+  check('AdminGive shows the reward note when the server sends one', ad:find('data.note', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -216,6 +216,20 @@ end
 -- press to onInputAction below; input.ACTION.Social is that action's id.
 local SOCIAL_ACTION = input.ACTION and input.ACTION.Social
 
+-- OT3-91: skill gain while partied (Morrowind has no kill XP, so skill use IS the progression).
+-- Keep PARTY_SKILL_GAIN equal to server/src/core/helperrewards.ts. pcall: the interface is
+-- absent on a body without the skill scripts, and a throw here must not stop the Social window.
+local PARTY_SKILL_GAIN = 1.15
+pcall(function()
+    if I.SkillProgression and I.SkillProgression.addSkillUsedHandler then
+        I.SkillProgression.addSkillUsedHandler(function(_, params)
+            if party.id ~= 0 and #(party.members or {}) >= 2 and params and params.skillGain then
+                params.skillGain = params.skillGain * PARTY_SKILL_GAIN
+            end
+        end)
+    end
+end)
+
 return {
     engineHandlers = {
         onInputAction = function(id)

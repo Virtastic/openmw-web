@@ -35,6 +35,8 @@ import { SocialStore } from './core/socialstore';
 import { Trades, TradeLedger } from './core/trade';
 import { PvpConsent } from './core/pvp-consent';
 import { BusyFlags } from './core/busy';
+import { HelperRewards } from './core/helperrewards';
+import { GOLD_ID, hintGold } from './core/economy';
 import { serverWhisper } from './core/chat';
 import { Binding } from './core/binding';
 import { AdminAudit, LoginLog } from './core/admin-audit';
@@ -604,7 +606,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // here because the world is built before the combat relay and neither should import the other.
   world.onHolderGained = (cellKey) => combat.flushCell(cellKey);
 
+  // OT3-91: helpers (party members the quest credit gave nothing) are paid gold, via the ledger.
+  const helperRewards = new HelperRewards({
+    now: () => Date.now(),
+    levelOf: (p) => levelOf(p),
+    mentorOk: (p) => socialStore.getMentor(p.accountKey) !== 'revoked',
+    give: (p, gold, note) => {
+      hintGold(p, 'quest');
+      p.peer.sendEvent('AdminGive', { recordId: GOLD_ID, count: gold, note });
+    },
+    ledger: (e) => tradeLedger.write(e),
+  });
   const quests = new Quests({
+    helperReward: (w, h, q, i) => void helperRewards.reward(w, h, q, i),
     roster,
     cells: cellStore,
     players: playerStore,

@@ -48,7 +48,7 @@ handlers.MP_AdminGive = function(data)
     item:moveInto(types.Actor.inventory(player))
     lastGive = recordId .. 'x' .. count
     mp.set('adminGive', lastGive)
-    deps.noticeFn('An admin gave you ' .. count .. 'x ' .. recordId)
+    deps.noticeFn(type(data.note) == 'string' and data.note ~= '' and data.note or ('An admin gave you ' .. count .. 'x ' .. recordId))
 end
 
 handlers.MP_ConsoleCommand = function(data)

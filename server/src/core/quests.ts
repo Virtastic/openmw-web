@@ -117,6 +117,8 @@ export interface QuestCtx {
   noteAnomaly?(accountKey: string, kind: string): void;
   // OT3-90: party accounts for an account, itself included (social.ts partyMembers).
   partyMembers?(accountKey: string): string[];
+  // OT3-91: pay a co-present party member the quest credit gave nothing (see helperrewards.ts).
+  helperReward?(writer: Player, helper: Player, questId: string, idx: number): void;
   // OT3-102: run a cell-doc mutation in the world's serial queue (worldstate.inQueue).
   inQueue?(fn: () => Promise<void> | void): Promise<void>;
 }
@@ -384,7 +386,7 @@ export class Quests {
       if (!m || m.system || !m.inWorld || !cellsVisible(player.cellKey, m.cellKey)) continue;
       if (m.lastInputAt === undefined || now - m.lastInputAt > PARTY_CREDIT_AFK_MS) continue;
       const have = this.ctx.players.getCached(m.charId)?.journal?.[questId];
-      if (have === undefined || have >= idx) continue;
+      if (have === undefined || have >= idx) { this.ctx.helperReward?.(player, m, questId, idx); continue; } // OT3-91
       this.ctx.players.update(m.charId, (doc) => {
         (doc.journal ??= {})[questId] = idx;
         this.logEntry(doc, questId, idx);
