@@ -59,6 +59,20 @@ mkdir -p "$DW/lib" "$DW/include"
 
 mkdir -p "$BUILD" && cd "$BUILD"
 
+# FREETYPE_LIBRARY: the same fault as PNG_LIBRARY below. The emscripten freetype port is
+# materialised under a variant name (libfreetype-legacysjlj.a, libfreetype-mt...), so FindFreetype
+# reports "Could NOT find Freetype (missing: FREETYPE_LIBRARY)", never generates osgdb_freetype,
+# and the target list dies with "unknown target 'osgdb_freetype'" -- after which the `|| ninja`
+# fallback builds every plugin, including obj, which does not compile on a current libc++
+# (std::ptr_fun is gone). Materialise the port, then hand CMake whatever archive it produced.
+FT_LIBDIR="$EM_LIBEXEC/cache/sysroot/lib/$WASM_ARCH-emscripten"
+if ! ls "$FT_LIBDIR"/libfreetype*.a >/dev/null 2>&1; then
+  printf 'int main(){return 0;}\n' > "${TMPDIR:-/tmp}/omw-ft.c"
+  emcc $ARCH_FLAG -pthread -sUSE_FREETYPE=1 "${TMPDIR:-/tmp}/omw-ft.c" -o "${TMPDIR:-/tmp}/omw-ft.js"
+fi
+FT_LIB="$(ls "$FT_LIBDIR"/libfreetype*.a 2>/dev/null | head -1)"
+[ -n "$FT_LIB" ] || { echo "FATAL: no libfreetype*.a under $FT_LIBDIR" >&2; exit 1; }
+
 # TWO THINGS THE PORT LAYOUT BREAKS, both the same shape as the MyGUI/Freetype fault.
 #
 # PNG_LIBRARY: under -pthread the emscripten port is built as libpng-mt.a, and CMake's FindPNG
@@ -76,6 +90,7 @@ emcmake cmake .. \
   -DBUILD_OSG_EXAMPLES:BOOL=OFF \
   -DCMAKE_BUILD_TYPE:STRING=Release \
   -DPNG_LIBRARY:FILEPATH="$EM_LIBEXEC/cache/sysroot/lib/$WASM_ARCH-emscripten/libpng-mt.a" \
+  -DFREETYPE_LIBRARY:FILEPATH="$FT_LIB" \
   -DCMAKE_CXX_FLAGS:STRING="-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -D_LIBCPP_ENABLE_CXX20_REMOVED_FEATURES -Wno-invalid-utf8 -Wno-register -pthread -fwasm-exceptions -msimd128 -fno-strict-aliasing -fno-strict-overflow $ARCH_FLAG" \
   -DCMAKE_C_FLAGS:STRING="-pthread -fwasm-exceptions -msimd128 -fno-strict-aliasing -fno-strict-overflow $ARCH_FLAG" \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
