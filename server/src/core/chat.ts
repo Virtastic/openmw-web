@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// ChatSend -> ChatMessage broadcast; "/"-prefixed text routes to the command registry.
+// ChatSend -> ChatMessage broadcast. The channel is explicit on the wire; a "/" line is plain chat.
 
 import type { LValue } from '../proto/lser';
 import type { Player, Roster } from './players';
@@ -84,7 +84,7 @@ function globalRefusal(lastGlobalAt: Map<string, number>, cooldownMs: number, pl
 export type ChatMessageBody = {
   // Phase 2.5 chat tiers:
   //   say     proximity — everyone whose interest bubble you are in (the default)
-  //   world   WORLD chat ('@' tier): everyone in your world (OT3-110: was 'party' on the wire)
+  //   world   WORLD chat: everyone in your world (OT3-110: was 'party' on the wire)
   //   party   your party (OT3-106), and only them
   //   global  the whole world, rate-limited
   //   server  announcements; never muted, never proximity-filtered
@@ -194,8 +194,8 @@ export function handleChatSend(
     log('warn', 'chat.bad_body', { from: player.name });
     return;
   }
-  // The client's channel selector sends the chosen channel explicitly; a raw client (or a
-  // typed prefix) still works via the !/@ fallback below. `to` is the whisper recipient's
+  // The client's channel selector sends the chosen channel explicitly; a missing or unknown
+  // channel is plain 'say'. There are no typed !/@ prefixes. `to` is the whisper recipient's
   // ACCOUNT KEY (the friend dropdown carries accounts, never usernames — usernames change).
   const explicitChannel = body instanceof Map && typeof body.get('channel') === 'string'
     ? (body.get('channel') as string) : '';
@@ -208,21 +208,14 @@ export function handleChatSend(
   // social panel, which the server hears as SocialAction events. A second, typed route to
   // the same actions was a second place for the permission check to be wrong.
   if (!hooks.onChat(player, trimmed)) return; // vetoed lines were never delivered, so never logged
-  // Channel resolution: an explicit channel from the selector wins; otherwise the !/@ MMO
-  // prefixes, parsed here because they are channel markers, not commands.
+  // Channel resolution: the explicit channel from the selector, else 'say'.
   let channel: 'say' | 'world' | 'party' | 'global' | 'whisper' | 'novice' = 'say';
-  let line = trimmed;
+  let line = trimmed.trim();
   if (explicitChannel === 'say' || explicitChannel === 'world' || explicitChannel === 'party'
     || explicitChannel === 'global' || explicitChannel === 'whisper' || explicitChannel === 'novice') {
     channel = explicitChannel;
-  } else if (/^!/.test(trimmed)) {
-    channel = 'global';
-    line = trimmed.slice(1).trim();
-  } else if (/^@/.test(trimmed)) {
-    channel = 'world';
-    line = trimmed.slice(1).trim();
   }
-  if (line === '') return; // a bare prefix is a typo, not a message
+  if (line === '') return; // a blank line is not a message
   if (channel === 'global') {
     const refused = globalRefusal(ctx.lastGlobalAt ??= new Map(), ctx.globalCooldownMs ?? 0, player, Date.now());
     if (refused !== null) {

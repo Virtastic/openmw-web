@@ -394,7 +394,7 @@ Event-body conventions: arrays = 1-based integer-keyed tables; nil fields = omit
 
 | name | dir | body |
 |---|---|---|
-| `ChatSend` | C→S | `{text=string, channel="say"\|"party"\|"global"\|"whisper"?, to=string?}` — without `channel`, a leading `!` is `global` and a leading `@` is `party` (world chat); `to` names a whisper target. A `/`-prefixed line is chat like any other (there is no command path, §Ops). Own `chat` rate bucket; over it the sender is whispered once and the line dropped |
+| `ChatSend` | C→S | `{text=string, channel="say"\|"party"\|"global"\|"whisper"?, to=string?}` — without `channel` the line is `say` (typed `!`/`@` prefixes are not channel markers); `to` names a whisper target. A `/`-prefixed line is chat like any other (there is no command path, §Ops). Own `chat` rate bucket; over it the sender is whispered once and the line dropped |
 | `ChatMessage` | S→C | `{channel="say"\|"party"\|"global"\|"server"\|"whisper", from=string?, fromId=u16?, to=string?, text=string}` — `say` is proximity when `[chat] sayProximity`; `server` is never muted; a whisper is echoed to the sender with `to` |
 | `PlayerJoinWorld` | S→C | `{id=u16, name=string}` |
 | `PlayerLeaveWorld` | S→C | `{id=u16}` |

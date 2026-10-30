@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Phase 2.5 chat tiers: '!' global, '@' world chat (everyone in this world), plain
+// Phase 2.5 chat tiers: global, world chat (everyone in this world), plain
 // say world-wide by default and proximity-scoped where a deployment asks for it.
 
 import test from 'node:test';
@@ -40,7 +40,7 @@ test('plain say is world-wide by default, proximity when the deployment asks', a
   // Same setup with proximity: not heard.
   const prox = await two(t, { rules: { sayScope: 'proximity' } }, '0,0', '40,40');
   prox.a.sendEvent('ChatSend', { text: 'too far' });
-  prox.a.sendEvent('ChatSend', { text: '!but this is global' });
+  prox.a.sendEvent('ChatSend', { text: 'but this is global', channel: 'global' });
   await prox.b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'but this is global');
   assert.equal(said(prox.b, 'too far').length, 0, 'proximity say must not cross the province');
   prox.a.close();
@@ -57,19 +57,19 @@ test('proximity say still reaches a neighbour in the same cell', async (t) => {
 
 test("the '@' tier is world chat: everyone in this world hears it, no membership needed", async (t) => {
   const { a, b } = await two(t);
-  a.sendEvent('ChatSend', { text: '@regroup at the tower' });
+  a.sendEvent('ChatSend', { text: 'regroup at the tower', channel: 'world' });
   const heard = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'regroup at the tower');
   assert.equal((heard.value as { channel: string }).channel, 'world', 'delivered on the world channel (OT3-110)');
   a.close();
   b.close();
 });
 
-test('a bare tier prefix is treated as a typo, not an empty message', async (t) => {
+test('typed !/@ prefixes are not channel markers; blank lines are dropped (OT3-129)', async (t) => {
   const { a, b } = await two(t);
-  a.sendEvent('ChatSend', { text: '!' });
-  a.sendEvent('ChatSend', { text: '@  ' });
+  a.sendEvent('ChatSend', { text: '   ' });
   a.sendEvent('ChatSend', { text: '!real one' });
-  await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'real one');
+  const got = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === '!real one');
+  assert.equal((got.value as { channel: string }).channel, 'say', 'the "!" stays in the text, on say');
   assert.equal(said(b, '').length, 0, 'no empty lines are broadcast');
   a.close();
   b.close();

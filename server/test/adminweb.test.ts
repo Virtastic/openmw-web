@@ -202,7 +202,7 @@ test('a moderator mute silences the muted player, and nobody else', async (t) =>
 
   assert.equal((await act('mute', 'bob')).status, 200);
   bob.sendEvent('ChatSend', { text: 'say while muted' });
-  bob.sendEvent('ChatSend', { text: '!global while muted' });
+  bob.sendEvent('ChatSend', { text: 'global while muted', channel: 'global' });
   // Alice keeps talking: muting Bob must not stop BOB hearing HER. That is the assertion the
   // argument order actually turns on -- a swap silences the listener instead of the speaker.
   alice.sendEvent('ChatSend', { text: 'can you still hear me' });
