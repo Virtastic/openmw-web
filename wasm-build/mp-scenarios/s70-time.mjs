@@ -3,8 +3,8 @@
 // s70 (M7): the server owns the clock (PROTOCOL.md §M7 WorldTime / WorldTimeRequest).
 //   1. Both clients apply a WorldTime at join and agree on the calendar.
 //   2. A rests 8 hours -> A's client DETECTS the local jump and sends WorldTimeRequest
-//      (asserted on the counter, not inferred), the server applies + rebroadcasts, and B's
-//      clock advances by the same 8 hours. One player resting moves time for everyone.
+//      (asserted on the counter, not inferred). OT3-108: the server takes it as PERSONAL, so
+//      A keeps the 8 hours and B's clock does not move (v1 advanced everyone).
 //   3. B never originated a request of its own: applying a WorldTime must not look like a
 //      local jump and bounce back (that loop would ratchet the world clock forever).
 //   0. The clock is the SERVER's, proven against a value only the server can supply (its
@@ -12,8 +12,8 @@
 //      agree" is NOT evidence: two clients free-running from the same demo start date agree
 //      perfectly while the clock is completely dead. That is exactly how an earlier version
 //      of this scenario passed against a world clock that could not be written at all.
-//   4. B SLEWS rather than snaps: sampled while it converges, B's clock is strictly
-//      between its old value and the target for at least one sample.
+//   (v1's step 4, "B slews rather than snaps to a shared rest", went with the shared skip;
+//   only a script skip is shared now.)
 import assert from 'node:assert/strict';
 
 const STEP_TIMEOUT = 25_000;
@@ -26,9 +26,6 @@ const SERVER_DAY = 16;
 
 const timeOf = async (c) => JSON.parse(await c.eval('window.omw.state.gameTime||"{}"'));
 const num = async (c, key) => Number(await c.eval(`window.omw.state.${key}||"0"`));
-
-// OT3-53: the default timeSkip="owner" is staff-only; this scenario rests as a plain player.
-export const serverRules = 'timeSkip = "anyone"';
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([ctx.launchClient('bot-a'), ctx.launchClient('bot-b')]);
@@ -73,32 +70,16 @@ export default async function run(ctx) {
     "A's rest was detected and sent as a WorldTimeRequest");
   ctx.log('ok: local jump detected -> WorldTimeRequest');
 
-  // B converges on the new time. Sample while it moves: a snap would jump straight from
-  // `beforeB` to the target with nothing in between.
-  const targetB = beforeB + REST_HOURS;
-  let sawIntermediate = false;
-  const deadline = Date.now() + STEP_TIMEOUT;
-  let lastAbs = beforeB;
-  while (Date.now() < deadline) {
-    const t = await timeOf(b);
-    if (t.abs > beforeB + 0.2 && t.abs < targetB - 0.2) sawIntermediate = true;
-    lastAbs = t.abs;
-    if (t.abs >= targetB - 0.35) break;
-    await ctx.sleep(150);
-  }
-  ctx.log(`B clock ${beforeB.toFixed(2)} -> ${lastAbs.toFixed(2)} (target ${targetB.toFixed(2)}), slew samples seen: ${sawIntermediate}`);
-  assert.ok(lastAbs >= targetB - 0.35, `B did not reach the shared time (${lastAbs.toFixed(2)} vs ${targetB.toFixed(2)})`);
-  assert.ok(sawIntermediate, 'B snapped instead of slewing (no intermediate sample observed)');
-
-  // Echo guard: B applied a WorldTime; it must not have read that as its own rest.
-  const reqB = await num(b, 'timeRequests');
-  ctx.log(`B timeRequests = ${reqB} (must stay 0)`);
-  assert.equal(reqB, 0, 'applying WorldTime bounced back as a WorldTimeRequest');
-
-  // And A ends up on the same clock as B.
+  // OT3-108: the rest is PERSONAL. A's own clock keeps the 8 hours; the shared sky does not
+  // skip, so B's clock stays on the world's. Give a periodic WorldTime time to arrive (it would
+  // pull A back if the offset were lost, and move B if the skip were shared).
+  await ctx.sleep(12_000);
   const [t1a, t1b] = await Promise.all([timeOf(a), timeOf(b)]);
-  ctx.log(`after rest: A=${t1a.abs.toFixed(2)} B=${t1b.abs.toFixed(2)}`);
-  assert.ok(Math.abs(t1a.abs - t1b.abs) < 0.75,
-    `clients diverged after the rest: ${(t1a.abs - t1b.abs).toFixed(2)} h`);
-  ctx.log('ok: one player resting advanced the shared clock');
+  ctx.log(`after rest: A=${t1a.abs.toFixed(2)} B=${t1b.abs.toFixed(2)} (B was ${beforeB.toFixed(2)})`);
+  assert.ok(t1a.abs - beforeB > REST_HOURS - 1, `A's rest did not stick (A ${t1a.abs.toFixed(2)}, was ${beforeB.toFixed(2)})`);
+  assert.ok(Math.abs(t1b.abs - beforeB) < 1, `B's clock moved ${(t1b.abs - beforeB).toFixed(2)} h on A's personal rest`);
+  assert.equal(await num(a, 'timeRefused'), 0, "A's rest was refused");
+  // Echo guard: B applied no skip and must not have read anything as its own rest.
+  assert.equal(await num(b, 'timeRequests'), 0, 'B sent a WorldTimeRequest it never made');
+  ctx.log('ok: one player resting moved only their own clock');
 }

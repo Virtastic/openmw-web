@@ -1,11 +1,10 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s150: SLEEPING HEALS YOU, AND YOUR FRIEND WAKES UP IN THE SAME HOUR. The host rests eight
-// hours: the wound closes on the body the peer rules (a local heal that must be claimed --
-// the same channel a potion uses, s146 -- but over eight game hours at once), and the clock
-// jump is the owner's to make (timeSkip = "owner") and reaches the guest, who never rested.
-// s70 proves the clock is shared and s135 that a guest cannot skip it; nothing had proven
-// that the host's own sleep does what sleep is for.
+// s150: SLEEPING HEALS YOU, AND IS YOURS ALONE. One player rests eight hours: the wound closes
+// on the body the peer rules (a local heal that must be claimed -- the same channel a potion
+// uses, s146 -- but over eight game hours at once), and (OT3-108) the clock jump is a personal
+// offset: the other player, who never rested, keeps the shared sky. s70 and s135 prove the
+// personal clock; nothing had proven that the sleeper's own sleep does what sleep is for.
 import assert from 'node:assert/strict';
 
 const STEP = 30_000;
@@ -64,11 +63,13 @@ export default async function run(ctx) {
   assert.ok(after.c > wounded.c + 10, `sleeping ${HOURS} h healed nothing that stuck (${wounded.c} -> ${after.c})`);
   assert.ok(after.c <= after.b, 'never past the maximum');
 
-  // The clock moved by the hours slept, on the host and -- through the server -- the guest.
+  // The clock moved by the hours slept on the host, and (OT3-108: a rest is personal) NOT on the
+  // guest, who never rested.
   const t1 = await timeOf(host);
   assert.ok(t1.abs - t0.abs >= HOURS - 0.5, `the host's clock did not advance ${HOURS} h (${t0.abs?.toFixed?.(2)} -> ${t1.abs?.toFixed?.(2)})`);
-  await guest.waitFor(`Number((JSON.parse(window.omw.state.gameTime||"{}").abs)||0) >= ${t1.abs - 0.5}`, 90_000, "the guest's clock caught up with the host's sleep");
+  await ctx.sleep(12_000); // past a periodic WorldTime
   const g1 = await timeOf(guest);
-  ctx.log(`clocks after: host ${t1.abs.toFixed(2)} h, guest ${g1.abs.toFixed(2)} h`);
-  ctx.log(`PASS: the host slept ${HOURS} h, healed ${after.c - wounded.c}, and the guest woke in the same hour`);
+  ctx.log(`clocks after: host ${t1.abs.toFixed(2)} h, guest ${g1.abs.toFixed(2)} h (was ${g0.abs.toFixed(2)})`);
+  assert.ok(Math.abs(g1.abs - g0.abs) < 1, `the guest's clock moved ${(g1.abs - g0.abs).toFixed(2)} h on the host's personal sleep`);
+  ctx.log(`PASS: the host slept ${HOURS} h and healed ${after.c - wounded.c}; the shared sky did not skip for the guest`);
 }
