@@ -230,6 +230,7 @@ namespace MWMP
         // AVATAR REGISTRY (see puppets.hpp). The mirror image of the puppet one: on the SIM
         // PEER these are the bodies real players drive, and engine code that reacts to "the
         // player" needs to find them, because getPlayer() there is the peer's own idle dummy.
+        api["setAvatarsPlaced"] = [](bool placed) { setAvatarsPlaced(placed); };
         api["setAvatar"] = [](const sol::object& obj, bool on) {
             if (!obj.is<MWLua::Object>())
                 return;

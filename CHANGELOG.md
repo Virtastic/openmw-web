@@ -2,6 +2,14 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.21
+
+**No more fall damage for arriving somewhere.** In multiplayer, travelling or walking into a new
+area could cost health even though you never fell: the server's copy of your character could
+arrive before that place's floors and platforms had loaded there, drop to the ground beneath,
+and charge you for the drop. The server's copy no longer takes fall damage of its own; real
+falls are still measured by your game, as before, and now cost you once instead of twice.
+
 ## 1.7.20
 
 **A weapon you picked up no longer vanishes when you enter a new area.** In multiplayer, an item
