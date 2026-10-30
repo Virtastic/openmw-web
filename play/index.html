@@ -4988,13 +4988,13 @@ window.omw = (function(){
   // Shown the moment creation finishes and multiplayer actually unlocks.
   TOURS.unlocked = [
     { t: 'You are in the world', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>',
-      b: 'Your character is saved to your account and follows you everywhere: solo, or with friends in a shared world. Multiplayer is now unlocked.' },
+      b: 'Your character is saved to your account and follows you everywhere. You share the world with every other player. Multiplayer is now unlocked.' },
     { t: 'Chat', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 10h32v22H22l-8 8v-8H8z"/><path d="M14 18h20M14 24h14"/></svg>',
-      b: 'Press <span class="key">T</span> to talk. <b>World</b> reaches everyone in your world, <b>Whisper</b> one friend. Tab switches channels.' },
+      b: 'Press <span class="key">T</span> to talk. <b>World</b> reaches everyone in the world, <b>Whisper</b> one friend. Tab switches channels.' },
     { t: 'Social', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="16" r="7"/><path d="M10 40c0-7.5 6-13 14-13s14 5.5 14 13"/><path d="M36 12l6 6M42 12l-6 6"/></svg>',
       b: 'Press <span class="key">O</span> for the Social panel: add friends, join a friend, and control who can see you.' },
-    { t: 'Play your way', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="16"/><path d="M24 8v6M24 34v6M8 24h6M34 24h6"/><path d="M24 24l7-7"/></svg>',
-      b: 'Play <b>Solo</b> in your own world, or open it to your friends with <b>Party</b>. Exit from the menu returns you to your characters.' },
+    { t: 'Play together', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="16"/><path d="M24 8v6M24 34v6M8 24h6M34 24h6"/><path d="M24 24l7-7"/></svg>',
+      b: 'Everyone plays in the same world; form a <b>Party</b> with friends to travel together. Exit from the menu returns you to your characters.' },
   ];
   var tourEl = document.getElementById('omw-tour'), tourIdx = 0, tourDeck = TOURS.unlocked, tourKey = 'omw-mp-tour';
   var tourShown = { intro: false, unlocked: false };

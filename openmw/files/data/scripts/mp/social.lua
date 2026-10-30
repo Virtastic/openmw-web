@@ -371,7 +371,7 @@ return {
         -- Without this the bed simply does nothing and the player tries again.
         MP_WorldTimeRefused = function(data)
             -- The server already phrases this as a sentence ("time does not skip in this
-            -- world", "only the world owner can rest for everyone"), so pass it through
+            -- world", "you cannot pass time here"), so pass it through
             -- rather than re-deriving it from a code that does not exist. A lookup table here
             -- would silently stop matching the day someone adds a reason.
             local reason = tostring(data.reason or '')
