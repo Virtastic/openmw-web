@@ -33,7 +33,7 @@ def lines():
         except OSError:
             pass
 
-ev = Counter(); warn = Counter(); sso_fail = Counter(); drops = Counter(); reaped = Counter()
+ev = Counter(); warn = Counter(); sso_fail = Counter(); drops = Counter(); handoffs = Counter(); phase_shifts = Counter()
 client_err = Counter(); peer_err = Counter(); accounts = set(); joined = set()
 path95, path_max, snaps, first_unheld, hold_capped = [], [], 0, 0, 0
 slow_reads = Counter()
@@ -43,7 +43,7 @@ facing_n = facing_bad = 0  # walking NPCs drawn >120 deg off the server's headin
 hitch = hitch_sfs = hidden_w = 0  # visible windows with a frame >= 500 ms; of those, >= 300 ms waiting on streamed reads
 frame_by_tier = defaultdict(lambda: ([], []))  # visible play windows by tier=: (fps, frameMs) -- frameMs is engine CPU ms per frame
 hitch_pf = [0, 0]  # those windows' slow streamed reads: [named by the cell prefetch already, never named] (sfsSlowPf)
-rtt50, rtt95, switch_ms, self_snaps, play_s = [], [], [], 0, 0.0
+rtt50, rtt95, self_snaps, play_s = [], [], 0, 0.0
 npc_worst = Counter()  # visible windows' worst-off NPC (>= 300 u): record (puppet | run locally)
 seen_session = set(); lua_errors = 0; err_sessions = defaultdict(set); data_setup = {}
 num = lambda s: re.sub(r'\d[\d.:x]*', 'N', s)
@@ -58,7 +58,8 @@ for e in lines():
     elif name == 'player.join_world': joined.add(e.get('name'))
     elif name == 'net.rtt':  # server-measured, per player per 5 min (connection.ts flushRtt)
         rtt50.append(e.get('p50', 0)); rtt95.append(e.get('p95', 0))
-    elif name == 'world.reaped': reaped[(e.get('reason') or 'idle') + ('' if e.get('played') is None else f" played={e.get('played')}")] += 1
+    elif name == 'region.handoff': handoffs[f"{e.get('from', '?')} -> {e.get('to', '?')}"] += 1  # a player crossed a region border (server.ts simPeerPass)
+    elif name == 'phase.shift': phase_shifts[f"{e.get('from') or 'base'} -> {e.get('to') or 'base'}"] += 1
     # A PLAYER's refused action only. The sim peer's own late frames after a hand-off (a burst of
     # ActorEquip / ActorDisposition when a new player takes Seyda Neen, 2026-10-21) are dropped by
     # design and read as a scripting fault here; they stay in the raw warning counts below.
@@ -109,8 +110,6 @@ for e in lines():
             if np and np.isdigit() and int(np) and ' settling=1' not in t:  # a settling world's peer may still be starting
                 for rec in (f(t, 'noPoseRec') or '?').split(','): no_pose[rec] += 1
         elif t.startswith('[boot] '):
-            v = f(t, 'switchMs')  # click -> playable in the destination world (index.html)
-            if v and v.isdigit(): switch_ms.append(int(v))
             # The settle hold let the player in on its +10 s cap, the cell still unheld (index.html).
             if f(t, 'holdCapped'): hold_capped += 1
         elif 'SELF SNAP' in t:
@@ -132,16 +131,16 @@ def top(c, n=12): return '\n'.join(f'  {v:6d}  {k}' for k, v in c.most_common(n)
 print(f'== OpenMW-Web multiplayer health, last {args.hours:g} h (since {since}Z)')
 print(f'players signed in: {len(accounts)}   joined a world: {len(joined)}   sessions with telemetry: {len(seen_session)}')
 print(f"funnel: sso ok {ev['auth.sso_ok']} | profile {ev['frontdoor.profile_set']} | new characters {ev['frontdoor.character_provisional']}"
-      f" | worlds started {ev['world.started']} | joins {ev['player.join_world']} | friends added {ev['social.friend_added']}")
+      f" | joins {ev['player.join_world']} | friends added {ev['social.friend_added']}")
 print(f"sign-ins refused:\n{top(sso_fail)}")
-print(f"worlds reaped:\n{top(reaped)}")
+print(f"region handoffs (a player crossed a region border), by direction:\n{top(handoffs)}")
+print(f"phase shifts (a player moved to another phase of the world), by direction:\n{top(phase_shifts)}")
 print(f"let in on the settle ceiling (5 min after first frame, world not settled): {sum(v for k, v in client_err.items() if 'settle hold released' in k)}")
 print(f"smoothness: NPC path p95 per 5 s window -- median {q(path95, .5)}, p90 {q(path95, .9)}, p99 {q(path95, .99)}, max {q(path_max, 1)} u"
       f" ({len(path95)} windows) | snaps {snaps} | sessions whose first window was unheld {first_unheld}"
       f" | let in unheld on the hold's cap {hold_capped}")
 print(f"network: round trip (server-measured) median p50 {q(rtt50, .5)} ms, p95 of p95s {q(rtt95, .95)} ms ({len(rtt50)} samples)"
       f" | own body pulled back (SELF SNAP) {self_snaps} = {self_snaps / max(play_s / 3600, 1e-9):.1f}/h over {play_s / 3600:.1f} h played")
-print(f"world switches: click to playable p50 {q(switch_ms, .5)} ms, p95 {q(switch_ms, .95)} ms ({len(switch_ms)} switches)")
 print(f"NPCs drawn 300 u+ off their server path, worst per visible 5 s window:\n{top(npc_worst, 8)}")
 print(f"NPCs drawn with no pose stream of their own (5 s windows, by record):\n{top(no_pose, 6)}")
 print(f"hitches: {hitch} visible windows with a frame of 500 ms or more, {hitch_sfs} of them waiting 300 ms+ on streamed game files"
