@@ -153,6 +153,9 @@ export interface PlayerDoc {
   // OT3-155: how NPCs feel about THIS character after a conversation (bribe, admire, taunt),
   // by content-ref key, with the cell to replay it in. Capped (quests.ts MAX_DISPOSITIONS).
   dispositions?: Record<string, { cellKey: string; d: number }>;
+  // OT3-113: this character's NPC script locals (a quest flag kept in an NPC's local var):
+  // cellKey -> content-ref key -> var name -> value. Replayed in WorldCellState to them alone.
+  memberVars?: Record<string, Record<string, Record<string, number>>>;
   // Backlog 230: content-ref keys of the NPCs this character has talked to (TalkedToPc).
   talkedTo?: string[];
   // OT3-16: skill books read (NpcStats used ids), flagged again at join so none teaches twice.

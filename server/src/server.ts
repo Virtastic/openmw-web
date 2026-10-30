@@ -467,6 +467,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const seen = moderation.anomaliesFor(accountKey);
     return DECLARED_STATE_ANOMALIES.some((k) => (seen[k] ?? 0) > 0);
   };
+  world.charMemberVars = (charId, cellKey) => playerStore.getCached(charId)?.memberVars?.[cellKey]; // OT3-113
   world.setQuarantineCheck(isQuarantined);
   world.setDropEnforcement(config.economy.refuseUnownedDrops);
 

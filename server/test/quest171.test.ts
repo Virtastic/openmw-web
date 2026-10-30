@@ -147,7 +147,15 @@ test("a member var is filed under the object's own cell, which must be in the wr
   const mv = (n: string) => (v: unknown) => (v as { name?: string })?.name === n;
   a.sendEvent('MemberVarUpdate', { net: 41, name: 'far_state', value: 2, cellKey: '0,2' }); // two cells off: out of reach, dropped
   a.sendEvent('MemberVarUpdate', { net: 41, name: 'npc_state', value: 3, cellKey: '0,1' });
-  const got = await c.waitEvent('MemberVarUpdate', mv('npc_state'), 3000);
-  assert.equal(val(got, 'value'), 3, "filed under 0,1, the write reaches a player who sees 0,1 but not the writer's 0,0");
-  assert.equal(c.inbox.events.filter((e) => e.name === 'MemberVarUpdate' && mv('far_state')(e.value)).length, 0);
+  // OT3-113: a human's NPC local is the writer's own, so the neighbour hears nothing; the
+  // write is filed under 0,1 and replayed to the writer alone when they load that cell.
+  await sleep(300);
+  assert.equal(c.inbox.events.filter((e) => e.name === 'MemberVarUpdate').length, 0, 'a human write is not relayed to another player');
+  a.sendCellChange('9,9', 0, 8192 * 9, 8192 * 9);
+  a.inbox.events.length = 0;
+  a.sendCellChange('0,1', 0, 8192, 0);
+  const snap = await a.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,1', 3000);
+  const mvs = (snap.value as { memberVars: Record<string, Record<string, number>> }).memberVars;
+  assert.deepEqual(Object.values(mvs).map((m) => m['npc_state']), [3], 'filed under 0,1 for the writer');
+  assert.equal(JSON.stringify(mvs).includes('far_state'), false, 'the out-of-reach write was dropped');
 });

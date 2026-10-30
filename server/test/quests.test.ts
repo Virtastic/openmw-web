@@ -138,30 +138,26 @@ test('global and member variables', async (t) => {
   });
 
   await t.test('member vars relay cell-scoped and persist in the cell doc', async () => {
-    const far = await TestClient.connect(server.port);
-    await far.joinAsNew('Far');
-    await far.waitEvent('PlayerList');
-    far.sendCellChange('40,40', 0, 0, 0);
-    await far.waitEvent('PlayerCellChange');
-
+    // OT3-113: a human's NPC local is the writer's own character data, not the cell's.
     a.sendEvent('MemberVarUpdate', { ref: NPC_REF, name: 'state', value: 3, cellKey: '0,0' });
-    const got = await b.waitEvent('MemberVarUpdate');
-    assert.deepEqual(got.value, { ref: NPC_REF, name: 'state', value: 3, cellKey: '0,0' });
-    await fence(a, far);
-    assert.equal(far.inbox.events.filter((e) => e.name === 'MemberVarUpdate').length, 0);
-    far.close();
-    await far.closed;
+    await fence(a, b);
+    assert.equal(b.inbox.events.filter((e) => e.name === 'MemberVarUpdate').length, 0, "Alice's progress does not reach Bob");
   });
 
-  await t.test('member vars reach a joiner in the cell state', async () => {
+  await t.test('a joiner sees defaults; the writer gets their own value back in the cell state', async () => {
     const late = await TestClient.connect(server.port);
     await late.joinAsNew('Late');
     await late.waitEvent('PlayerList');
     late.sendCellChange('0,0', 0, 0, 0);
     const state = (await late.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { memberVars: unknown };
-    assert.deepEqual(state.memberVars, { 'c:300:0': { state: 3 } });
+    assert.equal(Object.keys(state.memberVars as object).length, 0, "Bob/Late's dialogue with the NPC is unaffected by Alice");
     late.close();
     await late.closed;
+    a.sendCellChange('40,40', 0, 0, 0);
+    a.inbox.events.length = 0;
+    a.sendCellChange('0,0', 0, 0, 0);
+    const own = (await a.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { memberVars: unknown };
+    assert.deepEqual(own.memberVars, { 'c:300:0': { state: 3 } });
   });
 });
 

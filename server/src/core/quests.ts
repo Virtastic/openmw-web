@@ -646,8 +646,35 @@ export class Quests {
         return;
       }
     }
+    // OT3-113: a HUMAN's NPC local is that character's own (a quest flag kept in an NPC's
+    // local var is progress). It is filed on their doc, replayed to them alone when the cell
+    // loads (worldstate.ts charMemberVars), and told to the peer, which runs the NPC's script.
+    // No other human hears it, so player B's dialogue with the same NPC is unaffected by A's
+    // progress. The PEER's writes (the NPC's own world state: AI timers, animations) stay
+    // cell-scoped and shared.
+    if (player.system !== true) {
+      if (player.bot !== true) this.storeCharMemberVar(player.charId, cellKey, ref, name, value, player.name);
+      const peer = this.ctx.worldPeer?.();
+      if (peer && peer.id !== player.id) peer.peer.sendEvent('MemberVarUpdate', { ...(lToJs(body) as Record<string, JsLike>) });
+      return;
+    }
     void this.storeMemberVar(cellKey, ref, name, value, player.name);
     this.relayCell(cellKey, player.id, 'MemberVarUpdate', { ...(lToJs(body) as Record<string, JsLike>) });
+  }
+
+  private storeCharMemberVar(charId: string, cellKey: string, ref: ObjRef, name: string, value: number, by: string): void {
+    this.ctx.players.update(charId, (doc) => {
+      const cells = (doc.memberVars ??= {});
+      const vars = (cells[cellKey] ??= {});
+      const own = (vars[ref.key] ??= {});
+      let total = 0;
+      for (const c of Object.values(cells)) for (const v of Object.values(c)) total += Object.keys(v).length;
+      if (!(name in own) && total >= MAX_CHAR_MEMBER_VARS) {
+        log('warn', 'quest.char_member_vars_full', { by, cellKey });
+        return;
+      }
+      own[name] = value;
+    });
   }
 
   private storeMemberVar(cellKey: string, ref: ObjRef, name: string, value: number, by: string): Promise<void> {
@@ -904,6 +931,7 @@ export class Quests {
 }
 
 const MAX_DISPOSITIONS = 500;
+const MAX_CHAR_MEMBER_VARS = 4000; // OT3-113: NPC locals one character may keep
 const recentKey = (refKey: string, playerId: number): string => `${refKey}#${playerId}`;
 
 function refBody(ref: ObjRef): JsLike {

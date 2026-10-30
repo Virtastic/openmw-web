@@ -200,7 +200,7 @@ function takenBy(doc: CellDoc, charId: string | undefined): string[] {
 }
 
 export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], withMemberVars: boolean,
-  charId?: string): Record<string, JsLike> {
+  charId?: string, ownMemberVars?: Record<string, Record<string, number>>): Record<string, JsLike> {
   const locks: Record<string, JsLike> = {};
   for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
   const body: Record<string, JsLike> = {
@@ -225,7 +225,12 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
     actorsComplete: true,
   };
   // Bounded like placed/deleted; past the cap the cell simply sends none.
-  if (withMemberVars) body['memberVars'] = memberVarEntries(doc) <= MAX_MEMBER_VARS_PER_CELL ? { ...(doc.memberVars ?? {}) } : {};
+  if (withMemberVars) {
+    const mv: Record<string, Record<string, number>> = memberVarEntries(doc) <= MAX_MEMBER_VARS_PER_CELL ? { ...(doc.memberVars ?? {}) } : {};
+    // OT3-113: this character's own NPC locals win over the cell's (their progress, not anyone's).
+    for (const [ref, vars] of Object.entries(ownMemberVars ?? {})) mv[ref] = { ...(mv[ref] ?? {}), ...vars };
+    body['memberVars'] = mv;
+  }
   let nodes = lserNodeCount(body);
   if (nodes <= CELL_STATE_NODE_BUDGET) return body;
   const dropped: Record<string, number> = {};
@@ -418,6 +423,8 @@ export class WorldState {
 
   /** Set by the server: a cell gained an authority holder. See the grant callback below. */
   onHolderGained?: (cellKey: string) => void;
+  /** OT3-113: a character's own NPC locals in one cell (refKey -> name -> value). */
+  charMemberVars?: (charId: string, cellKey: string) => Record<string, Record<string, number>> | undefined;
   // Is this player (one of) those talking to an NPC (quests.ts)? Wired by server.ts; the
   // actor facts a non-holder may state hang off it (see actorEvent, ActorDisposition).
   talkingTo?: (refKey: string, playerId: number) => boolean;
@@ -2033,7 +2040,8 @@ export class WorldState {
       // MemberVarUpdate and never read back, so a joiner's copy started from the defaults).
       // Not to a character still in creation (prod 2026-10-26): a stored dock-guard `state`
       // of -1 skipped the race menu for every new character after the first (quests.ts memberVar).
-      player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, player.inChargen !== true, player.system ? undefined : player.charId));
+      player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, player.inChargen !== true, player.system ? undefined : player.charId,
+        player.system ? undefined : this.charMemberVars?.(player.charId, cellKey)));
     });
   }
 
