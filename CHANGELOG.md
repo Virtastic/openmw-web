@@ -2,6 +2,13 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.20
+
+**A weapon you picked up no longer vanishes when you enter a new area.** In multiplayer, an item
+picked up off the ground (most noticeably a weapon you then equipped) was deleted from your
+inventory the next time you crossed into another cell, a few seconds or more after the pickup.
+It now stays in your pack. Items already lost this way are not given back.
+
 ## 1.7.19
 
 **Installing a mod again replaces it instead of adding another copy.** Uploading the same archive
