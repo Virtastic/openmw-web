@@ -253,10 +253,13 @@ export class Quests {
     };
     // STANDALONE (1.7.1): like its globals, the peer's scripts persist to every human, and the
     // union is kept on the shared state the peer is seeded from (its own doc is throwaway).
-    const shared = this.ctx.cells.worldShared();
-    shared.scripts = apply(shared.scripts);
-    this.ctx.cells.saveShared();
+    // OT3-116: the shared list is the PEER'S OWN report only, pruned the moment it stops a script.
+    // A human's scripts live on their character and are not added to it: the union used to take
+    // every script any player ever started and start all of them on every client at join.
     if (player.system === true) {
+      const shared = this.ctx.cells.worldShared();
+      shared.scripts = apply(shared.scripts);
+      this.ctx.cells.saveShared();
       for (const h of this.peerCredit(body, () => false)) {
         this.ctx.players.update(h.charId, (doc) => { doc.scripts = apply(doc.scripts); });
       }
@@ -266,9 +269,20 @@ export class Quests {
   }
 
   sendScriptsSync(player: Player): void {
-    const running = player.system === true
-      ? (this.ctx.cells.worldShared().scripts ?? [])
-      : (this.ctx.players.getCached(player.charId)?.scripts ?? []);
+    // A human gets exactly their character's scripts. The peer, which runs the world's copy for
+    // everyone online, gets its own list plus the online characters' (bounded), so a script
+    // nobody online needs is not started.
+    let running: string[];
+    if (player.system === true) {
+      const set = new Set(this.ctx.cells.worldShared().scripts ?? []);
+      for (const h of this.ctx.roster.humansInWorld()) {
+        if (h.bot === true) continue;
+        for (const s of this.ctx.players.getCached(h.charId)?.scripts ?? []) set.add(s);
+      }
+      running = [...set].slice(0, MAX_SCRIPTS);
+    } else {
+      running = this.ctx.players.getCached(player.charId)?.scripts ?? [];
+    }
     if (running.length === 0) return;
     player.peer.sendEvent('GlobalScriptsSync', { running: [...running] });
   }

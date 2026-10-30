@@ -71,6 +71,40 @@ test("standalone: a new peer is seeded with globals and scripts", async (t) => {
   assert.deepEqual(val(ss, 'running'), ['sleepers']);
 });
 
+// OT3-116: a human's global scripts are theirs. The peer is seeded with its own list plus the
+// scripts of characters ONLINE now; a script a departed player started is not started again.
+test('the global-script union is bounded to the peer and the characters online', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Scripter');
+  await a.waitEvent('PlayerList');
+  peer.sendEvent('GlobalScriptsUpdate', { started: ['Sleepers'] });
+  a.sendEvent('GlobalScriptsUpdate', { started: ['PersonalQuest'] });
+  await sleep(300);
+  peer.close();
+  await sleep(500);
+  const peer2 = await TestClient.simPeer(server.port, PEER_PASS, 'simpeer-two');
+  t.after(() => peer2.close());
+  const both = await peer2.waitEvent('GlobalScriptsSync', () => true, 3000);
+  assert.deepEqual([...(val(both, 'running') as string[])].sort(), ['personalquest', 'sleepers'], 'online character + peer list');
+
+  a.close();
+  await a.closed;
+  await sleep(300);
+  peer2.close();
+  await sleep(500);
+  const peer3 = await TestClient.simPeer(server.port, PEER_PASS, 'simpeer-three');
+  t.after(() => peer3.close());
+  const only = await peer3.waitEvent('GlobalScriptsSync', () => true, 3000);
+  assert.deepEqual(val(only, 'running'), ['sleepers'], 'nobody online needs PersonalQuest: it is not in the union');
+});
+
 // Item 6: a client write refused because the peer owns the name is answered with the winning
 // value, so the refused engine converges instead of keeping its own until the next login.
 test('a client write refused as peer-owned is answered with the peer value', async (t) => {
