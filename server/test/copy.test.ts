@@ -4,13 +4,14 @@
 // or switching worlds: there is one shared world.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = join(process.cwd(), '..');
+const opts = existsSync(join(root, 'play', 'index.html')) ? {} : { skip: 'play/ is not part of the server image' };
 const FORBIDDEN = /\b(owner|guests?|private world|solo world|your own world|switch(ing)? worlds?)\b|<b>Solo<\/b>/i;
 
-test('tour and launcher copy describe one shared world', () => {
+test('tour and launcher copy describe one shared world', opts, () => {
   const index = readFileSync(join(root, 'play', 'index.html'), 'utf8');
   const tours = index.slice(index.indexOf('TOURS.unlocked = ['), index.indexOf('var tourEl'));
   assert.ok(tours.length > 200, 'found the tour block');

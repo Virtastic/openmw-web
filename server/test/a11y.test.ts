@@ -5,11 +5,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
-const html = readFileSync(new URL('../../play/index.html', import.meta.url), 'utf8');
+const indexUrl = new URL('../../play/index.html', import.meta.url);
+const opts = existsSync(indexUrl) ? {} : { skip: 'play/ is not part of the server image' };
+const html = existsSync(indexUrl) ? readFileSync(indexUrl, 'utf8') : '';
 
-test('the three dialogs are role=dialog, modal and named', () => {
+test('the three dialogs are role=dialog, modal and named', opts, () => {
   for (const [id, title] of [['omw-social', 'omw-social-title'], ['omw-ask', 'omw-ask-title'], ['omw-tour', 'omw-tour-title']]) {
     const tag = new RegExp(`<div id="${id}"[^>]*>`).exec(html)?.[0] ?? '';
     assert.match(tag, /role="dialog"/, id);
@@ -19,7 +21,7 @@ test('the three dialogs are role=dialog, modal and named', () => {
   }
 });
 
-test('chat: the feed is a polite live log, stays readable when idle, inputs are labelled', () => {
+test('chat: the feed is a polite live log, stays readable when idle, inputs are labelled', opts, () => {
   assert.match(html, /id="omw-feed" role="log" aria-live="polite"/);
   assert.match(html, /#omw-chat \.feed\.idle \.ln\{ opacity:\.5;/);
   assert.doesNotMatch(html, /#omw-chat \.feed\.idle \.ln\{ opacity:0;/);
@@ -28,7 +30,7 @@ test('chat: the feed is a polite live log, stays readable when idle, inputs are 
   assert.match(html, /ai\.setAttribute\('aria-label','Add a friend by their username'\)/);
 });
 
-test('tabs are buttons with role=tab in a tablist (chat and social)', () => {
+test('tabs are buttons with role=tab in a tablist (chat and social)', opts, () => {
   assert.match(html, /id="omw-chans" role="tablist"/);
   assert.match(html, /'<button type="button" role="tab" aria-selected=/);
   assert.match(html, /id="omw-nav" role="tablist"/);
@@ -38,11 +40,11 @@ test('tabs are buttons with role=tab in a tablist (chat and social)', () => {
   assert.doesNotMatch(html, /el\('div','nv'/);
 });
 
-test('reduced motion is honoured for chat, social and the dialogs, not only loading', () => {
+test('reduced motion is honoured for chat, social and the dialogs, not only loading', opts, () => {
   assert.match(html, /@media \(prefers-reduced-motion: reduce\)\{\s*#omw-chat \*, #omw-social \*, #omw-ask \*, #omw-tour \*/);
 });
 
-test('Tab is trapped in the top-most open dialog', () => {
+test('Tab is trapped in the top-most open dialog', opts, () => {
   const m = /\/\*A11YDIALOG\*\/([\s\S]*?)\/\*END A11YDIALOG\*\//.exec(html);
   assert.ok(m);
   type N = { id: string; disabled?: boolean; offsetParent: object | null; focus(): void; getAttribute(k: string): string | null };
@@ -68,7 +70,7 @@ test('Tab is trapped in the top-most open dialog', () => {
   assert.match(html, /if \(e\.key === 'Tab'\)\{\s*var dlg = visibleDialog\(\);\s*if \(dlg\)\{ trapTab\(e, dlg\); e\.stopImmediatePropagation\(\)/);
 });
 
-test('dialogs take focus on open and give it back on close', () => {
+test('dialogs take focus on open and give it back on close', opts, () => {
   assert.match(html, /premintTicket\(\); focusDialog\(sEl\)/);
   assert.match(html, /uiHold\(false\); releaseDialogFocus\(\); \}/);
   assert.equal((html.match(/focusDialog\(tourEl\)/g) ?? []).length, 2, 'tour and notice');

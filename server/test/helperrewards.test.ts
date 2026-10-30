@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { HelperRewards, HELPER_GOLD, MENTOR_BONUS_GOLD, HELPER_DAILY_CAP } from '../src/core/helperrewards';
 import { Quests } from '../src/core/quests';
 import { PlayerStore } from '../src/persist/playerstore';
@@ -89,9 +89,11 @@ test('quest credit: the member who is past the stage, or not on the quest, is th
   await players.close(); await cells.close();
 });
 
-test('wiring: the server pays through AdminGive with a note and the Lua shows it', () => {
+const luaUrl = new URL('../../openmw/files/data/scripts/mp/admin.lua', import.meta.url);
+test('wiring: the server pays through AdminGive with a note and the Lua shows it',
+  existsSync(luaUrl) ? {} : { skip: 'openmw/ is not part of the server image' }, () => {
   const srv = readFileSync(new URL('../src/server.ts', import.meta.url), 'utf8');
   assert.match(srv, /sendEvent\('AdminGive', \{ recordId: GOLD_ID, count: gold, note \}\)/);
-  const lua = readFileSync(new URL('../../openmw/files/data/scripts/mp/admin.lua', import.meta.url), 'utf8');
+  const lua = readFileSync(luaUrl, 'utf8');
   assert.match(lua, /data\.note/);
 });
