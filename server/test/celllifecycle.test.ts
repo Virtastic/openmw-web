@@ -37,6 +37,24 @@ test('resetCell restocks containers to their first-seen contents, climbing state
   await cells.close();
 });
 
+test('OT3-126: a restocking reset keeps deposits and nets a take-and-return to zero', async () => {
+  const cells = new CellStore(tmpDataDir());
+  const doc = await cells.get('Balmora, Bar');
+  doc.containers['c:42:0'] = {
+    // potion_cure taken then returned (net 0), dagger deposited, gold_001 looted down to 3
+    items: [{ id: 'gold_001', n: 3 }, { id: 'potion_cure', n: 2 }, { id: 'iron_dagger', n: 1 }],
+    stateSeq: 7,
+    origin: [{ id: 'gold_001', n: 100 }, { id: 'potion_cure', n: 2 }],
+  };
+  cells.markDirty('Balmora, Bar');
+  const cont = (await cells.resetCell('Balmora, Bar')).containers['c:42:0']!;
+  assert.deepEqual(cont.items, [{ id: 'gold_001', n: 100 }, { id: 'potion_cure', n: 2 }, { id: 'iron_dagger', n: 1 }]);
+  // a second reset is stable: the deposit is still exactly one dagger, never doubled
+  const again = (await cells.resetCell('Balmora, Bar')).containers['c:42:0']!;
+  assert.deepEqual(again.items, cont.items);
+  await cells.close();
+});
+
 test("a reset refills a merchant's purse, and never drops it", async () => {
   const dir = tmpDataDir();
   const cells = new CellStore(dir);

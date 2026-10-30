@@ -63,6 +63,24 @@ interface PlacedObject {
 
 export type ContainerItems = { id: string; n: number }[];
 
+/** OT3-126: what `now` holds above the first-seen `origin`, per record id (a deposit). */
+export function depositsOver(origin: ContainerItems, now: ContainerItems): ContainerItems {
+  const base = new Map<string, number>();
+  for (const o of origin) base.set(o.id.toLowerCase(), (base.get(o.id.toLowerCase()) ?? 0) + o.n);
+  const out = new Map<string, { id: string; n: number }>();
+  for (const i of now) {
+    const k = i.id.toLowerCase();
+    const have = out.get(k);
+    if (have) have.n += i.n; else out.set(k, { id: i.id, n: i.n });
+  }
+  const extra: ContainerItems = [];
+  for (const [k, e] of out) {
+    const n = e.n - (base.get(k) ?? 0);
+    if (n > 0) extra.push({ id: e.id, n });
+  }
+  return extra;
+}
+
 // THE KEYED MAPS HAVE A CEILING TOO. placed and deleted were capped (worldstate.ts) after
 // 3,400 drops made a cell undecodable; moved, locks, doors and memberVars were not, and
 // ~11k ObjectMoves (three minutes at 60 msg/s from one client, each naming a fresh ref)
@@ -452,13 +470,22 @@ export class CellStore {
         continue;
       }
       if (!cont.origin) continue; // pre-restock doc: nothing to restore it to
-      const items = cont.origin.map((i) => ({ ...i }));
+      // OT3-126: a restock refills what was TAKEN; it must not erase what was PUT. Anything
+      // above the first-seen roll is a deposit and rides through. (A player who took an origin
+      // item and put the same one back nets zero: no loss, no duplicate.)
+      const items = [...cont.origin.map((i) => ({ ...i })), ...depositsOver(cont.origin, cont.items)];
+      const views: NonNullable<typeof cont.views> = {};
+      for (const [c, v] of Object.entries(cont.views ?? {})) {
+        const extra = depositsOver(cont.origin, v.items);
+        if (extra.length) views[c] = { items: [...cont.origin.map((i) => ({ ...i })), ...extra], stateSeq: v.stateSeq + 1 };
+      }
       // stateSeq keeps CLIMBING across a reset. A client that reconnects mid-reset must
       // never see a lower seq than one it already applied, or its own staleness guard
       // would reject the restock as an out-of-date frame.
       // A restock refills the purse too -- a merchant whose stock is back but whose gold is
       // still zero cannot buy anything, which is half a restock.
       doc.containers[key] = { items, stateSeq: cont.stateSeq + 1, origin: cont.origin.map((i) => ({ ...i })),
+        ...(Object.keys(views).length ? { views } : {}),
         ...(cont.goldOrigin !== undefined ? { gold: cont.goldOrigin, goldOrigin: cont.goldOrigin } : {}),
         ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}) };
     }
