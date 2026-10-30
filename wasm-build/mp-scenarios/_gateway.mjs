@@ -9,8 +9,10 @@
 // wherever it landed as home. Anything that switches worlds needs all four, and a fifth
 // scenario re-deriving them by hand is how one of them gets missed.
 //
-// s47, s48 and s57 predate this helper and still inline the same steps. They are left alone
-// because they pass, and rewriting a passing scenario to share code is a bad trade.
+// V2 (OT3-31, OT3-58): there is ONE world, 'vvardenfell', and the gateway serves nothing else
+// (POST /worlds ensures it whatever id is posted; /w/<other> is a 502). Every client therefore
+// dials /w/vvardenfell. The `ownId` options the old scenarios still pass are ignored on purpose:
+// there is no "own world" to be in before going anywhere together.
 //
 // NOTE: this file starts with an underscore so the harness's scenario scan skips it -- it is
 // a library, not a scenario, and a bare .mjs here would be run as one.
@@ -20,6 +22,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+/** The one world every gateway serves (server/src/gateway/worlds.ts WORLD_ID). */
+export const WORLD_ID = 'vvardenfell';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -104,7 +109,7 @@ export function adminApi(gwPort, token = '') {
 }
 
 /**
- * Start a gateway and put a client in its OWN world through it (worlds are created on demand).
+ * Start a gateway and put a client in its OWN world through it (the one world is started on demand).
  * Returns { client, gwPort, ownId, account, stop }.
  */
 /**
@@ -118,13 +123,14 @@ export function adminApi(gwPort, token = '') {
 export async function addClient(ctx, gwPort, opts = {}) {
   // boot: extra launchClient opts (retail: true). dial: boot straight into ANOTHER world (a
   // friend's) with our own as mphome -- what the launcher's "join <friend>" does.
-  const { name = 'bot-b', ownId = 'priv-own-world-b', boot = {}, dial } = opts;
+  const { name = 'bot-b', boot = {}, dial } = opts;
+  const ownId = WORLD_ID; // one world; opts.ownId (v1) is ignored
   const account = `${name}-${ctx.runId}`;
   const token = await harnessSession(gwPort, account);
   const mk = await fetch(`http://127.0.0.1:${gwPort}/worlds`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ id: ownId, mode: 'private' }),
+    body: JSON.stringify({ id: ownId }),
   });
   assert.equal(mk.status, 200, `${name}'s own world must be creatable (${mk.status})`);
   const by = Date.now() + 60_000;
@@ -143,7 +149,8 @@ export async function addClient(ctx, gwPort, opts = {}) {
 }
 
 export async function startGatewayAndClient(ctx, opts = {}) {
-  const { gwPort, name = 'bot-a', maxWorlds = 4, idleReapMs, ownId = 'priv-own-world', boot = {} } = opts;
+  const { gwPort, name = 'bot-a', maxWorlds = 4, idleReapMs, boot = {} } = opts;
+  const ownId = WORLD_ID; // one world; opts.ownId (v1) is ignored
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-gw-worlds-'));
   const gw = spawn(process.execPath, [
     join(ROOT, 'server', 'dist', 'gateway.mjs'),
@@ -201,16 +208,15 @@ export async function startGatewayAndClient(ctx, opts = {}) {
   try {
     assert.ok(await waitHttp(`http://127.0.0.1:${gwPort}/healthz`, 30_000), 'the gateway must come up');
 
-    // The player's OWN world -- the only kind there is now. Dialling a world still booting
-    // gets the 502 a down world is supposed to give, so the helper waits for `up` below
-    // before handing anyone a client. Named priv-* because that is the only prefix the
-    // gateway will revive on dial.
+    // THE world (there is only one). Dialling a world still booting gets the 502 a down
+    // world is supposed to give, so the helper waits for `up` below before handing anyone a
+    // client.
     const account = `${name}-${ctx.runId}`;
     const token = await harnessSession(gwPort, account);
     const mk = await fetch(`http://127.0.0.1:${gwPort}/worlds`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ id: ownId, mode: 'private' }),
+      body: JSON.stringify({ id: ownId }),
     });
     assert.equal(mk.status, 200, `the player's own world must be creatable (${mk.status})`);
     const ownBy = Date.now() + 60_000;
