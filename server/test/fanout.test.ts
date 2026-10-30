@@ -48,7 +48,7 @@ test('a look reaches viewers only, and whoever comes into view gets it', async (
   await near.c.waitEvent('PlayerAppearance', isA, 3000);
   await near.c.waitEvent('PlayerEquipment', isA, 3000);
   const text = `fence-${Math.random().toString(36).slice(2)}`;
-  a.c.sendEvent('ChatSend', { text: `!${text}` });
+  a.c.sendEvent('ChatSend', { text, channel: 'global' });
   await far.c.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === text);
   assert.equal(far.c.inbox.events.filter((e) => (e.name === 'PlayerAppearance' || e.name === 'PlayerEquipment') && isA(e.value)).length, 0,
     'a player across the map is not told how A looks');

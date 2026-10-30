@@ -35,10 +35,10 @@ test('two players at different stages of one quest both finish it independently'
   // A finishes first, B follows later; neither write may move the other.
   a.sendEvent('JournalEntry', { questId: Q, index: 100 });
   const text = `fence-${Math.random().toString(36).slice(2)}`;
-  a.sendEvent('ChatSend', { text: `!${text}` });
+  a.sendEvent('ChatSend', { text, channel: 'global' });
   await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === text);
   b.sendEvent('JournalEntry', { questId: Q, index: 100 });
-  b.sendEvent('ChatSend', { text: `!${text}b` });
+  b.sendEvent('ChatSend', { text: `${text}b`, channel: 'global' });
   await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === `${text}b`);
 
   for (const c of [a, b]) {

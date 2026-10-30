@@ -46,7 +46,7 @@ async function join(t: { after(fn: () => unknown): void }, server: RunningServer
 // before it has been handled.
 async function fence(from: TestClient, watcher: TestClient) {
   const text = `fence-${Math.random().toString(36).slice(2)}`;
-  from.sendEvent('ChatSend', { text: `!${text}` });
+  from.sendEvent('ChatSend', { text, channel: 'global' });
   await watcher.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === text);
 }
 const settle = () => new Promise((r) => setTimeout(r, 250));

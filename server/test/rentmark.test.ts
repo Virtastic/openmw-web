@@ -26,9 +26,9 @@ test('rent globals and the Mark spot are per character', async (t) => {
   a.sendEvent('PlayerMark', { cell: 'Balmora, Eight Plates', x: 1, y: 2, z: 3 });
   b.sendEvent('PlayerMark', { cell: 'Caldera, Guild of Mages', x: 4, y: 5, z: 6 });
   const text = `fence-${Math.random().toString(36).slice(2)}`;
-  a.sendEvent('ChatSend', { text: `!${text}` });
+  a.sendEvent('ChatSend', { text, channel: 'global' });
   await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === text);
-  b.sendEvent('ChatSend', { text: `!${text}2` });
+  b.sendEvent('ChatSend', { text: `${text}2`, channel: 'global' });
   await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === `${text}2`);
   assert.equal(a.inbox.events.filter((e) => e.name === 'GlobalVarUpdate' || e.name === 'PlayerMark').length, 0);
   assert.equal(b.inbox.events.filter((e) => e.name === 'GlobalVarUpdate' || e.name === 'PlayerMark').length, 0);
