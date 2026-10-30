@@ -100,8 +100,19 @@ function recordId(v: LValue | undefined): string | undefined {
   return typeof v === 'string' && v.length > 0 && v.length <= MAX_RECORD_ID ? v : undefined;
 }
 
-function relayAll(roster: Roster, name: string, body: JsLike): void {
-  for (const p of roster.inWorld()) p.peer.sendEvent(name, body);
+// OT3-59: a player's look is for the people who can SEE them (and the sim peer, which models
+// every avatar). Everyone else learns it on entering view (sendLooks, from the cell change).
+function relayToViewers(roster: Roster, of: Player, name: string, body: JsLike): void {
+  for (const p of roster.inWorld()) {
+    if (p.id === of.id || p.system === true || cellsVisible(p.cellKey, of.cellKey)) p.peer.sendEvent(name, body);
+  }
+}
+
+/** Hand `to` the stored appearance + equipment of `of` (the two coming into view of each other). */
+export function sendLooks(store: PlayerStore, to: Player, of: Player): void {
+  const doc = store.getCached(of.charId);
+  if (doc?.appearance) to.peer.sendEvent('PlayerAppearance', { id: of.id, ...doc.appearance });
+  if (doc?.equipment) to.peer.sendEvent('PlayerEquipment', { id: of.id, slots: equipmentToL(doc.equipment) });
 }
 
 // ------------------------------------------------------- per-message handlers
@@ -164,7 +175,7 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
   }
   ctx.store.update(player.charId, (doc) => (doc.appearance = appearance));
   ctx.onCharacterNamed?.(player, appearance.name);
-  relayAll(ctx.roster, 'PlayerAppearance', { id: player.id, ...appearance });
+  relayToViewers(ctx.roster, player, 'PlayerAppearance', { id: player.id, ...appearance });
   return true;
 }
 
@@ -184,7 +195,7 @@ function handleEquipment(ctx: StateCtx, player: Player, body: LTable): boolean {
   const slots = parseEquipment(body);
   if (!slots) return false;
   ctx.store.update(player.charId, (doc) => (doc.equipment = slots), 'debounced');
-  relayAll(ctx.roster, 'PlayerEquipment', { id: player.id, slots: equipmentToL(slots) });
+  relayToViewers(ctx.roster, player, 'PlayerEquipment', { id: player.id, slots: equipmentToL(slots) });
   return true;
 }
 
@@ -1331,8 +1342,8 @@ export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
   for (const other of ctx.roster.inWorld()) {
     if (other.id === joiner.id) continue;
     const doc = ctx.store.getCached(other.charId);
-    if (doc?.appearance) joiner.peer.sendEvent('PlayerAppearance', { id: other.id, ...doc.appearance });
-    if (doc?.equipment) joiner.peer.sendEvent('PlayerEquipment', { id: other.id, slots: equipmentToL(doc.equipment) });
+    // OT3-59: looks only for those in view (the rest arrive with the cell change, sendLooks).
+    if (joiner.system === true || other.system === true || cellsVisible(other.cellKey, joiner.cellKey)) sendLooks(ctx.store, joiner, other);
     // What the others are under right now (a joining PEER gets these from each owner's
     // resyncActive on SimReady instead, with their real instance keys).
     if (joiner.system !== true && other.actives && other.actives.size > 0) {
@@ -1347,8 +1358,7 @@ export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
   if (!own) return;
   for (const other of ctx.roster.inWorld()) {
     if (other.id === joiner.id) continue;
-    if (own.appearance) other.peer.sendEvent('PlayerAppearance', { id: joiner.id, ...own.appearance });
-    if (own.equipment) other.peer.sendEvent('PlayerEquipment', { id: joiner.id, slots: equipmentToL(own.equipment) });
+    if (other.system === true || joiner.system === true || cellsVisible(other.cellKey, joiner.cellKey)) sendLooks(ctx.store, other, joiner);
     // Phase 2b: every PEER gets the whole character of a joining player.
     if (other.system === true && joiner.system !== true) {
       other.peer.sendEvent('AvatarState', avatarStateBody(joiner.id, own, joiner.bounty));

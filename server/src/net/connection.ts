@@ -88,7 +88,7 @@ export function mergeLossy(older: Buffer, newer: Buffer): Buffer {
   out[h - 1] = n;
   return out;
 }
-import { handleAvatarEffectsBatch, handleAvatarItemStatesBatch, handleAvatarSkillUse, handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, type StateCtx, clampToChargenCeiling } from '../core/playerstate';
+import { handleAvatarEffectsBatch, handleAvatarItemStatesBatch, handleAvatarSkillUse, handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, sendLooks, type StateCtx, clampToChargenCeiling } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
 import type { Quests } from '../core/quests';
@@ -1329,6 +1329,7 @@ export class Connection implements Peer {
       if (!p.pose) continue;
       player.peer.sendEvent('PlayerCellChange',
         { id: p.id, cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z });
+      sendLooks(this.ctx.players, player, p); // OT3-59: and how they look
     }
   }
 
@@ -1532,6 +1533,10 @@ export class Connection implements Peer {
       // cell. Everyone else learns on arrival (the occupants sync below).
       if (p.id !== player.id && p.system !== true && !cellsVisible(p.cellKey, cellKey) && !cellsVisible(p.cellKey, oldCell)) continue;
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
+      // OT3-59: whoever the mover has just come into view of learns how they look now (looks
+      // are not broadcast world-wide).
+      if (p.id !== player.id && p.system !== true && player.system !== true
+        && cellsVisible(p.cellKey, cellKey) && !cellsVisible(p.cellKey, oldCell)) sendLooks(this.ctx.players, p, player);
     }
     // ...and the mover is told who is already where they now stand.
     if (!this.isSystem) this.sendVisibleOccupants(player);

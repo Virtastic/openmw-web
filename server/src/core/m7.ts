@@ -452,10 +452,8 @@ export class WorldM7 {
         doc.explored = [...set].slice(-MAX_EXPLORED);
       });
     }
-    if (!this.ctx.isMapShared()) return; // individual mode: never relayed
-    for (const p of this.ctx.roster.inWorld()) {
-      if (p.id !== player.id) p.peer.sendEvent('WorldMapExplored', { cellKeys, byId: player.id });
-    }
+    // OT3-59: the map is the character's own. It is kept above and replayed to them at join
+    // (exploredFor); no other player is told what they have explored.
   }
 
   // The keys a joining client replays through MP_WorldMapExplored: the campaign's when the

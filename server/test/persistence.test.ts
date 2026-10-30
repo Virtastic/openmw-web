@@ -149,10 +149,11 @@ test('m2 state sync end to end', async (t) => {
     b.sendCellChange('50,50', 0, 0, 0); // far from Alice
     await b.waitEvent('PlayerCellChange');
 
-    // Far apart: appearance still fans out to all...
+    // Far apart: neither appearance (OT3-59) nor dynamic stats reach a far cell.
     a.sendEvent('PlayerAppearance', APPEARANCE);
-    assert.deepEqual((await b.waitEvent('PlayerAppearance', (v) => (v as { id: number }).id === aId)).value, { id: aId, ...APPEARANCE });
-    // ...but dynamic stats do not reach a far cell.
+    a.sendEvent('ChatSend', { text: 'look-fence' });
+    await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'look-fence');
+    assert.equal(b.inbox.events.filter((e) => e.name === 'PlayerAppearance').length, 0);
     b.inbox.events.length = 0;
     const stats = { hp: { c: 12.5, b: 50 }, mp: { c: 0, b: 30 }, ft: { c: 99, b: 100 } };
     a.sendEvent('PlayerStatsDynamic', stats);
@@ -221,6 +222,7 @@ test('m2 state sync end to end', async (t) => {
   await t.test('late joiner receives existing players state; joiner stored state broadcasts', async () => {
     const c = await TestClient.connect(server.port);
     const { playerId: cId } = await c.joinAsNew('Cara');
+    c.sendCellChange('0,0', 0, 0, 0); // OT3-59: looks come with coming into view
     // Joiner gets Alice's cached appearance + equipment without Alice resending.
     const app = await c.waitEvent('PlayerAppearance', (v) => (v as { id: number }).id === aId);
     assert.deepEqual(app.value, { id: aId, ...APPEARANCE });
@@ -242,6 +244,7 @@ test('m2 state sync end to end', async (t) => {
     const w2 = await c2.waitJson('SessionWelcome');
     const c2Id = w2['playerId'] as number;
     c2.sendJson({ t: 'SessionReady' });
+    c2.sendCellChange('0,0', 0, 0, 0);
     const rejoined = await a.waitEvent('PlayerAppearance', (v) => (v as { id: number }).id === c2Id);
     assert.equal((rejoined.value as { name: string }).name, 'Cara');
     c2.close();

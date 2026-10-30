@@ -545,13 +545,13 @@ test('operator cell resets', async (t) => {
 });
 
 test('map sharing follows the [sharing] toggle', async (t) => {
-  await t.test('shared: explored cells relay to peers with the sender id', async () => {
+  await t.test('even with [sharing] map on, explored cells are never relayed (OT3-59)', async () => {
     const { server } = await boot(t, { sharing: { map: true } });
-    const { c: a, playerId: aId } = await join(server, 'MapA');
+    const { c: a } = await join(server, 'MapA');
     const { c: b } = await join(server, 'MapB');
     a.sendEvent('WorldMapExplored', { cellKeys: ['1,1', '1,2'] });
-    assert.deepEqual((await b.waitEvent('WorldMapExplored')).value, { cellKeys: ['1,1', '1,2'], byId: aId });
-    await fence(a, a);
+    await fence(a, b);
+    assert.equal(b.inbox.events.filter((e) => e.name === 'WorldMapExplored').length, 0, "another player's map is not told");
     assert.equal(a.inbox.events.filter((e) => e.name === 'WorldMapExplored').length, 0, 'never echoed');
 
     a.sendEvent('WorldMapExplored', { cellKeys: [] });        // empty
