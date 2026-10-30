@@ -365,6 +365,29 @@ return {
             mirror()
             render()
         end,
+        -- OT3-76: the heartbeat no longer rebroadcasts the whole player list. The server sends a delta of
+        -- who joined, left or moved to the friends and party mates of whoever changed: each change is
+        -- the same row a FriendList carries, applied to the friend row and the party member in place.
+        MP_PresenceDelta = function(data)
+            for _, c in ipairs(data.changes or {}) do
+                for _, f in ipairs(friends) do
+                    if f.acct == c.acct then
+                        f.online = c.online == true
+                        f.playerId = c.playerId
+                        f.cellKey = c.cellKey
+                        f.joinable = c.joinable
+                    end
+                end
+                for _, m in ipairs(party.members or {}) do
+                    if m.acct == c.acct then
+                        m.online = c.online == true
+                        m.playerId = c.playerId
+                    end
+                end
+            end
+            mirror()
+            render()
+        end,
         -- Every refused action reports why. An action that silently does nothing is
         -- indistinguishable from a broken server.
         -- Why the world clock did not move. `[rules] timeSkip` refuses a Rest or Wait.

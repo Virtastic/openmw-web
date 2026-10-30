@@ -221,35 +221,74 @@ export class Social {
   // cellKey is included ONLY for friends. It is a location disclosure, and a stranger — or
   // someone this player has blocked — must never receive it.
   friendList(acct: AccountKey): FriendView[] {
-    const out: FriendView[] = [];
-    for (const f of this.d.store.friendsOf(acct)) {
-      const p = this.onlinePlayer(f.account);
-      // cellKey is gated by the SUBJECT's presence mode, not merely by friendship: a player
-      // who set themselves to private stays hidden from friends too, which is
-      // the entire point of choosing it.
-      // Availability is a hard gate over connectedness: an Offline player is CONNECTED (they
-      // are off in their own solo world) but must read as offline to friends — hidden, and
-      // with no location, exactly as if disconnected.
-      // Server-wide: `p` is only this world's copy, and a friend elsewhere is still online.
-      const where = this.presenceOf(f.account);
-      const available = where.online && this.isAvailable(f.account);
-      const showWhere = available && where.cellKey !== undefined && this.maySeeLocation(acct, f.account);
-      out.push({
-        acct: f.account,
-        name: this.d.displayName(f.account) ?? f.account,
-        online: available,
-        // playerId is a LOCAL connection id and only means anything in this world — a friend
-        // elsewhere is online with no id here, which is exactly right: you cannot click
-        // through to a session this process does not hold. The location comes from shared
-        // presence, so it is correct wherever they are.
-        ...(available && p ? { playerId: p.id } : {}),
-        ...(showWhere ? { cellKey: where.cellKey } : {}),
-        // Presence says which world they are IN; joinFriend follows them there (and refuses,
-        // in place, a party whose host is not your friend).
-        ...(available && where.world !== this.d.worldId && where.mode === 'party' ? { joinable: true } : {}),
-      });
+    return this.d.store.friendsOf(acct).map((f) => this.presenceView(acct, f.account));
+  }
+
+  /** How `viewer` sees `subject`'s presence: one row of the friend list, and one entry of a
+   *  PresenceDelta (OT3-76), so the two can never disagree about what a viewer may know. */
+  private presenceView(viewer: AccountKey, subject: AccountKey): FriendView {
+    const p = this.onlinePlayer(subject);
+    // cellKey is gated by the SUBJECT's presence mode, not merely by friendship: a player
+    // who set themselves to private stays hidden from friends too, which is
+    // the entire point of choosing it.
+    // Availability is a hard gate over connectedness: an Offline player is CONNECTED (they
+    // are off in their own solo world) but must read as offline to friends — hidden, and
+    // with no location, exactly as if disconnected.
+    // Server-wide: `p` is only this world's copy, and a friend elsewhere is still online.
+    const where = this.presenceOf(subject);
+    const available = where.online && this.isAvailable(subject);
+    const showWhere = available && where.cellKey !== undefined && this.maySeeLocation(viewer, subject);
+    return {
+      acct: subject,
+      name: this.d.displayName(subject) ?? subject,
+      online: available,
+      // playerId is a LOCAL connection id and only means anything in this world — a friend
+      // elsewhere is online with no id here, which is exactly right: you cannot click
+      // through to a session this process does not hold. The location comes from shared
+      // presence, so it is correct wherever they are.
+      ...(available && p ? { playerId: p.id } : {}),
+      ...(showWhere ? { cellKey: where.cellKey } : {}),
+      // Presence says which world they are IN; joinFriend follows them there (and refuses,
+      // in place, a party whose host is not your friend).
+      ...(available && where.world !== this.d.worldId && where.mode === 'party' ? { joinable: true } : {}),
+    };
+  }
+
+  // OT3-76: what the last heartbeat saw, per account (its cell; absent = offline). The heartbeat used
+  // to push EVERY player a full PlayerList of everyone online every 10 s (O(N) bytes per player per
+  // beat, O(N^2) in total, idle). Now it diffs this and tells only the friends and party mates of
+  // whoever changed, so an idle server sends nothing.
+  private lastSeen: Map<AccountKey, string> | undefined;
+
+  /** Run on the presence heartbeat, after this world's rows are published. Sends a PresenceDelta
+   *  `{ changes: FriendView[] }` to each friend / party mate of an account that joined, left or
+   *  changed cell since the last call. Returns the number of changed accounts. */
+  presenceDeltas(): number {
+    this.presenceCache = undefined;
+    const now = new Map<AccountKey, string>();
+    for (const r of this.presentRows()) if (!r.isBot) now.set(r.account, r.cellKey ?? '');
+    const before = this.lastSeen;
+    this.lastSeen = now;
+    if (!before) return 0; // first beat: everyone already got their list on join
+    const changed: AccountKey[] = [];
+    for (const [a, cell] of now) if (before.get(a) !== cell) changed.push(a);
+    for (const a of before.keys()) if (!now.has(a)) changed.push(a);
+    if (changed.length === 0) return 0;
+    const out = new Map<Player, FriendView[]>();
+    for (const subject of changed) {
+      const audience = new Set<AccountKey>(this.d.store.friendsOf(subject).map((f) => f.account));
+      for (const m of this.partyMembers(subject)) audience.add(m);
+      audience.delete(subject);
+      for (const a of audience) {
+        const viewer = this.onlinePlayer(a);
+        if (!viewer || viewer.system || viewer.bot) continue;
+        let list = out.get(viewer);
+        if (!list) out.set(viewer, (list = []));
+        list.push(this.presenceView(a, subject));
+      }
     }
-    return out;
+    for (const [viewer, changes] of out) viewer.peer.sendEvent('PresenceDelta', { changes: changes as unknown as never });
+    return changed.length;
   }
 
   // Friends, the two lists a player can only ever ADD to from the panel (blocked, muted --

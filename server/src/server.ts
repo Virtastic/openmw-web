@@ -1730,6 +1730,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // under a position from the other. The presence row is the arbiter: a row another world
   // wrote AFTER this session joined means the character was opened there, and this session
   // is the one to drop. Checked on the heartbeat, so the overlap is at most one beat.
+  const presenceWritten = new Map<string, { sig: string; at: number }>();
+  const PRESENCE_REFRESH_MS = 20_000; // the row's TTL is 30 s (social.ts PRESENCE_TTL_MS)
   const publishPresence = (): void => {
     const now = Date.now();
     for (const p of roster.inWorld()) {
@@ -1743,42 +1745,22 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         p.peer.disconnect('SUPERSEDED', 'this character was opened in another world');
         continue;
       }
+      // OT3-76: a row is rewritten when it CHANGED, or before the readers' TTL would age it out
+      // (PRESENCE_REFRESH_MS) -- not for every player on every beat.
+      const sig = `${p.name}|${p.cellKey ?? ''}|${p.charId}|${p.joinedWorldAt ?? 0}`;
+      const prev = presenceWritten.get(p.accountKey);
+      if (prev && prev.sig === sig && now - prev.at < PRESENCE_REFRESH_MS) continue;
       socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now, 'public', p.charId);
+      presenceWritten.set(p.accountKey, { sig, at: now });
     }
+    for (const acct of presenceWritten.keys()) if (!roster.activeForAccount(acct)?.inWorld) presenceWritten.delete(acct);
   };
-  // THE PLAYERS LIST IS THE SERVER'S, NOT THIS WORLD'S. Roster.joinWorld sends a PlayerList
-  // built from this process's occupants, which is all it can see — so the panel showed the
-  // world you were standing in and called it "players". You should be able to see, and invite,
-  // anyone connected to the server from wherever you are. Rebroadcast the shared view; the
-  // client's PlayerList handler already replaces its roster wholesale.
-  //
-  // A remote player carries no id: connection ids are local to the process that holds the
-  // socket, and inventing one would let the UI offer actions that address nothing. Social ops
-  // resolve by NAME, so every button still works on a row from another world.
-  const broadcastServerRoster = (): void => {
-    const everyone = social.onlineEverywhere();
-    if (everyone.length === 0) return;
-    for (const p of roster.humansInWorld()) {
-      if (p.bot) continue; // nothing is listening on a bot's peer
-      // Three queries for this viewer, not three per candidate. See Social.relationsFor.
-      const relation = social.relationsFor(p.accountKey);
-      // PER RECIPIENT, because the interesting part of a row is the RELATIONSHIP: the panel
-      // offered "add friend" to people you were already friends with, and to people whose
-      // request you had already sent, since a row carried only {id, name}. Flags, not account
-      // keys — a key is the login identifier, which for an SSO account is a real name.
-      const list = everyone
-        .filter((r) => r.account !== p.accountKey) // your own row is rendered from what you know
-        .map((r) => {
-          const local = roster.activeForAccount(r.account);
-          return {
-            ...(local && local.inWorld ? { id: local.id } : {}),
-            name: r.name,
-            ...relation(r.account),
-          };
-        });
-      p.peer.sendEvent('PlayerList', { players: list as unknown as never });
-    }
-  };
+  // OT3-76: THE 10 s FULL PlayerList IS GONE. broadcastServerRoster sent every human a per-recipient
+  // list of everyone online on every beat -- O(N) bytes each, O(N^2) in all, with nobody doing
+  // anything. Joiners still get the list once (Roster.joinWorld) and join/leave are announced live;
+  // what moves between beats is who is where, and that goes as a PresenceDelta to the friends and
+  // party mates of whoever changed (Social.presenceDeltas). An idle server sends nothing.
+  const broadcastServerRoster = (): void => { social.presenceDeltas(); };
 
   publishPresence();
   const presenceTick = setInterval(() => {

@@ -1301,6 +1301,7 @@ local eventHandlers = {
     MP_PartyFinder = function(data) toPlayer('MP_PartyFinder', data) end,
     MP_PartyFollowPrompt = function(data) toPlayer('MP_PartyFollowPrompt', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
+    MP_PresenceDelta = function(data) toPlayer('MP_PresenceDelta', data) end, -- OT3-76
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
     -- OT3-177: trade. The window lives on the page (social.lua mirrors it); only the apply
     -- needs the global script, because only global can create and remove inventory items.
