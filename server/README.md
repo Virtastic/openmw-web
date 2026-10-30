@@ -216,6 +216,36 @@ comfortable with a single world of 100 **even in the pathological all-in-one-cel
 the binding constraint on players-per-cell is the browser client, which must render and
 interpolate every avatar. That is what the render-LOD tiers address.
 
+### Node-side capacity, no peer (OT3-74, INDICATIVE)
+
+`bots/soak.ts` against `dist/testhost.mjs` (which has NO sim peer), 1 minute per step, on a
+shared laptop at load 5-12 with a dependency compile running (bots and server share the CPU, so
+"CPU %" is the server and "bot CPU %" the fleet; do not quote these as production numbers).
+Spread = `--bots N --cells N`; hub = `--onecell --layout cluster --bots N`.
+
+| bots | layout | server CPU % | RSS MB | rx KB/s/client | ping max ms | backpressure drops | join ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 25 | spread | 0 | 197 | 0.3 | 1 | 0 | 18 |
+| 25 | hub | 4 | 205 | 10.3 | 1 | 0 | 17 |
+| 50 | spread | 2 | 210 | 0.3 | 1 | 0 | 22 |
+| 50 | hub | 11 | 235 | 20.8 | 1 | 37 | 20 |
+| 100 | spread | 4 | 245 | 0.3 | 2 | 0 | 28 |
+| 100 | hub | 71 | 286 | 38.4 | 93 | 3005 | 490 |
+| 200 | spread | 13 | 295 | 0.3 | 4 | 0 | 30 |
+| 200 | hub | 79 | 312 | 27.1 | 482 | 37777 | 1775 |
+
+First Node wall: a **hub of about 100** (one core saturated by the pose fan-out; backpressure
+drops and join time climb at once, ping follows). Spread out, 200 is nowhere near it. Watch
+`omwmp_relay_checks_total` and `omwmp_event_loop_delay_p99_seconds` on /metrics; the display cap
+(`limits.maxVisiblePlayers`, OT3-197) is the lever, and is untested under this soak.
+
+**Not measured: the peer.** testhost has none, so peer frame time, sim/real ratio and the
+peer's own RSS are absent, and the peer is the suspected first wall (20-50 scattered players or
+one dense city). The numbers above are an upper bound on what the Node process alone allows.
+The peer series (`omwmp_peer_frame_interval_ms`, `omwmp_peer_sim_real_ratio`, per region) are
+on /metrics for a real run: `soak.ts --attach <port>` at 25/50/100/200 with a peer, spread and
+with 50 in Balmora. `maxPlayers` stays 256 until that run publishes the peer's number.
+
 ### Client cost per avatar (render LOD)
 
 Measured with `wasm-build/measure-avatar-cost.sh` (removed in OT3-240; in git history), which runs all three arms back to back so
