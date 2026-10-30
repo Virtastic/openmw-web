@@ -137,3 +137,14 @@ test('chat history migrates from world-id scope to channel scope', () => {
   assert.equal(s.recentChat('priv-someone', 10).length, 0);
   s.close();
 });
+
+test('the replay window equals the client buffer and keeps the newest lines (OT3-127)', async () => {
+  const { replayWindow, CHAT_REPLAY_LINES } = await import('../src/core/chat');
+  const a = Array.from({ length: 60 }, (_, i) => ({ ts: i * 2, n: i }));
+  const b = Array.from({ length: 60 }, (_, i) => ({ ts: i * 2 + 1, n: 1000 + i }));
+  const out = replayWindow(a, b);
+  assert.equal(CHAT_REPLAY_LINES, 50);
+  assert.equal(out.length, CHAT_REPLAY_LINES);
+  assert.equal(out[out.length - 1]!.n, 1059, 'newest line survives');
+  assert.ok(out.every((l, i) => i === 0 || out[i - 1]!.ts <= l.ts), 'oldest first');
+});

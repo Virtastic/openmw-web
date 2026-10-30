@@ -46,7 +46,7 @@ import type { ChatContext } from './core/chat';
 import { Moderation, reportView } from './core/moderation';
 import { Admin, ADMIN_COMMANDS, dashboardRank, operatorRank } from './core/admin';
 import { ResumeStore } from './core/resume';
-import { broadcastChat, makeChatFilter, noviceEligible, type ChatMessageBody } from './core/chat';
+import { broadcastChat, makeChatFilter, replayWindow, noviceEligible, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
 import { MoveBroadcaster, interestFromLimits } from './core/movement';
@@ -791,11 +791,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Ordinary ChatMessage events in the order they were said, so the client needs no new
     // handling — history is the same messages, earlier.
     replayChat: (player): void => {
-      const lines = [
-        ...socialStore.recentChat('global', CHAT_HISTORY_REPLAY),
-        ...socialStore.recentChat('server', CHAT_HISTORY_REPLAY),
-        ...socialStore.recentChat('world', CHAT_HISTORY_REPLAY),
-      ].sort((a, b) => a.ts - b.ts);
+      const lines = replayWindow(
+        socialStore.recentChat('global', CHAT_HISTORY_REPLAY),
+        socialStore.recentChat('server', CHAT_HISTORY_REPLAY),
+        socialStore.recentChat('world', CHAT_HISTORY_REPLAY),
+      );
       for (const l of lines) {
         // A listener who muted the speaker never received the line live, and must not get it
         // through the back door on their next join. The same is true of a BLOCK, which is the

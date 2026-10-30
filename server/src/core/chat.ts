@@ -60,6 +60,17 @@ import { cellsVisible } from './movement';
 import { log } from '../log';
 
 const MAX_CHAT_CHARS = 1024;
+
+/** Lines the server replays on join. MUST equal the client buffer (CHAT_LOG_MAX in
+ *  scripts/mp/player.lua), or the oldest part of a replay is dropped on arrival. Whispers and
+ *  'say' are deliberately not stored, so they do not survive a reconnect (OT3-127 decision:
+ *  whispers are private, 'say' is proximity noise on replay). */
+export const CHAT_REPLAY_LINES = 50;
+
+/** Merge the replay sources oldest-first and keep only the newest CHAT_REPLAY_LINES. */
+export function replayWindow<T extends { ts: number }>(...sources: T[][]): T[] {
+  return sources.flat().sort((a, b) => a.ts - b.ts).slice(-CHAT_REPLAY_LINES);
+}
 // GLOBAL reaches every player on the server, so it is held to a tighter budget than say or
 // world chat (OT3-23): a shorter line, one line per account per cooldown -- keyed on the
 // ACCOUNT, so reconnecting does not reset it -- and nothing at all while on probation.
