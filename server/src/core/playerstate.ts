@@ -63,6 +63,8 @@ const GOLD_PER_MINUTE = 40_000;
 const MAX_EQUIPMENT_SLOT = 20;
 
 export interface StateCtx {
+  /** OT3-105: the player took damage (the peer's hp report fell): ends their busy flag. */
+  onDamaged?(player: Player): void;
   worldPeer(): Player | undefined; // THE world peer (server.ts): the one simulator answers rule
   roster: Roster;
   store: PlayerStore;
@@ -899,6 +901,8 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     const died = hp.c <= 0;
     const transition = died && p.avatarDead !== true;
     p.avatarDead = died;
+    const hpBefore = ctx.store.getCached(p.charId)?.stats?.dynamic?.hp?.c;
+    if (hpBefore !== undefined && hp.c < hpBefore) ctx.onDamaged?.(p);
     ctx.store.update(p.charId, (doc) => {
       doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
     }, transition ? 'now' : 'sweep');

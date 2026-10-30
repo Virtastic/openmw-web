@@ -5094,5 +5094,19 @@ do
   check('global.lua forwards MP_PartyUpdate to the player script', gl:find("MP_PartyUpdate = function(data) toPlayer('MP_PartyUpdate', data) end", 1, true) ~= nil)
   check('the pose mirror carries yaw for the compass', pl:find('yaw = okY and yaw or nil', 1, true) ~= nil)
 end
+-- ============================== OT3-105: busy flag (client side)
+print('player.lua -- the UI mode edge becomes the server busy flag')
+do
+  local function rd(f) return io.open(f):read('*a') end
+  local pl, gl = rd('./openmw/files/data/scripts/mp/player.lua'), rd('./openmw/files/data/scripts/mp/global.lua')
+  local modes = pl:match('local BUSY_MODES = (%b{})') or ''
+  for _, m in ipairs({ 'Dialogue', 'Barter', 'Travel', 'Training', 'Container' }) do
+    check('BUSY_MODES has ' .. m, modes:find(m .. ' = true', 1, true) ~= nil)
+  end
+  check('the inventory window is not busy', not modes:find('Interface', 1, true))
+  check('UiModeChanged sends mpUiBusy only on an edge', pl:find('if busyNow ~= uiBusy then', 1, true) ~= nil
+    and pl:find("core.sendGlobalEvent('mpUiBusy', { busy = busyNow })", 1, true) ~= nil)
+  check('global forwards mpUiBusy as the UiBusy event', gl:find("mp.sendEvent('UiBusy', { busy = data.busy == true })", 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

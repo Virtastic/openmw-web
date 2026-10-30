@@ -98,6 +98,7 @@ interface SocialDeps {
   // OT3-84: the character's journal (questId -> stage), for the party's out-of-phase hint.
   journalOf?(player: Player): Record<string, number>;
   // OT3-114: the character's current/base health, magicka and fatigue, for the party frame.
+  busyOf?(player: Player): boolean; // OT3-105
   vitalsOf?(player: Player): { hp: [number, number]; mp: [number, number]; ft: [number, number] } | undefined;
   // A4/3.8: file a report into the moderation queue (the same store /report writes).
   report?(doc: {
@@ -1094,6 +1095,7 @@ export class Social {
           name: this.d.displayName(m) ?? m,
           ...(local ? { playerId: local.id } : {}),
           ...(v ? { hp: v.hp, mp: v.mp, ft: v.ft } : {}),
+          ...(local && this.d.busyOf?.(local) ? { busy: true } : {}),
           ...(local?.cellKey !== undefined ? { cell: local.cellKey } : {}),
           ...(local?.pose ? { x: Math.round(local.pose.x), y: Math.round(local.pose.y), z: Math.round(local.pose.z) } : {}),
         };

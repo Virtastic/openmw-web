@@ -34,6 +34,7 @@ import { Social } from './core/social';
 import { SocialStore } from './core/socialstore';
 import { Trades, TradeLedger } from './core/trade';
 import { PvpConsent } from './core/pvp-consent';
+import { BusyFlags } from './core/busy';
 import { serverWhisper } from './core/chat';
 import { Binding } from './core/binding';
 import { AdminAudit, LoginLog } from './core/admin-audit';
@@ -525,7 +526,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // stable across roster order, so two system peers cannot each be "the" peer to different
   // sites (that split brain sent input to one and authority to the other).
   let worldPeerImpl: () => Player | undefined = () => undefined;
+  // OT3-105: busy players (menus, dialogue). The world peer is told every edge.
+  const busy = new BusyFlags({
+    now: () => Date.now(),
+    notify: (p, b) => worldPeerImpl()?.peer.sendEvent('PlayerBusy', { id: p.id, busy: b }),
+  });
   const stateCtx: StateCtx = {
+    onDamaged: (p) => busy.damaged(p),
     worldPeer: () => worldPeerImpl(),
     roster,
     store: playerStore,
@@ -728,6 +735,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     now: () => Date.now(),
     levelOf,
     journalOf: (p) => playerStore.getCached(p.charId)?.journal ?? {},
+    busyOf: (p) => busy.isBusy(p.id),
     vitalsOf: (p) => {
       const d = playerStore.getCached(p.charId)?.stats?.dynamic;
       return d ? { hp: [d.hp.c, d.hp.b], mp: [d.mp.c, d.mp.b], ft: [d.ft.c, d.ft.b] } : undefined;
@@ -780,6 +788,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     social,
     trades,
     pvpConsent,
+    busy,
     m7,
     admin,
     bans,
@@ -1620,7 +1629,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     }));
     peer.peer.sendEvent('StoryLicense', contentTable.storyLicence(humans));
   };
-  const simPeerTick = setInterval(() => { simPeerPass(); pushStoryLicence(); social.pushPartyUpdates(); }, 2_000);
+  const simPeerTick = setInterval(() => { simPeerPass(); pushStoryLicence(); social.pushPartyUpdates(); busy.sweep((id) => roster.get(id)); }, 2_000);
   // A peer finishing its hello should not wait up to a full tick to be put to work —
   // that is 5s of the player holding a loading screen for no reason.
   ctx.onPeerJoined = () => simPeerPass();

@@ -95,6 +95,14 @@ local lastPoseMirror = 0
 -- six paying into a per-client purse that never empties.
 local liveContainerOpen = false -- a pickpocket window is up (Container mode on a live actor)
 local arrestDialoguePending = false -- the next Dialogue mode is MP_PlayerArrest's: no lock request (343)
+-- OT3-105: windows in which the player is not in the world. Interface (inventory/map) is NOT
+-- here: you can be hit while you rummage, and the cap would not save you from a bad guess.
+local BUSY_MODES = {
+    Dialogue = true, Barter = true, Training = true, Travel = true, SpellBuying = true,
+    SpellCreation = true, Enchanting = true, MerchantRepair = true, Companion = true,
+    Alchemy = true, Repair = true, Recharge = true, Persuasion = true, Container = true,
+}
+local uiBusy = false
 local GOLD_SERVICE_MODES = {
     Barter = true, Training = true, Travel = true, SpellBuying = true,
     SpellCreation = true, Enchanting = true, MerchantRepair = true,
@@ -1610,6 +1618,13 @@ local script = {
             end
         end,
         UiModeChanged = function(data)
+            -- OT3-105: in a menu or a conversation we are not playing: tell the server so the
+            -- peer's AI leaves us be (cleared by damage and by the server's time cap).
+            local busyNow = data.newMode ~= nil and BUSY_MODES[data.newMode] == true
+            if busyNow ~= uiBusy then
+                uiBusy = busyNow
+                core.sendGlobalEvent('mpUiBusy', { busy = busyNow })
+            end
             -- Esc (or any other window) closed our Interface mode -> drop the chat window.
             if chatElement and data.newMode == nil then
                 destroyChat()

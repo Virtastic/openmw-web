@@ -5290,7 +5290,7 @@ window.omw = (function(){
     function bar(c, v){ var t = v && v[1] > 0 ? Math.max(0, Math.min(100, v[0] / v[1] * 100)) : 0;
       return '<div class="bar '+c+'" role="meter" aria-label="'+c+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(t)+'"><i style="width:'+t+'%"></i></div>'; }
     pf.innerHTML = rows.map(function(r){
-      return '<div class="pm"><span class="pn">'+esc(r.name)+'</span> <span class="pc">'+esc(r.cell == null ? 'offline' : r.cell)+'</span>'
+      return '<div class="pm"><span class="pn">'+esc(r.name)+(r.busy ? ' (busy)' : '')+'</span> <span class="pc">'+esc(r.cell == null ? 'offline' : r.cell)+'</span>'
         + (r.hp ? bar('hp', r.hp) + bar('mp', r.mp) + bar('ft', r.ft) : '') + '</div>'; }).join('');
     var marks = '<span class="tick"></span>', hasMe = typeof me.x === 'number';
     rows.forEach(function(r){

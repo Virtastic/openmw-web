@@ -284,6 +284,7 @@ local isChargenCell = shared.isChargenCell -- the sanctuary objects.lua and the 
 local PUPPET_TEMPLATE_ID = 'villager_00' -- demo NPC record (race "Imperial"), neutral kit
 
 local puppets = {} -- id -> {obj=GameObject, name=string}
+local busyPlayers = {} -- OT3-105: playerId -> true while the server says they are in a menu/dialogue
 -- body object id -> player id: "is this actor a puppet?" is asked for every active actor
 -- several times a second (actors.lua actorsByCell), and a scan of every puppet per actor was
 -- ~1000 binding calls a pass with a crowd of 20 (#159 s177).
@@ -2085,6 +2086,13 @@ local eventHandlers = {
         pushStatsToPuppet(data.id)
     end,
 
+    -- OT3-105: the server's busy flag for a player (menu/dialogue). The sim peer records it
+    -- here; the AI-target skip in actors.cpp reads it in a later C++ change (tier2).
+    MP_PlayerBusy = function(data)
+        if type(data.id) ~= 'number' then return end
+        busyPlayers[data.id] = data.busy == true or nil
+    end,
+
     -- M2 respawn service: teleport self, then let player.lua revive/refill.
     MP_PlayerResurrect = function(data)
         -- standUp: a death the peer never confirmed (playerstate.ts) -- up where we lie.
@@ -2749,6 +2757,11 @@ local eventHandlers = {
         if data.obj and data.obj:isValid() then
             data.obj:removeScript('scripts/mp/selfkill.lua')
         end
+    end,
+
+    -- OT3-105: the player's UI mode edge -> the server's busy flag (player.lua decides what is busy).
+    mpUiBusy = function(data)
+        mp.sendEvent('UiBusy', { busy = data.busy == true })
     end,
 
     mpChatSend = function(data)
