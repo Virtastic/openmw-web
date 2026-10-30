@@ -3680,7 +3680,7 @@ window.omw = (function(){
 #omw-chat .ln{ margin:1.5px 0; text-shadow:0 1px 2px rgba(0,0,0,.95), 0 0 6px rgba(0,0,0,.7);
   word-wrap:break-word; opacity:.78; animation:omwln .25s ease; transition:opacity 1.2s ease; }
 /* idle: nothing said for a while, the corner clears itself; opening the panel (T) brings it all back */
-#omw-chat .feed.idle .ln{ opacity:0; }
+#omw-chat .feed.idle .ln{ opacity:.5; } /* OT3-145: dimmed, never gone (was 0) */
 @keyframes omwln{ from{ opacity:0; transform:translateY(3px);} to{ transform:none; } }
 #omw-chat .ln .tag{ font-weight:700; letter-spacing:.02em; }
 #omw-chat .ln .who{ font-weight:600; color:var(--ink); }
@@ -3702,6 +3702,16 @@ window.omw = (function(){
 #omw-chat .chan{ padding:4px 10px 6px; cursor:pointer; font-size:11px; letter-spacing:.1em;
   text-transform:uppercase; color:var(--faint); border-bottom:2px solid transparent; }
 #omw-chat .chan:hover{ color:var(--muted); }
+/* OT3-145: the tabs are real buttons now; undo only what a button adds. */
+#omw-chat button.chan{ background:none; border-top:0; border-left:0; border-right:0; font-family:inherit; }
+#omw-social button.nv{ background:transparent; font-family:inherit; text-align:left; width:100%; }
+#omw-chat button:focus-visible, #omw-social button:focus-visible, #omw-ask button:focus-visible,
+#omw-tour button:focus-visible, #omw-social input:focus-visible, #omw-chat input:focus-visible{
+  outline:2px solid #e8c86a; outline-offset:2px; }
+@media (prefers-reduced-motion: reduce){
+  #omw-chat *, #omw-social *, #omw-ask *, #omw-tour *, #omw-party, #omw-compass{
+    animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+}
 #omw-chat .chan.on{ color:var(--ink); }
 #omw-chat .chan.on[data-c="world"]{ border-color:var(--c-world); color:var(--c-world); }
 #omw-chat .chan.on[data-c="whisper"]{ border-color:var(--c-whisper); color:var(--c-whisper); }
@@ -3873,27 +3883,27 @@ window.omw = (function(){
 </style>
 <div id="omw-party" role="region" aria-label="Party members"></div>
 <div id="omw-compass" role="img" aria-label="Party compass"></div>
-<div id="omw-chat"><div class="feed" id="omw-feed"></div>
+<div id="omw-chat"><div class="feed" id="omw-feed" role="log" aria-live="polite" aria-relevant="additions" aria-label="Chat"></div>
   <div class="bar">
-    <div class="chans" id="omw-chans"></div>
+    <div class="chans" id="omw-chans" role="tablist" aria-label="Chat channel"></div>
     <div class="r2"><span class="clab" id="omw-clab">[World]</span>
-      <input class="wto" id="omw-wto" list="omw-wto-list" placeholder="Name" autocomplete="off" style="display:none"><datalist id="omw-wto-list"></datalist>
-      <input class="tx" id="omw-tx" maxlength="1024" placeholder="Type a message…"></div>
+      <input class="wto" id="omw-wto" list="omw-wto-list" aria-label="Whisper to" placeholder="Name" autocomplete="off" style="display:none"><datalist id="omw-wto-list"></datalist>
+      <input class="tx" id="omw-tx" maxlength="1024" aria-label="Chat message" placeholder="Type a message…"></div>
     <div class="hint">Enter send &middot; Tab channel &middot; Esc close</div>
   </div></div>
-<div id="omw-social"><div class="panel">
+<div id="omw-social" role="dialog" aria-modal="true" aria-labelledby="omw-social-title"><div class="panel">
   <div class="hd">
-    <div class="ttl"><div class="kick">Multiplayer</div><h2>Social</h2></div>
+    <div class="ttl"><div class="kick">Multiplayer</div><h2 id="omw-social-title">Social</h2></div>
     <span class="seg" id="omw-avail"></span>
     <button class="x" id="omw-social-close" title="Close (O)" aria-label="Close (O)">&times;</button>
   </div>
   <div class="body">
-    <div class="nav" id="omw-nav"></div>
+    <div class="nav" id="omw-nav" role="tablist" aria-label="Social sections"></div>
     <div class="content" id="omw-social-body"></div>
   </div>
-  <div class="ft" id="omw-social-status"></div>
+  <div class="ft" id="omw-social-status" role="status" aria-live="polite"></div>
 </div></div>
-<div id="omw-ask"><div class="panel">
+<div id="omw-ask" role="dialog" aria-modal="true" aria-labelledby="omw-ask-title" aria-describedby="omw-ask-body"><div class="panel">
   <div class="glyph" id="omw-ask-glyph"></div>
   <div class="kick">Multiplayer</div>
   <h2 id="omw-ask-title"></h2>
@@ -3903,7 +3913,7 @@ window.omw = (function(){
     <button class="go" id="omw-ask-yes">Continue</button>
   </div>
 </div></div>
-<div id="omw-tour"><div class="panel">
+<div id="omw-tour" role="dialog" aria-modal="true" aria-labelledby="omw-tour-title" aria-describedby="omw-tour-body"><div class="panel">
   <button class="x" id="omw-tour-x" aria-label="Close">×</button>
   <div class="glyph" id="omw-tour-glyph"></div>
   <div class="kick">Multiplayer</div>
@@ -4518,7 +4528,7 @@ window.omw = (function(){
   function renderChans(){
     if (chans().indexOf(chChan) < 0) chChan = 'world';
     chansEl.innerHTML = chans().map(function(c){
-      return '<span class="chan'+(c===chChan?' on':'')+'" data-c="'+c+'">'+c+'</span>'; }).join('');
+      return '<button type="button" role="tab" aria-selected="'+(c===chChan?'true':'false')+'" tabindex="'+(c===chChan?'0':'-1')+'" class="chan'+(c===chChan?' on':'')+'" data-c="'+c+'">'+c+'</button>'; }).join('');
     clab.textContent = CLABEL[chChan];
     clab.style.color = 'var(--c-'+chChan+')';
     wto.style.display = (chChan === 'whisper') ? '' : 'none';
@@ -4533,6 +4543,14 @@ window.omw = (function(){
       wto.value = chWhisper;
     }
   }
+  // OT3-145: arrow keys move between channel tabs (roving tabindex, WAI-ARIA tabs pattern).
+  chansEl.addEventListener('keydown', function(e){
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    var cs = chans(), i = cs.indexOf(chChan);
+    chChan = cs[(i + (e.key === 'ArrowRight' ? 1 : cs.length - 1)) % cs.length];
+    e.preventDefault(); e.stopPropagation(); renderChans();
+    var on = chansEl.querySelector('.chan.on'); if (on) on.focus();
+  });
   chansEl.addEventListener('click', function(e){ var c = e.target.getAttribute('data-c'); if (c){ chChan = c; renderChans(); tx.focus(); } });
   wto.addEventListener('input', function(){ chWhisper = wto.value.trim(); });
   // Called by the key shield too (it runs a field's onkeydown). Enter moves on to the line.
@@ -4628,7 +4646,39 @@ window.omw = (function(){
   function failureText(code, op){
     return FAILURE[code] || (op + ': ' + (code || '?'));
   }
-  function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); premintTicket(); }
+  // ---- OT3-145: dialogs trap Tab, take focus on open and give it back on close ----
+  /*A11YDIALOG*/
+  var focusBack = null;
+  function visibleDialog(){
+    var ids = ['omw-ask', 'omw-tour', 'omw-social']; // top-most first
+    for (var i = 0; i < ids.length; i++){
+      var d = document.getElementById(ids[i]);
+      if (d && d.classList.contains('show')) return d;
+    }
+    return null;
+  }
+  function dialogFocusables(d){
+    return Array.prototype.filter.call(d.querySelectorAll('button, input, select, textarea, [tabindex]'), function(n){
+      return !n.disabled && n.getAttribute('tabindex') !== '-1' && n.offsetParent !== null; });
+  }
+  function trapTab(e, d){
+    var f = dialogFocusables(d);
+    if (!f.length){ e.preventDefault(); return; }
+    var first = f[0], last = f[f.length - 1], a = document.activeElement;
+    if (!d.contains(a)){ e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && a === first){ e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && a === last){ e.preventDefault(); first.focus(); }
+  }
+  function focusDialog(d){
+    if (!focusBack && document.activeElement && document.activeElement !== document.body) focusBack = document.activeElement;
+    setTimeout(function(){ var f = dialogFocusables(d); if (f.length && !d.contains(document.activeElement)) f[0].focus(); }, 0);
+  }
+  function releaseDialogFocus(){
+    var b = focusBack; focusBack = null;
+    if (b && document.contains(b)) try { b.focus(); } catch(e){}
+  }
+  /*END A11YDIALOG*/
+  function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); premintTicket(); focusDialog(sEl); }
   // Every world switch starts here, so the ticket it will need is fetched now, off the click's
   // critical path. One spare at a time; a failure costs nothing (rebootIntoWorld mints as before).
   function premintTicket(){
@@ -4642,7 +4692,7 @@ window.omw = (function(){
       .then(function(d){ if (d && d.ticket) window.__omwSpareTicket = { ticket: d.ticket, at: Date.now() }; })
       .catch(function(){});
   }
-  function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
+  function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); releaseDialogFocus(); }
   document.getElementById('omw-social-close').addEventListener('click', closeSocial);
   sEl.addEventListener('mousedown', function(e){ if (e.target === sEl) closeSocial(); });
   function seg(opts, cur, fn){ var s = el('span','seg'); opts.forEach(function(o){
@@ -4713,9 +4763,10 @@ window.omw = (function(){
       return String(p.name||'').toLowerCase() !== selfName; });
     [['friends','Friends', friends.length],['players','Players', otherPlayers.length + (selfDisplay ? 1 : 0)],['settings','Settings', null]]
       .forEach(function(t){
-        var d = el('div','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
+        var d = el('button','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
+        d.type = 'button'; d.setAttribute('role','tab'); d.setAttribute('aria-selected', sTab===t[0] ? 'true' : 'false');
         d.setAttribute('data-t', t[0]); // stable hook for the click regression test
-        d.onclick = function(){ sTab = t[0]; renderSocial(); };
+        d.onclick = function(){ sTab = t[0]; renderSocial(); var nb = sNav.querySelector('[data-t="'+t[0]+'"]'); if (nb) nb.focus(); };
         sNav.appendChild(d);
       });
     // content
@@ -4856,7 +4907,7 @@ window.omw = (function(){
         acts.push(['remove', function(){ cmd('social:FriendRemove:'+f.acct); }]);
         sec.appendChild(personRow(f.name, f.online ? (f.cellKey || 'Online') : 'Offline', f.online, acts));
       });
-      var add = el('div','addrow'); var ai = el('input'); ai.placeholder = 'Add a friend by their username';
+      var add = el('div','addrow'); var ai = el('input'); ai.placeholder = 'Add a friend by their username'; ai.setAttribute('aria-label','Add a friend by their username');
       var ab = el('button','btn pri','Add'); ab.onclick = function(){ if (ai.value.trim()){ cmd('social:FriendRequest:'+ai.value.trim()); setStatus('Friend request sent to '+ai.value.trim()+'.'); ai.value=''; } };
       ai.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') ab.onclick(); };
       add.appendChild(ai); add.appendChild(ab); sec.appendChild(add);
@@ -5077,7 +5128,7 @@ window.omw = (function(){
     tourDeck = TOURS[which];
     tourKey = tourKeyFor(which);
     tourIdx = 0; renderTour();
-    tourEl.classList.add('show');
+    tourEl.classList.add('show'); focusDialog(tourEl);
     // The intro appears BEFORE character creation, where you are alone in your own private
     // world, so stopping the world is safe and a modal you cannot dismiss while something
     // walks up to you is not. The unlock tour does not pause: by then you are in a live world
@@ -5087,7 +5138,7 @@ window.omw = (function(){
     if (tourPaused) cmd('pause:on');
   }
   function closeTour(){ if (!tourEl.classList.contains('show')) return;
-    tourEl.classList.remove('show');
+    tourEl.classList.remove('show'); releaseDialogFocus();
     if (tourPaused) { tourPaused = false; cmd('pause:off'); }
     tourHold(false);
     // A notice has no key: it reports something that just happened, so "seen" is meaningless
@@ -5117,7 +5168,7 @@ window.omw = (function(){
       var field = null;
       if (ask){
         field = document.createElement('input');
-        field.type = 'text'; field.maxLength = 200; field.placeholder = ask;
+        field.type = 'text'; field.maxLength = 200; field.placeholder = ask; field.setAttribute('aria-label', ask);
         field.style.cssText = 'display:block;width:100%;margin-top:12px;padding:9px 10px;background:#0f0c08;'
           + 'border:1px solid #3a2e1e;border-radius:4px;color:#e9dcc3;font:inherit;';
         field.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); };
@@ -5129,7 +5180,7 @@ window.omw = (function(){
       // click that dismisses it is also a click into the world behind it.
       uiHold(true);
       function done(v){
-        bd.classList.remove('show');
+        bd.classList.remove('show'); releaseDialogFocus();
         uiHold(false);
         yes.onclick = null; no.onclick = null; document.removeEventListener('keydown', key, true);
         if (field){ var typed = field.value; field.remove(); resolve(v ? typed : null); }
@@ -5142,7 +5193,7 @@ window.omw = (function(){
       yes.onclick = function(){ done(true); };
       no.onclick = function(){ done(false); };
       document.addEventListener('keydown', key, true);
-      bd.classList.add('show');
+      bd.classList.add('show'); focusDialog(bd);
       if (field) field.focus(); else no.focus();
     });
   }
@@ -5160,7 +5211,7 @@ window.omw = (function(){
     tourIdx = 0; renderTour();
     document.getElementById('omw-tour-dots').innerHTML = '';
     document.getElementById('omw-tour-next').innerHTML = 'Got it';
-    tourEl.classList.add('show');
+    tourEl.classList.add('show'); focusDialog(tourEl);
     tourHold(true);
     tourPaused = false;
   }
@@ -5256,8 +5307,8 @@ window.omw = (function(){
       + '<h2>Choose your handle</h2>'
       + '<p>This is the name other players see: in chat, on your friends list and in your party. '
       + 'It is <b>not</b> your character name and <b>not</b> the name on your sign-in account.</p>'
-      + '<input id="omw-uname-in" maxlength="20" placeholder="handle" autocomplete="off" spellcheck="false">'
-      + (email ? '' : '<input id="omw-uname-em" type="email" placeholder="email" autocomplete="off" style="margin-top:8px">')
+      + '<input id="omw-uname-in" maxlength="20" aria-label="Public handle" placeholder="handle" autocomplete="off" spellcheck="false">'
+      + (email ? '' : '<input id="omw-uname-em" type="email" aria-label="Email" placeholder="email" autocomplete="off" style="margin-top:8px">')
       + '<div id="omw-uname-err" class="err"></div>'
       + '<button id="omw-uname-go" class="go">Continue ▸</button>'
       + '</div>');
@@ -5636,6 +5687,10 @@ window.omw = (function(){
     return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
   }
   window.addEventListener('keydown', function(e){
+    if (e.key === 'Tab'){
+      var dlg = visibleDialog();
+      if (dlg){ trapTab(e, dlg); e.stopImmediatePropagation(); return; } // OT3-145
+    }
     if (e.key === 'Escape'){
       if (tourEl.classList.contains('show')){ e.preventDefault(); e.stopPropagation(); closeTour(); }
       else if (chatOpen){ e.preventDefault(); e.stopPropagation(); suppressSignals(); closeChat(); }
