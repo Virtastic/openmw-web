@@ -160,7 +160,10 @@ build_mygui() {
   # so 3.4.3 no longer compiles as-is. Force-include a forwarding specialisation rather than
   # patching upstream. See deps/shim/ushort_char_traits.h for why this is safe.
   local SHIM=""
-  [ -f "$ROOT/deps/shim/ushort_char_traits.h" ] && SHIM="-include $ROOT/deps/shim/ushort_char_traits.h"
+  # The tracked copy first: deps/ is gitignored, so deps/shim/ is absent on a clean checkout.
+  for h in "$ROOT/wasm-build/include/mygui_char_traits_fix.h" "$ROOT/deps/shim/ushort_char_traits.h"; do
+    [ -f "$h" ] && { SHIM="-include $h"; break; }
+  done
   emcmake cmake -S "$SRC/mygui" -B "$SRC/mygui/$BUILD_DIR" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DMYGUI_STATIC=ON -DMYGUI_RENDERSYSTEM=1 -DMYGUI_DISABLE_PLUGINS=ON \
