@@ -2250,7 +2250,17 @@ namespace MWMechanics
                 {
                     float height = cls.getCreatureStats(mPtr).land(isPlayer);
                     float healthLost = 0.f;
-                    if (!inwater)
+                    // A PLACED AVATAR NEVER PAYS FOR A FALL ITSELF. On the peer it is set on its
+                    // owner's poses (global.lua placeAvatar) and the owner's engine claims every
+                    // real fall (hp.fall). What it does fall is the peer's own artefact: arriving in
+                    // a cell before that cell's statics are up, a still avatar (no pose, no
+                    // placement) dropped through a strider platform or a floor to the terrain and
+                    // was charged for it -- damage on every arrival the player never fell (prod
+                    // 2026-10-29 23:50, 405 u under Balmora's platform), and a real fall charged
+                    // twice. No knockdown either: the owner's kd rides the claim.
+                    const bool placedAvatar = !isPlayer && MWMP::avatarsPlaced()
+                        && MWMP::isAvatar(mPtr.getCellRef().getRefNum());
+                    if (!inwater && !placedAvatar)
                         healthLost = getFallDamage(mPtr, height);
 
                     if (healthLost > 0.0f)

@@ -76,6 +76,13 @@ namespace MWMP
     void setAvatarBusy(ESM::RefNum ref, bool busy);
     bool isAvatarBusy(ESM::RefNum ref);
 
+    /** Under the WoW model ([limits] clientAuthority) the peer PLACES each avatar on its owner's
+     * poses instead of walking it, and the owner's own engine measures every real fall and claims
+     * it (hp.fall). Set from `mp.setAvatarsPlaced` (global.lua sendAvatarPolicy). While set, an
+     * avatar takes no fall damage of its own: see character.cpp. */
+    void setAvatarsPlaced(bool placed);
+    bool avatarsPlaced();
+
     /** That avatar's crime bounty, 0 when unknown. Safe to call every frame. */
     int avatarBounty(ESM::RefNum ref);
 

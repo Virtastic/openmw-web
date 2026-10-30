@@ -146,6 +146,21 @@ namespace MWMP
 
     namespace
     {
+        bool sAvatarsPlaced = false;
+    }
+
+    void setAvatarsPlaced(bool placed)
+    {
+        sAvatarsPlaced = placed;
+    }
+
+    bool avatarsPlaced()
+    {
+        return sAvatarsPlaced;
+    }
+
+    namespace
+    {
         int sPartyLevel = 0;
     }
 
