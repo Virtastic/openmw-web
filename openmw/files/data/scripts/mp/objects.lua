@@ -177,6 +177,17 @@ local function resolveRefKey(key)
     return nil
 end
 
+-- A CARRIED ITEM IS NOT THE WORLD OBJECT IT WAS. A single picked-up item keeps the form id of
+-- the world reference it came from, so a cell state's refKey for that pickup resolves to the
+-- copy in the player's pack. Deleting or moving it there took the item out of the inventory
+-- on the next cell entry once the 5 s pickup guard had lapsed, and the next declaration saved
+-- the loss -- an equipped weapon was simply gone (prod 2026-10-29/30, iron shardaxe, twice).
+-- The cell state only ever describes objects lying in the world.
+local function inWorld(obj)
+    local ok, parent = pcall(function() return obj.parentContainer end)
+    return not (ok and parent ~= nil)
+end
+
 local function cellKeyOfObj(obj)
     local cell = obj.cell
     if not cell then return deps.ownCellKeyFn() end
@@ -1218,7 +1229,7 @@ handlers.MP_WorldCellState = function(data)
     if deps.cellDeathsFn then deps.cellDeathsFn(data.cellKey, data.deaths or {}) end
     for _, refKey in ipairs(data.deleted or {}) do
         local obj = resolveRefKey(refKey)
-        if obj and obj:isValid() and not recentPickups[obj.id] then
+        if obj and obj:isValid() and not recentPickups[obj.id] and inWorld(obj) then
             local netId = objIdToNet[obj.id]
             if netId then
                 netToObj[netId] = nil
@@ -1229,7 +1240,7 @@ handlers.MP_WorldCellState = function(data)
     end
     for refKey, m in pairs(data.moved or {}) do
         local obj = resolveRefKey(refKey)
-        if obj and obj:isValid() then
+        if obj and obj:isValid() and inWorld(obj) then
             retry.teleport(obj, cellArgFor(data.cellKey), util.vector3(m.x, m.y, m.z), nil,
                 { rotation = util.transform.rotateZ(m.rotZ or 0) })
         end
