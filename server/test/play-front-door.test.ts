@@ -15,9 +15,14 @@ const play = readFileSync(join(process.cwd(), 'web', 'play.js'), 'utf8');
 
 test('one mode: no single-player branch, no password form', () => {
   assert.doesNotMatch(play, /singlePlayer|deploymentMode|cloud=1|pwForm|\/auth\/password/);
-  const launcher = readFileSync(join(process.cwd(), '..', 'play', 'launcher.html'), 'utf8');
-  assert.doesNotMatch(launcher, /registration_disabled/, 'the error map lives in play.js only');
-  assert.ok(launcher.includes("location.replace('/#mperror=' + err[1])"), '/join forwards its errors to the door');
+  // play/ is not part of the server image (the tier2 build runs this suite), so the launcher half
+  // only runs where the checkout is whole.
+  const launcherPath = join(process.cwd(), '..', 'play', 'launcher.html');
+  if (existsSync(launcherPath)) {
+    const launcher = readFileSync(launcherPath, 'utf8');
+    assert.doesNotMatch(launcher, /registration_disabled/, 'the error map lives in play.js only');
+    assert.ok(launcher.includes("location.replace('/#mperror=' + err[1])"), '/join forwards its errors to the door');
+  }
   for (const c of ['email_unverified', 'signup_limited']) assert.ok(play.includes(c + ": '"), c);
 });
 

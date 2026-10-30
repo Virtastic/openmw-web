@@ -5,11 +5,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('mp-health.py: handoff and phase-shift counts appear; no world reap/switch section', () => {
+const script = join(process.cwd(), '..', 'deploy', 'mp-health.py');
+test('mp-health.py: handoff and phase-shift counts appear; no world reap/switch section',
+  existsSync(script) ? {} : { skip: 'deploy/ is not part of the server image' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'mphealth-'));
   const log = join(dir, 'openmw-mp.log');
   const ts = new Date().toISOString();
@@ -22,7 +24,7 @@ test('mp-health.py: handoff and phase-shift counts appear; no world reap/switch 
     line({ event: 'world.reaped', reason: 'idle' }), // a stale v1 line: ignored, not reported
     line({ event: 'client.log', session: 's1', text: '[boot] switchMs=900 ' }),
   ].join('\n') + '\n');
-  const out = execFileSync('python3', [join(process.cwd(), '..', 'deploy', 'mp-health.py'), '--log', log, '--hours', '1'],
+  const out = execFileSync('python3', [script, '--log', log, '--hours', '1'],
     { encoding: 'utf8' });
   assert.match(out, /region handoffs[^\n]*\n\s+2\s+west -> east\n\s+1\s+east -> west/);
   assert.match(out, /phase shifts[^\n]*\n\s+1\s+base -> blight/);

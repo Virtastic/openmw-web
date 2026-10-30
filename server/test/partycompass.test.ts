@@ -5,11 +5,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
-const html = readFileSync(new URL('../../play/index.html', import.meta.url), 'utf8');
+const indexUrl = new URL('../../play/index.html', import.meta.url);
+const opts = existsSync(indexUrl) ? {} : { skip: 'play/ is not part of the server image' };
+const html = existsSync(indexUrl) ? readFileSync(indexUrl, 'utf8') : '';
 
-test('compass math: bearing is relative to the facing, markers clamp to the strip', () => {
+test('compass math: bearing is relative to the facing, markers clamp to the strip', opts, () => {
   const m = /\/\*PARTYCOMPASS\*\/([\s\S]*?)\/\*END PARTYCOMPASS\*\//.exec(html);
   assert.ok(m, 'compass block present');
   const { partyBearing, compassSlot } = new Function(`${m[1]}; return { partyBearing, compassSlot };`)() as {
@@ -28,7 +30,7 @@ test('compass math: bearing is relative to the facing, markers clamp to the stri
   assert.equal(compassSlot(-2).edge, '◀');
 });
 
-test('party frame markup is wired: region, bars as meters, fed by partyFrame', () => {
+test('party frame markup is wired: region, bars as meters, fed by partyFrame', opts, () => {
   assert.match(html, /id="omw-party" role="region"/);
   assert.match(html, /role="meter"/);
   assert.match(html, /mpState\(\), rows = pj\(m\.partyFrame\)/);
