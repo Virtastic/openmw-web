@@ -35,6 +35,7 @@ import { SocialStore } from './core/socialstore';
 import { Trades, TradeLedger } from './core/trade';
 import { PvpConsent } from './core/pvp-consent';
 import { BusyFlags } from './core/busy';
+import { Titles } from './core/titles';
 import { HelperRewards } from './core/helperrewards';
 import { GOLD_ID, hintGold } from './core/economy';
 import { serverWhisper } from './core/chat';
@@ -528,6 +529,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // stable across roster order, so two system peers cannot each be "the" peer to different
   // sites (that split brain sent input to one and authority to the other).
   let worldPeerImpl: () => Player | undefined = () => undefined;
+  // OT3-99: faction titles for nameplates (PlayerTitles, on change).
+  const titles = new Titles({ roster, factionsOf: (p) => playerStore.getCached(p.charId)?.factions });
   // OT3-105: busy players (menus, dialogue). The world peer is told every edge.
   const busy = new BusyFlags({
     now: () => Date.now(),
@@ -1643,7 +1646,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     }));
     peer.peer.sendEvent('StoryLicense', contentTable.storyLicence(humans));
   };
-  const simPeerTick = setInterval(() => { simPeerPass(); pushStoryLicence(); social.pushPartyUpdates(); busy.sweep((id) => roster.get(id)); }, 2_000);
+  const simPeerTick = setInterval(() => { simPeerPass(); pushStoryLicence(); social.pushPartyUpdates(); titles.tick(); busy.sweep((id) => roster.get(id)); }, 2_000);
   // A peer finishing its hello should not wait up to a full tick to be put to work —
   // that is 5s of the player holding a loading screen for no reason.
   ctx.onPeerJoined = () => simPeerPass();

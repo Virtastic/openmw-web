@@ -17,6 +17,9 @@ local nearby = require('openmw.nearby')
 local json = require('scripts.mp.json')
 local identity = require('scripts.mp.identity')
 local shared = require('scripts.mp.shared')
+local nameplates = require('scripts.mp.nameplates')
+local plates = nil -- OT3-99: built on first use (needs the engine camera and ui)
+local platesOn = true -- the page persists the toggle and re-sends it as plates:on|off at boot
 
 local HISTORY_MAX = 8
 
@@ -727,7 +730,7 @@ local TEST_HOOKS = (function()
     return ok and type(flags) == 'table' and flags.testHooks == true
 end)()
 local PAGE_COMMANDS = { vis = true, leaving = true, chatx = true,
-    pause = true, profile = true, social = true, uimode = true, where = true }
+    pause = true, profile = true, social = true, uimode = true, where = true, plates = true }
 
 local function dispatch(cmd)
     if type(cmd) ~= 'string' then return end
@@ -941,6 +944,11 @@ local function dispatch(cmd)
         -- in the small widget; if both are blank, nothing is being drawn at all.
         local uiMode = cmd:match('^ui:(%a+)$')
         if uiMode then pcall(function() I.UI.addMode(uiMode) end) end
+        local platesCmd = cmd:match('^plates:(%a+)$')
+        if platesCmd then
+            platesOn = platesCmd ~= 'off'
+            if plates then plates.setEnabled(platesOn) end
+        end
         local learnTopic = cmd:match('^topic:(.+)$')
         if learnTopic then
             -- SAY WHEN IT FAILS. addTopic looks the id up in the ESM store and THROWS if there
@@ -1491,6 +1499,7 @@ local script = {
             end
         end,
         onFrame = function(dt) -- runs while paused too — the harness must not stall in menus
+            if plates and platesOn then pcall(plates.update, dt) end -- OT3-99
             simAcc = simAcc + (dt or 0) -- 0 while paused: a menu simulates nothing
             simFrameDt = dt or 0
             pollCommands()
@@ -1616,6 +1625,16 @@ local script = {
                     end
                 end
             end
+        end,
+        -- OT3-99: bodies to plate, from global.lua pushNameplates (re-sent when they change).
+        MP_Nameplates = function(data)
+            if not plates then
+                local ok, env = pcall(nameplates.engineEnv)
+                if not ok then return end
+                plates = nameplates.new(env)
+                plates.setEnabled(platesOn)
+            end
+            plates.setPlates(data.plates)
         end,
         UiModeChanged = function(data)
             -- OT3-105: in a menu or a conversation we are not playing: tell the server so the

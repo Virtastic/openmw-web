@@ -1000,6 +1000,32 @@ local function restoreTick()
     print('[mp] rejoin restore: ' .. granted .. ' item stack(s) granted, record forwarded')
 end
 
+-- OT3-99: nameplates. The server's PlayerTitles ([{id, faction, rank}], 1-based rank) are kept
+-- here; the rank NAME comes from our own game data, never from the wire. The player script
+-- (nameplates.lua) projects the bodies we hand it. Re-sent only when the set of bodies or a
+-- title changed (a GameObject cannot be hashed, so the signature is ids + titles).
+local plateState = { titles = {}, sig = nil }
+local function rankTitle(t)
+    if not t then return nil end
+    local ok, name = pcall(function() return core.factions.records[t.faction].ranks[t.rank].name end)
+    return ok and name or nil
+end
+local function pushNameplates()
+    local player = playerScript()
+    if not player then return end
+    local list, parts = {}, {}
+    for id, p in pairs(puppets) do
+        local title = rankTitle(plateState.titles[id])
+        list[#list + 1] = { id = id, name = p.name, title = title, obj = p.obj }
+        parts[#parts + 1] = tostring(id) .. '=' .. tostring(title) .. ':' .. tostring(p.name)
+    end
+    table.sort(parts)
+    local sig = table.concat(parts, ',')
+    if sig == plateState.sig then return end
+    plateState.sig = sig
+    toPlayer('MP_Nameplates', { plates = list })
+end
+
 local function puppetTick()
     local now = core.getRealTime()
     local player = playerScript()
@@ -1018,6 +1044,7 @@ local function puppetTick()
     if now - lastPuppetMirror >= 0.5 then
         lastPuppetMirror = now
         mirrorPuppets()
+        pushNameplates()
     end
 end
 
@@ -1752,6 +1779,16 @@ local eventHandlers = {
                 pcall(function() p.obj:sendEvent('MP_Emote', { group = tostring(data.anim) }) end)
             end
         end
+    end,
+
+    -- OT3-99: every player's highest faction rank, pushed by the server when it changes.
+    MP_PlayerTitles = function(data)
+        local t = {}
+        for _, row in ipairs(data.titles or {}) do
+            if type(row.id) == 'number' and row.faction then t[row.id] = { faction = row.faction, rank = row.rank } end
+        end
+        plateState.titles = t
+        plateState.sig = nil -- resend with the new titles
     end,
 
     MP_PlayerJoinWorld = function(data)

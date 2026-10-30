@@ -4572,6 +4572,14 @@ window.omw = (function(){
   function chatHidden(){
     try { return localStorage.getItem('omw.chatHidden') === '1'; } catch(e){ return false; }
   }
+  // OT3-99: nameplates over other players; on by default, remembered per browser like the chat.
+  function platesOn(){
+    try { return localStorage.getItem('omw.plates') !== '0'; } catch(e){ return true; }
+  }
+  function setPlates(on){
+    try { localStorage.setItem('omw.plates', on ? '1' : '0'); } catch(e){}
+    cmd('plates:' + (on ? 'on' : 'off'));
+  }
   function setChatHidden(v){
     try { localStorage.setItem('omw.chatHidden', v ? '1' : '0'); } catch(e){}
     applyChatVisibility();
@@ -4936,6 +4944,21 @@ window.omw = (function(){
       chatRow.appendChild(btn);
       sec.appendChild(chatRow);
       sec.appendChild(sub);
+
+      // OT3-99: nameplates (name + highest faction rank title over other players).
+      var plRow = el('div','setrow');
+      var plBtn = el('button','btn', platesOn() ? 'Hide nameplates' : 'Show nameplates');
+      plBtn.setAttribute('data-t','plates-toggle');
+      plBtn.setAttribute('aria-pressed', platesOn() ? 'true' : 'false');
+      plBtn.onclick = function(){
+        setPlates(!platesOn());
+        plBtn.textContent = platesOn() ? 'Hide nameplates' : 'Show nameplates';
+        plBtn.setAttribute('aria-pressed', platesOn() ? 'true' : 'false');
+        setStatus(platesOn() ? 'Nameplates shown.' : 'Nameplates hidden.');
+      };
+      plRow.appendChild(el('div','setlbl','Nameplates'));
+      plRow.appendChild(plBtn);
+      sec.appendChild(plRow);
 
       // PRIVACY: who can see where you are. The server enforces it on every path that could
       // disclose a location or deliver an invite; this is just the switch. It used to live
@@ -5328,6 +5351,7 @@ window.omw = (function(){
       applyChatVisibility();
       // The lines carried across a world switch are on screen before anyone speaks.
       if (ready && chatPrior.length) renderFeed();
+      if (ready) cmd('plates:' + (platesOn() ? 'on' : 'off')); // OT3-99: the saved choice reaches the engine
       // The moment multiplayer unlocks, walk a first-timer through what just appeared.
       if (ready && !tourSeen('unlocked')) openTour('unlocked');
     }

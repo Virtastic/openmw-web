@@ -5124,5 +5124,53 @@ do
   local ad = io.open('./openmw/files/data/scripts/mp/admin.lua'):read('*a')
   check('AdminGive shows the reward note when the server sends one', ad:find('data.note', 1, true) ~= nil)
 end
+-- ============================== OT3-99: nameplates (executed unit: scripts/mp/nameplates.lua)
+print('nameplates.lua -- selection, label, pooling, toggle')
+do
+  package.loaded['scripts.mp.nameplates'] = nil
+  local np = dofile('./openmw/files/data/scripts/mp/nameplates.lua')
+  check('label is the name alone without a title', np.label('Ann', nil) == 'Ann' and np.label('Ann', '') == 'Ann')
+  check('label puts the rank title under the name', np.label('Ann', 'Knight') == 'Ann\nKnight')
+  local plates = {}
+  for i = 1, 30 do plates[#plates + 1] = { id = i, name = 'p' .. i, pos = { x = i * 100, y = 0, z = 0 } } end
+  plates[#plates + 1] = { id = 99, name = 'far', pos = { x = 99999, y = 0, z = 0 } }
+  local sel = np.select(plates, { x = 0, y = 0, z = 0 })
+  check('at most 20 plates, nearest first', #sel == 20 and sel[1].id == 1 and sel[20].id == 20)
+  check('nothing beyond MAX_DIST', (function() for _, p in ipairs(sel) do if p.id == 99 then return false end end return true end)())
+  local created, shown, hidden = 0, 0, 0
+  local function env(visible)
+    return {
+      cameraPos = function() return { x = 0, y = 0, z = 0 } end,
+      posOf = function(o) return o.pos end,
+      project = function(x, y, z) if visible then return x, y end return nil end,
+      create = function() created = created + 1
+        return { show = function() shown = shown + 1 end, hide = function() hidden = hidden + 1 end, destroy = function() end } end,
+    }
+  end
+  local pl = np.new(env(true))
+  local list = {}
+  for i = 1, 25 do list[i] = { id = i, name = 'p' .. i, title = 'T', obj = { pos = { x = i * 50, y = 0, z = 0 } } } end
+  pl.setPlates(list)
+  check('no work between refreshes (rate limit)', pl.update(0.01) == 0 and created == 0)
+  check('a refresh shows 20 plates', pl.update(0.2) == 20 and created == 20)
+  pl.update(0.2)
+  check('elements are pooled, never re-created', created == 20)
+  pl.setEnabled(false)
+  check('toggle off hides every plate and does no work', hidden >= 20 and pl.update(1) == 0)
+  pl.setEnabled(true)
+  pl.setPlates({ list[1] })
+  pl.update(0.2)
+  check('fewer bodies hide the spare elements', pl.update(0.2) == 1)
+  local back = np.new(env(false))
+  back.setPlates(list)
+  check('a body behind the camera is not shown', back.update(0.2) == 0)
+  local pls = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local cm = io.open('./openmw/files/data/CMakeLists.txt'):read('*a')
+  check('plates is a page command (survives release)', (pls:match('local PAGE_COMMANDS = (%b{})') or ''):find('plates = true', 1, true) ~= nil)
+  check('global resolves the rank name from game data and pushes MP_Nameplates',
+    gl:find('core.factions.records[t.faction].ranks[t.rank].name', 1, true) ~= nil and gl:find("toPlayer('MP_Nameplates'", 1, true) ~= nil)
+  check('nameplates.lua is installed by CMake', cm:find('scripts/mp/nameplates.lua', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
