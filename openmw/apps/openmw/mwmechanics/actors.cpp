@@ -2063,7 +2063,7 @@ namespace MWMechanics
     int Actors::nearestAvatarLevel(const osg::Vec3f& pos, const MWWorld::CellStore* cell) const
     {
         // OT3-146: the world-wide party level is gone (one world, nothing sets it any more); the
-        // level is read per cell. Avatars in the spawn's own cell win; only when none is there
+        // level is read per cell. Avatars in the spawn's own cell win (lowest level, OT3-97); only when none is there
         // does the nearest avatar anywhere stand in.
         int level = 0;
         float bestDist2 = std::numeric_limits<float>::max();
@@ -2081,13 +2081,22 @@ namespace MWMechanics
             if (here && !inCell)
             {
                 inCell = true;
-                bestDist2 = std::numeric_limits<float>::max();
+                level = 0; // drop any nearer-elsewhere pick
+            }
+            const int lvl = body.getClass().getCreatureStats(body).getLevel();
+            if (here)
+            {
+                // OT3-97: the LOWEST level present in the cell, so a L2 and a L20 together meet
+                // L2-appropriate spawns (a lone player is just their own level).
+                if (level == 0 || lvl < level)
+                    level = lvl;
+                continue;
             }
             const float d2 = (body.getRefData().getPosition().asVec3() - pos).length2();
             if (d2 < bestDist2)
             {
                 bestDist2 = d2;
-                level = body.getClass().getCreatureStats(body).getLevel();
+                level = lvl;
             }
         }
         return level;
