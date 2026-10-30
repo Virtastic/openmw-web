@@ -387,16 +387,24 @@ test('server-issued custom records', async (t) => {
     }
   });
 
-  await t.test('peers already in world learn each new record immediately', async () => {
-    const pushed: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      const sync = (await b.waitEvent('RecordsSync')).value as
-        { records: { recordNetId: string; kind: string }[] };
-      assert.equal(sync.records.length, 1, 'a creation pushes just the new record');
-      assert.equal(sync.records[0]!.kind, 'enchantment');
-      pushed.push(sync.records[0]!.recordNetId);
-    }
-    assert.deepEqual(pushed, ids, 'the same ids the author was acked, in the same order');
+  // OT3-81: records are delivered LAZILY. Creating one pushes nothing to the rest of the world; a
+  // client is sent a record, once, ahead of the first event that names it.
+  await t.test('peers are not pushed new records; each arrives ahead of the first event that names it', async () => {
+    await fence(a, b);
+    assert.equal(b.inbox.events.filter((e) => e.name === 'RecordsSync').length, 0, 'no push on creation');
+    a.sendEvent('ChatSend', { channel: 'global', text: `try my ${ids[0]} and ${ids[2]}` });
+    const sawChat = () => b.inbox.events.some((e) => e.name === 'ChatMessage' && String((e.value as { text?: string }).text).includes(ids[0]!));
+    for (let i = 0; i < 200 && !sawChat(); i++) await new Promise((r) => setTimeout(r, 10)); // not consuming: order matters
+    const evs = b.inbox.events;
+    const syncs = evs.filter((e) => e.name === 'RecordsSync');
+    const got = syncs.flatMap((e) => (e.value as { records: { recordNetId: string }[] }).records.map((r) => r.recordNetId));
+    assert.deepEqual(got.sort(), [ids[0]!, ids[2]!].sort(), 'only the records the chat line names');
+    assert.ok(evs.indexOf(syncs[0]!) < evs.findIndex((e) => e.name === 'ChatMessage' && String((e.value as { text?: string }).text).includes(ids[0]!)), 'the record precedes the event');
+    a.sendEvent('ChatSend', { channel: 'global', text: `again ${ids[0]}` });
+    await b.waitEvent('ChatMessage', (v) => String((v as { text?: string }).text ?? '').startsWith('again'));
+    assert.equal(b.inbox.events.filter((e) => e.name === 'RecordsSync').length, syncs.length, 'a record is sent once');
+    b.inbox.events.length = 0;
+    b.inbox.events.length = 0;
   });
 
   await t.test('malformed creates are dropped and mint nothing', async () => {
@@ -420,13 +428,21 @@ test('server-issued custom records', async (t) => {
     assert.equal(a.inbox.events.filter((e) => e.name === 'RecordsSync').length, 0, 'no new record to push');
   });
 
-  await t.test('a late joiner gets the COMPLETE record set with data intact', async () => {
+  await t.test('a late joiner is not replayed the record set; it gets the records an event names, data intact', async () => {
+    type Rec = { recordNetId: string; data: { name: string; cost: number } };
     const { c } = await join(server, 'LateJoiner');
-    const sync = (await c.waitEvent('RecordsSync')).value as
-      { records: { recordNetId: string; kind: string; data: { name: string; cost: number } }[] };
-    assert.deepEqual(sync.records.map((r) => r.recordNetId), ids);
-    assert.deepEqual(sync.records.map((r) => r.data.name), ['ench1', 'ench2', 'ench3']);
-    assert.deepEqual(sync.records.map((r) => r.data.cost), [10, 20, 30]);
+    await fence(c, c);
+    const synced = () => c.inbox.events.filter((e) => e.name === 'RecordsSync')
+      .flatMap((e) => (e.value as { records: Rec[] }).records);
+    // Only what the chat HISTORY it was replayed names (ids[0] and ids[2]), not the whole set.
+    assert.deepEqual(synced().map((r) => r.recordNetId).sort(), [ids[0]!, ids[2]!].sort(),
+      'the join payload does not grow with the records the world has made');
+    a.sendEvent('ChatSend', { channel: 'global', text: ids.join(' ') });
+    for (let i = 0; i < 200 && synced().length < 3; i++) await new Promise((r) => setTimeout(r, 10));
+    const all = synced().sort((x, y) => x.recordNetId.localeCompare(y.recordNetId));
+    assert.deepEqual(all.map((r) => r.recordNetId), [...ids].sort(), 'each record once, none twice');
+    assert.deepEqual(all.map((r) => r.data.name), ['ench1', 'ench2', 'ench3']);
+    assert.deepEqual(all.map((r) => r.data.cost), [10, 20, 30]);
     c.close();
     await c.closed;
   });
@@ -442,8 +458,10 @@ test('server-issued custom records', async (t) => {
     });
     t.after(() => restarted.close());
     const { c } = await join(restarted, 'AfterReboot');
-    const sync = (await c.waitEvent('RecordsSync')).value as { records: { recordNetId: string }[] };
-    assert.deepEqual(sync.records.map((r) => r.recordNetId), ids);
+    await c.waitEvent('RecordsSync');
+    // The dedupe index is rebuilt from disk: the same body is acked with the id minted before the reboot.
+    c.sendEvent('RecordCreate', { tempId: 41, kind: 'enchantment', data: { name: 'ench3', cost: 30 } });
+    assert.equal(((await c.waitEvent('RecordCreateAck')).value as { recordNetId: string }).recordNetId, ids[2]);
     // A new record must not reuse an id handed out before the reboot.
     c.sendEvent('RecordCreate', { tempId: 42, kind: 'potion', data: { name: 'restart brew' } });
     const ack = (await c.waitEvent('RecordCreateAck')).value as { recordNetId: string };
@@ -474,7 +492,7 @@ test('absurd record bodies are refused, sane ones minted', async (t) => {
   // #323: a refused create is SAID, so the client can fail loudly instead of waiting forever.
   const refused = a.inbox.events.filter((e) => e.name === 'RecordCreateRefused').map((e) => e.value);
   assert.deepEqual(refused, [{ tempId: 11, reason: 'beyond caps' }, { tempId: 12, reason: 'beyond caps' }]);
-  assert.equal(b.inbox.events.filter((e) => e.name === 'RecordsSync').length, 2, 'the peer learns only those two');
+  assert.equal(b.inbox.events.filter((e) => e.name === 'RecordsSync').length, 0, 'nothing is pushed to the peer (lazy delivery)');
   a.close(); b.close();
   await a.closed; await b.closed;
 });
@@ -650,11 +668,12 @@ test('a world full of custom records is still joinable, and stops accepting more
   const { server } = await boot(t, undefined, dataDir);
   const { c } = await join(server, 'Enchanter');
   await fence(c, c);
+  // OT3-81: the join no longer replays the set at all (a joiner who authored nothing gets one empty
+  // batch), so a world this full joins in one small frame. Chunking still guards the lazy sends.
   const synced = c.inbox.events.filter((e) => e.name === 'RecordsSync')
     .reduce((n, e) => n + ((e.value as { records: unknown[] }).records?.length ?? 0), 0);
-  assert.equal(synced, 50_000, `the whole set must arrive across batches, got ${synced}`);
-  assert.ok(c.inbox.events.filter((e) => e.name === 'RecordsSync').length > 1,
-    'it must arrive in more than one frame, or the node ceiling is still one enchant away');
+  assert.equal(synced, 0, `a join must not replay 50,000 records, got ${synced}`);
+  assert.equal(c.inbox.events.filter((e) => e.name === 'RecordsSync').length, 1, 'one empty batch, so the client knows the set arrived');
 
   // 2. AND IT REFUSES MORE. An unacked tempId is how the client learns the creation failed.
   c.sendEvent('RecordCreate', { tempId: 999, kind: 'enchantment', data: { name: 'one too many' } });

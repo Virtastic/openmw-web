@@ -329,6 +329,8 @@ export class Connection implements Peer {
 
   sendEvent(name: string, body: JsLike): void {
     if (this.ws.readyState !== this.ws.OPEN) return;
+    // OT3-81: a custom record travels once, ahead of the first event that mentions it.
+    if (this.player && name !== 'RecordsSync' && name !== 'RecordCreateAck') this.ctx.m7.deliverRecords(this.player, body);
     this.wsSend(packEvent(++this.outSeq, name, lserEncode(jsToL(body))));
   }
 

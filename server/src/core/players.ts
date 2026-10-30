@@ -116,6 +116,8 @@ export interface Player {
   // Wall-clock of the last sendCellStateAround: nine fat cell docs land in one burst and the
   // outbound hard ceiling is not what a healthy client crossing a city gate should die of.
   cellStateBurstAt?: number;
+  /** OT3-81: custom record ids this client already holds (RecordsSync sent or authored by it). */
+  knownRecords?: Set<string>;
   // THE BOUNTY THE WORLD HOLDS THIS PLAYER TO, live. Not doc.bounty: with [sharing] crime the
   // party has ONE criminal record (shared.bounty), and before OT3-31 a guest's crime was persisted on
   // the campaign they were visiting, so the guest's own doc said 0 while the owner's said the

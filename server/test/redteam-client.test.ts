@@ -245,7 +245,6 @@ test('#362 a spellbook add of another account\'s custom record is refused; the m
   a.sendEvent('RecordCreate', { tempId: 1, kind: 'spell', data: { name: 'private bolt', cost: 10,
     effects: [{ id: 'firedamage', magnitudeMin: 5, magnitudeMax: 10, duration: 1 }] } });
   const rid = ((await a.waitEvent('RecordCreateAck')).value as { recordNetId: string }).recordNetId;
-  await b.waitEvent('RecordsSync', (v) => ((v as { records?: { recordNetId?: string }[] }).records ?? []).some((r) => r.recordNetId === rid));
 
   const refused = b.waitEvent('StateRefused');
   b.sendEvent('PlayerSpellbook', { add: [rid], remove: [] });

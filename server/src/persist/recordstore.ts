@@ -59,10 +59,16 @@ const MIGRATIONS = [
   },
 ];
 
+const contentKey = (kind: string, json: string): string => `${kind}\0${json}`;
+
 export class RecordStore {
   private readonly db: DatabaseSync;
   private records: CustomRecord[] = [];
   private byId = new Map<string, CustomRecord>();
+  // OT3-81: dedupe is a hash lookup, not a scan of every record (kind + body JSON -> record), and
+  // the per-account counts the quota reads are kept in step as rows arrive.
+  private byContent = new Map<string, CustomRecord>();
+  private perAccount = new Map<string, number>();
   private lastSeq = 0;
   private loaded: Promise<void>;
   private write: Promise<void> = Promise.resolve();
@@ -94,6 +100,8 @@ export class RecordStore {
       };
       this.records.push(rec);
       this.byId.set(rec.recordNetId, rec);
+      this.byContent.set(contentKey(rec.kind, r.data), rec);
+      if (rec.byAccount) this.perAccount.set(rec.byAccount, (this.perAccount.get(rec.byAccount) ?? 0) + 1);
     }
   }
 
@@ -109,6 +117,24 @@ export class RecordStore {
   all(): CustomRecord[] {
     this.sync();
     return this.records;
+  }
+
+  /** The record with exactly this kind and body (`json` = JSON.stringify of the data), if any. */
+  findByContent(kind: string, json: string): CustomRecord | undefined {
+    this.sync();
+    return this.byContent.get(contentKey(kind, json));
+  }
+
+  /** How many records this account has authored. */
+  countBy(account: string): number {
+    this.sync();
+    return this.perAccount.get(account) ?? 0;
+  }
+
+  /** Records this account authored, in creation order. */
+  authoredBy(account: string): CustomRecord[] {
+    this.sync();
+    return this.records.filter((r) => r.byAccount === account);
   }
 
   get(recordNetId: string): CustomRecord | undefined {

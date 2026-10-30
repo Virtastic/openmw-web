@@ -52,6 +52,37 @@ const MAX_CUSTOM_RECORDS = 50_000;
 // record, and the post-creation path already sends a one-record RecordsSync, so a partial batch
 // is the shape it has always handled.
 const RECORDS_PER_SYNC = 128;
+// OT3-81: one account may author this many custom records. The deployment ceiling above bounds the
+// store; this bounds any single player's share of it, so one client cannot spend all 50,000.
+const MAX_RECORDS_PER_ACCOUNT = 1_000;
+const RECORD_REF = /mp_(?:spell|potion|enchantment|armor|weapon|clothing|book|misc)_\d+/g;
+// An outbound body is scanned once however many recipients a broadcast has.
+const refsCache = new WeakMap<object, string[]>();
+
+/** Every custom record id mentioned anywhere in an outbound body (string values and map keys). */
+export function recordRefsIn(body: JsLike): string[] {
+  if (body === null || typeof body !== 'object') {
+    return typeof body === 'string' && body.includes('mp_') ? (body.match(RECORD_REF) ?? []) : [];
+  }
+  const hit = refsCache.get(body);
+  if (hit) return hit;
+  const out = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') {
+      if (v.includes('mp_')) for (const m of v.match(RECORD_REF) ?? []) out.add(m);
+    } else if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+    } else if (v instanceof Map) {
+      for (const [k, x] of v) { walk(k); walk(x); }
+    } else if (v !== null && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v)) { walk(k); walk(x); }
+    }
+  };
+  walk(body);
+  const list = [...out];
+  refsCache.set(body, list);
+  return list;
+}
 const RESET_TICK_MS = 1_000;
 // RECORD BODIES ARE CLIENT-AUTHORED AND REPLAYED TO THE PEER, whose avatar then fights with them.
 // Nothing bounded the numbers: chopMaxDamage=9999 or Fortify Health 10000 for 10^6 s were stored
@@ -247,7 +278,28 @@ export class WorldM7 {
     if (offset) player.peer.sendEvent('TimeOffset', { hours: offset });
     this.clock.sendTo((name, body) => player.peer.sendEvent(name, body));
     this.weather.sendSyncTo(player);
-    this.sendRecordsSync(player);
+    // OT3-81: NOT the whole set. A joiner gets the records it authored; every other one arrives the
+    // first time an event carrying it is sent (deliverRecords, from Connection.sendEvent), so the
+    // join payload no longer grows with the records the world has ever made. An empty batch still
+    // goes out: a client waiting on RecordsSync to know the set has arrived must not wait forever.
+    player.knownRecords ??= new Set(); // (chat history may already have named some)
+    this.sendRecordsSync(player, this.ctx.records.authoredBy(player.accountKey));
+  }
+
+  /** OT3-81: lazy delivery. Called before any event body goes to `player`: ships (ahead of that
+   *  event) each custom record it mentions that this client has not been given yet. */
+  deliverRecords(player: Player, body: JsLike): void {
+    const refs = recordRefsIn(body); // pure string work: no store read unless a record is named
+    if (refs.length === 0) return;
+    const known = (player.knownRecords ??= new Set());
+    let missing: CustomRecord[] | undefined;
+    for (const id of refs) {
+      if (known.has(id)) continue;
+      const rec = this.ctx.records.get(id);
+      if (!rec) continue; // not a record (or one this deployment never minted)
+      (missing ??= []).push(rec);
+    }
+    if (missing) this.sendRecordsSync(player, missing);
   }
 
   /** OT3-108: a rest/wait moves this character's clock offset, never the world's. */
@@ -282,6 +334,8 @@ export class WorldM7 {
       player.peer.sendEvent('RecordsSync', { records: [] });
       return;
     }
+    const known = (player.knownRecords ??= new Set());
+    for (const r of records) known.add(r.recordNetId);
     for (let i = 0; i < records.length; i += RECORDS_PER_SYNC) {
       player.peer.sendEvent('RecordsSync', {
         records: records.slice(i, i + RECORDS_PER_SYNC)
@@ -322,11 +376,19 @@ export class WorldM7 {
         // #60/#323: an identical body (same kind, same data) is the SAME record -- two players
         // brewing the same potion share one id instead of bloating the doc. Looked up inside
         // the queue so two identical creates in flight cannot both mint.
-        // ponytail: O(n) scan on a rare op (a brew, a spell); index by hash if it ever shows.
-        const existing = this.ctx.records.all().find((r) => r.kind === kind && JSON.stringify(r.data) === json);
+        // OT3-81: a hash lookup (RecordStore.byContent), not a scan of every record.
+        const existing = this.ctx.records.findByContent(kind, json);
         if (existing) {
           log('info', 'records.deduped', { recordNetId: existing.recordNetId, kind, by: accountKey });
-          this.ctx.roster.get(playerId)?.peer.sendEvent('RecordCreateAck', { tempId, recordNetId: existing.recordNetId });
+          const asker = this.ctx.roster.get(playerId);
+          asker?.peer.sendEvent('RecordCreateAck', { tempId, recordNetId: existing.recordNetId });
+          if (asker) (asker.knownRecords ??= new Set()).add(existing.recordNetId); // it can build it from its own body
+          return;
+        }
+        if (this.ctx.records.countBy(accountKey) >= MAX_RECORDS_PER_ACCOUNT) {
+          metrics.recordsRefused.inc();
+          log('warn', 'records.dropped', { from: player.name, account: accountKey, why: 'per-player quota', cap: MAX_RECORDS_PER_ACCOUNT });
+          this.ctx.roster.get(playerId)?.peer.sendEvent('RecordCreateRefused', { tempId, reason: 'record quota reached' });
           return;
         }
         if (this.ctx.records.count() >= MAX_CUSTOM_RECORDS) {
@@ -349,10 +411,11 @@ export class WorldM7 {
         // anything referencing the record arrives), then push the single new record to
         // every OTHER in-world client as a one-entry RecordsSync — peers must be able to
         // resolve the id immediately, not only after their next join.
-        this.ctx.roster.get(playerId)?.peer.sendEvent('RecordCreateAck', { tempId, recordNetId: record.recordNetId });
-        for (const p of this.ctx.roster.inWorld()) {
-          if (p.id !== playerId) this.sendRecordsSync(p, [record]);
-        }
+        const creator = this.ctx.roster.get(playerId);
+        creator?.peer.sendEvent('RecordCreateAck', { tempId, recordNetId: record.recordNetId });
+        if (creator) (creator.knownRecords ??= new Set()).add(record.recordNetId);
+        // OT3-81: no push to the rest of the world. Whoever is shown an item bearing this id is sent
+        // the record first (deliverRecords), which is when it can matter to them.
       })
       .catch((err) => log('error', 'records.create_failed', { error: String(err) }));
   }
