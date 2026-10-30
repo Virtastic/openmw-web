@@ -169,6 +169,7 @@ namespace MWScript
                     return;
                 }
                 MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+                MWWorld::ScriptItemOpScope scriptOp; // OT3-72
                 if (isLevelledList)
                     addRandomToStore(itemPtr, count, store);
                 else
@@ -293,7 +294,11 @@ namespace MWScript
                     }
                 }
 
-                int numRemoved = store.remove(item, count);
+                int numRemoved;
+                {
+                    MWWorld::ScriptItemOpScope scriptOp; // OT3-72
+                    numRemoved = store.remove(item, count);
+                }
 
                 // Spawn a messagebox (only for items removed from player's inventory)
                 if ((numRemoved > 0) && (ptr == MWMechanics::getPlayer()))

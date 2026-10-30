@@ -328,12 +328,12 @@ namespace MWLua
             mEngineEvents.addToQueue(EngineEvents::OnTeleported{ getId(ptr) });
     }
 
-    void LuaManager::itemTransferred(const MWWorld::Ptr& container, const ESM::RefId& itemId, int count, bool added)
+    void LuaManager::itemTransferred(const MWWorld::Ptr& container, const ESM::RefId& itemId, int count, bool added, bool script)
     {
         if (mPlayer.isEmpty())
             return; // world still loading; initial fills are not transactions
         mEngineEvents.addToQueue(
-            EngineEvents::OnItemTransferred{ getId(container), itemId.serializeText(), count, added });
+            EngineEvents::OnItemTransferred{ getId(container), itemId.serializeText(), count, added, script });
     }
 
     void LuaManager::globalVariableChanged(std::string_view name, float value)

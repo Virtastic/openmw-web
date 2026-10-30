@@ -3176,6 +3176,13 @@ return {
         -- E5 (MP): an MWScript global was written (worldimp setGlobalInt/Float). Feeds the
         -- same queue the 1 s diff poll uses, so the peer's quest advances go out the frame
         -- they happen.
+        -- OT3-72: a script AddItem/RemoveItem on a non-player ref (script=true).
+        _onItemTransferred = function(container, recordId, count, added, script)
+            if net.state == 'Joined' and script == true then
+                local ok, err = pcall(objects.onItemTransferred, container, recordId, count, added, script)
+                if not ok then print('[mp] onItemTransferred hook error: ' .. tostring(err)) end
+            end
+        end,
         _onGlobalVariableChanged = function(name, value)
             quests.onGlobalWritten(name, value)
         end,

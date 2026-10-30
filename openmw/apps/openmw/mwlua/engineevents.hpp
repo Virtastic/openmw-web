@@ -92,6 +92,7 @@ namespace MWLua
             std::string mRecordId;
             int mCount;
             bool mAdded;
+            bool mScript;
         };
         using Event = std::variant<OnActive, OnInactive, OnConsume, OnActivate, OnUseItem, OnNewExterior, OnTeleported,
             OnAnimationTextKey, OnAnimationEnded, OnSkillUse, OnSkillLevelUp, OnJailTimeServed, OnItemTransferred>;

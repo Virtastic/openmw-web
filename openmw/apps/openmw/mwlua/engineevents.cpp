@@ -94,7 +94,7 @@ namespace MWLua
             MWWorld::Ptr container = getPtr(event.mContainer);
             if (container.isEmpty())
                 return;
-            mGlobalScripts.onItemTransferred(GObject(container), event.mRecordId, event.mCount, event.mAdded);
+            mGlobalScripts.onItemTransferred(GObject(container), event.mRecordId, event.mCount, event.mAdded, event.mScript);
         }
 
         void operator()(const OnAnimationTextKey& event) const

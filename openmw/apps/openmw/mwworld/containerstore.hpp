@@ -39,6 +39,16 @@ namespace MWWorld
 {
     class ContainerStore;
 
+    /// OT3-72: true while an MWScript AddItem/RemoveItem is running, so the transaction hook
+    /// can tell a script's change from the engine's own (AI, barter, death, loading).
+    inline bool gScriptItemOp = false;
+    struct ScriptItemOpScope
+    {
+        bool mPrev = gScriptItemOp;
+        ScriptItemOpScope() { gScriptItemOp = true; }
+        ~ScriptItemOpScope() { gScriptItemOp = mPrev; }
+    };
+
     template <class PtrType>
     class ContainerStoreIteratorBase;
 

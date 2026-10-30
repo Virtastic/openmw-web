@@ -5172,5 +5172,39 @@ do
     gl:find('core.factions.records[t.faction].ranks[t.rank].name', 1, true) ~= nil and gl:find("toPlayer('MP_Nameplates'", 1, true) ~= nil)
   check('nameplates.lua is installed by CMake', cm:find('scripts/mp/nameplates.lua', 1, true) ~= nil)
 end
+-- OT3-72 / OT3-138: script AddItem/RemoveItem on NPCs and containers reaches the server ledger.
+print('objects.lua / global.lua -- script item ops on non-player refs (OT3-72, OT3-138)')
+do
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local cx = io.open('./openmw/apps/openmw/mwscript/containerextensions.cpp'):read('*a')
+  local cs = io.open('./openmw/apps/openmw/mwworld/containerstore.cpp'):read('*a')
+  check('AddItem and RemoveItem set the script-op scope the transaction hook reads',
+    select(2, cx:gsub('ScriptItemOpScope scriptOp', '')) == 2 and cs:find('count, true, gScriptItemOp)', 1, true) ~= nil
+    and cs:find('count - toRemove, false, gScriptItemOp)', 1, true) ~= nil)
+  check('global.lua routes _onItemTransferred (script=true only) to objects',
+    gl:find('_onItemTransferred = function(container, recordId, count, added, script)', 1, true) ~= nil
+    and gl:find('objects.onItemTransferred', 1, true) ~= nil)
+  check('the handler only queues; the flush runs from objects.tick a delay later (OT3-138)',
+    ob:find('SCRIPT_OP_DELAY', 1, true) ~= nil and ob:find('objects.flushScriptItemOps(now)', 1, true) ~= nil)
+  check('known state -> put/take with the netted delta; unknown -> one once-only first read',
+    ob:find("delta > 0 and 'put' or 'take'", 1, true) ~= nil and ob:find('once = true', 1, true) ~= nil)
+  package.loaded['scripts.mp.objects'] = nil
+  package.loaded['scripts.mp.world'] = nil
+  env = stubs.install({})
+  local ty = package.loaded['openmw.types']
+  ty.Weapon = ty.Weapon or {}
+  ty.Weapon.TYPE = ty.Weapon.TYPE or { Arrow = 12, Bolt = 13, MarksmanThrown = 11 }
+  local objects = require('scripts.mp.objects')
+  objects.init({ playerFn = function() return nil end, ownCellKeyFn = function() return '0,0' end,
+    noticeFn = function() end })
+  local npc = { id = 'npc1', recordId = 'fargoth', isValid = function() return true end }
+  local before = #env.calls.events
+  objects.onItemTransferred(npc, 'ring_keening', 1, true, false) -- engine's own move: ignored
+  objects.onItemTransferred(npc, 'ring_keening', 1, true, true)
+  objects.onItemTransferred(npc, 'ring_keening', 1, false, true) -- same frame: nets to zero
+  objects.flushScriptItemOps(math.huge)
+  check('an add then a remove in one frame, and engine-made moves, report nothing', #env.calls.events == before)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

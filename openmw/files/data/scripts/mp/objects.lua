@@ -689,6 +689,65 @@ function objects.onCorpse(obj)
     containerOpenPending[obj.id] = { obj = obj, at = core.getRealTime() }
 end
 
+-- OT3-72 SCRIPT ITEM OPS ON NPCs / CONTAINERS. An MWScript AddItem / RemoveItem on a non-player
+-- ref (a quest NPC handed a key, a chest stocked by a script) moved items with no one told:
+-- the engine's containerstore hook (_onItemTransferred, script=true only for those two opcodes)
+-- is the signal. Nothing else reports them -- a take/put watch only exists while a PLAYER has the
+-- window open.
+--
+-- OT3-138: the engine lands inventory changes at the end of the frame, so the handler only
+-- QUEUES; the flush runs on a later tick, nets add-then-remove in one frame to nothing (no
+-- double, no miss), and only then reports. Known server state -> a put/take with the netted
+-- delta. Unknown state -> one first-opener read (the snapshot already contains the change, so
+-- sending the ops as well would count it twice).
+local SCRIPT_OP_DELAY = 0.05
+local scriptItemOps = {} -- obj.id -> {obj=, at=, d={recordId->delta}}
+
+function objects.onItemTransferred(container, recordId, count, added, script)
+    if script ~= true then return end
+    if not (container and container:isValid()) then return end
+    if type(recordId) ~= 'string' or type(count) ~= 'number' or count <= 0 then return end
+    local okp, isPlayer = pcall(function() return types.Player.objectIsInstance(container) end)
+    if okp and isPlayer then return end -- the player's own pack is reported by identity / inventory sync
+    local q = scriptItemOps[container.id]
+    if not q then
+        q = { obj = container, d = {} }
+        scriptItemOps[container.id] = q
+    end
+    q.at = core.getRealTime() + SCRIPT_OP_DELAY
+    q.d[recordId] = (q.d[recordId] or 0) + (added and count or -count)
+end
+
+function objects.flushScriptItemOps(now)
+    for id, q in pairs(scriptItemOps) do
+        if now >= q.at then
+            scriptItemOps[id] = nil
+            local obj = q.obj
+            local okl, store = pcall(lootStore, obj, true)
+            if obj and obj:isValid() and okl and store ~= nil
+                and not containerWatch[id] and not containerOpenPending[id] then
+                local avatar = false
+                if deps.allAvatarsFn then
+                    for _, av in ipairs(deps.allAvatarsFn()) do
+                        if av.id == id then avatar = true break end
+                    end
+                end
+                if not avatar then
+                    if containerData[refKeyOfObj(obj)] then
+                        for recId, delta in pairs(q.d) do
+                            if delta ~= 0 then
+                                objects.sendContainerOp(obj, delta > 0 and 'put' or 'take', recId, math.abs(delta))
+                            end
+                        end
+                    else
+                        containerOpenPending[id] = { obj = obj, at = now, live = true, once = true }
+                    end
+                end
+            end
+        end
+    end
+end
+
 -- Closing the window is the moment to reconcile: the engine has finished moving items both
 -- ways, so one final diff reports the whole trade rather than a stream of intermediate states.
 function objects.onBarterClose()
@@ -1416,9 +1475,13 @@ function objects.tick(now)
     for id, pending in pairs(containerOpenPending) do
         if now >= pending.at then
             containerOpenPending[id] = nil
+            local hadWatch = containerWatch[id]
             openContainerNow(pending.obj, now, pending.live, pending.pack)
+            -- OT3-72: a script-op first report is a one-shot canonical read, not a window.
+            if pending.once and not hadWatch then containerWatch[id] = nil end
         end
     end
+    objects.flushScriptItemOps(now)
 
     -- Put equipment back once the recreated items have landed. Applied the moment they are
     -- all present, and abandoned at the deadline so a record that never rematerialises (a
@@ -1633,6 +1696,7 @@ function objects.reset()
     pendingTakes = {}
     doorPending = {}
     containerOpenPending = {}
+    scriptItemOps = {}
     -- Retry counters go with the pending opens they belong to, or a world switch would
     -- carry a stale attempt count into the next world and give up early there.
     openRetries = {}

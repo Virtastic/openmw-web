@@ -100,8 +100,9 @@ namespace MWBase
         /// the containerstore boundary, which had ZERO Lua hooks (itemConsumed/useItem cover
         /// different things). Server-authoritative inventory needs a transaction signal here.
         /// `container` may be empty (a store with no owner yet); `count` is the amount that
-        /// actually moved.
-        virtual void itemTransferred(const MWWorld::Ptr& container, const ESM::RefId& itemId, int count, bool added)
+        /// actually moved. `script` is true when an MWScript AddItem/RemoveItem caused the move
+        /// (OT3-72: the only transfers the server ledger has to be told about from here).
+        virtual void itemTransferred(const MWWorld::Ptr& container, const ESM::RefId& itemId, int count, bool added, bool script)
             = 0;
         /// MP (E5): an MWScript global variable was WRITTEN (setGlobalInt/Float). Quest state
         /// advanced by mwscript was otherwise invisible to Lua — questUpdated covers journal
