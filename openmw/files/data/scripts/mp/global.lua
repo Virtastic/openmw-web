@@ -1316,6 +1316,8 @@ local function pushAvatarPolicy()
     end
     local pvp = (net.flags and net.flags.pvp) == true
     local placed = (net.flags and net.flags.clientAuthority) == true
+    -- ...and the engine's fall damage: a placed avatar's falls are its owner's to claim.
+    if mp.setAvatarsPlaced then pcall(mp.setAvatarsPlaced, placed) end
     for _, p in pairs(puppets) do
         if p.obj and p.obj:isValid() then
             pcall(function() p.obj:sendEvent('mpAvatarPolicy', { pvp = pvp, avatarObjIds = ids, placed = placed }) end)

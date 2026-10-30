@@ -538,6 +538,9 @@ do
   check('objects.onScriptNote asks the server for a scripted actor spawn',
     ob:find("mp.sendEvent%('ObjectSpawnRequest', {%s*tempId = 0, actor = true") ~= nil)
   check('WorldCellState applies persisted re-enables', ob:find('for _, refKey in ipairs(data.enabled or {}) do', 1, true) ~= nil)
+  check('the peer tells the engine its avatars are placed (no fall damage of their own)',
+    g:find('if mp.setAvatarsPlaced then pcall(mp.setAvatarsPlaced, placed) end', 1, true) ~= nil,
+    'a still avatar falling through an unloaded floor is charged for it')
   check('WorldCellState never deletes or moves an item out of a pack',
     ob:find('not recentPickups[obj.id] and inWorld(obj) then', 1, true) ~= nil
       and ob:find('if obj and obj:isValid() and inWorld(obj) then\n            retry.teleport', 1, true) ~= nil
