@@ -73,5 +73,5 @@ test('PartyUpdate: an offline member is a bare row, a solo "party" sends nothing
 
 test('the server ticks pushPartyUpdates every 2 s with the sim-peer pass', () => {
   const src = readFileSync(new URL('../src/server.ts', import.meta.url), 'utf8');
-  assert.match(src, /simPeerPass\(\); pushStoryLicence\(\); social\.pushPartyUpdates\(\); \}, 2_000/);
+  assert.match(src, /simPeerPass\(\); pushStoryLicence\(\); social\.pushPartyUpdates\(\);[^}]*\}, 2_000/);
 });
