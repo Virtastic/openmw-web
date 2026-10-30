@@ -29,7 +29,7 @@ export const bootTimeoutMs = 420_000;
 
 export default async function run(ctx) {
   const host = await startGatewayAndClient(ctx, {
-    gwPort: GW_PORT, name: 'maint-player', ownId: 'priv-maint-world',
+    gwPort: GW_PORT, name: 'maint-player',
   });
   const root = `http://127.0.0.1:${GW_PORT}`;
   const base = `${root}/admin/api`;
@@ -54,7 +54,7 @@ export default async function run(ctx) {
     const before = await fetch(`${root}/worlds`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${player}` },
-      body: JSON.stringify({ id: 'priv-maint-probe', mode: 'private' }),
+      body: JSON.stringify({}),
     });
     assert.equal(before.status, 200,
       `a world must be creatable before maintenance (${before.status}) — without this the`
@@ -74,7 +74,7 @@ export default async function run(ctx) {
     const during = await fetch(`${root}/worlds`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${player}` },
-      body: JSON.stringify({ id: 'priv-maint-probe-2', mode: 'private' }),
+      body: JSON.stringify({}),
     });
     assert.equal(during.status, 503, `a new game must be refused during maintenance (${during.status})`);
     const why = await during.json();
@@ -98,7 +98,7 @@ export default async function run(ctx) {
     const after = await fetch(`${root}/worlds`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${player}` },
-      body: JSON.stringify({ id: 'priv-maint-probe-3', mode: 'private' }),
+      body: JSON.stringify({}),
     });
     assert.equal(after.status, 200,
       `the doors must open again (${after.status}) — a maintenance switch with no way back is`

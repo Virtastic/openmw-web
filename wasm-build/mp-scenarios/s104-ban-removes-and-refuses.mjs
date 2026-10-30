@@ -32,7 +32,7 @@ export const bootTimeoutMs = 420_000;
 
 export default async function run(ctx) {
   const host = await startGatewayAndClient(ctx, {
-    gwPort: GW_PORT, name: 'ban-target', ownId: 'priv-ban-world',
+    gwPort: GW_PORT, name: 'ban-target',
   });
   const base = `http://127.0.0.1:${GW_PORT}/admin/api`;
   try {

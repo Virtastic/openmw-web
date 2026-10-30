@@ -1,13 +1,13 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s136: A PARTY OF THREE. Every guest scenario so far is one friend joining one host. A real
-// evening is the host and TWO friends: both join through the real door, everyone sees
-// everyone (three names on every screen), a guest's chat reaches the host AND the other
-// guest, the two guests can trade with each other inside the host's world (drop + pickup,
-// the sanctioned exchange, s108), and when the host closes up BOTH guests land home. The
-// guest-to-guest edges are the ones nothing else exercises.
+// s136: THREE PLAYERS IN ONE WORLD. Every earlier two-player scenario has exactly one pair. A
+// real evening is three: everyone sees everyone (three names on every screen), one player's
+// chat reaches BOTH others, two of them trade inside the world (drop + pickup, the sanctioned
+// exchange, s108), and when one leaves the other two see them go. The edges between players
+// who are not the first client are the ones nothing else exercises. (v1 framed it as a host
+// and two guests who are sent home when the host closes up; that is gone, OT3-31/58.)
 import assert from 'node:assert/strict';
-import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
+import { startGatewayAndClient, addClient } from './_gateway.mjs';
 
 const STEP = 30_000;
 const GW_PORT = 19060; // ten apart from its neighbours (see s102)
@@ -26,10 +26,10 @@ async function countOf(c, name) {
 }
 
 export default async function run(ctx) {
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'trio-host', ownId: 'priv-trio-host' });
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'trio-host' });
   try {
-    const ga = await addClient(ctx, GW_PORT, { name: 'trio-a', ownId: 'priv-trio-a' });
-    const gb = await addClient(ctx, GW_PORT, { name: 'trio-b', ownId: 'priv-trio-b' });
+    const ga = await addClient(ctx, GW_PORT, { name: 'trio-a' });
+    const gb = await addClient(ctx, GW_PORT, { name: 'trio-b' });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const H = `thost${tag}`, A = `ta${tag}`, B = `tb${tag}`;
     await host.client.cmd(`profile:trio-host@example.com:${H}`);
@@ -52,15 +52,10 @@ export default async function run(ctx) {
       await g.client.cmd(`social:FriendAccept:${H}`);
     }
     await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 2`, 60_000, 'the host has two friends');
-    await host.client.cmd('worldmode:party');
-    await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
-    // Both friends come over.
+    // Everyone is in the one world already (v1 had to join the host's party world).
     for (const [handle, g] of [[A, ga], [B, gb]]) {
-      const acct = JSON.parse(await g.client.eval("window.omw.state.friends||'[]'"))[0].acct;
-      await g.client.cmd(`joinfriend:${acct}`);
-      await host.client.waitFor(`${rowOf(handle)}.id !== undefined`, 300_000, `the host sees ${handle} arrive`);
-      await g.client.waitFor('window.omw.state.state === "Joined"', 60_000, `${handle} is joined after the redial`);
-      await grantLockerSession(g.client, GW_PORT, g.account);
+      await host.client.waitFor(`${rowOf(handle)}.id !== undefined`, 300_000, `the host sees ${handle}`);
+      await g.client.waitFor('window.omw.state.state === "Joined"', 60_000, `${handle} is joined`);
     }
     // Everyone sees everyone: three names on every screen.
     for (const [who, cli, others] of [['host', host.client, [A, B]], ['A', ga.client, [H, B]], ['B', gb.client, [H, A]]]) {
@@ -99,18 +94,14 @@ export default async function run(ctx) {
     assert.equal(bNow, bHad + 1, "B did not receive A's item");
     ctx.log("ok: two guests traded inside the host's world");
 
-    // The host closes up: BOTH guests are sent home and land joined in their own worlds.
-    await host.client.cmd('worldmode:private');
-    for (const [who, g] of [['A', ga], ['B', gb]]) {
-      await g.client.waitFor(`(window.omw.state.worldClosed||'') !== '' || String(window.omw.state.state||'') !== 'Joined'`, STEP, `${who} is sent home`);
-    }
-    for (const [who, g] of [['A', ga], ['B', gb]]) {
-      await g.client.waitFor('window.omw.state.state === "Joined" && String(window.omw.state.worldClosed||"") === ""', 180_000, `${who} is back in their own world`);
-    }
-    await host.client.waitFor(`${rowOf(A)}.id === undefined && ${rowOf(B)}.id === undefined`, STEP, 'the host is alone again');
-    const errs = ga.client.luaErrors().concat(gb.client.luaErrors(), host.client.luaErrors());
+    // One of them leaves: the other two see them go and stay put.
+    ga.client.close();
+    await host.client.waitFor(`${rowOf(A)}.id === undefined`, 120_000, 'the host sees A leave');
+    await gb.client.waitFor(`${rowOf(A)}.id === undefined`, 120_000, 'B sees A leave');
+    assert.equal(await gb.client.eval('window.omw.state.state'), 'Joined', 'B stays joined');
+    const errs = gb.client.luaErrors().concat(host.client.luaErrors());
     assert.equal(errs.length, 0, 'Lua errors during the evening:\n' + errs.join('\n'));
-    ctx.log('PASS: a party of three -- everyone seen by everyone, chat to all, guests trading, both home when the host closes');
+    ctx.log('PASS: three players -- everyone seen by everyone, chat to all, trading, a leaver is seen to go');
   } finally {
     host.stop();
   }

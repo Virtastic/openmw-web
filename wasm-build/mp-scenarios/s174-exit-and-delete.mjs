@@ -13,12 +13,11 @@
 // than the roster: the watching client's puppet, and the sim peer's avatar body. A ghost on
 // either is a solid, AI-off body standing where the player left.
 //
-// Shape: A owns a character world (the id DERIVED from the character, so the gateway's
-// isPlayed check applies to it), B is A's friend and a guest in it, and the world's own
+// Shape: A plays a character in the one world, B is in it too, and the world's own
 // managed peer holds the cell. A exits; B must lose A's row and puppet, the peer must despawn
 // A's avatar, and the delete must be accepted -- with numbers for how long each took.
 import assert from 'node:assert/strict';
-import { startGatewayAndClient, addClient, harnessSession, grantLockerSession } from './_gateway.mjs';
+import { startGatewayAndClient, addClient, harnessSession, grantLockerSession, WORLD_ID } from './_gateway.mjs';
 
 export const managedPeer = true;
 // The harness respawn point is the Example Suite village (26,25): open sea in retail, where A
@@ -42,14 +41,14 @@ export default async function run(ctx) {
   const A_HANDLE = `leaver${tag}`, B_HANDLE = `watch${tag}`;
 
   // B, the watcher, in their own world first -- where everybody is before they go anywhere.
-  const watch = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'del-watch', ownId: 'priv-del-watch', boot: BOOT });
+  const watch = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'del-watch', boot: BOOT });
   const B = watch.client;
   try {
     // A: a character, then ITS world, whose id the gateway derives from the character id (the
     // launcher's POST /worlds {characterId}). A harness account only comes into being at its first world sign-in (?mpauto registers
     // there), and that sign-in gives it its first character. So A signs in once, in a
     // throwaway world, and that character is the one A then plays from the character screen.
-    const first = await addClient(ctx, GW_PORT, { name: 'del-leaver', ownId: 'priv-del-leaver-first' });
+    const first = await addClient(ctx, GW_PORT, { name: 'del-leaver' });
     await first.client.close();
     const accountA = first.account;
     const tokenA = await harnessSession(GW_PORT, accountA);
@@ -57,10 +56,10 @@ export default async function run(ctx) {
     const listed = await (await fetch(`${gw}/auth/characters`, { headers: authA })).json();
     const charId = listed.characters?.[0]?.id;
     assert.ok(charId, `A's first sign-in must have given the account a character: ${JSON.stringify(listed)}`);
-    const mk = await fetch(`${gw}/worlds`, { method: 'POST', headers: authA, body: JSON.stringify({ mode: 'private', characterId: charId }) });
+    const mk = await fetch(`${gw}/worlds`, { method: 'POST', headers: authA, body: JSON.stringify({ characterId: charId }) });
     const worldA = (await mk.json()).id;
     assert.equal(mk.status, 200, `A's character world must be creatable (${mk.status})`);
-    assert.ok(worldA.endsWith('-' + charId.slice(-8)), `the world id must be derived from the character: ${worldA} / ${charId}`);
+    assert.equal(worldA, WORLD_ID, `v2 has the one world: ${worldA}`);
     for (const by = Date.now() + 60_000; Date.now() < by;) {
       if ((await (await fetch(`${gw}/worlds/${worldA}`)).json()).up) break;
       await ctx.sleep(1000);
@@ -75,7 +74,7 @@ export default async function run(ctx) {
       newDocScript: `if (/index\\.html/.test(location.pathname) && !/mpchar=/.test(location.hash)) history.replaceState(null, '', location.href + ${JSON.stringify(frag)});` });
     await grantLockerSession(A, GW_PORT, accountA);
 
-    // Friends, Party, and B walks into A's world.
+    // A and B are in the one world together.
     await A.cmd(`profile:del-leaver@example.com:${A_HANDLE}`);
     await B.cmd(`profile:del-watch@example.com:${B_HANDLE}`);
     for (const [who, c] of [['A', A], ['B', B]]) {
@@ -86,14 +85,10 @@ export default async function run(ctx) {
     await B.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
     await B.cmd(`social:FriendAccept:${A_HANDLE}`);
     await A.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-    await A.cmd('worldmode:party');
-    await A.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
     const acctA = JSON.parse(await B.eval("window.omw.state.friends||'[]'"))[0].acct;
-    await B.cmd(`joinfriend:${acctA}`);
     const rowOf = (h) => `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(h)}; }) || {})`;
     await A.waitFor(`${rowOf(B_HANDLE)}.id !== undefined`, 300_000, "B reached A's world");
-    await B.waitFor('window.omw.state.state === "Joined"', 60_000, "B is joined in A's world");
-    await grantLockerSession(B, GW_PORT, watch.account);
+    await B.waitFor('window.omw.state.state === "Joined"', 60_000, "B is joined");
     const idA = Number(await A.eval('window.omw.state.selfId'));
     assert.ok(idA > 0, 'A has a connection id');
 
@@ -144,8 +139,7 @@ export default async function run(ctx) {
     }
     ctx.log(`ok: A exited through the menu (${await A.eval('location.pathname')})`);
 
-    // The watcher, WHILE still in A's world (a Party world closes to its guests when the owner
-    // leaves, and B is sent home in up to 30 s -- so this is read first, and read fast).
+    // The watcher, WHILE still in A's world (read fast: the ghost, if any, is there from the first second).
     let rowGone = null, puppetGone = null;
     for (const by = Date.now() + 20_000; Date.now() < by && (rowGone === null || puppetGone === null);) {
       const s = JSON.parse(await B.eval(`JSON.stringify({ row: ${rowOf(A_HANDLE)}.id !== undefined, pup: !!JSON.parse(window.omw.state.puppets||'{}')['${idA}'] })`));

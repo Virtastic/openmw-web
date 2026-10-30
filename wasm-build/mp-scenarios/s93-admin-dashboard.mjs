@@ -20,7 +20,7 @@ const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' 
 
 export default async function run(ctx) {
   const gwPort = 18780 + (Number(String(ctx.runId).replace(/\D/g, '').slice(-2)) % 100);
-  const { client: bot, ownId, stop } = await startGatewayAndClient(ctx, { gwPort, name: 'bot-dash', ownId: 'priv-dash-world' });
+  const { client: bot, ownId, stop } = await startGatewayAndClient(ctx, { gwPort, name: 'bot-dash' });
   const base = `http://127.0.0.1:${gwPort}/admin/api`;
   try {
     // The operator: first-run owner creation (loopback needs no setup key), then the wizard's

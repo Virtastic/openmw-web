@@ -1,9 +1,9 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s131: YOU DIE WHILE VISITING. Death and respawn (s22) in the world you were invited to:
-// the guest must come back to life IN THE HOST'S WORLD -- moved to that world's respawn
-// point, health restored, still a guest the host can see -- and not be bounced home or left
-// on a dead socket. Dying is the most ordinary thing that happens to a helper.
+// s131: ONE OF TWO PLAYERS DIES. Death and respawn (s22) in a gateway-spawned, peer-ruled world:
+// the dead player must come back to life in that world -- moved to its respawn point, health
+// restored -- and not be bounced out or left on a dead socket, while the other player sees them
+// again. Dying is the most ordinary thing that happens to a helper.
 import assert from 'node:assert/strict';
 import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
 import { drown } from './_death.mjs';
@@ -18,9 +18,9 @@ const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"nul
 
 export default async function run(ctx) {
   const BOOT = { retail: true, joinTimeoutMs: 420_000 }; // retail: the sea bed is in Morrowind.esm, and so is the peer's world
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'die-host', ownId: 'priv-die-host', boot: BOOT });
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'die-host', boot: BOOT });
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'die-guest', ownId: 'priv-die-guest', boot: BOOT });
+    const guest = await addClient(ctx, GW_PORT, { name: 'die-guest', boot: BOOT });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const hostHandle = `dhost${tag}`, guestHandle = `dguest${tag}`;
     await host.client.cmd(`profile:die-host@example.com:${hostHandle}`);
@@ -33,15 +33,10 @@ export default async function run(ctx) {
     await guest.client.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
     await guest.client.cmd(`social:FriendAccept:${hostHandle}`);
     await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-    await host.client.cmd('worldmode:party');
-    await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
-    const guestFriends = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"));
-    await guest.client.cmd(`joinfriend:${guestFriends[0].acct}`);
     const guestRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(guestHandle)}; }) || {})`;
     await host.client.waitFor(`${guestRow}.id !== undefined`, 120_000, "the guest is inside the host's world");
     await guest.client.waitFor('window.omw.state.state === "Joined"', 60_000, 'the guest is joined after the redial');
     await grantLockerSession(guest.client, GW_PORT, guest.account);
-    const worldUrl = String(await guest.client.eval('String(window.omw.state.publicStage||"")'));
     ctx.log("ok: the guest is in the host's world");
 
     // The guest dies BY DAMAGE, on the world's own peer (backlog 241; sethp:0 was a client
@@ -74,7 +69,6 @@ export default async function run(ctx) {
     assert.ok(pose && Math.hypot(pose.x - before.x, pose.y - before.y) > 300, 'the guest never respawned (no move to the respawn point)');
     await guest.client.waitFor('Number(window.omw.state.hp||"0") > 0', 15_000, 'health restored after the respawn');
     assert.equal(await guest.client.eval('window.omw.state.state'), 'Joined', 'the guest must still be connected after dying');
-    assert.equal(await guest.client.eval('String(window.omw.state.worldClosed||"")'), '', 'dying must not send the guest home');
     await host.client.waitFor(`${guestRow}.id !== undefined`, STEP, "the host still sees the guest after the respawn");
     ctx.log(`PASS: the guest died and respawned inside the host's world (${Math.round(Math.hypot(pose.x - before.x, pose.y - before.y))} units away), still a guest the host can see`);
   } finally {

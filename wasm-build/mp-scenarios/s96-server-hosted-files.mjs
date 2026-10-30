@@ -41,7 +41,7 @@ export default async function run(ctx) {
   writeFileSync(join(lib, 'Fonts', 'demo.fnt'), 'y'.repeat(64));
 
   const host = await startGatewayAndClient(ctx, {
-    gwPort: GW_PORT, name: 'files-host', ownId: 'priv-files-world',
+    gwPort: GW_PORT, name: 'files-host',
   });
   try {
     const base = `http://127.0.0.1:${GW_PORT}`;

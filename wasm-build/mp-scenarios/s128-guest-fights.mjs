@@ -1,11 +1,10 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s128: A GUEST FIGHTS IN A FRIEND'S WORLD. The whole point of joining: you and your friend
-// take on the world together, in THEIR world, with their NPCs simulated by their world's
-// peer. Every fight scenario so far ran in a symmetric harness world; this one goes through
-// the real door -- befriend, Party, joinfriend, retail data through the gateway -- and then
-// both players hit the same NPC in the host's world, which must die once for both. The
-// gateway world spawns its own peer from the shared config (managedPeer).
+// s128: TWO PLAYERS FIGHT IN A GATEWAY-SPAWNED WORLD. The whole point of playing together: take
+// on the world's NPCs side by side, simulated by the world's own peer. Most fight scenarios run
+// in the harness's own world; this one goes through the real gateway (retail data, the world
+// spawns its own peer from the shared config via managedPeer) and both players hit the same
+// NPC, which must die once for both. (v1: a guest joined the host's party world; one world now.)
 import assert from 'node:assert/strict';
 import { focus, armMelee, swingUntil, probeOf as probeRec } from './_realfight.mjs';
 import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
@@ -24,9 +23,9 @@ const probeOf = async (c) => JSON.parse(await c.eval('window.omw.state.actorProb
 
 export default async function run(ctx) {
   const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'fight-host', ownId: 'priv-fight-host', boot: BOOT });
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'fight-host', boot: BOOT });
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'fight-guest', ownId: 'priv-fight-guest', boot: BOOT });
+    const guest = await addClient(ctx, GW_PORT, { name: 'fight-guest', boot: BOOT });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const hostHandle = `fhost${tag}`, guestHandle = `fguest${tag}`;
     await host.client.cmd(`profile:fight-host@example.com:${hostHandle}`);
@@ -39,10 +38,6 @@ export default async function run(ctx) {
     await guest.client.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
     await guest.client.cmd(`social:FriendAccept:${hostHandle}`);
     await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-    await host.client.cmd('worldmode:party');
-    await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
-    const guestFriends = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"));
-    await guest.client.cmd(`joinfriend:${guestFriends[0].acct}`);
     const guestRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(guestHandle)}; }) || {})`;
     await host.client.waitFor(`${guestRow}.id !== undefined`, 300_000, "the guest is inside the host's world");
     await guest.client.waitFor('window.omw.state.state === "Joined"', 60_000, 'the guest is joined after the redial');

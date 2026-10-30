@@ -6,7 +6,7 @@
 // calls (owner, game files, a friend's account, the answers, the restart), the server comes
 // back through the entrypoint on the marker the wizard wrote, and then two people play a
 // session through the LAUNCHER -- password sign-in, the onboarding handle, the character
-// tiles, "Friends playing now" -- not the harness's ?mp= shortcut. Everything the other
+// tiles -- not the harness's ?mp= shortcut. Everything the other
 // scenarios get pre-seeded (config.toml, harness auth, a locker session minted by hand) is
 // absent here on purpose: what this proves is the shipped defaults.
 //
@@ -385,13 +385,12 @@ export default async function run(ctx) {
   ctx.log('ok: back on the marker, answers loaded, password sign-in on, the game served');
 
   // ===================================================================== 4. THE HOST
-  phase(4, 'the owner plays: launcher -> password -> handle -> new character -> own world');
+  phase(4, 'the first player: launcher -> password -> handle -> new character -> the world');
   const launcher = { url: `${PLAY}/launcher.html`, waitExpr: "document.readyState === 'complete' && !!document.getElementById('card-mp')", waitWhat: 'the launcher page', newDocScript: NEW_DOC_SCRIPT, joinTimeoutMs: 120_000 };
   const host = await ctx.launchClient('host', '', launcher);
   await launcherSignIn(ctx, host, OWNER, HOST_HANDLE);
   // No characters yet: the tile screen creates the first one itself and boots.
   await awaitInWorld(ctx, host, 'the host');
-  assert.equal(await host.eval('String(window.omw.state.amHost||"")'), 'true', 'the owner is the host of the world the launcher opened');
   assert.equal(await host.eval('String(window.omw.state.profileUsername||"")'), HOST_HANDLE, 'the handle from onboarding is what the world knows');
   const hostLocker = await host.eval("JSON.parse(sessionStorage.getItem('omw-mp-session')||'{}').lockerToken||''");
   assert.ok(hostLocker, 'the launcher parked a locker session for the tab');
@@ -402,58 +401,38 @@ export default async function run(ctx) {
   const games = (await api.get('/games')).body.games;
   const hostWorld = games.find((g) => g.up && g.playerCount > 0);
   assert.ok(hostWorld, `the host's world is up with a player in it: ${JSON.stringify(games).slice(0, 300)}`);
-  assert.equal(hostWorld.ownerName, HOST_HANDLE, 'the dashboard labels the game by the owner\'s handle');
-  assert.equal(hostWorld.mode, 'private', 'a new world opens Solo');
+  // OT3-28/31: one world, no owner on the row.
+  assert.ok(!hostWorld.ownerName || hostWorld.ownerName === HOST_HANDLE, `the dashboard must not label the game with an account key: ${hostWorld.ownerName}`);
   await host.waitFor('String(window.omw.state.simReady||"") === "1"', 300_000, "the world's own peer is up (spawned by the world, from the uploaded files)");
   ctx.log(`ok: the host is in ${hostWorld.id}, simulated by the world's own peer`);
 
   // ===================================================================== 5. THE FRIEND
-  phase(5, 'the friend: own world first (a character has to exist), then Party from the O panel, then "Friends playing now"');
+  phase(5, 'the friend: launcher -> password -> handle -> character -> the same world, then an invite brings them beside the host');
   const guest = await ctx.launchClient('guest', '', launcher);
   await launcherSignIn(ctx, guest, FRIEND, GUEST_HANDLE);
-  await awaitInWorld(ctx, guest, "the friend's own world");
+  await awaitInWorld(ctx, guest, "the world, as the friend");
   assert.equal(await guest.eval('String(window.omw.state.profileUsername||"")'), GUEST_HANDLE);
   await host.cmd(`social:FriendRequest:${GUEST_HANDLE}`);
-  await guest.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives across worlds');
+  await guest.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
   await guest.cmd(`social:FriendAccept:${HOST_HANDLE}`);
   await host.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-  // THE O PANEL: a real key, then a real click on Party. The host is a first-timer, so the
-  // feature tour is up and sits ABOVE the social panel: fresh4 clicked Party and the browser
-  // handed the click to omw-tour. A player closes the tour first; so does this.
-  if (await host.eval("document.getElementById('omw-tour').classList.contains('show')")) {
-    await host.eval("document.getElementById('omw-tour-x').click()");
-    await host.waitFor("!document.getElementById('omw-tour').classList.contains('show')", 3000, 'the tour closed');
-  }
-  await host.key({ key: 'o', code: 'KeyO', keyCode: 79 });
-  await host.waitFor("document.getElementById('omw-social').classList.contains('show')", STEP, 'O opened the social panel');
-  const flipped = `JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode' && String(JSON.parse(window.omw.state.socialResult||'{}').detail) === 'party'`;
-  // Up to three clicks: fresh24 landed the click on the button and no SetWorldMode followed
-  // (one run in seventeen); a player clicks again.
-  let party = false;
-  for (let i = 0; i < 3 && !party; i++) {
-    const hit = await host.click('#omw-social .whererow .seg button:nth-child(2)');
-    ctx.log(`clicked Party (the browser handed the click to ${hit})`);
-    party = await host.waitFor(flipped, 20_000, 'the server flipped the world to Party').then(() => true).catch(() => false);
-    if (!party) ctx.log(`  click ${i + 1}: no flip; socialResult=${await host.eval('window.omw.state.socialResult')} social=${await host.eval("document.getElementById('omw-social').className")}`);
-  }
-  assert.ok(party, 'the world never flipped to Party in three clicks');
-  assert.match(gwLog(), /world\.mode_flip.*"mode":"party"/, 'the flip reached the world');
-  // The friend leaves their own world the way a player does (Exit), lands on the tiles...
-  await guest.eval('window.__omwExitToLauncher(); "bye"');
-  await guest.waitFor(`/launcher\\.html$/.test(location.pathname) && ${shown('cs-bd')}`, 60_000, 'Exit landed the friend on their character tiles');
-  // ...where the host is listed as playing, and one click joins.
-  await guest.waitFor("(function(){ var b = document.querySelector('.cs-friends .cs-friend button'); return !!b && !b.disabled; })()", 90_000, '"Friends playing now" lists the host with a Join button');
-  const who = await guest.eval("document.querySelector('.cs-friends .cs-friend b').textContent");
-  assert.equal(who, HOST_HANDLE, 'the friend playing is the host, by handle');
-  await guest.click('.cs-friends .cs-friend button');
-  await awaitInWorld(ctx, guest, "the host's world, from the launcher");
-  await host.waitFor(`${rowOf(GUEST_HANDLE)}.id !== undefined`, STEP, 'the host sees the friend arrive');
-  await guest.waitFor(`String(window.omw.state.worldHost||"") === ${JSON.stringify(HOST_HANDLE)} && String(window.omw.state.amHost||"") === "false"`, STEP, 'the friend knows whose world this is');
-  const hp0 = await poseOf(host), gp0 = await poseOf(guest);
+  await host.waitFor(`${rowOf(GUEST_HANDLE)}.id !== undefined`, STEP, 'the host sees the friend in the world');
+  // v1 listed the host under "Friends playing now" and joined into their party world; v2 has
+  // one world, and the way to stand beside a friend is their invite (social.ts acceptInvite).
+  const hostAcctForInvite = JSON.parse(await host.eval("window.omw.state.friends||'[]'"))[0].acct;
+  await host.eval("window.omw.state.socialResult = ''; 'cleared'");
+  await host.cmd(`social:InviteSend:${hostAcctForInvite}`);
+  await host.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'InviteSend'`, STEP, 'the invite is answered');
+  assert.equal(JSON.parse(await host.eval("window.omw.state.socialResult||'{}'")).ok, true, 'the invite to a friend was refused');
+  await guest.waitFor(`JSON.parse(window.omw.state.invites||'[]').length > 0`, STEP, 'the invite reaches the friend');
+  await guest.cmd(`social:InviteAccept:${JSON.parse(await guest.eval("window.omw.state.invites||'[]'"))[0].acct}`);
+  const hp0 = await poseOf(host);
+  let gp0 = await poseOf(guest);
+  for (const until = Date.now() + 30_000; Date.now() < until && Math.hypot(hp0.x - gp0.x, hp0.y - gp0.y) >= 600;) { await ctx.sleep(1000); gp0 = await poseOf(guest); }
   assert.ok(Math.hypot(hp0.x - gp0.x, hp0.y - gp0.y) < 600, `the friend landed beside the host (${Math.hypot(hp0.x - gp0.x, hp0.y - gp0.y).toFixed(0)} u)`);
   const hostId = String(await host.eval('window.omw.state.playerId'));
   const guestId = String(await guest.eval('window.omw.state.playerId'));
-  ctx.log('ok: the friend joined from the launcher and stands beside the host');
+  ctx.log('ok: the friend joined from the launcher and the invite put them beside the host');
 
   // ===================================================================== 6. THE SESSION
   phase(6, 'ten minutes together: walk, fight, loot, die, relog, the host blips, both exit');
@@ -717,7 +696,6 @@ export default async function run(ctx) {
   await guest.waitFor('Number(window.omw.state.hp||"0") > 0', 60_000, 'health restored by the respawn');
   { const [sx, sy, sz] = SPOT.split(',').map(Number); await hopTo(ctx, guest, sx, sy, sz); } // out of the water before it drowns again (stock rules respawn in place)
   assert.equal(await guest.eval('window.omw.state.state'), 'Joined', 'dying keeps the friend connected');
-  assert.equal(await guest.eval('String(window.omw.state.worldClosed||"")'), '', 'dying does not send the friend home');
   await host.waitFor(`${puppetOf(guestId)}.dead !== true`, STEP, 'the host sees the friend get up');
   assert.match(gwLog(), /respawn.sent.*"via":"surfaced"/, 'the world logged the respawn under the stock rule for a drowning: surfaced (485), not the seabed'); // where-you-fell below an exterior's water comes back at the surface
   ctx.log(`ok: the friend drowned at z=${fell.z.toFixed(0)} and respawned`);
@@ -725,14 +703,13 @@ export default async function run(ctx) {
   // RELOG (F5): the page reloads, the parked resume token rejoins the same world.
   await guest.reload(); // the harness's F5: Page.reload, back once the new document has loaded (fresh46/51: an eval sent into the re-fetch was never answered and waitFor sat on it for 300 s)
   await awaitInWorld(ctx, guest, 'the friend after F5');
-  assert.equal(await guest.eval('String(window.omw.state.worldHost||"")'), HOST_HANDLE, "F5 came back into the host's world");
   await host.waitFor(`${rowOf(GUEST_HANDLE)}.id !== undefined`, STEP, 'the host sees the friend back');
   const guestId2 = String(await guest.eval('window.omw.state.playerId'));
   ctx.log(`ok: F5 relog (player id ${guestId} -> ${guestId2})`);
 
-  // THE HOST BLIPS AND RETURNS INSIDE THE GRACE. The transport drops (a wifi blip); the
-  // client's own redial brings the host back in seconds, well inside the 90 s grace, so the
-  // friend is never sent home. A full page reload cannot fit inside the grace on a
+  // THE FIRST PLAYER BLIPS AND RETURNS. The transport drops (a wifi blip); the
+  // client's own redial brings them back in seconds and the friend plays on undisturbed
+  // (v1 armed an owner grace here, 90 s, after which the friend was sent home; gone, OT3-31). A full page reload cannot fit inside the grace on a
   // SwiftShader box, which is why the blip is the transport and not the tab.
   // The friend has just rebooted: its first minute is cell streaming in frames that run for
   // tens of seconds, and a chat line broadcast into that reads late (fresh53: told nothing in
@@ -741,7 +718,6 @@ export default async function run(ctx) {
   await guest.waitFor('typeof window.omw.state.selfDivergence === "string" && Number(window.omw.state.selfDivergence) < 100', 120_000, "the friend's frames flow again after the F5");
   const dropped = Date.now();
   await host.cmd('netdrop');
-  await guest.waitFor('String(window.omw.state.chatLog||"").toLowerCase().indexOf("host has disconnected") >= 0', 90_000, 'the friend is told the host dropped'); // the log, not the last line: any later line overwrites lastChatLine
   // Back inside the grace, by whichever road: the in-place redial on the parked resume token
   // (reconnectTotal > 0, the 3 s road) or the page's fresh-ticket rescue (a reboot; fresh64
   // took it and was back in 25 s as a new player id). The outcome is what the friend feels;
@@ -758,13 +734,11 @@ export default async function run(ctx) {
   ctx.log(`  the host's road back: ${road.join(' -> ')}`);
   await host.waitFor('window.omw.state.state === "Joined"', 30_000, 'the host is back in the world');
   assert.ok(Date.now() - dropped < 90_000, `the host came back inside the grace (${((Date.now() - dropped) / 1000).toFixed(0)} s)`);
-  assert.match(gwLog(), /world\.owner_left/, 'the world armed the grace');
-  assert.doesNotMatch(gwLog(), /world\.owner_gone/, 'the grace never expired');
-  assert.equal(await guest.eval('String(window.omw.state.worldClosed||"")'), '', 'the friend stayed');
+  assert.equal(await guest.eval('window.omw.state.state'), 'Joined', 'the friend stayed in the world through the blip');
   await guest.waitFor(`${rowOf(HOST_HANDLE)}.id !== undefined`, STEP, 'the friend sees the host again');
   ctx.log(`ok: the host dropped and was back in ${((Date.now() - dropped) / 1000).toFixed(0)} s`);
 
-  // BOTH EXIT, the friend first (a deliberate leave), then the host (the world closes).
+  // BOTH EXIT, the friend first (a deliberate leave), then the host.
   await guest.eval('window.__omwExitToLauncher(); "bye"');
   await guest.waitFor(`/launcher\\.html$/.test(location.pathname) && ${shown('cs-bd')}`, 60_000, 'the friend is back on the tiles');
   await host.waitFor(`${rowOf(GUEST_HANDLE)}.id === undefined`, STEP, 'the host sees the friend leave');
@@ -778,7 +752,6 @@ export default async function run(ctx) {
     if (!empty) await ctx.sleep(1_000);
   }
   assert.ok(empty, 'every world is empty after both exits');
-  assert.match(gwLog(), /world\.owner_leaving/, "the host's exit closed the world on purpose, not by grace");
 
   // ===================================================================== 7. THE LOG
   phase(7, 'nothing in the server log a stranger would have to google');

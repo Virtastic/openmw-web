@@ -1,9 +1,9 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s133: FOLLOW YOUR FRIEND THROUGH A DOOR. The leader walks into a building; you follow. In
-// the host world, through the real join, both must end up in the same interior, each seeing
-// the other there, with the room held by the world peer. s117 proved this with a companion
-// in a symmetric world; this is the two-player version through the door of a friend world.
+// s133: FOLLOW YOUR FRIEND THROUGH A DOOR. One player walks into a building; the other follows.
+// Both must end up in the same interior, each seeing the other there, with the room held by
+// the world peer. s117 proved this with a companion in a symmetric world; this is the
+// two-player version through a gateway-spawned world.
 import assert from 'node:assert/strict';
 import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
 
@@ -15,9 +15,9 @@ const cellOf = async (c) => String(await c.eval('window.omw.state.cell||""'));
 
 export default async function run(ctx) {
   const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'door-host', ownId: 'priv-door-host', boot: BOOT });
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'door-host', boot: BOOT });
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'door-guest', ownId: 'priv-door-guest', boot: BOOT });
+    const guest = await addClient(ctx, GW_PORT, { name: 'door-guest', boot: BOOT });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const hostHandle = `ohost${tag}`, guestHandle = `oguest${tag}`;
     await host.client.cmd(`profile:door-host@example.com:${hostHandle}`);
@@ -30,10 +30,6 @@ export default async function run(ctx) {
     await guest.client.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
     await guest.client.cmd(`social:FriendAccept:${hostHandle}`);
     await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-    await host.client.cmd('worldmode:party');
-    await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
-    const guestFriends = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"));
-    await guest.client.cmd(`joinfriend:${guestFriends[0].acct}`);
     const guestRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(guestHandle)}; }) || {})`;
     const hostRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(hostHandle)}; }) || {})`;
     await host.client.waitFor(`${guestRow}.id !== undefined`, 300_000, "the guest is inside the host world");

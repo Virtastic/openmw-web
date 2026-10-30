@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // s175: THE WORLD PROCESS RESTARTS AND THE WORLD IS STILL THE WORLD.
 //
-// A host and a guest (friends, Party) change the host's world: a door unlocked and opened,
+// Two players change the world: a door unlocked and opened,
 // a chest filled, an item dropped and picked up by the other player, eight hours rested away,
 // and the weather changed by whichever of them holds the region. Both clients must agree on
 // every one of those -- WEATHER included, which nothing in the suite had ever compared across
@@ -11,9 +11,8 @@
 // Then the WORLD PROCESS restarts: not a reconnect, a new process on the same data dir. The
 // gateway's rolling restart (SIGHUP, the idiom an operator and the updater use; worlds.ts
 // rollingRestart) stops the world and starts a replacement. Both clients must come back on
-// their own -- the guest too, into a world whose Party mode lived only in the old process's
-// memory unless the gateway handed it over (OMW_WORLD_LAST_MODE) -- and still agree on every
-// item, with the values from before the restart.
+// their own and still agree on every item, with the values from before the restart (the
+// host's personal rest offset included, OT3-108).
 //
 // Hooks, not keys, for the world edits (door:/chest:/drop:/takenet:/rest:/weather:): none of
 // these is what this scenario is about, each has its own scenario (s30-s32, s70), and no
@@ -53,10 +52,10 @@ async function ownItem(c, not = []) {
 }
 
 export default async function run(ctx) {
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'ws-host', ownId: 'priv-ws-host', boot: BOOT });
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'ws-host', boot: BOOT });
   const H = host.client;
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'ws-guest', ownId: 'priv-ws-guest', boot: BOOT });
+    const guest = await addClient(ctx, GW_PORT, { name: 'ws-guest', boot: BOOT });
     const G = guest.client;
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const HH = `wshost${tag}`, GH = `wsguest${tag}`;
@@ -70,9 +69,6 @@ export default async function run(ctx) {
     await G.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
     await G.cmd(`social:FriendAccept:${HH}`);
     await H.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-    await H.cmd('worldmode:party');
-    await H.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
-    await G.cmd(`joinfriend:${JSON.parse(await G.eval("window.omw.state.friends||'[]'"))[0].acct}`);
     const rowOf = (h) => `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(h)}; }) || {})`;
     await H.waitFor(`${rowOf(GH)}.id !== undefined`, 300_000, "the guest reached the host's world");
     await G.waitFor('window.omw.state.state === "Joined"', 60_000, 'the guest is joined after the redial');
@@ -117,11 +113,14 @@ export default async function run(ctx) {
     await H.cmd(`takenet:${dropNet}`);
     for (const c of [H, G]) await c.waitFor(`!${J('netObjects')}[${JSON.stringify(dropNet)}]`, STEP, `${c.name}: the picked-up item is gone`);
 
-    // ---- 4. time: the host rests eight hours; both clocks move.
+    // ---- 4. time: the host rests eight hours. OT3-108: a rest is PERSONAL, so only the host's
+    // clock moves (and the offset is the character's, so it must survive the restart too).
     const clock0 = JSON.parse(await G.eval(`JSON.stringify(${J('gameTime')})`)).abs;
     await H.cmd(`rest:${REST_HOURS}`);
-    // The guest SLEWS to the new time (s70), a step per frame, on a client at a frame a second or two.
-    await G.waitFor(`(${J("gameTime")}).abs >= ${clock0 + REST_HOURS - 0.5}`, 180_000, "the guest's clock took the rest");
+    await H.waitFor(`(${J("gameTime")}).abs >= ${clock0 + REST_HOURS - 0.5}`, 180_000, "the host's clock took its own rest");
+    await ctx.sleep(8_000);
+    const clockG = JSON.parse(await G.eval(`JSON.stringify(${J('gameTime')})`)).abs;
+    assert.ok(Math.abs(clockG - clock0) < 1, `the guest's clock followed the host's personal rest (${clock0} -> ${clockG})`);
 
     // ---- 5. weather: whoever holds the region changes it; the other applies it.
     let hold = null;
@@ -151,7 +150,7 @@ export default async function run(ctx) {
     const [b1, b2] = await Promise.all([snap(H), snap(G)]);
     ctx.log(`before the restart: host=${JSON.stringify(b1)} guest=${JSON.stringify(b2)}`);
     for (const k of ['doorOpen', 'doorLocked', 'chest', 'chestHolds', 'drop']) assert.equal(b1[k], b2[k], `before the restart they already disagree on ${k}`);
-    assert.ok(Math.abs(b1.clock - b2.clock) < 0.75, `clocks disagree before the restart: ${b1.clock} vs ${b2.clock}`);
+    assert.ok(Math.abs((b1.clock - b2.clock) - REST_HOURS) < 1, `the host should be ${REST_HOURS} h ahead of the guest before the restart: ${b1.clock} vs ${b2.clock}`);
 
     // ---- THE RESTART. SIGHUP: the gateway rolls every world -- stop, wait for the exit, start
     // a new process on the same data dir, wait for it to answer.
@@ -185,7 +184,7 @@ export default async function run(ctx) {
     }
     const url = await G.eval('String(window.omw.state.dialTarget || "")');
     ctx.log(`back ${Math.round((Date.now() - t0) / 1000)} s after SIGHUP; guest dialled ${url}`);
-    assert.ok(url.includes(host.ownId), `the guest came back somewhere else (${url}), not the host's world`);
+    assert.ok(url.includes(host.ownId), `the guest came back somewhere else (${url}), not the world`);
 
     // The chest is re-opened, as a player would to look inside; mirrors reset on a new session.
     await H.cmd(`chest:open:${chestNet}`);
@@ -199,7 +198,7 @@ export default async function run(ctx) {
         for (const k of ['doorOpen', 'doorLocked', 'chest', 'chestHolds', 'drop']) if (s[k] !== b1[k]) bad.push(`${who}.${k}=${s[k]} (was ${b1[k]})`);
         if (!(s.clock >= b1.clock - 0.25)) bad.push(`${who}.clock=${s.clock} went back from ${b1.clock}`);
       }
-      if (Math.abs(a1.clock - a2.clock) >= 0.75) bad.push(`clocks ${a1.clock} vs ${a2.clock}`);
+      if (Math.abs((a1.clock - a2.clock) - REST_HOURS) >= 1) bad.push(`clocks ${a1.clock} vs ${a2.clock}: the host's ${REST_HOURS} h offset was lost or shared`);
       const wOther = (a1.holder === 'true' ? a2 : a1).weather;
       if (wOther !== WEATHER) bad.push(`non-holder weather=${wOther} (was ${WEATHER})`);
       if (bad.length === 0) break;
@@ -207,7 +206,7 @@ export default async function run(ctx) {
     }
     ctx.log(`after the restart: host=${JSON.stringify(a1)} guest=${JSON.stringify(a2)}`);
     assert.deepEqual(bad, [], `after the world restarted the clients do not hold the world they left: ${bad.join('; ')}`);
-    ctx.log(`PASS: door, chest, pickup, clock (+${REST_HOURS} h) and weather ${WEATHER} survived a world-process restart on both clients`);
+    ctx.log(`PASS: door, chest, pickup, personal clock (+${REST_HOURS} h on the host only) and weather ${WEATHER} survived a world-process restart on both clients`);
   } finally {
     host.stop();
   }

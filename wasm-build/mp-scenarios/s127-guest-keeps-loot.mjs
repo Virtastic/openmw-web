@@ -1,10 +1,9 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s127: A GUEST TAKES THEIR LOOT HOME. The model (MP-COVERAGE-MAP: "a guest keeps what they
-// carry out"): you join a friend's world, they lead, and whatever you pick up there is yours
-// -- it is written to YOUR character, not the host's campaign -- so when the host closes up
-// and you land back in your own world, it is still in your pocket. The quest log stays the
-// host's; the loot does not. Without this, helping a friend is pure charity.
+// s127: WHAT YOU PICK UP IS YOURS. v2 has one world and no host: whatever a player takes (here
+// a dagger another player dropped) is written to THEIR OWN character, so after a relog it is
+// still in their pocket. (v1 phrased this as a guest taking loot home from a friend's world;
+// the world switching it needed is gone, OT3-31/58, the per-character write is not.)
 import assert from 'node:assert/strict';
 import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
 
@@ -27,9 +26,9 @@ export default async function run(ctx) {
   // RETAIL, so the loot is a real content item. A minted record (equiptest) cannot cross worlds:
   // records are per-world registries, and that is a separate, recorded gap (MP-COVERAGE-MAP).
   const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'loot-host', ownId: 'priv-loot-host', boot: BOOT });
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'loot-host', boot: BOOT });
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'loot-guest', ownId: 'priv-loot-guest', boot: BOOT });
+    const guest = await addClient(ctx, GW_PORT, { name: 'loot-guest', boot: BOOT });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const hostHandle = `lhost${tag}`, guestHandle = `lguest${tag}`;
     await host.client.cmd(`profile:loot-host@example.com:${hostHandle}`);
@@ -42,10 +41,6 @@ export default async function run(ctx) {
     await guest.client.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
     await guest.client.cmd(`social:FriendAccept:${hostHandle}`);
     await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-    await host.client.cmd('worldmode:party');
-    await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
-    const guestFriends = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"));
-    await guest.client.cmd(`joinfriend:${guestFriends[0].acct}`);
     const guestRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(guestHandle)}; }) || {})`;
     // A RETAIL reload: the page reboots into the host's world and streams the game data again,
     // and the socket is dialled only once the world is up (global.lua: first frame). Minutes.
@@ -80,28 +75,17 @@ export default async function run(ctx) {
     await guest.client.cmd(`takenet:${netId}`);
     await guest.client.waitFor(`${netCount} === 0`, STEP, 'the guest took it');
     await ctx.sleep(3_000); // the guest's inventory diff (2 s) writes it to THEIR character
-    assert.equal(await countOf(guest.client, name), had + 1, 'the guest holds the item in the host world');
+    assert.equal(await countOf(guest.client, name), had + 1, 'the guest holds the item');
     ctx.log(`ok: the guest picked up "${name}" in the host's world`);
 
-    // The host closes up; the guest goes home -- and must still have it there.
-    await host.client.cmd('worldmode:private');
-    // The notice lives only until the page reloads for home (a few hundred ms); leaving is the same signal.
-    await guest.client.waitFor(`(window.omw.state.worldClosed||'') !== '' || String(window.omw.state.state||'') !== 'Joined'`, STEP, 'the guest is sent home');
-    try {
-      await guest.client.waitFor('window.omw.state.state === "Joined" && String(window.omw.state.worldClosed||"") === ""', 180_000,
-        'the guest is back in their own world');
-    } catch (e) {
-      const lines = (guest.client.logTail ? guest.client.logTail(3000) : '').split(String.fromCharCode(10))
-        .filter((l) => /world|locker|ticket|closed|disconnect|session state|KICK|seat/i.test(l)).slice(-30);
-      ctx.log('guest log around the close: ' + lines.join(' || '));
-      ctx.log(`guest lockerBase=${await guest.client.eval('window.__lockerHttpBase ? window.__lockerHttpBase() : "(no fn)"')} token=${await guest.client.eval('String(window.__omwLockerToken||"").length')} chars hash=${await guest.client.eval('String(window.__omwBootFrag||location.hash||"").slice(0,120)')}`);
-      ctx.log(`guest state=${await guest.client.eval('window.omw.state.state')} netfail=${await guest.client.eval('window.omw.state.netfail')} switchTo=${await guest.client.eval('window.omw.state.switchTo')} publicStage=${await guest.client.eval('window.omw.state.publicStage')}`);
-      throw e;
-    }
-    await guest.client.waitFor('String(window.omw.state.restored||"") === "1" || String(window.omw.state.baselineReady||"") === "1"', 60_000, 'the guest character is restored at home');
+    // The guest's tab reloads (a relog); their character is theirs, so the dagger must still
+    // be in the pack after the restore (v2: no host to close up and no own world to go home to).
+    await guest.client.reload();
+    await guest.client.waitFor('window.omw.state.state === "Joined"', 180_000, 'the guest is back in the world after the reload');
+    await guest.client.waitFor('String(window.omw.state.restored||"") === "1" || String(window.omw.state.baselineReady||"") === "1"', 60_000, 'the guest character is restored');
     await ctx.sleep(2_000);
     const home = await countOf(guest.client, name);
-    ctx.log(`back home the guest holds ${home} of "${name}" (had ${had} before the visit)`);
+    ctx.log(`after the relog the guest holds ${home} of "${name}" (had ${had} before the visit)`);
     assert.equal(home, had + 1, 'the loot did not come home: it was written to the wrong character, or the restore dropped it');
     ctx.log('PASS: a guest keeps what they carried out of a friend\'s world');
   } finally {

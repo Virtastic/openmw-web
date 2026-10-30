@@ -26,11 +26,11 @@ export const bootTimeoutMs = 420_000;
 
 export default async function run(ctx) {
   const host = await startGatewayAndClient(ctx, {
-    gwPort: GW_PORT, name: 'rep-host', ownId: 'priv-rep-host',
+    gwPort: GW_PORT, name: 'rep-host',
   });
   const base = `http://127.0.0.1:${GW_PORT}/admin/api`;
   try {
-    const other = await addClient(ctx, GW_PORT, { name: 'rep-other', ownId: 'priv-rep-other' });
+    const other = await addClient(ctx, GW_PORT, { name: 'rep-other' });
 
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const reporter = `rep${tag}`;

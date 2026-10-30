@@ -1,14 +1,12 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s134: THE GUEST'S TAB DIES MID-VISIT, AND THEY COME BACK. A real player's browser crashes,
-// their laptop sleeps, they hit F5 (which bounces index.html to the launcher). What must hold:
-// the loot they picked up in the friend's world before the drop is on THEIR character when
-// they boot at home (the host world's logout flush wrote it, and the home world re-reads the
-// row rather than trusting its own copy -- the s132 bug); and when they rejoin the friend,
-// whose world is still in party mode, they are a guest again with that loot still in hand,
-// and the host sees them back. Three worlds' caches of one character, in order.
+// s134: A PLAYER'S TAB DIES AND THEY COME BACK. A real player's browser crashes, their laptop
+// sleeps, they hit F5. What must hold: the loot they picked up before the drop is on THEIR
+// character when they rejoin (the logout flush wrote it, and the next join re-reads the row
+// rather than trusting a cached copy -- the s132 bug), and the other player sees them back.
+// (v1 split this over a visited host world and an own world; there is one world now.)
 import assert from 'node:assert/strict';
-import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
+import { startGatewayAndClient, addClient } from './_gateway.mjs';
 
 const STEP = 30_000;
 const GW_PORT = 19040; // ten apart from its neighbours (see s102)
@@ -24,9 +22,9 @@ async function countOf(c, name) {
 
 export default async function run(ctx) {
   const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'drop-host', ownId: 'priv-drop-host', boot: BOOT });
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'drop-host', boot: BOOT });
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'drop-guest', ownId: 'priv-drop-guest', boot: BOOT });
+    const guest = await addClient(ctx, GW_PORT, { name: 'drop-guest', boot: BOOT });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const hostHandle = `dhost${tag}`, guestHandle = `dguest${tag}`;
     await host.client.cmd(`profile:drop-host@example.com:${hostHandle}`);
@@ -39,16 +37,11 @@ export default async function run(ctx) {
     await guest.client.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`, STEP, 'the request arrives');
     await guest.client.cmd(`social:FriendAccept:${hostHandle}`);
     await host.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'they are friends');
-    await host.client.cmd('worldmode:party');
-    await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'party');
-    const friendAcct = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"))[0].acct;
     const guestRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(guestHandle)}; }) || {})`;
 
     const joinFriend = async (cli, what) => {
-      await cli.cmd(`joinfriend:${friendAcct}`);
       await host.client.waitFor(`${guestRow}.id !== undefined`, 300_000, `the host sees the guest ${what}`);
       await cli.waitFor('window.omw.state.state === "Joined"', 60_000, `the guest is joined ${what}`);
-      await grantLockerSession(cli, GW_PORT, guest.account); // the switch reloaded the page
       await cli.waitFor('String(window.omw.state.restored||"") === "1" || String(window.omw.state.baselineReady||"") === "1"', 60_000, `the guest is settled ${what}`);
     };
     await joinFriend(guest.client, 'in the host world');
@@ -71,28 +64,19 @@ export default async function run(ctx) {
     // THE TAB DIES. No goodbye, no flip: the socket just closes.
     guest.client.close();
     await host.client.waitFor(`${guestRow}.id === undefined`, 120_000, 'the host sees the guest drop');
-    ctx.log('ok: the guest dropped; the host world is still in party mode');
+    ctx.log('ok: the guest dropped');
 
-    // Back at the launcher, into their OWN world first (that is where a boot lands): the loot
-    // must be there -- written by the host world at logout, read fresh by the home world.
-    const ownUrl = `ws://127.0.0.1:${GW_PORT}/w/${guest.ownId}`;
-    const back = await ctx.launchClient('drop-guest', '', { mpUrl: ownUrl, homeUrl: ownUrl, ...BOOT }); // same name = same account
-    await grantLockerSession(back, GW_PORT, guest.account);
-    await back.waitFor('window.omw.state.state === "Joined"', 60_000, 'the guest is back in their own world');
-    await back.waitFor('String(window.omw.state.restored||"") === "1"', 60_000, 'the guest character is restored at home');
+    // Back through the door: the loot must be there -- written at logout, read fresh at the
+    // next join (v1 went home to an own world first; there is only the one world now).
+    const worldUrl = `ws://127.0.0.1:${GW_PORT}/w/${guest.ownId}`;
+    const back = await ctx.launchClient('drop-guest', '', { mpUrl: worldUrl, homeUrl: worldUrl, ...BOOT }); // same name = same account
+    await joinFriend(back, 'after the drop');
     await ctx.sleep(2_000);
     const atHome = await countOf(back, NAME);
-    ctx.log(`at home after the drop the guest holds ${atHome} "${NAME}" (had ${had} before the visit)`);
-    assert.equal(atHome, had + 1, 'the loot taken before the tab died did not survive: the host world never flushed it, or the home world served its stale copy');
-
-    // ...and rejoins the friend: a guest again, loot in hand, the host sees them return.
-    await joinFriend(back, 'again after the drop');
-    await ctx.sleep(2_000);
-    const again = await countOf(back, NAME);
-    ctx.log(`back in the host world the guest holds ${again} "${NAME}"`);
-    assert.equal(again, had + 1, 'the loot did not follow the guest back into the host world: the host world served the copy it cached before the drop');
-    assert.equal(await host.client.eval(`${guestRow}.id !== undefined`), true, 'the host must see the returning guest');
-    ctx.log("PASS: the guest's tab died mid-visit; they came home with the loot, rejoined the friend, and still hold it there");
+    ctx.log(`after the rejoin the player holds ${atHome} "${NAME}" (had ${had} before)`);
+    assert.equal(atHome, had + 1, 'the loot taken before the tab died did not survive: the world never flushed it, or served its stale copy');
+    assert.equal(await host.client.eval(`${guestRow}.id !== undefined`), true, 'the other player must see the returning one');
+    ctx.log("PASS: the player's tab died; they came back with the loot and the other player sees them return");
   } finally {
     host.stop();
   }

@@ -29,7 +29,7 @@ export const bootTimeoutMs = 420_000;
 
 export default async function run(ctx) {
   const host = await startGatewayAndClient(ctx, {
-    gwPort: GW_PORT, name: 'ops-player', ownId: 'priv-ops-world',
+    gwPort: GW_PORT, name: 'ops-player',
   });
   const base = `http://127.0.0.1:${GW_PORT}/admin/api`;
   try {
@@ -58,10 +58,11 @@ export default async function run(ctx) {
     const games = await (await fetch(`${base}/games`, { headers: auth })).json();
     const mine = (games.games ?? games).find((g) => g.id === host.ownId);
     assert.ok(mine, `the running game must be listed: ${JSON.stringify(games).slice(0, 300)}`);
-    assert.equal(mine.ownerName, handle,
-      `a game must be labelled with its owner's HANDLE, not their account key — got`
-      + ` ${JSON.stringify(mine.ownerName)}, which for an SSO account is a real name`);
-    ctx.log(`ok: the platform lists ${(games.games ?? games).length} game(s), owner named by handle`);
+    // OT3-28/31: one world and no owner, so the row names nobody. What must NOT happen is the
+    // ACCOUNT KEY leaking onto an operator's screen as an owner name.
+    assert.ok(!mine.ownerName || mine.ownerName === handle,
+      `a game must never be labelled with an account key, got ${JSON.stringify(mine.ownerName)}`);
+    ctx.log(`ok: the platform lists ${(games.games ?? games).length} game(s), no owner on the row`);
 
     // 2. THE PROXY — one sign-in reaching into a running game's own admin API. Every per-game
     // page in the dashboard is this call with a different tail.
