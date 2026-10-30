@@ -2,63 +2,50 @@
 
 ## Where builds run
 
-**Heavy builds do NOT run on the laptop.** The engine bake (wasm64, ~15-35 min), the native
-sim-peer image (tier2, ~25 min cold) and the multiplayer browser-harness sweeps all run on the
-LAN Jenkins box (`builder`: 32 cores, 38 GB; hosts live in the gitignored `ci/jenkins/config.env`).
-That box is **dev/test only** and never reaches any production deployment.
+**Everything builds locally on the laptop, in Docker.** Jenkins is retired and nothing is built
+remotely. The laptop has 32 cores / 31 GB; builds are memory-bound, so run ONE docker build at a time
+(`flock /tmp/omw-build.lock docker build ...`; parallel agents share that lock).
 
 **This branch is OpenTES3 (v2).** Its deploy path is not settled yet, so nothing on OpenTES3
-deploys anywhere. Jenkins builds of OpenTES3 run with `DEPLOY=false`: the test app server runs v1.
+deploys anywhere. `ci/jenkins/*` is kept only as the recipe the local commands below come from.
 
-### The Jenkins job: `openmw-web-dev`
+### Gitignored build inputs (not in git; see docs/DEMO-DATA-PROVENANCE.md)
 
-Pipeline from `ci/jenkins/Jenkinsfile` (read from the `dev` branch, so a Jenkinsfile change must
-land on `dev` before it takes effect). Parameters:
-
-| param | default | meaning |
+| path | what | where it comes from |
 |---|---|---|
-| `BRANCH` | `dev` | branch to build (a feature branch for a bake + sweep) |
-| `DEPLOY` | `true` | deploy engine + server to the test app server — set `false` for feature branches |
-| `RUN_HARNESS` | `false` | run the MP browser harness on the images just built |
-| `SCENARIOS` | `''` | space-separated ids (`s149 s152`); empty = the full suite |
+| `deps/wasm64` | the cross-compiled dependency stack | `wasm-build/fetch-deps.sh`, then `OMW_WASM64=1 wasm-build/build-deps.sh em_ports lz4 lua boost bullet recast mygui ffmpeg osg` inside `emscripten/emsdk:6.0.1` (mount the repo at `/build`, `-e ROOT=/build -e EM_LIBEXEC=/emsdk/upstream/emscripten -e OMW_WASM64=1 -e JOBS=10`) |
+| `openmw-builder64:1` | toolchain image | `docker build -t openmw-builder64:1 -f Dockerfile.builder64 --build-arg HOST_REPO_DIR=$PWD .` |
+| `fsroot/icudt68l.dat` | ICU 68 data | `icu4c-68.2-data-bin-l.zip` from the unicode-org/icu release-68-2 assets |
+| `fsroot/gamedata/` | the FREE `?nomw` demo, baked into `openmw.data` | the `/gamedata/` entries of the public `openmw.data` (manifest in `openmw.js`). **Never retail Morrowind files here.** |
+| `play/mwdata/` | retail Morrowind/Tribunal/Bloodmoon, read by the harness peer | your own install |
 
-Stages: checkout into `/src` → restage inputs → `build-engine.sh` (morrowind:test) → deploy engine →
-`build-server.sh` (openmw-mp:tier2) → deploy server → `run-harness.sh` (play/ artifacts out of the
-engine image, harness image on top of the peer, then `mp-harness.mjs`). The harness log is archived
-on the build as `jenkins-<n>.log`; verdicts are deduped at the end of the stage log.
+### Build and sweep commands
 
-Drive it through the Jenkins MCP (`mcp__jenkins__*`, authenticated as admin):
-
-- trigger a feature-branch bake + sweep:
-  `triggerBuild openmw-web-dev {BRANCH=<branch>, DEPLOY=false, RUN_HARNESS=true, SCENARIOS="s149 s152"}`
-- watch: `getBuild` (building/result), `getBuildLog` with a negative `limit` for the tail,
-  `searchBuildLog` for `^(PASS|FAIL) s`.
-- one executor, `disableConcurrentBuilds`: a second trigger queues behind the first.
-
-The branch must be **pushed** — Jenkins clones from GitHub. Push the feature branch, trigger,
-keep working locally while it runs.
+- engine image: `DOCKER_BUILDKIT=1 docker build --network=host --build-arg CCACHE=1 --build-arg TEST_HOOKS=1 -t morrowind:test -f Dockerfile .`
+- peer image (runs the server suite inside): `DOCKER_BUILDKIT=1 docker build --network=host --build-arg CCACHE=1 -f server/Dockerfile.simpeer --target tier2 -t openmw-mp:tier2 .`
+  A test that reads files outside `server/` (play/, openmw/, deploy/, wasm-build/) must `skip` when they are absent, or this build fails. BuildKit clips its log at 2 MB, so reproduce a failure by running the suite against a copy of `server/` alone.
+- sweep: `SRC=$PWD HOST_SRC=$PWD ENGINE_TAG=morrowind:test PEER_TAG=openmw-mp:tier2 SCENARIOS="s98 s99" LOG=<file> bash ci/jenkins/run-harness.sh` (empty `SCENARIOS` = the full suite; `HARNESS_LANES=n` for parallel lanes). Docker has no NVIDIA runtime here, so browsers render in software: leave the machine idle during a sweep or timing assertions fail for load, not for the code.
 
 ### Fix everything first, then test ONCE
 
 A bake plus a full sweep costs **hours** (engine ~15-35 min, tier2 ~25 min, harness ~4 h). Do not
 spend them on a branch that still has known open issues. For an objective with several problems:
 
-1. Find and fix **every** known issue for the objective; commit and push each fix. Use the cheap
+1. Find and fix **every** known issue for the objective; commit each fix (push only when the maintainer asks). Use the cheap
    checks while fixing — Lua unit runner, `npm test`, reading code and existing logs (the harness
    prints the server log tail after every FAIL; read that before asking for a new run).
 2. Only when nothing known is left open: **one** bake + sweep. Prefer `SCENARIOS="…"` for the
    scenarios that cover the objective; the full suite is the final evidence before a merge/deploy.
 3. From that run, fix everything it shows, commit all of it, then one more run. Never a run per fix.
 
-Do not start ad-hoc harness containers or Jenkins builds mid-fix "to see", and do not leave a
+Do not start ad-hoc harness containers or image builds mid-fix "to see", and do not leave a
 sweep running on a head you already know is broken (stop it and fix instead).
 
-### When the laptop is still the right tool
+### Cheap checks while fixing
 
 - Lua unit runner: `bash wasm-build/lua-tests/run.sh`
-- server suite: `cd server && npm test` (tsc + ~1080 tests)
-- a single harness scenario against images already on the laptop, for a fast edit-run loop
-  (see memory `local-fullstack-builds`). Do not start a fresh engine/peer bake here.
+- server suite: `cd server && npm test` (tsc + ~1450 tests)
+- a single scenario against the images already built (the sweep command above with one id).
 
 ## Process
 
@@ -68,7 +55,7 @@ Client-Lua or C++ edits need an engine rebake
 (browser Lua is baked into openmw.data); peer C++ edits need a tier2 rebuild; both before trusting
 a harness verdict.
 
-Commits end `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; PR bodies end
+Commits carry no `Co-Authored-By` line; PR bodies end
 `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 
 Never commit or paste private keys or tokens; they live outside the repo.
