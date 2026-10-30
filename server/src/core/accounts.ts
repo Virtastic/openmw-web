@@ -117,6 +117,7 @@ const PLACEHOLDER_NAMES = new Set([DEFAULT_CHARACTER_NAME.toLowerCase(), 'new ch
 
 // Public handle rules: tighter than account names (no spaces — it is a handle, not a
 // paragraph), case-insensitively unique, and never something that reads as staff.
+export const HANDLE_MAX = 20; // play/index.html and launcher.html maxlength must match (test)
 const USERNAME_RE = /^[A-Za-z0-9]{3,20}$/; // letters and numbers only — the public handle
 const USERNAME_BLOCKLIST = new Set([
   'admin', 'administrator', 'moderator', 'mod', 'staff', 'gm', 'gamemaster',

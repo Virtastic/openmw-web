@@ -5214,7 +5214,7 @@ window.omw = (function(){
       + '<h2>Choose your handle</h2>'
       + '<p>This is the name other players see: in chat, on your friends list and in your party. '
       + 'It is <b>not</b> your character name and <b>not</b> the name on your sign-in account.</p>'
-      + '<input id="omw-uname-in" maxlength="24" placeholder="handle" autocomplete="off" spellcheck="false">'
+      + '<input id="omw-uname-in" maxlength="20" placeholder="handle" autocomplete="off" spellcheck="false">'
       + (email ? '' : '<input id="omw-uname-em" type="email" placeholder="email" autocomplete="off" style="margin-top:8px">')
       + '<div id="omw-uname-err" class="err"></div>'
       + '<button id="omw-uname-go" class="go">Continue ▸</button>'
@@ -5228,6 +5228,7 @@ window.omw = (function(){
       var v = String(input.value || '').trim();
       var err = document.getElementById('omw-uname-err');
       if (!v) { err.textContent = 'Pick a handle to continue.'; return; }
+      if (v.length > 20) { err.textContent = 'Handles are at most 20 characters.'; return; }
       var em = email || String((emIn && emIn.value) || '').trim();
       if (!em) { err.textContent = 'Enter an email address to continue.'; return; }
       err.textContent = 'Checking…';

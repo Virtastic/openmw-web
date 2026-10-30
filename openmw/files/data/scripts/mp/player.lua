@@ -25,7 +25,7 @@ local HISTORY_MAX = 8
 -- chatSeq the overlay polls) and, on the T key, raises an openChat signal the overlay polls.
 -- Outgoing lines come back from the overlay as 'chatx:<channel>:<to>:<text>' commands, parsed
 -- in dispatch. Raw fields are mirrored (channel/from/to/text) so the HTML formats/colours.
-local CHAT_LOG_MAX = 50
+local CHAT_LOG_MAX = 50 -- = server CHAT_REPLAY_LINES (server/src/core/chat.ts)
 local chatHistory = {}
 local chatSeq = 0
 local chatOpenSeq = 0
