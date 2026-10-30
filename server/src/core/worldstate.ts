@@ -15,6 +15,7 @@ import { MONTH_DAYS } from './worldtime';
 import { peekActorMoveBatchEpoch } from '../proto/movement';
 import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { Authority, type ActorSnapshot } from './authority';
+import { CellQueue } from '../world/cellqueue';
 import { CellStore, cellMapFull, emptyCellDoc, type CellDoc, type ContainerItems } from '../persist/cellstore';
 import { log } from '../log';
 import { serverWhisper } from './chat';
@@ -277,7 +278,12 @@ function parseItems(v: LValue | undefined): ContainerItems | undefined {
 }
 
 export class WorldState {
-  private queue: Promise<void> = Promise.resolve();
+  // OT3-98: one lane per cell plus a global lane. A keyed op rolls its cell back if it throws.
+  private readonly queue = new CellQueue({
+    onError: (err, cellKey) => log('error', 'world.op_failed', { error: String(err), ...(cellKey ? { cellKey } : {}) }),
+    snapshot: (cellKey) => this.cells.snapshotCell(cellKey),
+    restore: (cellKey, snap) => this.cells.restoreCell(cellKey, snap as ReturnType<CellStore['snapshotCell']>),
+  });
   private readonly authority: Authority;
   // cellKey -> count of ActorMoveBatch frames relayed for that cell, the phase source for
   // actor LOD striding. Cleared when the cell empties.
@@ -500,13 +506,21 @@ export class WorldState {
   }
 
   // Serializes all world mutations/reads; errors are logged, never break the chain.
-  private enqueue(fn: () => Promise<void> | void): void {
-    this.queue = this.queue.then(fn).catch((err) => log('error', 'world.op_failed', { error: String(err) }));
+  // `cellKey` names the ONE cell the op touches (it then waits only for that cell's earlier ops);
+  // without it the op takes the global lane and serialises against everything.
+  private enqueue(fn: () => Promise<void> | void, cellKey?: string): void {
+    void (cellKey ? this.queue.run(cellKey, fn) : this.queue.runGlobal(fn));
+  }
+
+  // The cell an object/container op names, for lane selection. Absent or oversize -> global lane
+  // (the op itself rejects the body).
+  private laneOf(body: LTable): string | undefined {
+    return str(body.get('cellKey'), MAX_CELL_KEY) || undefined;
   }
 
   // Tests/shutdown: resolves when every enqueued op so far has applied.
   drain(): Promise<void> {
-    return this.queue;
+    return this.queue.drain();
   }
 
   // The HOLDER hears everything about a cell it simulates, wherever its own avatar stands:
@@ -567,15 +581,15 @@ export class WorldState {
       return true;
     }
     switch (name) {
-      case 'ObjectSpawnRequest': this.enqueue(() => this.spawn(player, body)); break;
-      case 'ObjectDelete': this.enqueue(() => this.delete(player, body)); break;
-      case 'ObjectTakeRequest': this.enqueue(() => this.take(player, body)); break;
-      case 'ObjectMove': this.enqueue(() => this.move(player, body)); break;
-      case 'ObjectLock': this.enqueue(() => this.lock(player, body)); break;
-      case 'ObjectEnabled': this.enqueue(() => this.enabled(player, body)); break;
-      case 'DoorState': this.enqueue(() => this.door(player, body)); break;
-      case 'ContainerOpen': this.enqueue(() => this.containerOpen(player, body)); break;
-      case 'ContainerOpRequest': this.enqueue(() => this.containerOp(player, body)); break;
+      case 'ObjectSpawnRequest': this.enqueue(() => this.spawn(player, body), this.laneOf(body)); break;
+      case 'ObjectDelete': this.enqueue(() => this.delete(player, body), this.laneOf(body)); break;
+      case 'ObjectTakeRequest': this.enqueue(() => this.take(player, body), this.laneOf(body)); break;
+      case 'ObjectMove': this.enqueue(() => this.move(player, body), this.laneOf(body)); break;
+      case 'ObjectLock': this.enqueue(() => this.lock(player, body), this.laneOf(body)); break;
+      case 'ObjectEnabled': this.enqueue(() => this.enabled(player, body), this.laneOf(body)); break;
+      case 'DoorState': this.enqueue(() => this.door(player, body), this.laneOf(body)); break;
+      case 'ContainerOpen': this.enqueue(() => this.containerOpen(player, body), this.laneOf(body)); break;
+      case 'ContainerOpRequest': this.enqueue(() => this.containerOp(player, body), this.laneOf(body)); break;
       case 'ResyncRequest': {
         const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
         // #370: a resync reads (and creates) a cell doc, so it is reach-gated like an edit.
@@ -2018,18 +2032,29 @@ export class WorldState {
   // they crossed the line; the friend who dropped it for them pointed at nothing.
   sendCellStateAround(player: Player, cellKey: string): void {
     player.cellStateBurstAt = Date.now(); // connection.ts: the entry burst is not a stalled reader
-    this.sendCellState(player, cellKey); // the entered cell first: it is the one the client waits on
+    // The entered cell first: it is the one the client waits on. Each cell now has its own lane
+    // (OT3-98), so the burst is chained explicitly to keep its order on the wire.
+    let prev = this.sendCellState(player, cellKey);
     const at = parseExterior(cellKey);
     if (!at) return;
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
-        if (dx !== 0 || dy !== 0) this.sendCellState(player, `${at.x + dx},${at.y + dy}`);
+        if (dx !== 0 || dy !== 0) prev = this.sendCellState(player, `${at.x + dx},${at.y + dy}`, prev);
       }
     }
   }
 
-  sendCellState(player: Player, cellKey: string): void {
-    this.enqueue(async () => {
+  /** Resolves once the frame is sent. `after` holds this send back until an earlier one of the
+   *  same burst has gone out (it lives on another cell's lane, so the lane cannot order it). */
+  sendCellState(player: Player, cellKey: string, after?: Promise<void>): Promise<void> {
+    return new Promise<void>((resolve) => this.enqueue(async () => {
+      try { await this.sendCellStateNow(player, cellKey, after); } finally { resolve(); }
+    }, cellKey));
+  }
+
+  private async sendCellStateNow(player: Player, cellKey: string, after?: Promise<void>): Promise<void> {
+    {
+      if (after) await after;
       const doc = this.cells.getCached(cellKey) ?? (await this.cells.get(cellKey)) ?? emptyCellDoc();
       const deaths = this.liveDeaths(doc, cellKey); // before placed is read: an expired corpse takes its spawn entry with it
       // The body carries: placed/deleted/moved/locks/doors/containers; Phase 4 disabled and
@@ -2042,7 +2067,7 @@ export class WorldState {
       // of -1 skipped the race menu for every new character after the first (quests.ts memberVar).
       player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, player.inChargen !== true, player.system ? undefined : player.charId,
         player.system ? undefined : this.charMemberVars?.(player.charId, cellKey)));
-    });
+    }
   }
 
   // WHO IS STILL DEAD HERE. A death older than fCorpseRespawnDelay is forgotten, and with it
@@ -2119,11 +2144,16 @@ export class WorldState {
       await this.cells.flushKey(cellKey);
       // OT3-102: an empty, clean cell leaves memory; somebody who entered meanwhile keeps it.
       if (!this.roster.inWorld().some((p) => p.cellKey === cellKey)) this.cells.evictClean(cellKey);
-    });
+    }, cellKey);
   }
 
   /** Runs `fn` in the world queue and resolves when it has applied (OT3-102). */
   inQueue(fn: () => Promise<void> | void): Promise<void> {
     return new Promise((resolve) => this.enqueue(async () => { try { await fn(); } finally { resolve(); } }));
+  }
+
+  /** Same, on one cell's lane: it waits only for that cell's earlier ops (OT3-98). */
+  inCellQueue(cellKey: string, fn: () => Promise<void> | void): Promise<void> {
+    return new Promise((resolve) => this.enqueue(async () => { try { await fn(); } finally { resolve(); } }, cellKey));
   }
 }

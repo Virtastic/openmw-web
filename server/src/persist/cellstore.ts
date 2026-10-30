@@ -523,6 +523,21 @@ export class CellStore {
     return this.cache.delete(cellKey);
   }
 
+  /** OT3-98: what a cell looked like before an op, so a throwing op can be undone. Cheap for a
+   *  cell that is not loaded (nothing to capture). */
+  snapshotCell(cellKey: string): { json: string; dirty: boolean } | undefined {
+    const doc = this.cache.get(cellKey);
+    return doc ? { json: JSON.stringify(doc), dirty: this.dirty.has(cellKey) } : undefined;
+  }
+
+  /** Undo a throwing op: the cell goes back to its snapshot, or, if it was not loaded before the
+   *  op, out of the cache (it reloads from disk, which the op never reached). */
+  restoreCell(cellKey: string, snap: { json: string; dirty: boolean } | undefined): void {
+    if (!snap) { this.cache.delete(cellKey); this.dirty.delete(cellKey); return; }
+    this.cache.set(cellKey, JSON.parse(snap.json) as CellDoc);
+    if (snap.dirty) this.dirty.add(cellKey); else this.dirty.delete(cellKey);
+  }
+
   async flushKey(cellKey: string): Promise<void> {
     await timeFlush('cells', async () => this.writeKey(cellKey));
   }
