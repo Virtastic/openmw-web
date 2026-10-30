@@ -249,6 +249,9 @@ test('m2 state sync end to end', async (t) => {
   });
 
   await t.test('death fires plugins: PlayerResurrect where you fell', async () => {
+    // OT3-122: a PlayerDeath is taken only once the doc agrees (hp 0); Alice reported hp 12.5 above.
+    a.sendEvent('PlayerStatsDynamic', { hp: { c: 0, b: 50 }, mp: { c: 0, b: 30 }, ft: { c: 99, b: 100 } });
+    await new Promise((r) => setTimeout(r, 300));
     a.sendEvent('PlayerDeath', {});
     const res = await a.waitEvent('PlayerResurrect');
     // [rules] respawnCellKey ships "" (backlog 355): back where they fell, the last cell
