@@ -7,6 +7,7 @@ import type { DisconnectCode } from '../proto/session';
 import type { JsLike } from '../proto/lser';
 import type { PlayerPose } from '../proto/movement';
 import { log } from '../log';
+import { Interest } from '../world/interest';
 
 export interface Peer {
   sendEvent(name: string, body: JsLike): void;
@@ -240,6 +241,8 @@ export class Roster {
   private byChar = new Map<string, Player>();
   private nextId = 1;
   private inWorldCache?: Player[];
+  /** OT3-69: who stands in which cell, kept in step by joinWorld/remove and Player.cellKey writes. */
+  readonly interest = new Interest();
 
   get count(): number {
     return this.byId.size;
@@ -323,6 +326,15 @@ export class Roster {
       moveSeq: 0,
       poseVersion: 0,
     };
+    // cellKey is an accessor so every write -- connection.ts, resume, tests -- reaches the interest
+    // index; a write site that forgot would otherwise strand the player in the wrong bucket.
+    let cell: string | undefined;
+    Object.defineProperty(player, 'cellKey', {
+      enumerable: true,
+      configurable: true,
+      get: () => cell,
+      set: (v: string | undefined) => { cell = v; if (player.inWorld) this.interest.moved(player, v); },
+    });
     this.byId.set(player.id, player);
     this.byAccount.set(accountKey, player);
     if (!this.byName.has(name.toLowerCase())) this.byName.set(name.toLowerCase(), player);
@@ -336,6 +348,7 @@ export class Roster {
     player.inWorld = true;
     player.joinedWorldAt = Date.now();
     this.inWorldCache = undefined; // before the reads below, or the joiner misses itself
+    this.interest.add(player);
     // A system peer is invisible as a PARTICIPANT: it is never announced and never listed,
     // so no client spawns a puppet NPC of it. But it is announced TO — it needs everyone
     // else's poses to simulate them — and a human joining is still announced normally. So
@@ -352,6 +365,7 @@ export class Roster {
   remove(player: Player): void {
     if (!this.byId.delete(player.id)) return; // already removed (supersede + close race)
     this.inWorldCache = undefined;
+    this.interest.remove(player);
     if (this.byAccount.get(player.accountKey) === player) this.byAccount.delete(player.accountKey);
     this.unindex(this.byName, player.name.toLowerCase(), player, (p) => p.name.toLowerCase());
     this.unindex(this.byChar, player.charId, player, (p) => p.charId);

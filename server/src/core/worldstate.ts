@@ -548,18 +548,18 @@ export class WorldState {
     return false;
   }
 
+  // OT3-69: relays go through the interest index -- the 3x3 around the cell plus any sim peer that
+  // holds it -- never a scan of the whole roster.
   private relayCell(cellKey: string, name: string, body: JsLike): void {
-    for (const p of this.roster.inWorld()) {
-      if (this.hears(p, cellKey)) p.peer.sendEvent(name, body);
-    }
+    this.roster.interest.hearers(cellKey, (peer) => this.hears(peer, cellKey), (p) => p.peer.sendEvent(name, body));
   }
 
   // Actor relays exclude the sender: the holder simulates locally and doesn't puppet its
   // own actors.
   private relayCellExcept(cellKey: string, exceptId: number, name: string, body: JsLike): void {
-    for (const p of this.roster.inWorld()) {
-      if (p.id !== exceptId && this.hears(p, cellKey)) p.peer.sendEvent(name, body);
-    }
+    this.roster.interest.hearers(cellKey, (peer) => this.hears(peer, cellKey), (p) => {
+      if (p.id !== exceptId) p.peer.sendEvent(name, body);
+    });
   }
 
   private invalid(player: Player, name: string): void {
@@ -659,9 +659,7 @@ export class WorldState {
   // two rooms can be matched by name; the walk between them cannot, and that is exactly where
   // the escort stalled, because the peer anchored the exterior and puppeted the guard.
   hasPlayerInChargen(cellKey: string): boolean {
-    for (const p of this.roster.inWorld()) {
-      if (p.inChargen === true && p.cellKey === cellKey) return true;
-    }
+    for (const p of this.roster.interest.inCell(cellKey) ?? []) if (p.inChargen === true) return true;
     return false;
   }
 
@@ -680,7 +678,7 @@ export class WorldState {
       // was loading, and any of those cells may still hold players -- their anchor keeps the
       // peer simulating them, so dropping authority here only produced a dormancy window that
       // clients now see (puppets detach, swings stop landing) before simPeerPass re-grants.
-      if (system && this.roster.inWorld().some((p) => p.cellKey === c)) continue;
+      if (system && this.roster.interest.occupied(c)) continue;
       // ...AND NEITHER DO CELLS THE PASS HOLDS. The peer now holds the 3x3 around every player,
       // and its dummy follows the first player's cell: stepping from -2,-9 to -2,-8 released
       // -2,-9 (nobody standing IN it) although it is the player's neighbour, and the next pass
@@ -821,7 +819,8 @@ export class WorldState {
     for (const [key, f] of Object.entries(doc.follows ?? {})) {
       const ref = parseRefKey(key);
       if (!ref || this.followedBy.has(key)) continue;
-      const owner = this.roster.inWorld().find((p) => p.charId === f.charId);
+      const o = this.roster.activeForChar(f.charId);
+      const owner = o?.inWorld ? o : undefined;
       this.followedBy.set(key, { ref, cellKey, follow: owner?.id ?? -1, charId: f.charId, at: Date.now(), ...(f.escort ? { escort: f.escort } : {}) });
     }
   }
@@ -1230,8 +1229,8 @@ export class WorldState {
     // per recipient), every peer gets byte-identical actor bytes, so re-enveloping per peer
     // was pure copying. Safe because the envelope seq is server-global, not per-connection.
     let frame: Buffer | undefined;
-    for (const p of this.roster.inWorld()) {
-      if (p.id === player.id || !cellsVisible(p.cellKey, cellKey)) continue;
+    this.roster.interest.near(cellKey, (p) => {
+      if (p.id === player.id) return;
       // LOD: a player across the cell does not need 15 Hz NPC updates. Rate only, NEVER
       // culled — actors have no leave-view signal, so cutting the stream would freeze
       // NPC puppets in place instead of removing them. The recipient's own cell is never
@@ -1240,12 +1239,12 @@ export class WorldState {
         const dx = p.pose.x - cx;
         const dy = p.pose.y - cy;
         const st = lodStride(dx * dx + dy * dy, this.interest!);
-        if (st > 1 && (batchNo + p.id) % st !== 0) continue;
+        if (st > 1 && (batchNo + p.id) % st !== 0) return;
       }
       frame ??= packEnvelope(MSG_ACTOR_MOVE_BATCH, nextBroadcastSeq(), payload);
       const ok = p.peer.sendBinaryFrame(MSG_ACTOR_MOVE_BATCH, frame);
       this.noteRelay(ok ? 'sent' : 'shed', `${p.name}@${p.cellKey}`);
-    }
+    });
   }
 
   // ---------------------------------------------------------------- objects
@@ -2128,22 +2127,20 @@ export class WorldState {
     // locks: a reset re-locks what the doc says (nothing, after a reset) -- it used to leave
     // stale locks standing. Built once; every viewer gets the same frame.
     const body = cellStateBody(cellKey, doc, deaths, false);
-    for (const p of this.roster.inWorld()) {
-      if (!this.hears(p, cellKey)) continue; // hears, not cellsVisible: the far holder keeps stale litter otherwise (346)
-      p.peer.sendEvent('CellSnapshotReplace', body);
-    }
+    // hears, not cellsVisible: the far holder keeps stale litter otherwise (346)
+    this.roster.interest.hearers(cellKey, (peer) => this.hears(peer, cellKey), (p) => p.peer.sendEvent('CellSnapshotReplace', body));
     log('info', 'world.cell_snapshot_replace', { cellKey, containers: Object.keys(doc.containers).length });
   }
 
   // Cell-empty flush point: called when a cell may have lost its last occupant.
   onCellVacated(cellKey: string): void {
-    if (this.roster.inWorld().some((p) => p.cellKey === cellKey)) return;
+    if (this.roster.interest.occupied(cellKey)) return;
     this.actorBatchNo.delete(cellKey); // no occupants -> no holder -> no stride phase to keep
     this.actorRefs.delete(cellKey);
     this.enqueue(async () => {
       await this.cells.flushKey(cellKey);
       // OT3-102: an empty, clean cell leaves memory; somebody who entered meanwhile keeps it.
-      if (!this.roster.inWorld().some((p) => p.cellKey === cellKey)) this.cells.evictClean(cellKey);
+      if (!this.roster.interest.occupied(cellKey)) this.cells.evictClean(cellKey);
     }, cellKey);
   }
 

@@ -186,9 +186,19 @@ export class Authority {
     this.epochCounter = Math.max(this.epochCounter, c.epoch) + 1;
     return this.epochCounter;
   }
+  // OT3-69: epoch -> cell, so the 20 Hz actor stream resolves a cell by lookup, not by scanning every
+  // cell. Entries are written when an epoch is issued and read back verified against the live cell.
+  private readonly cellByEpoch = new Map<number, string>();
+  private stampEpoch(c: Cell, cellKey: string): void {
+    this.cellByEpoch.delete(c.epoch);
+    c.epoch = this.nextEpoch(c);
+    this.cellByEpoch.set(c.epoch, cellKey);
+  }
   cellOfEpoch(epoch: number): string | undefined {
-    for (const [key, c] of this.cells) if (c.holderId !== null && c.epoch === epoch) return key;
-    return undefined;
+    const key = this.cellByEpoch.get(epoch);
+    if (key === undefined) return undefined;
+    const c = this.cells.get(key);
+    return c && c.holderId !== null && c.epoch === epoch ? key : undefined;
   }
 
   occupants(cellKey: string): number[] {
@@ -247,7 +257,7 @@ export class Authority {
   // where the cell has occupants and no holder.
   private handTo(c: Cell, cellKey: string, next: number, kind: string): void {
     c.holderId = next;
-    c.epoch = this.nextEpoch(c);
+    this.stampEpoch(c, cellKey);
     c.grantedAt = this.now();
     c.lastActorFrame = 0;
     this.silentHolders.delete(next);
@@ -285,7 +295,7 @@ export class Authority {
       // already stale. Reachable only when there is no cached snapshot — a fresh or
       // just-restarted server, i.e. exactly when a crowd arrives at once.
       c.holderId = playerId;
-      c.epoch = this.nextEpoch(c);
+      this.stampEpoch(c, cellKey);
       c.grantedAt = this.now();
       c.lastActorFrame = 0;
       this.silentHolders.delete(playerId);
