@@ -72,6 +72,12 @@ if ! ls "$FT_LIBDIR"/libfreetype*.a >/dev/null 2>&1; then
 fi
 FT_LIB="$(ls "$FT_LIBDIR"/libfreetype*.a 2>/dev/null | head -1)"
 [ -n "$FT_LIB" ] || { echo "FATAL: no libfreetype*.a under $FT_LIBDIR" >&2; exit 1; }
+# JPEG and the PNG headers are the same shape: the ports unpack their headers into the sysroot's
+# include/ and the archives carry a variant suffix, so FindJPEG/FindPNG miss both. build-deps.sh
+# runs em_ports first, which is what materialises them.
+JPEG_LIB="$(ls "$FT_LIBDIR"/libjpeg*.a 2>/dev/null | head -1)"
+[ -n "$JPEG_LIB" ] || { echo "FATAL: no libjpeg*.a under $FT_LIBDIR (run build-deps.sh em_ports first)" >&2; exit 1; }
+SYS_INC="$EM_LIBEXEC/cache/sysroot/include"
 
 # TWO THINGS THE PORT LAYOUT BREAKS, both the same shape as the MyGUI/Freetype fault.
 #
@@ -91,6 +97,9 @@ emcmake cmake .. \
   -DCMAKE_BUILD_TYPE:STRING=Release \
   -DPNG_LIBRARY:FILEPATH="$EM_LIBEXEC/cache/sysroot/lib/$WASM_ARCH-emscripten/libpng-mt.a" \
   -DFREETYPE_LIBRARY:FILEPATH="$FT_LIB" \
+  -DJPEG_LIBRARY:FILEPATH="$JPEG_LIB" \
+  -DJPEG_INCLUDE_DIR:PATH="$SYS_INC" \
+  -DPNG_PNG_INCLUDE_DIR:PATH="$SYS_INC" \
   -DCMAKE_CXX_FLAGS:STRING="-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -D_LIBCPP_ENABLE_CXX20_REMOVED_FEATURES -Wno-invalid-utf8 -Wno-register -pthread -fwasm-exceptions -msimd128 -fno-strict-aliasing -fno-strict-overflow $ARCH_FLAG" \
   -DCMAKE_C_FLAGS:STRING="-pthread -fwasm-exceptions -msimd128 -fno-strict-aliasing -fno-strict-overflow $ARCH_FLAG" \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
