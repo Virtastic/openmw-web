@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto';
 import { startServer } from './server';
 import { deleteAccount } from './persist/erase';
 import { log, enableFileLog } from './log';
+import { metrics } from './metrics';
 
 const { values } = parseArgs({
   options: {
@@ -122,6 +123,7 @@ process.on('SIGUSR1', () => {
 //
 // This is not a substitute for fixing the crash; it bounds the damage while you do.
 function lastGaspExit(kind: string, err: unknown): void {
+  metrics.serverCrashes.inc({ kind });
   log('error', 'server.crash', { kind, error: String(err), stack: (err as Error)?.stack });
   if (shuttingDown) process.exit(1);
   shuttingDown = true;

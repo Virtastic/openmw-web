@@ -65,7 +65,11 @@ const MAX_EQUIPMENT_SLOT = 20;
 export interface StateCtx {
   /** OT3-105: the player took damage (the peer's hp report fell): ends their busy flag. */
   onDamaged?(player: Player): void;
-  worldPeer(): Player | undefined; // THE world peer (server.ts): the one simulator answers rule
+  /** The region peer that simulates this cell (server.ts; one region = THE world peer). */
+  peerFor(cellKey?: string): Player | undefined;
+  /** Is this player one of the region peers? Only a region peer may report avatars. */
+  isPeer(p: Player): boolean;
+  worldPeer(): Player | undefined; // the default region's peer: the one simulator answers rule
   roster: Roster;
   store: PlayerStore;
   onPlayerDeath(player: Player): void;
@@ -335,7 +339,7 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     // ...and the fall knocked the owner down: lay the avatar down too (a fact about the owner's
     // own body, harmless to forge). Its own event: it may come with no bar change at all.
     if (ctx.clientAuthority && tbl(body.get('hp'))?.get('kd') === true && player.avatarDead !== true) {
-      ctx.worldPeer()?.peer.sendEvent('AvatarRestore', { id: player.id, kd: true });
+      ctx.peerFor(player.cellKey)?.peer.sendEvent('AvatarRestore', { id: player.id, kd: true });
     }
     if (fallLoss !== undefined && fallLoss > 0 && cur?.hp && !(player.avatarDead === true && cur.hp.c <= 0)) {
       const base = r.hp ?? { c: cur.hp.c, b: cur.hp.b };
@@ -371,7 +375,7 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
       const d = doc.stats?.dynamic; if (!d) return;
       if (r.hp) d.hp = r.hp; if (r.mp) d.mp = r.mp; if (r.ft) d.ft = r.ft;
     }, 'sweep');
-    const worldPeer = ctx.worldPeer();
+    const worldPeer = ctx.peerFor(player.cellKey);
     // THE CHANGE RIDES ALONG AS `g`, and the avatar ADDS it. An absolute `c` raced the peer's
     // report already in flight: that report (taken before this restore landed) overwrote the
     // doc, the next claim's gain was added to the stale value, and a gain was lost per overlap
@@ -789,7 +793,7 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     // a weapon picked up mid-session has to be IN the avatar's hands for 4C to compute the
     // right damage. Same AvatarState the join sends; applyAvatarDoc reconciles shortfall,
     // surplus and states without duplicating what the body already holds.
-    const worldPeer = ctx.worldPeer();
+    const worldPeer = ctx.peerFor(player.cellKey);
     if (worldPeer) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc, player.bounty));
   });
   // The snapshot now accounts for everything credited since the last one, so the credit is
@@ -836,7 +840,7 @@ const RESTORE_WINDOW_MS = 10_000;
 const RESTORE_BUDGET_MULT = 4; // x the player's max health per window: a level-2 chugging three cheap potions in a fight is inside it
 
 export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
-  if (sender.system !== true || sender !== ctx.worldPeer()) return; // forgery / second peer: only THE world peer reports avatars
+  if (sender.system !== true || !ctx.isPeer(sender)) return; // forgery / second peer: only THE world peer reports avatars
   const body = tbl(value);
   const entries = body ? tbl(body.get('entries')) : undefined;
   if (!entries) return;
@@ -935,7 +939,7 @@ const SKILL_USE_PER_WINDOW = 10;
 const skillUseWindow = new WeakMap<Player, { at: number; n: number }>();
 
 export function handleAvatarSkillUse(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
-  if (sender.system !== true || sender !== ctx.worldPeer()) return;
+  if (sender.system !== true || !ctx.isPeer(sender)) return;
   const e = tbl(value);
   if (!e) return;
   const id = finite(e.get('id'));
@@ -990,7 +994,7 @@ function parseItemStatesL(raw: LTable | undefined): Record<string, ItemStateDoc[
 }
 
 export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
-  if (sender.system !== true || sender !== ctx.worldPeer()) return; // only THE world peer reports avatars
+  if (sender.system !== true || !ctx.isPeer(sender)) return; // only THE world peer reports avatars
   const body = tbl(value);
   const entries = body ? tbl(body.get('entries')) : undefined;
   if (!entries) return;
@@ -1210,7 +1214,7 @@ function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolea
 // character -- and both halves go to the owner's client, which applies them to the body the
 // player is actually looking at. World peer only: a client saying this would be cursing others.
 export function handleAvatarEffectsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
-  if (sender.system !== true || sender !== ctx.worldPeer()) return;
+  if (sender.system !== true || !ctx.isPeer(sender)) return;
   const body = tbl(value);
   const entries = body ? tbl(body.get('entries')) : undefined;
   if (!entries || entries.size > MAX_ACTIVE_SPELL_OPS) return;
@@ -1329,7 +1333,7 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
   // vampire's new abilities, a curse lifted -- the avatar kept the old spell list until some
   // unrelated inventory change pushed the doc.
   if (ok && (name === 'PlayerAttributes' || name === 'PlayerSkills' || name === 'PlayerLevel' || name === 'PlayerSpellbook')) {
-    const worldPeer = ctx.worldPeer();
+    const worldPeer = ctx.peerFor(player.cellKey);
     const doc = ctx.store.getCached(player.charId);
     if (worldPeer && doc) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc, player.bounty));
   }

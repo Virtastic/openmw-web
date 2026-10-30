@@ -135,7 +135,11 @@ type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
 export interface ServerCtx {
-  worldPeer(): Player | undefined; // THE world peer (server.ts): the single simulator
+  /** The region peer simulating this cell (server.ts). One region = the one world peer. */
+  peerFor(cellKey?: string): Player | undefined;
+  /** Is this player one of the region peers? */
+  isPeer(p: Player): boolean;
+  worldPeer(): Player | undefined; // the default region's peer
   relayPose?(p: Player): void; // an accepted pose, to near observers now (MoveBroadcaster.relayNow)
   config: Config;
   accounts: AccountStore;
@@ -144,10 +148,14 @@ export interface ServerCtx {
   engine: EngineGate;
   // Phase H: present only when a sim peer is configured. Used to stop retrying a peer that
   // was refused for a reason retrying cannot fix.
-  simPeers?: { disablePermanently(reason: string): void; noteHello?(key: string): void; readonly disabledReason?: string };
+  simPeers?: { disablePermanently(reason: string): void; noteHello?(key: string): void; keyOfAccount(name: string): string | undefined; readonly disabledReason?: string };
   /** Is the world actually being SIMULATED — the peer holding cells, not merely connected?
    *  Clients hold their loading screen on this. */
-  simReady?(): boolean;
+  simReady?(cellKey?: string): boolean;
+  /** OT3-70: a peer's ActorMoveBatch arrived (actor count); feeds the per-region load series. */
+  notePeerBatch?(peer: Player, actorCount: number): void;
+  /** Which region owns a cell (server.ts RegionMap); absent = one region. */
+  regionOfCell?(cellKey: string): string;
   /** Run an anchor/claim pass now instead of waiting for the next periodic one. */
   onPeerJoined?(): void;
   onPlayerJoined?(player: Player): void; // presence at once (server.ts one-character-one-world)
@@ -300,6 +308,7 @@ export class Connection implements Peer {
       if (this.state === 'CONNECTED') this.disconnect('BAD_PROTO', 'SessionHello not received in time');
     }, ctx.config.limits.helloTimeoutMs);
     ws.on('message', (data: Buffer, isBinary: boolean) => {
+      metrics.bytesIn.inc({}, data.length);
       if (this.inQ) this.inQ.push(() => this.onMessage(data, isBinary));
       else this.onMessage(data, isBinary);
     });
@@ -320,7 +329,7 @@ export class Connection implements Peer {
   // Every outbound frame leaves through here: the harness delay FIFO sits in front of the
   // socket, and the socket may have closed while a frame waited.
   private wsSend(frame: string | Buffer, opts?: { compress: boolean }): void {
-    const go = () => { if (this.ws.readyState === this.ws.OPEN) this.ws.send(frame, opts ?? {}); };
+    const go = () => { if (this.ws.readyState === this.ws.OPEN) { metrics.bytesOut.inc({}, typeof frame === 'string' ? Buffer.byteLength(frame) : frame.length); this.ws.send(frame, opts ?? {}); } };
     if (this.outQ) this.outQ.push(go);
     else go();
   }
@@ -413,6 +422,7 @@ export class Connection implements Peer {
       // completes inside send(), nothing waits, and back-to-back frames all go out (a burst
       // of peer frames is still every frame). The callback always runs later (next tick).
       let waiting = false;
+      metrics.bytesOut.inc({}, frame.length);
       this.ws.send(frame, { compress: false }, () => {
         if (waiting && --this.inflight === 0) this.flushHeld();
       });
@@ -589,8 +599,8 @@ export class Connection implements Peer {
       // the whole outage. Tell every human the world is unsimulated; the peer's return sends
       // ready:true again through the join path above.
       if (this.player.system === true) {
-        const ready = this.ctx.simReady?.() ?? false; // another peer may still be here
-        for (const p of wasSimulated) p.peer.sendEvent('SimReady', { ready }); // only the cells it held
+        // another peer may still be here: asked PER CELL, so a region whose peer is still up stays ready
+        for (const p of wasSimulated) p.peer.sendEvent('SimReady', { ready: this.ctx.simReady?.(p.cellKey) ?? false }); // only the cells it held
       }
       if (this.player.cellKey) this.ctx.world.onCellVacated(this.player.cellKey);
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
@@ -833,6 +843,7 @@ export class Connection implements Peer {
     }
     if (envelope.type === MSG_ACTOR_MOVE_BATCH) {
       this.ctx.world.handleActorMoveBatch(this.player, envelope.payload);
+      if (this.isSystem && envelope.payload.length > 4) this.ctx.notePeerBatch?.(this.player, envelope.payload.readUInt8(4));
       return;
     }
     if (envelope.type === MSG_PLAYER_INPUT) {
@@ -900,7 +911,7 @@ export class Connection implements Peer {
       // An avatar committed a crime on the peer (assault, murder). The bounty is the owner's:
       // the increment goes to their client, whose own CrimeUpdate then carries the total.
       // World peer only, same as PlayerArrest: a client cannot make somebody else wanted.
-      if (this.player.system !== true || this.player !== this.ctx.worldPeer()) {
+      if (this.player.system !== true || !this.ctx.isPeer(this.player)) {
         log('warn', 'conn.crime_forged', { from: this.player.name, account: this.player.accountKey });
         return;
       }
@@ -938,7 +949,7 @@ export class Connection implements Peer {
       // A guard reached a wanted avatar on the peer; the owner's client opens the arrest
       // dialogue with its copy of that guard. Only THE world peer may say so -- a client
       // sending this would be forcing a dialogue onto somebody else's screen.
-      if (this.player.system !== true || this.player !== this.ctx.worldPeer()) {
+      if (this.player.system !== true || !this.ctx.isPeer(this.player)) {
         log('warn', 'conn.arrest_forged', { from: this.player.name, account: this.player.accountKey });
         return;
       }
@@ -1062,7 +1073,7 @@ export class Connection implements Peer {
     if (player.inputSeq !== undefined && seq <= player.inputSeq) return; // stale/replayed
     player.inputSeq = seq;
     player.lastInputAt = Date.now();
-    const peer = this.ctx.worldPeer();
+    const peer = this.ctx.peerFor(player.cellKey);
     if (!peer) {
       metrics.playerInputDropped.inc({ reason: 'no_peer' });
       return; // degraded mode; see above
@@ -1084,7 +1095,7 @@ export class Connection implements Peer {
       log('warn', 'conn.avatar_batch_forged', { from: sender.name, account: sender.accountKey });
       return;
     }
-    if (sender !== this.ctx.worldPeer()) {
+    if (!this.ctx.isPeer(sender)) {
       // A second system peer (an operator's, a leftover) must not author poses beside the
       // world peer -- last-writer-wins per frame is visible jitter. Counted, not fatal.
       metrics.avatarBatchRejected.inc({ reason: 'not_world_peer' });
@@ -1160,7 +1171,7 @@ export class Connection implements Peer {
           const reach = Math.min(REBASE_MAX, REBASE_SPEED * (now - (tp.armedAt ?? tp.at)) / 1000);
           if (d2 > SNAP_DIST * SNAP_DIST && walked <= reach) {
             p.teleportPose = { x: here.x, y: here.y, z: here.z, at: now, seq: p.inputSeq ?? 0, armedAt: now };
-            this.ctx.worldPeer()?.peer.sendEvent('PlayerCellChange',
+            this.ctx.peerFor(p.cellKey)?.peer.sendEvent('PlayerCellChange',
               { id: p.id, cellKey: p.cellKey, x: here.x, y: here.y, z: here.z });
             log('info', 'simpeer.avatar_rebased', { id: p.id, name: p.name, dist: Math.round(Math.sqrt(d2)), walked: Math.round(walked) });
             continue;
@@ -1211,7 +1222,7 @@ export class Connection implements Peer {
     player.poseVersion++;
     this.ctx.relayPose?.(player);
     if (this.ctx.config.limits.clientAuthority && player.inChargen !== true) {
-      this.ctx.worldPeer()?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
+      this.ctx.peerFor(player.cellKey)?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
         nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose: player.pose }])));
     }
   }
@@ -1312,7 +1323,7 @@ export class Connection implements Peer {
     // already decodes): the broadcaster only sends it players near where it is parked, and
     // the avatar has to stand where its owner is for NPCs to fight and see them there.
     if (this.ctx.config.limits.clientAuthority && !this.isSystem && player.inChargen !== true) {
-      this.ctx.worldPeer()?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
+      this.ctx.peerFor(player.cellKey)?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
         nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose }])));
     }
   }
@@ -1439,6 +1450,13 @@ export class Connection implements Peer {
       }
     }
     if (oldCell !== undefined && oldCell !== cellKey) player.prevCellKey = oldCell;
+    // OT3-205: SimReady is per REGION. Crossing into a region whose peer is not up (or back
+    // into one that is) changes the answer, and the join-time answer was for the default region.
+    if (!this.isSystem && this.ctx.simReady && oldCell !== cellKey) {
+      const was = this.ctx.simReady(oldCell);
+      const now = this.ctx.simReady(cellKey);
+      if (was !== now) player.peer.sendEvent('SimReady', { ready: now });
+    }
     // An accepted cell entry is what area-trigger scripts react to (quests.ts guestWriteUnbacked).
     // The first placement after a join is not an entry anyone walked into.
     if (oldCell !== undefined && oldCell !== cellKey && !this.isSystem) player.questTriggerAt = Date.now();
@@ -1486,7 +1504,7 @@ export class Connection implements Peer {
       // peer's job, and the peer had never heard of it -- a statue where the fight should be.
       // With a world peer the encounter is spawned THERE, beside the player's avatar, so it is
       // a real simulated actor everyone in the cell sees and fights. No peer: as before.
-      const peer = this.ctx.worldPeer();
+      const peer = this.ctx.peerFor(cellKey);
       for (const spawn of owed) {
         const body = { recordId: spawn.recordId, questId: spawn.questId, cellKey };
         if (peer) peer.peer.sendEvent('QuestSpawn', { ...body, forId: player.id });
@@ -2273,7 +2291,8 @@ export class Connection implements Peer {
     this.sendVisibleOccupants(this.player);
     // The peer is in the world: authenticated, content-checked, joined. THIS is ready.
     if (this.isSystem) {
-      this.ctx.simPeers?.noteHello?.('world');
+      const peerRegion = this.ctx.simPeers?.keyOfAccount(this.player.name);
+      this.ctx.simPeers?.noteHello?.(peerRegion ?? 'world');
       // Put it to work NOW rather than on the next 5s tick: until it has been given anchors
       // it holds nothing, and every player already here is watching a loading screen until
       // it does. That pass is also what announces readiness — server.ts owns the signal,
@@ -2286,6 +2305,9 @@ export class Connection implements Peer {
         if (p.system === true) continue; // it is the subject of the announcement
         // Only those it is about to simulate for: not yet placed, or in a cell nobody holds.
         if (p.cellKey !== undefined && this.ctx.world.holderOf(p.cellKey) !== undefined) continue;
+        // OT3-205: only the players this peer's REGION covers.
+        if (p.cellKey !== undefined && this.ctx.regionOfCell && peerRegion !== undefined
+          && this.ctx.regionOfCell(p.cellKey) !== peerRegion) continue;
         p.peer.sendEvent('SimReady', { ready: true });
       }
     } else {
@@ -2293,7 +2315,7 @@ export class Connection implements Peer {
       // common case never holds at all. Absent (no peer configured — a test server, or
       // single-player) means nothing will ever simulate for them: say ready and let them
       // play, rather than holding a screen forever for something that is not coming.
-      this.player.peer.sendEvent('SimReady', { ready: this.ctx.simReady?.() ?? true });
+      this.player.peer.sendEvent('SimReady', { ready: this.ctx.simReady?.(this.player.cellKey) ?? true });
     }
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }

@@ -288,6 +288,12 @@ renderLod = "tiered"
 # 12 keeps a co-located 64 inside a 30fps budget; raise it for small co-op sessions where
 # fidelity matters more than headroom.
 lodNearMaxAvatars = 12
+# OT3-197 DISPLAY CAP: the most OTHER players one client is ever sent, nearest first, party
+# members always included. Busy hubs overload clients before they overload the server; this is
+# the first lever (shards are deferred). 0 = off. Pick the number from a soak with the cap on
+# (bots/soak.ts --onecell at 100 bots), not a guess; a client that already hits its frame budget
+# at lodNearMaxAvatars wants this at about 40-60.
+maxVisiblePlayers = 0
 # WHO SAYS WHERE A PLAYER IS. true (the World of Warcraft model): each player's own game owns
 # its character's position; the server checks every move (speed over a 200 ms window) and
 # relays it, refuses an impossible one with a correction, and the sim peer stands that

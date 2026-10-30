@@ -11,6 +11,7 @@
 // interest management (distance culling with hysteresis and a nearest-K floor) and LOD
 // (send rate as a function of distance). Both shrink what each client must draw.
 
+import { metrics } from '../metrics';
 import type { Player, Roster } from './players';
 import type { Config } from '../config';
 import { MSG_PLAYER_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
@@ -116,6 +117,9 @@ export interface InterestSettings {
   enterR2: number; // must be within this to ENTER a peer's view
   exitR2: number; // stays in view until beyond this — strictly wider than enterR2
   minPeers: number; // nearest-K floor: always in view, radius or not
+  /** OT3-197: display cap. A recipient is sent at most this many other players (the nearest, with
+   *  party members always included). 0 = no cap. Applied after the nearest-K floor. */
+  maxVisible: number;
   nearR2: number;
   midR2: number;
   nearStride: number; // ticks between sends for the near tier (1 = every tick)
@@ -136,6 +140,7 @@ export function interestFromLimits(limits: Config['limits'], intervalMs = BATCH_
     // has to re-cover to flip state, which is what actually sets the flap period.
     exitR2: (enter + limits.interestHysteresis) ** 2,
     minPeers: limits.interestMinPeers,
+    maxVisible: limits.maxVisiblePlayers ?? 0,
     nearR2: limits.lodNearRadius ** 2,
     midR2: limits.lodMidRadius ** 2,
     nearStride: stride(limits.lodNearHz, intervalMs),
@@ -251,6 +256,8 @@ export class MoveBroadcaster {
     private readonly roster: Roster,
     private readonly intervalMs = BATCH_INTERVAL_MS,
     settings?: InterestSettings,
+    /** Party mates are never cut by the display cap (OT3-197). */
+    private readonly isPartyMate?: (recipient: Player, sender: Player) => boolean,
   ) {
     // No settings = culling off, everything near tier: the M1 behaviour, so a caller that
     // does not opt in cannot silently lose peers.
@@ -259,6 +266,7 @@ export class MoveBroadcaster {
       enterR2: 0,
       exitR2: 0,
       minPeers: 0,
+      maxVisible: 0,
       nearR2: Infinity,
       midR2: Infinity,
       nearStride: 1,
@@ -359,6 +367,7 @@ export class MoveBroadcaster {
     const rPose = recipient.cellKey !== undefined && parseExterior(recipient.cellKey) ? recipient.pose : undefined;
 
     this.pairsExamined += candidates.length;
+    metrics.relayChecks.inc({}, candidates.length);
     for (const sender of candidates) {
       if (sender.id === recipient.id) continue;
       // No cellsVisible() call: the index yields exactly the set it would accept (own key,
@@ -395,6 +404,25 @@ export class MoveBroadcaster {
         this.inSet.push(this.outSet[j]!);
         this.inD2.push(this.outD2[j]!);
       }
+    }
+    // DISPLAY CAP (OT3-197). A crowded hub overloads the client however well it degrades distant
+    // avatars, so it is sent at most `maxVisible` others: party members first (a friend never
+    // vanishes into a crowd), then the nearest. Players cut here are simply not in the set this
+    // tick, so the sweep despawns their puppets and re-sights them when a slot frees up.
+    const cap = s.maxVisible;
+    if (cap > 0 && this.inSet.length > cap) {
+      const n = this.inSet.length;
+      const order = this.inSet.map((_, i) => i);
+      const mate = (i: number): boolean => this.isPartyMate?.(recipient, this.inSet[i]!) === true;
+      const rank = new Map<number, boolean>();
+      for (const i of order) rank.set(i, mate(i));
+      order.sort((a, b) => (rank.get(b)! ? 1 : 0) - (rank.get(a)! ? 1 : 0) || this.inD2[a]! - this.inD2[b]!);
+      const keepIdx = order.slice(0, Math.max(cap, order.filter((i) => rank.get(i)).length));
+      const keepSet = keepIdx.map((i) => this.inSet[i]!);
+      const keepD2 = keepIdx.map((i) => this.inD2[i]!);
+      this.inSet.length = 0; this.inD2.length = 0;
+      for (let i = 0; i < keepSet.length; i++) { this.inSet.push(keepSet[i]!); this.inD2.push(keepD2[i]!); }
+      metrics.displayCapped.inc({}, n - keepSet.length);
     }
   }
 

@@ -111,6 +111,10 @@ export interface QuestCtx {
   // Operator additions to the world-shared global set (total conversions).
   worldGlobals?: string[];
   worldPeer?(): Player | undefined;
+  /** Region peer for a cell (falls back to worldPeer). */
+  peerFor?(cellKey?: string): Player | undefined;
+  /** Every region peer, for world-wide facts (globals). */
+  allPeers?(): Player[];
   // Who simulates a cell (worldstate.ts): the holder hears its cells wherever it stands.
   holderOf?(cellKey: string): number | undefined;
   // #366: anomaly sink (moderation), same contract as movement/playerstate.
@@ -531,7 +535,7 @@ export class Quests {
       this.ctx.players.update(player.charId, (doc) => {
         (doc.globals ??= {})[name] = value;
       });
-      this.ctx.worldPeer?.()?.peer.sendEvent('GlobalVarUpdate', { name, value });
+      for (const pr of this.ctx.allPeers?.() ?? [this.ctx.worldPeer?.()].filter((x): x is Player => x !== undefined)) pr.peer.sendEvent('GlobalVarUpdate', { name, value });
       this.noteCampaignGlobal(name, value); // the peer's seed
       return;
     }
@@ -670,7 +674,7 @@ export class Quests {
     // cell-scoped and shared.
     if (player.system !== true) {
       if (player.bot !== true) this.storeCharMemberVar(player.charId, cellKey, ref, name, value, player.name);
-      const peer = this.ctx.worldPeer?.();
+      const peer = this.ctx.peerFor ? this.ctx.peerFor(cellKey) : this.ctx.worldPeer?.();
       if (peer && peer.id !== player.id) peer.peer.sendEvent('MemberVarUpdate', { ...(lToJs(body) as Record<string, JsLike>) });
       return;
     }
@@ -770,7 +774,7 @@ export class Quests {
     }
     this.ctx.players.update(player.charId, (doc) => (doc.bounty = bounty));
     player.bounty = bounty;
-    this.ctx.worldPeer?.()?.peer.sendEvent('CrimeUpdate', { bounty, byId: player.id, ...(typeof kind === 'string' ? { kind } : {}) });
+    (this.ctx.peerFor ? this.ctx.peerFor(player.cellKey) : this.ctx.worldPeer?.())?.peer.sendEvent('CrimeUpdate', { bounty, byId: player.id, ...(typeof kind === 'string' ? { kind } : {}) });
   }
 
   // Dialogue topics: the character's own knowledge, persisted with its journal (OT3-51).

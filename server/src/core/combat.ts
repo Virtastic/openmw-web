@@ -49,6 +49,8 @@ type CombatTarget =
 
 interface CombatCtx {
   worldPeer(): Player | undefined;
+  /** Region peer for a cell; falls back to worldPeer when not wired (single region). */
+  peerFor?(cellKey?: string): Player | undefined;
   roster: Roster;
   maxHitDamage: number;
   // #390: the browser scenarios relay hitn:/hitp: under a holder on purpose (limits.harness).
@@ -264,7 +266,7 @@ export class Combat {
       // world peer applies the hit to the victim's AVATAR instead, and the damage travels
       // back through the peer's bar reports. An input-less victim keeps the old delivery.
       if (victim.lastInputAt !== undefined && Date.now() - victim.lastInputAt <= INPUT_DRIVING_MS) {
-        const worldPeer = this.ctx.worldPeer();
+        const worldPeer = this.ctx.peerFor ? this.ctx.peerFor(victim.cellKey) : this.ctx.worldPeer();
         if (worldPeer) return worldPeer;
       }
       return victim;

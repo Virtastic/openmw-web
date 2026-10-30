@@ -40,6 +40,7 @@ const ACCOUNT_MIGRATIONS = [
   },
 ];
 import { log } from '../log';
+import { metrics } from '../metrics';
 
 // A character slot. The character — not the account — owns a PlayerDoc (inventory, stats,
 // journal), and its id is the PlayerStore key. Lives on the SHARED account record so the
@@ -449,6 +450,7 @@ export class AccountStore {
     const key = name.toLowerCase();
     this.cache.set(key, account);
     this.writeNow(key, account);
+    metrics.accountsCreated.inc();
     return account;
   }
 
@@ -462,6 +464,7 @@ export class AccountStore {
     const key = name.toLowerCase();
     this.cache.set(key, account);
     this.writeNow(key, account);
+    metrics.accountsCreated.inc();
     return account;
   }
 

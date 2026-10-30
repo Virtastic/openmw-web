@@ -9,7 +9,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { renderMetrics } from '../metrics';
+import { renderMetrics, metrics } from '../metrics';
 import { log } from '../log';
 
 // M8 lobby payload: everything a launcher needs to list a server and offer join-by-URL,
@@ -365,6 +365,7 @@ export function clientLogRoute(req: IncomingMessage, res: ServerResponse, path: 
         // mark everything 'error' and drown the operator's real alerts.
         const level = /\berror\b|\bABORT\b|\bfatal\b/i.test(text) ? 'error'
           : /\bwarn/i.test(text) ? 'warn' : 'info';
+        if (level === 'error') metrics.clientErrors.inc();
         log(level, 'client.log', { ip, session, text });
       }
       res.writeHead(204);

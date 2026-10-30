@@ -82,6 +82,8 @@ import { log, logHistory } from './log';
 import { startTestBots } from './dev/testbots';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
+import { PeerLoad } from './peers/peerload';
+import { RegionMap, partitionAnchors, AnchorSender, type AnchorPlayer } from './peers/regions';
 import { parseExterior, isChargenCell } from './core/movement';
 import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings, hashContentFiles, type GameData } from './core/gamedata';
 
@@ -387,7 +389,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
           victim.resurrectedAt = victim.respawnAt = Date.now();
           victim.avatarDead = false; // the respawn's refill must flow (a corpse is not healed)
           victim.peerStatsAt = undefined;
-          worldPeerImpl()?.peer.sendEvent('AvatarResurrect', { id: target, ...(body as object) });
+          peerForImpl(victim.cellKey)?.peer.sendEvent('AvatarResurrect', { id: target, ...(body as object) });
         }
       }
     },
@@ -536,9 +538,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     now: () => Date.now(),
     notify: (p, b) => worldPeerImpl()?.peer.sendEvent('PlayerBusy', { id: p.id, busy: b }),
   });
+  // OT3-202: per-region resolvers (assigned with worldPeerImpl once simPeers exists). With one
+  // region these are all the same peer, so every call site behaves as it did.
+  let peerForImpl: (cellKey?: string) => Player | undefined = () => undefined;
+  let isPeerImpl: (p: Player) => boolean = () => false;
+  let allPeersImpl: () => Player[] = () => [];
   const stateCtx: StateCtx = {
     onDamaged: (p) => busy.damaged(p),
     worldPeer: () => worldPeerImpl(),
+    peerFor: (ck) => peerForImpl(ck),
+    isPeer: (p) => isPeerImpl(p),
     roster,
     store: playerStore,
     harness: config.limits.harness,
@@ -579,6 +588,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const combat = new Combat({
     roster,
     worldPeer: () => worldPeerImpl(),
+    peerFor: (ck) => peerForImpl(ck),
     maxHitDamage: config.limits.maxHitDamage,
     harness: config.limits.harness,
     holderOf: (cellKey) => world.holderOf(cellKey),
@@ -628,6 +638,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     regressAllowed: (questId) => hooks.journalRegress(questId),
     worldGlobals: config.sharing.worldGlobals,
     worldPeer: () => worldPeerImpl(),
+    peerFor: (ck) => peerForImpl(ck),
+    allPeers: () => allPeersImpl(),
     holderOf: (cellKey) => world.holderOf(cellKey),
     inQueue: (fn) => world.inQueue(fn),
     noteAnomaly: (accountKey, kind) => moderation.noteAnomaly(accountKey, kind), // #366
@@ -786,6 +798,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const ctx: ServerCtx = {
     worldPeer: () => worldPeerImpl(),
+    peerFor: (ck) => peerForImpl(ck),
+    isPeer: (p) => isPeerImpl(p),
     config,
     accounts,
     roster,
@@ -1145,6 +1159,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // every world look like it has a player in it — the reason maxPlayers and the roster exclude
   // it too — and an operator reading this gauge for capacity would be reading one peer per
   // cluster as load.
+  const unhooks: (() => void)[] = []; // metric collectors to release at close
   const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.humansInWorld().length);
   const backupStatus = join(opts.dataDir, 'backup-status.json');
   const unhookBackupAge = metrics.backupAgeSec.addCollector(() =>
@@ -1328,30 +1343,55 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   //
   // The supervisor keeps its multi-key machinery: it costs nothing and is the spill valve if
   // the scale ramp ever shows frame time going superlinear in anchored cells.
-  const WORLD_KEY = 'world';
-  let lastWorldPeerId: number | undefined;
-  worldPeerImpl = (): Player | undefined => {
+  // REGIONS (OT3-77/202). Each region has its own peer, keyed by region id; the default region
+  // is 'world', so a deployment with no [[simPeer.regions]] is the one-peer world it always was.
+  const regionMap = new RegionMap(config.simPeer.regions ?? []);
+  ctx.regionOfCell = (cellKey) => regionMap.regionOf(cellKey);
+  const SPARE_KEY = 'spare';
+  // [simPeer].warmSpare: one extra peer, started and hello'd but holding nothing, promoted into
+  // the first region that needs a peer (skips the ~11 s cold start). Only meaningful with 2+ regions.
+  const wantSpare = (): boolean => regionMap.size > 1 && config.simPeer.warmSpare !== false;
+  const lastPeerOfRegion = new Map<string, number>();
+  const peerOfRegion = (region: string): Player | undefined => {
     const sys = roster.inWorld().filter((pp) => pp.system === true);
-    const chosen = sys.find((pp) => simPeers.keyOfAccount(pp.name) === WORLD_KEY)
-      ?? sys.sort((a, b) => a.id - b.id)[0];
+    const isRegionKey = (k: string | undefined): boolean => k !== undefined && regionMap.ids.includes(k);
+    const chosen = sys.find((pp) => simPeers.keyOfAccount(pp.name) === region)
+      // The default region also accepts a peer this supervisor did not spawn (the harness
+      // pre-starts its own; an operator may too): any system peer not keyed to a region.
+      ?? (region === regionMap.defaultId
+        ? sys.filter((pp) => { const k = simPeers.keyOfAccount(pp.name); return !isRegionKey(k) && k !== SPARE_KEY; })
+            .sort((a, b) => a.id - b.id)[0]
+        : undefined);
     // A FLIP ORPHANS THE LOSER'S CELLS. When the supervisor's own peer joins beside one an
     // operator or the harness started, the answer changes instantly -- input, poses and bar
     // reports move to the new peer while every cell is still HELD by the old one, whose
     // batches are now rejected. Nothing released those cells until it disconnected, so the
     // world was unsimulated in exactly the cells that had a holder. Release on the change.
-    if (chosen && lastWorldPeerId !== undefined && chosen.id !== lastWorldPeerId) {
-      const loser = lastWorldPeerId;
-      log('warn', 'simpeer.world_peer_changed', { from: loser, to: chosen.id,
+    const lastId = lastPeerOfRegion.get(region);
+    if (chosen && lastId !== undefined && chosen.id !== lastId) {
+      log('warn', 'simpeer.world_peer_changed', { region, from: lastId, to: chosen.id,
         note: 'releasing the previous peer cells so the new one can take them' });
-      world.authorityReleaseEverything(loser, undefined, false);
+      world.authorityReleaseEverything(lastId, undefined, false);
       // ...and hand the newcomer the characters it is now responsible for. Releasing the
       // loser's cells only frees them; without this the new peer takes them holding an
       // avatar for nobody, and every player in them freezes (see pushAvatarsToPeer).
       pushAvatarsToPeer(stateCtx, chosen);
     }
-    if (chosen) lastWorldPeerId = chosen.id;
+    if (chosen) lastPeerOfRegion.set(region, chosen.id);
     return chosen;
   };
+  worldPeerImpl = (): Player | undefined => peerOfRegion(regionMap.defaultId);
+  peerForImpl = (cellKey) => peerOfRegion(cellKey === undefined ? regionMap.defaultId : regionMap.regionOf(cellKey));
+  // OT3-70: per-region capacity series. Peer load is measured on batch arrival (peers/peerload.ts);
+  // held cells and sessions come straight from the state the pass already keeps.
+  const peerLoad = new PeerLoad();
+  const regionOfPeer = (peer: Player): string => {
+    const k = simPeers.keyOfAccount(peer.name);
+    return k !== undefined && regionMap.ids.includes(k) ? k : regionMap.defaultId;
+  };
+  ctx.notePeerBatch = (peer, n) => peerLoad.noteBatch(regionOfPeer(peer), Date.now(), n);
+  allPeersImpl = () => regionMap.ids.map(peerOfRegion).filter((x): x is Player => x !== undefined);
+  isPeerImpl = (p) => p.system === true && allPeersImpl().includes(p);
   // Anchors held past occupancy (idle-decay): cellKey -> last known position + expiry.
   // Walking a cell border must not flap the peer's grid; dropping an anchor is cheap.
   const heldAnchors = new Map<string, { x: number; y: number; z: number; until: number }>();
@@ -1363,17 +1403,27 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // client puppets them (actors.lua attaches on the first ActorMoveBatch for an actor).
   const heldRing = new Map<string, number>();
   world.peerHolds = (cellKey) => heldAnchors.has(cellKey) || heldRing.has(cellKey);
-  // Cells the peer currently holds, so authority is DIFFED rather than re-entered every tick
-  // (re-entering bumps the epoch and forces a full re-sync).
-  const claimed = new Set<string>();
-  // The exterior ring around the anchors (worldstate hears): cellKey -> has the peer been sent
-  // its record yet. Tied to one peer id; a new peer starts from an empty ring.
-  const ring = new Map<string, boolean>();
-  let ringPeer: number | undefined;
-  // The peer id whose dummy has been placed. It is placed ONCE per peer and then left alone.
-  let placedPeer: number | undefined;
-  let lastAnchorCells = ''; // log throttle: one simpeer.anchors line per change
-  let warnedUnsimulated = ''; // throttle for simpeer.cells_unsimulated
+  // Per-region peer bookkeeping (each peer is diffed against its own last pass).
+  const regionRt = new Map<string, {
+    claimed: Set<string>;               // cells this region's peer holds authority for (diffed, not re-entered)
+    ring: Map<string, boolean>;         // the exterior ring around its anchors: has the peer been sent the record
+    ringPeer?: number;                  // ring is tied to one peer id; a new peer starts from an empty ring
+    placedPeer?: number;                // the peer id whose dummy has been placed (ONCE per peer)
+    lastAnchorCells: string;            // log throttle: one simpeer.anchors line per change
+    warnedUnsimulated: string;          // throttle for simpeer.cells_unsimulated
+    sender: AnchorSender;               // which SimAnchors messages are worth sending (OT3-135)
+    senderPeer?: number;
+  }>();
+  const rtOf = (region: string) => {
+    let r = regionRt.get(region);
+    if (!r) {
+      r = { claimed: new Set(), ring: new Map(), lastAnchorCells: '', warnedUnsimulated: '', sender: new AnchorSender() };
+      regionRt.set(region, r);
+    }
+    return r;
+  };
+  const lastRegionOf = new Map<number, string>(); // player id -> region as of the last pass (region.handoff)
+  const lastExterior = new Map<number, string>(); // player id -> last exterior cell (learns interior doors)
   // Is the world actually being SIMULATED? Read live from the roster rather than kept as
   // state: a peer can arrive, die and be respawned, and the roster is the only thing that is
   // right at every moment. It also stays correct for an operator running their own peer
@@ -1385,8 +1435,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // operator's own peer has been here the roster is the answer again, so its outage is still
   // announced (325) and the client drops its peer-rules.
   let peerSeen = false;
-  ctx.simReady = () => {
-    const now = roster.inWorld().some((p) => p.system === true);
+  // Is the cell's region being SIMULATED? A cell with no cellKey yet belongs to the default
+  // region. One region's peer dying leaves the others ready (OT3-205).
+  ctx.simReady = (cellKey) => {
+    const region = cellKey === undefined ? regionMap.defaultId : regionMap.regionOf(cellKey);
+    const now = roster.inWorld().some((p) => {
+      if (p.system !== true) return false;
+      const k = simPeers.keyOfAccount(p.name);
+      return k === region || (region === regionMap.defaultId && !regionMap.ids.includes(k ?? '') && k !== SPARE_KEY);
+    });
     if (now) peerSeen = true;
     return now || (!config.simPeer.enabled && !peerSeen);
   };
@@ -1494,135 +1551,162 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // simply never advanced — chargen is entirely indoors, which is why it stalled at the
     // census office every time.
     const held = new Set<string>([...heldAnchors.keys(), ...heldRing.keys()]);
-    const cells = [...held].sort();
+    // LEARN WHICH EXTERIOR EACH INTERIOR IS ENTERED FROM: an interior belongs to its door's region.
+    for (const p of humans) {
+      const ck = p.cellKey!;
+      if (parseExterior(ck)) lastExterior.set(p.id, ck);
+      else { const from = lastExterior.get(p.id); if (from !== undefined) regionMap.learnDoor(ck, from); }
+      // A border crossing is today's authority handoff between two region peers; logged for
+      // deploy/mp-health.py. Only with 2+ regions: one region has no borders.
+      if (regionMap.size > 1) {
+        const to = regionMap.regionOf(ck);
+        const was = lastRegionOf.get(p.id);
+        if (was !== undefined && was !== to) log('info', 'region.handoff', { from: was, to, name: p.name, cellKey: ck });
+        lastRegionOf.set(p.id, to);
+      }
+    }
+    const here = new Set(humans.map((p) => p.id));
+    for (const id of [...lastExterior.keys()]) if (!here.has(id)) lastExterior.delete(id);
+    for (const id of [...lastRegionOf.keys()]) if (!here.has(id)) lastRegionOf.delete(id);
     // ONE ANCHOR PER PLAYER, not per cell. Keyed by cell, the last player processed won, so
     // two players at opposite edges of one cell (up to 11,585 u apart, past the 7168 u
     // processing range) left the NPCs beside one of them held but unsimulated -- frozen
     // puppets on that player's screen. A cell whose players have all gone keeps its last
     // position until idle-decay, as before.
-    const anchors: { x: number; y: number; z: number }[] = [];
-    const interiors: string[] = [];
+    const anchorPlayers: AnchorPlayer[] = [];
     const anchoredByPlayer = new Set<string>();
     for (const p of settled) {
       const ck = p.cellKey!;
       if (!heldAnchors.has(ck) || !parseExterior(ck) || !p.pose) continue;
-      anchors.push({ x: p.pose.x, y: p.pose.y, z: p.pose.z });
+      anchorPlayers.push({ cellKey: ck, x: p.pose.x, y: p.pose.y, z: p.pose.z });
       anchoredByPlayer.add(ck);
     }
     for (const ck of [...heldAnchors.keys()].sort()) {
       const a = heldAnchors.get(ck)!;
-      if (!parseExterior(ck)) interiors.push(ck);
-      else if (!anchoredByPlayer.has(ck)) anchors.push({ x: a.x, y: a.y, z: a.z });
+      if (parseExterior(ck) && !anchoredByPlayer.has(ck)) anchorPlayers.push({ cellKey: ck, x: a.x, y: a.y, z: a.z });
     }
-    // Stable order for an unchanged roster (the list is diffed and logged; roster order is not
-    // a property of the world).
-    anchors.sort((p, q) => p.x - q.x || p.y - q.y || p.z - q.z);
+    // The split: each region's peer gets its own SimAnchors (a player near a border anchors both
+    // sides), and claims only the cells it owns.
+    const parts = partitionAnchors(regionMap, anchorPlayers, held);
 
-    // Where the peer's own avatar stands: a real player's position, so a cold boot lands on
-    // ground that exists rather than a computed point inside terrain. Vestigial for
-    // simulation now that every anchor ticks — [simPeer].startCell covers the cold boot with
-    // nobody placed yet. Exteriors only: the dummy standing indoors is a third active
-    // interior nobody asked for (backlog 382).
-    const stand = humans.find((p) => p.cellKey !== undefined && heldAnchors.has(p.cellKey)
-      && parseExterior(p.cellKey) !== null);
-    const place = stand
-      ? { cellKey: stand.cellKey!, x: stand.pose?.x ?? 0, y: stand.pose?.y ?? 0, z: stand.pose?.z ?? 0 }
-      : undefined;
-
-    simPeers.ensure(WORLD_KEY, place);
-    // Retire any per-cell peers left over from the fan-out era (or an operator's stale
-    // supervisor state): one process carries the world now.
-    for (const k of simPeers.keys()) if (k !== WORLD_KEY) simPeers.markIdle(k);
+    // Start, promote or idle each region's peer. The default region is always up (OT3-131);
+    // others run while they own a held cell. A warm spare is promoted in place of a cold start.
+    for (const r of regionMap.ids) {
+      if (r === regionMap.defaultId || parts.get(r)!.claim.length > 0) {
+        if (r !== regionMap.defaultId && !simPeers.has(r) && simPeers.promote(SPARE_KEY, r)) {
+          log('info', 'simpeer.spare_promoted', { region: r });
+        }
+        // Where the peer's own avatar boots: a real player's position, so a cold boot lands on
+        // ground that exists. Exteriors only (backlog 382).
+        const stand = humans.find((p) => p.cellKey !== undefined && heldAnchors.has(p.cellKey)
+          && parseExterior(p.cellKey) !== null && regionMap.regionOf(p.cellKey) === r);
+        simPeers.ensure(r, stand
+          ? { cellKey: stand.cellKey!, x: stand.pose?.x ?? 0, y: stand.pose?.y ?? 0, z: stand.pose?.z ?? 0 }
+          : undefined);
+      } else simPeers.markIdle(r);
+    }
+    if (wantSpare()) simPeers.ensure(SPARE_KEY);
+    // Retire any peer that is neither a region nor the spare (the fan-out era, or an operator's
+    // stale supervisor state).
+    for (const k of simPeers.keys()) if (k !== SPARE_KEY && !regionMap.ids.includes(k)) simPeers.markIdle(k);
     simPeers.sweep();
 
-    // The supervisor's own spawn is preferred, but ANY connected system peer serves: one
-    // world has one peer, and a peer the supervisor did not spawn (the harness pre-starts
-    // its own so the boots overlap; an operator may too) authenticated with the same peer
-    // password. Input forwarding already resolves the peer this way (connection.ts).
-    const peerPlayer = worldPeerImpl();
-    if (!peerPlayer) {
-      // The peer being down is now a GENUINE anomaly, not a capacity warning: there is no
-      // maxPeers arithmetic to blame, just a process that is starting, crashed, or backing
-      // off. Say so once per change; authority re-enters cleanly when it returns.
-      claimed.clear();
-      const line = cells.join(',');
-      if (cells.length > 0 && warnedUnsimulated !== line) {
-        warnedUnsimulated = line;
-        log('warn', 'simpeer.cells_unsimulated', {
-          unsimulated: line,
-          note: 'the world peer is not up (starting, crashed, or in restart backoff)',
-        });
+    for (const r of regionMap.ids) {
+      const part = parts.get(r)!;
+      const rt = rtOf(r);
+      const own = new Set(part.claim);
+      // The supervisor's own spawn is preferred, but ANY connected system peer serves the default
+      // region (the harness pre-starts its own; an operator may too). Input forwarding resolves
+      // the peer this way (connection.ts).
+      const peerPlayer = peerOfRegion(r);
+      if (!peerPlayer) {
+        // The peer being down is a GENUINE anomaly: a process that is starting, crashed, or
+        // backing off. Say so once per change; authority re-enters cleanly when it returns.
+        rt.claimed.clear();
+        const line = part.claim.join(',');
+        if (part.claim.length > 0 && rt.warnedUnsimulated !== line) {
+          rt.warnedUnsimulated = line;
+          log('warn', 'simpeer.cells_unsimulated', {
+            region: r,
+            unsimulated: line,
+            note: 'the region peer is not up (starting, crashed, or in restart backoff)',
+          });
+        }
+        continue;
       }
-      return;
-    }
-    warnedUnsimulated = '';
+      rt.warnedUnsimulated = '';
 
-    // Sent EVERY pass, deliberately: positions move, and the engine gates its own grid
-    // rebuild on the derived cell set (Scene::setSimAnchors), so a resend is cheap there.
-    // THE DUMMY IS PLACED ONCE, THEN LEFT ALONE. It used to follow the first player's cell, and
-    // every follow was a peer cell change: authority released and re-claimed around it, the
-    // actors' AI packages reset by the teleport. With the 3x3 around every player held, that
-    // flipped the creatures a player was fighting to local AI and back ("moving very slowly,
-    // everything is strange", dev box 2026-09-23). Nothing needs it to follow: what the peer
-    // simulates is the anchor list, the navmesh is built around every anchor (backlog 483),
-    // and its body no longer collides (mp.setSelfCollisionBody). A new peer is placed afresh.
-    const placeNow = place !== undefined && placedPeer !== peerPlayer.id;
-    if (placeNow) placedPeer = peerPlayer.id;
-    peerPlayer.peer.sendEvent('SimAnchors', { anchors, interiors, ...(placeNow ? { place } : {}) });
+      // THE DUMMY IS PLACED ONCE, THEN LEFT ALONE. It used to follow the first player's cell, and
+      // every follow was a peer cell change: authority released and re-claimed around it, the
+      // actors' AI packages reset by the teleport ("moving very slowly, everything is strange",
+      // dev box 2026-09-23). Nothing needs it to follow: what the peer simulates is the anchor
+      // list. A new peer is placed afresh.
+      const stand = humans.find((p) => p.cellKey !== undefined && heldAnchors.has(p.cellKey)
+        && parseExterior(p.cellKey) !== null && regionMap.regionOf(p.cellKey) === r);
+      const place = stand
+        ? { cellKey: stand.cellKey!, x: stand.pose?.x ?? 0, y: stand.pose?.y ?? 0, z: stand.pose?.z ?? 0 }
+        : undefined;
+      const placeNow = place !== undefined && rt.placedPeer !== peerPlayer.id;
+      if (rt.senderPeer !== peerPlayer.id) { rt.sender.reset(); rt.senderPeer = peerPlayer.id; }
+      // OT3-135: the engine rebuilds its grid only when the derived cell set changes, so a resend
+      // of an unchanged list is pure traffic. Send on a membership change, a move past
+      // ANCHOR_DRIFT_UNITS, the dummy placement, or the heartbeat (a peer that missed one converges).
+      if (rt.sender.shouldSend({ anchors: part.anchors, interiors: part.interiors }, now, placeNow)) {
+        if (placeNow) rt.placedPeer = peerPlayer.id;
+        peerPlayer.peer.sendEvent('SimAnchors', { anchors: part.anchors, interiors: part.interiors, ...(placeNow ? { place } : {}) });
+      }
 
-    // AUTHORITY FOR EVERY ANCHORED CELL, on the one peer. The old revoke loop ("authority
-    // follows the peer that can actually simulate") is gone because after the engine fix it
-    // can simulate all of them. Diffed so epochs are stable.
-    for (const gone of [...claimed].filter((c) => !held.has(c))) {
-      world.authorityLeave(peerPlayer.id, gone, true);
-      claimed.delete(gone);
-    }
-    for (const ck of cells) {
-      // Re-assert even a CLAIMED cell whose holder is no longer the peer: the peer's own
-      // avatar cell change (handleCellChange) releases the cell it walked out of, and the
-      // claimed-diff alone would never re-enter it -- leaving an anchored cell dormant until
-      // idle-decay. authorityEnter is idempotent when the peer already holds it.
-      if (claimed.has(ck) && world.holderOf(ck) === peerPlayer.id) continue;
-      world.authorityEnter(peerPlayer, ck);
-      claimed.add(ck);
-    }
+      // AUTHORITY FOR EVERY CLAIMED CELL, on the owning region's peer. Diffed so epochs are stable.
+      for (const gone of [...rt.claimed].filter((c) => !own.has(c))) {
+        world.authorityLeave(peerPlayer.id, gone, true);
+        rt.claimed.delete(gone);
+      }
+      for (const ck of part.claim) {
+        // Re-assert even a CLAIMED cell whose holder is no longer the peer: the peer's own
+        // avatar cell change (handleCellChange) releases the cell it walked out of, and the
+        // claimed-diff alone would never re-enter it. authorityEnter is idempotent.
+        if (rt.claimed.has(ck) && world.holderOf(ck) === peerPlayer.id) continue;
+        world.authorityEnter(peerPlayer, ck);
+        rt.claimed.add(ck);
+      }
 
-    // THE RING'S RECORD, ONE PASS LATE. From here on the peer hears every relay for the
-    // exteriors around its anchors (worldstate hears), but what happened there BEFORE -- the
-    // door opened an hour ago, the crate moved yesterday -- lives only in the cell doc. The
-    // anchored cell itself asks on its grant (actors.lua); nothing asks for its neighbours.
-    // Sent on the pass AFTER a cell joins the ring, not this one: SimAnchors above only
-    // REQUESTS the grid change (Scene::requestChangeCellGrid runs next frame), a record that
-    // lands first resolves no refs and is dropped, and a relay heard in the gap is in the doc
-    // by then anyway. Re-sent only when a cell leaves the ring and comes back.
-    if (ringPeer !== peerPlayer.id) { ring.clear(); ringPeer = peerPlayer.id; }
-    const inRing = new Set<string>();
-    for (const ck of cells) {
-      const e = parseExterior(ck);
-      if (!e) continue;
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          const n = `${e.x + dx},${e.y + dy}`;
-          if (!held.has(n)) inRing.add(n);
+      // THE RING'S RECORD, ONE PASS LATE. From here on the peer hears every relay for the
+      // exteriors around its anchors (worldstate hears), but what happened there BEFORE -- the
+      // door opened an hour ago -- lives only in the cell doc. Sent on the pass AFTER a cell
+      // joins the ring, not this one: SimAnchors only REQUESTS the grid change, a record that
+      // lands first resolves no refs and is dropped. Re-sent only when a cell leaves the ring
+      // and comes back.
+      if (rt.ringPeer !== peerPlayer.id) { rt.ring.clear(); rt.ringPeer = peerPlayer.id; }
+      const inRing = new Set<string>();
+      for (const ck of part.claim) {
+        const e = parseExterior(ck);
+        if (!e) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const n = `${e.x + dx},${e.y + dy}`;
+            if (!held.has(n)) inRing.add(n);
+          }
         }
       }
-    }
-    for (const ck of [...ring.keys()]) if (!inRing.has(ck)) ring.delete(ck);
-    for (const ck of inRing) {
-      const sent = ring.get(ck);
-      if (sent === undefined) ring.set(ck, false);
-      else if (!sent) { world.sendCellState(peerPlayer, ck); ring.set(ck, true); }
-    }
+      for (const ck of [...rt.ring.keys()]) if (!inRing.has(ck)) rt.ring.delete(ck);
+      for (const ck of inRing) {
+        const sent = rt.ring.get(ck);
+        if (sent === undefined) rt.ring.set(ck, false);
+        else if (!sent) { world.sendCellState(peerPlayer, ck); rt.ring.set(ck, true); }
+      }
 
-    const anchorLine = cells.join(',');
-    if (anchorLine !== lastAnchorCells) {
-      lastAnchorCells = anchorLine;
-      noteAnchorsChanged(now); // the peer is about to load cells: no silence verdict for a while (383)
-      log('info', 'simpeer.anchors', {
-        world: worldId, exteriors: anchors.length, interiors: interiors.length,
-        occupied: humans.map((p) => `${p.name}@${p.cellKey}${p.inChargen === true ? ' [chargen]' : ''}`),
-        simulating: anchorLine,
-      });
+      // A COUNT, not a roll call (OT3-135): the line used to name every occupant and the whole
+      // cell list, and grew with the player count on every change.
+      const anchorLine = part.claim.join(',');
+      if (anchorLine !== rt.lastAnchorCells) {
+        rt.lastAnchorCells = anchorLine;
+        noteAnchorsChanged(now); // the peer is about to load cells: no silence verdict for a while (383)
+        log('info', 'simpeer.anchors', {
+          world: worldId, region: r, exteriors: part.anchors.length, interiors: part.interiors.length,
+          occupied: humans.filter((p) => regionMap.regionOf(p.cellKey!) === r).length,
+          simulating: part.claim.length,
+        });
+      }
     }
   };
   // Every 2 s (was 5): anchors are player positions, and a running player covers ~1000 u
@@ -1632,8 +1716,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // tells it who may. Every pass, not diffed: the peer maps playerId -> avatar on receipt and an
   // avatar spawned since the last one needs mapping. A few hundred bytes every 2 s.
   const pushStoryLicence = (): void => {
-    const peer = worldPeerImpl();
-    if (!peer || contentTable.storyActors.size === 0) return;
+    if (contentTable.storyActors.size === 0) return;
     const journalOf = (p: { charId: string }) => playerStore.getCached(p.charId)?.journal ?? {};
     const humans = roster.humansInWorld().filter((p) => !p.bot).map((p) => ({
       id: p.id,
@@ -1644,7 +1727,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         .filter((m): m is Player => m !== undefined)
         .map(journalOf),
     }));
-    peer.peer.sendEvent('StoryLicense', contentTable.storyLicence(humans));
+    const licence = contentTable.storyLicence(humans);
+    for (const peer of allPeersImpl()) peer.peer.sendEvent('StoryLicense', licence);
   };
   const simPeerTick = setInterval(() => { simPeerPass(); pushStoryLicence(); social.pushPartyUpdates(); titles.tick(); busy.sweep((id) => roster.get(id)); }, 2_000);
   // A peer finishing its hello should not wait up to a full tick to be put to work —
@@ -1660,15 +1744,43 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   };
   simPeerTick.unref();
   metrics.simPeerRunning.addCollector(() => simPeers.running);
+  const unhookRegionMetrics = [
+    metrics.opQueueDepth.addCollector(() => world.queueDepth),
+    metrics.sessionsInRegion.addCollector(() => {
+      const n = new Map<string, number>(regionMap.ids.map((r) => [r, 0]));
+      for (const p of roster.humansInWorld()) {
+        const r = regionMap.regionOf(p.cellKey ?? '');
+        n.set(r, (n.get(r) ?? 0) + 1);
+      }
+      return [...n].map(([region, value]) => ({ labels: { region }, value }));
+    }),
+    metrics.peerUp.addCollector(() => regionMap.ids.map((region) => ({ labels: { region }, value: peerOfRegion(region) ? 1 : 0 }))),
+    metrics.peerHeldCells.addCollector(() => regionMap.ids.map((region) => ({ labels: { region }, value: rtOf(region).claimed.size }))),
+    metrics.peerFrameMs.addCollector(() => regionMap.ids.flatMap((region) => {
+      const s = peerLoad.sample(region);
+      return s ? [{ labels: { region, quantile: '0.5' }, value: s.p50 }, { labels: { region, quantile: '0.99' }, value: s.p99 }] : [];
+    })),
+    metrics.peerSimReal.addCollector(() => regionMap.ids.flatMap((region) => {
+      const s = peerLoad.sample(region);
+      return s ? [{ labels: { region }, value: s.simReal }] : [];
+    })),
+    metrics.peerActiveActors.addCollector(() => regionMap.ids.flatMap((region) => {
+      const s = peerLoad.sample(region);
+      return s ? [{ labels: { region }, value: s.actors }] : [];
+    })),
+  ];
+  unhooks.push(...unhookRegionMetrics);
   // A WEDGED PEER IS RESTARTED, NOT JUST LOGGED (backlog 324). Its reader thread still pongs,
   // so the socket never drops and every cell it holds stays frozen for ever; when authority
   // sees all its actor-bearing cells silent, stop it -- the exit is a crash to the supervisor
   // and the ordinary ensure() pass respawns it after the backoff. An unmanaged peer (the
   // harness's own) is not ours to kill.
   setOnSilentPeer((holderId, cells) => {
-    if (simPeers.keyOfAccount(roster.get(holderId)?.name ?? '') !== WORLD_KEY) return;
-    log('error', 'simpeer.restart_silent', { holderId, cells: cells.length });
-    simPeers.stop(WORLD_KEY);
+    // OT3-205: only the SILENT region's peer is restarted; the others keep simulating.
+    const region = simPeers.keyOfAccount(roster.get(holderId)?.name ?? '');
+    if (region === undefined || !regionMap.ids.includes(region)) return;
+    log('error', 'simpeer.restart_silent', { holderId, region, cells: cells.length });
+    simPeers.stop(region);
   });
 
   const ipTracker = new IpConnTracker(config.limits.maxConnsPerIp);
@@ -1744,7 +1856,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   const address = httpServer.address();
   const port = typeof address === 'object' && address !== null ? address.port : opts.port;
-  const moveBroadcaster = new MoveBroadcaster(roster, undefined, interest);
+  const moveBroadcaster = new MoveBroadcaster(roster, undefined, interest,
+    (recipient, sender) => socialStore.partyOf(recipient.accountKey)?.members.includes(sender.accountKey) === true);
   moveBroadcaster.start();
   ctx.relayPose = (p) => moveBroadcaster.relayNow(p);
   m7.start(); // clock ticking + cell-reset sweep before plugins register schedules
@@ -1896,6 +2009,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       clearInterval(presenceTick);
       schedule.stop();
       unhookGauge();
+      for (const u of unhooks) u();
       unhookBackupAge();
       unhookBufferedGauge();
       // The test suite builds dozens of servers in one process; a subscriber left behind

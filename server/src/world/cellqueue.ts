@@ -17,11 +17,14 @@ export interface CellQueueHooks {
   snapshot?(cellKey: string): unknown;
   /** Put the cell back as snapshot() found it (called only when the op threw). */
   restore?(cellKey: string, snap: unknown): void;
+  /** OT3-70: ms an op spent queued before it started running. */
+  onWait?(ms: number): void;
 }
 
 export class CellQueue {
   private lanes = new Map<string, Promise<void>>();
   private global: Promise<void> = Promise.resolve();
+  private pending = 0;
 
   constructor(private readonly hooks: CellQueueHooks) {}
 
@@ -30,7 +33,10 @@ export class CellQueue {
     // A lane tail always starts after the global op that preceded it, so waiting on the lane
     // alone is enough once it exists; a fresh lane waits on the global tail.
     const prev = this.lanes.get(cellKey) ?? this.global;
+    const queuedAt = Date.now();
+    this.pending++;
     const tail: Promise<void> = prev.then(async () => {
+      this.hooks.onWait?.(Date.now() - queuedAt);
       let snap: unknown;
       try { snap = this.hooks.snapshot?.(cellKey); } catch (err) { this.hooks.onError(err, cellKey); }
       try {
@@ -39,7 +45,7 @@ export class CellQueue {
         try { this.hooks.restore?.(cellKey, snap); } catch (e2) { this.hooks.onError(e2, cellKey); }
         this.hooks.onError(err, cellKey);
       }
-    }).finally(() => { if (this.lanes.get(cellKey) === tail) this.lanes.delete(cellKey); });
+    }).finally(() => { this.pending--; if (this.lanes.get(cellKey) === tail) this.lanes.delete(cellKey); });
     this.lanes.set(cellKey, tail);
     return tail;
   }
@@ -47,8 +53,11 @@ export class CellQueue {
   /** Queue `fn` after every op queued so far (any cell); later ops wait for it. */
   runGlobal(fn: () => Promise<void> | void): Promise<void> {
     const waits: Promise<void>[] = [this.global, ...this.lanes.values()];
+    const queuedAt = Date.now();
+    this.pending++;
     const tail: Promise<void> = Promise.all(waits).then(async () => {
-      try { await fn(); } catch (err) { this.hooks.onError(err, undefined); }
+      this.hooks.onWait?.(Date.now() - queuedAt);
+      try { await fn(); } catch (err) { this.hooks.onError(err, undefined); } finally { this.pending--; }
     });
     this.global = tail;
     // Every lane queued so far is awaited above; later run() calls chain on `global`.
@@ -60,6 +69,9 @@ export class CellQueue {
   drain(): Promise<void> {
     return Promise.all([this.global, ...this.lanes.values()]).then(() => undefined);
   }
+
+  /** Ops queued or running, all lanes (metrics). */
+  get depth(): number { return this.pending; }
 
   /** Cells with ops in flight (tests, metrics). */
   get busyCells(): number { return this.lanes.size; }

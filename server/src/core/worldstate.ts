@@ -280,6 +280,7 @@ function parseItems(v: LValue | undefined): ContainerItems | undefined {
 export class WorldState {
   // OT3-98: one lane per cell plus a global lane. A keyed op rolls its cell back if it throws.
   private readonly queue = new CellQueue({
+    onWait: (ms) => metrics.opQueueWait.observe({}, ms / 1000),
     onError: (err, cellKey) => log('error', 'world.op_failed', { error: String(err), ...(cellKey ? { cellKey } : {}) }),
     snapshot: (cellKey) => this.cells.snapshotCell(cellKey),
     restore: (cellKey, snap) => this.cells.restoreCell(cellKey, snap as ReturnType<CellStore['snapshotCell']>),
@@ -522,6 +523,9 @@ export class WorldState {
   drain(): Promise<void> {
     return this.queue.drain();
   }
+
+  /** Ops queued or running (omwmp_op_queue_depth). */
+  get queueDepth(): number { return this.queue.depth; }
 
   // The HOLDER hears everything about a cell it simulates, wherever its own avatar stands:
   // the peer anchors far interiors and exteriors, and a door opened there must open for its

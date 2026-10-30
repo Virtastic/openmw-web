@@ -40,7 +40,7 @@ interface Spawner {
 }
 
 interface Peer {
-  key: string;
+  key: string; // mutable: a promoted warm spare is re-keyed to the region it takes over
   child: ChildProcess;
   startedAt: number;
   // Set when the peer completes its SessionHello. Until then it is starting, and a peer that
@@ -221,6 +221,24 @@ export class SimPeerSupervisor {
     if (peer && peer.idleSince === undefined) peer.idleSince = this.now();
   }
 
+  /**
+   * Re-key a hello'd WARM SPARE to the region that now needs a peer. The process is already
+   * loaded and connected, so the region has a peer as fast as the next anchor pass (well under
+   * 2 s) instead of a ~11 s cold start. The spare's login name is unchanged; keyOfAccount now
+   * answers with the new key. Returns false if there is no ready spare or the target is taken.
+   */
+  promote(spareKey: string, toKey: string): boolean {
+    const peer = this.peers.get(spareKey);
+    if (!peer || peer.helloAt === undefined || peer.stopping || this.peers.has(toKey)) return false;
+    this.peers.delete(spareKey);
+    peer.key = toKey;
+    peer.idleSince = undefined;
+    this.peers.set(toKey, peer);
+    for (const [name, k] of this.byAccount) if (k === spareKey) this.byAccount.set(name, toKey);
+    log('info', 'simpeer.promoted', { from: spareKey, to: toKey });
+    return true;
+  }
+
   private start(key: string): void {
     const s = this.deps.settings;
     // NO --new-game. It sets mNewGame, and engine.cpp calls newGame(!mNewGame), so passing it
@@ -351,11 +369,11 @@ export class SimPeerSupervisor {
     child.on('exit', (code, signal) => {
       // Only act if this is still the CURRENT peer for the key: a stop() followed by a
       // restart must not have the old process's exit reap the new one.
-      if (this.peers.get(key) !== peer) return;
+      if (this.peers.get(peer.key) !== peer) return;
       if (peer.stopping) {
         if (peer.killTimer) clearTimeout(peer.killTimer);
-        this.peers.delete(key);
-        log('info', 'simpeer.stopped', { key });
+        this.peers.delete(peer.key);
+        log('info', 'simpeer.stopped', { key: peer.key });
         return;
       }
       // The reason, not just the fact. Without this the only evidence of a peer dying on
@@ -373,7 +391,7 @@ export class SimPeerSupervisor {
     // the supervisor was wedged in silence. Treat it as the crash it is.
     child.on('error', (err) => {
       log('error', 'simpeer.child_error', { key, error: String(err) });
-      if (this.peers.get(key) === peer && !peer.stopping) this.crashed(peer, { error: String(err) });
+      if (this.peers.get(peer.key) === peer && !peer.stopping) this.crashed(peer, { error: String(err) });
     });
   }
 

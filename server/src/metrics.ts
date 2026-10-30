@@ -205,6 +205,31 @@ export class Gauge extends Metric {
   }
 }
 
+// A gauge whose series are labelled (per region). Collectors return the whole series list at
+// scrape time, so a region that disappears simply stops being reported.
+export class LabeledGauge extends Metric {
+  private collectors = new Set<() => { labels: Labels; value: number }[]>();
+
+  addCollector(fn: () => { labels: Labels; value: number }[]): () => void {
+    this.collectors.add(fn);
+    return () => this.collectors.delete(fn);
+  }
+
+  render(out: string[]): void {
+    out.push(`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} gauge`);
+    for (const fn of this.collectors) {
+      for (const s of fn()) {
+        if (!Number.isFinite(s.value) || !checkLabels(this.name, this.labelNames, s.labels)) continue;
+        out.push(`${this.name}${renderLabels(s.labels)} ${s.value}`);
+      }
+    }
+  }
+
+  reset(): void {
+    // live wiring, like Gauge
+  }
+}
+
 // OT3-189: the items gained most (by count) over the current and previous window, top N only,
 // so the label set stays bounded whatever ids arrive. Ids are inventory record ids that passed
 // the declaration checks (known records wherever the content table is loaded).
@@ -410,14 +435,43 @@ export const metrics = {
   outboundBuffered: reg(
     new Gauge('omwmp_outbound_buffered_bytes', 'Bytes queued for delivery across all live sockets.'),
   ),
+  // OT3-70: p50 and max share the delay histogram with p99 below, so they are registered FIRST:
+  // the p99 collector resets the histogram after reading, and these read before that.
+  eventLoopP50: reg(
+    new Gauge('omwmp_event_loop_delay_p50_seconds', 'Event-loop delay p50 since the last scrape.'),
+  ),
+  eventLoopMax: reg(
+    new Gauge('omwmp_event_loop_delay_max_seconds', 'Event-loop delay max since the last scrape.'),
+  ),
   // OT3-140: a page fires when this stays above 100 ms. p99 since the previous scrape.
   eventLoopP99: reg(
     new Gauge('omwmp_event_loop_delay_p99_seconds', 'Event-loop delay p99 since the last scrape.'),
   ),
+
+  // ---- OT3-70/195: capacity series. Peer ones are measured on arrival (peers/peerload.ts).
+  // Per region: the peer is one process per region, so each carries its own ceiling.
+  sessionsInRegion: reg(new LabeledGauge('omwmp_sessions_in_region', 'PLAYERS in world, by the region owning their cell.', ['region'])),
+  peerUp: reg(new LabeledGauge('omwmp_peer_up', '1 when the region has a connected sim peer.', ['region'])),
+  peerFrameMs: reg(new LabeledGauge('omwmp_peer_frame_interval_ms',
+    'Interval between the peer\'s simulation frames as seen on arrival (50 = on pace; over 50 slows sim time).', ['region', 'quantile'])),
+  peerSimReal: reg(new LabeledGauge('omwmp_peer_sim_real_ratio', 'Sim time over real time for the region (1 = real time).', ['region'])),
+  peerHeldCells: reg(new LabeledGauge('omwmp_peer_held_cells', 'Cells the region\'s peer holds authority for.', ['region'])),
+  peerActiveActors: reg(new LabeledGauge('omwmp_peer_active_actors', 'Actors in the region\'s latest simulation frame.', ['region'])),
+  opQueueDepth: reg(new Gauge('omwmp_op_queue_depth', 'World ops queued or running (the per-cell lanes plus the global lane).')),
+  opQueueWait: reg(new Histogram('omwmp_op_queue_wait_seconds', 'Time a world op waited in its lane before it ran.', [], SECONDS_FAST)),
+  displayCapped: reg(new Counter('omwmp_display_capped_total', 'Player-views withheld by the per-client display cap (limits.maxVisiblePlayers).', [])),
+  relayChecks: reg(new Counter('omwmp_relay_checks_total', 'Sender-candidates examined by the movement relay (rate() = checks/s).', [])),
+  bytesOut: reg(new Counter('omwmp_bytes_out_total', 'Bytes written to player sockets (divide rate() by omwmp_sessions_in_world for bytes/session).', [])),
+  bytesIn: reg(new Counter('omwmp_bytes_in_total', 'Bytes read from player sockets.', [])),
+  serverCrashes: reg(new Counter('omwmp_server_crashes_total', 'Process-level crashes caught by the last-gasp handler.', ['kind'])),
+  accountsCreated: reg(new Counter('omwmp_accounts_created_total', 'Accounts created (password and SSO).', [])),
+  clientErrors: reg(new Counter('omwmp_client_errors_total', 'Error-level lines the page and engine posted to /clientlog.', [])),
 };
 
 const loopDelay = monitorEventLoopDelay({ resolution: 20 });
 loopDelay.enable();
+metrics.eventLoopP50.addCollector(() => (loopDelay.count > 0 ? loopDelay.percentile(50) / 1e9 : 0));
+metrics.eventLoopMax.addCollector(() => (loopDelay.count > 0 ? loopDelay.max / 1e9 : 0));
 metrics.eventLoopP99.addCollector(() => {
   const p99 = loopDelay.count > 0 ? loopDelay.percentile(99) / 1e9 : 0;
   loopDelay.reset();

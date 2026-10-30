@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { randomBytes } from 'node:crypto';
 import { log } from './log';
+import { parseRegionDefs, type RegionDef } from './peers/regions';
 
 export interface Config {
   server: { name: string; motd: string; maxPlayers: number; password: string };
@@ -44,6 +45,10 @@ export interface Config {
      *  border does not flap the peer's grid. Dropping an anchor is cheap — the engine unloads
      *  cells no anchor covers — so this is purely hysteresis. */
     anchorIdleSec: number;
+    /** OT3-77: hand-cut region peers, `[[simPeer.regions]]` (id, rects = [[x0,y0,x1,y1],...]). Absent = one region, 'world'. */
+    regions?: RegionDef[];
+    /** With 2+ regions, keep one started-and-idle peer to promote on demand (default true). */
+    warmSpare?: boolean;
     /** E1 measurement: path for OPENMW_OSG_STATS_FILE on the peer (resource-cache counts).
      *  Empty = off. Set it for a measurement run, read the file, turn it back off. */
     osgStatsFile: string;
@@ -234,6 +239,8 @@ export interface Config {
     renderLod: 'full' | 'tiered';
     // Hard ceiling on fully-simulated avatars per client. 0 = no cap (radius alone).
     lodNearMaxAvatars: number;
+    /** OT3-197: most other players one client is sent (party members always included). 0 = no cap. */
+    maxVisiblePlayers?: number;
     // THE WOW MODEL (2026-10-22): each player's own client owns its position, the server
     // validates every move and relays it, and the sim peer places that player's avatar where
     // the client put it. false = the peer replays inputs and the client reconciles to it.
@@ -512,6 +519,8 @@ function validate(t: Tree): Config {
       startCell: reqStr(t, 'simPeer', 'startCell'),
       maxPeers: reqNum(t, 'simPeer', 'maxPeers'),
       anchorIdleSec: optNum(t, 'simPeer', 'anchorIdleSec', 300),
+      regions: (() => { try { return parseRegionDefs((t['simPeer'] as Tree | undefined)?.['regions']); } catch (e) { return fail('[[simPeer.regions]]', String((e as Error).message)); } })(),
+      warmSpare: optBool(t, 'simPeer', 'warmSpare', true),
       osgStatsFile: optStr(t, 'simPeer', 'osgStatsFile', ''),
       idleReapMs: reqNum(t, 'simPeer', 'idleReapMs'),
       startTimeoutMs: reqNum(t, 'simPeer', 'startTimeoutMs'),
@@ -655,6 +664,7 @@ function validate(t: Tree): Config {
       lodFarHz: reqPosNum(t, 'limits', 'lodFarHz'),
       renderLod: reqEnum(t, 'limits', 'renderLod', ENUM_OPTIONS['limits.renderLod']),
       lodNearMaxAvatars: reqNum(t, 'limits', 'lodNearMaxAvatars'),
+      maxVisiblePlayers: optNum(t, 'limits', 'maxVisiblePlayers', 0),
       clientAuthority: optBool(t, 'limits', 'clientAuthority', true),
     },
     authority: {
