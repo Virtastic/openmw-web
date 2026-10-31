@@ -67,6 +67,29 @@ test('the front door: / sends you to setup until it is done, then serves the sig
   }
 });
 
+// OT3-107: the sign-in page is the one crawlable page on opentes3.com.
+test('SEO: the sign-in page names opentes3.com and robots.txt/sitemap.xml are public', async (t) => {
+  const { base, call, token } = await boot(t);
+  // Public even while setup is unfinished: a crawler must not be redirected into /admin.
+  const robots = await fetch(`${base}/robots.txt`, { redirect: 'manual' });
+  assert.equal(robots.status, 200);
+  const rtxt = await robots.text();
+  assert.match(rtxt, /Disallow: \/admin/, 'the dashboard is kept out of the index');
+  assert.match(rtxt, /Sitemap: https:\/\/opentes3\.com\/sitemap\.xml/);
+  const sm = await fetch(`${base}/sitemap.xml`, { redirect: 'manual' });
+  assert.equal(sm.status, 200);
+  assert.match(sm.headers.get('content-type') ?? '', /xml/);
+  assert.match(await sm.text(), /<loc>https:\/\/opentes3\.com\/<\/loc>/);
+
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    deploymentMode: 'multiplayer', loginMethods: ['password'], completed: true,
+  } })).status, 200);
+  const body = await (await fetch(`${base}/`)).text();
+  assert.match(body, /<link rel="canonical" href="https:\/\/opentes3\.com\/">/);
+  assert.match(body, /<meta property="og:url" content="https:\/\/opentes3\.com\/">/);
+  assert.doesNotMatch(body, /virtastic\.app\/"?>?\s*<\/?(link|meta)/, 'no old-domain canonical');
+});
+
 test('accounts/create makes a working dashboard login in one step, owner only', async (t) => {
   const { call, token } = await boot(t);
 

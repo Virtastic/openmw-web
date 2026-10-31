@@ -272,7 +272,7 @@ export function adminRoutes(deps: AdminDeps) {
     // "/" and "/play" belong to this router too: the sign-in landing page lives with the
     // dashboard's static assets, and this is the only place that serves them.
     if (path !== '/admin' && !path.startsWith('/admin/') && path !== '/' && path !== '/play'
-        && path !== VERIFY_PATH) return false;
+        && path !== '/robots.txt' && path !== '/sitemap.xml' && path !== VERIFY_PATH) return false;
 
     // HEAD is a GET without a body, and Node drops the body for us. Matching only on the
     // literal method meant HEAD /admin answered 404, which uptime checks and link checkers
@@ -300,6 +300,12 @@ export function adminRoutes(deps: AdminDeps) {
     // when the game client is staged in front of us its files win, but the ROOT path is
     // routed here deliberately (see Caddyfile), the login screen is the default entry now,
     // not launcher.html.
+    // Crawler files: public and static, so they answer before (and regardless of) the setup gate.
+    if (method === 'GET' && (path === '/robots.txt' || path === '/sitemap.xml')) {
+      if (serveWebFile(res, path.slice(1))) return true;
+      json(res, 404, { error: 'not found' });
+      return true;
+    }
     if (method === 'GET' && (path === '/' || path === '/play')) {
       // Before setup is finished there is nothing here to sign in to: no sign-in method has
       // been chosen, the world cannot run, and the landing page would offer a player a door

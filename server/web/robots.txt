@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /$
+Disallow: /admin
+Disallow: /auth/
+Disallow: /locker/
+Disallow: /mwdata/
+Disallow: /w/
+Disallow: /worlds
+
+Sitemap: https://opentes3.com/sitemap.xml

@@ -196,7 +196,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     // The dashboard, when this is the multiplayer server. Same path set a game's router
     // claims, so an operator's bookmark works on either program.
     if (deps.admin && (path === '/admin' || path.startsWith('/admin/') || path === '/'
-        || path === '/play' || path === VERIFY_PATH)) {
+        || path === '/play' || path === '/robots.txt' || path === '/sitemap.xml' || path === VERIFY_PATH)) {
       // H6: off the internet. Outside the allowlist /admin is indistinguishable from no dashboard.
       if ((path === '/admin' || path.startsWith('/admin/')) && deps.adminAllowFrom?.length
           && !addressAllowed(clientIp(req), deps.adminAllowFrom)) {
