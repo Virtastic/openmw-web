@@ -323,8 +323,6 @@ export const metrics = {
   // means the box is full and a player was told to come back later, which is honest but is
   // also the signal to provision. Without it the only evidence of a full platform was a 503 the player
   // saw and nobody else did.
-  worldsRunning: reg(new Gauge('omwmp_worlds_running', 'World processes currently supervised.')),
-  worldsCapacity: reg(new Gauge('omwmp_worlds_capacity', 'Worlds this gateway may run at once (the binding ceiling).')),
   // Peers are what spend the RAM (one per occupied cell, ~487 MB each); graph this against
   // the host's memory.
   gatewayPeersRunning: reg(new Gauge('omwmp_gateway_peers_running', 'Sim peers across every supervised world (normally one per world).')),

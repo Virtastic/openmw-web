@@ -240,14 +240,7 @@ const directory = await startDirectory({
 
 const cap = worlds.capacity();
 log('info', 'gateway.capacity', { cap: cap.cap, reason: cap.reason });
-metrics.worldsRunning.addCollector(() => worlds.running);
 metrics.gatewayPeersRunning.addCollector(() => worlds.peersRunning);
-metrics.worldsCapacity.addCollector(() => {
-  const c = worlds.capacity().cap;
-  // A gauge must be a number; an unbounded cap renders as 0 ("not governed") rather than
-  // Infinity, which the Prometheus text format cannot carry and metrics.ts would drop.
-  return Number.isFinite(c) ? c : 0;
-});
 
 log('info', 'gateway.start', {
   port: directory.port, worldsDir, sharedDir, serverEntry, admin: '/admin',
