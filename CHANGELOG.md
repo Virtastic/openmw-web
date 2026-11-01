@@ -2,6 +2,11 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.22
+
+**The sign-in page says what it is.** Its browser tab and link previews read "Play"; they now
+name OpenMW-Web and Morrowind, with a short description for search results and shared links.
+
 ## 1.7.21
 
 **No more fall damage for arriving somewhere.** In multiplayer, travelling or walking into a new
