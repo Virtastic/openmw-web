@@ -93,6 +93,10 @@ log() { echo "=== build-deps: $* ==="; }
 log "target=$WASM_ARCH prefix=$DW"
 
 # --- Bullet (double precision, static) -> libBullet{Collision,Dynamics,SoftBody}.a + libLinearMath.a
+# OT3-213: OMW_BULLET_MT=1 builds Bullet with BULLET2_MULTITHREADING (BT_THREADSAFE), which is
+# what [Physics] async num threads > 1 needs; without it the engine falls back to one worker
+# (mtphysics.cpp). Off by default: today's build, and the setting the browser runs with, is 1.
+# Only for the 0/1/2 experiment (?physthreads=2); rebuild the engine image on top of it.
 build_bullet() {
   log "bullet3"
   emcmake cmake -S "$SRC/bullet3" -B "$SRC/bullet3/$BUILD_DIR" -G Ninja \
@@ -100,6 +104,7 @@ build_bullet() {
     -DBUILD_SHARED_LIBS=OFF -DUSE_DOUBLE_PRECISION=ON \
     -DBUILD_BULLET2_DEMOS=OFF -DBUILD_CPU_DEMOS=OFF -DBUILD_OPENGL3_DEMOS=OFF \
     -DBUILD_UNIT_TESTS=OFF -DBUILD_EXTRAS=OFF -DBUILD_PYBULLET=OFF \
+    -DBULLET2_MULTITHREADING="$([ "${OMW_BULLET_MT:-0}" = 1 ] && echo ON || echo OFF)" \
     -DCMAKE_CXX_FLAGS="$CFLAGS_COMMON -DBT_USE_DOUBLE_PRECISION" -DCMAKE_C_FLAGS="$CFLAGS_COMMON"
   ninja -C "$SRC/bullet3/$BUILD_DIR" BulletDynamics BulletCollision BulletSoftBody LinearMath
   find "$SRC/bullet3/$BUILD_DIR" \( -name 'libBullet*.a' -o -name 'libLinearMath.a' \) -exec cp -f {} "$DW/lib/" \;

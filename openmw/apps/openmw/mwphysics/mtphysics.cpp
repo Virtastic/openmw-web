@@ -317,39 +317,43 @@ namespace MWPhysics
             return std::min<unsigned>(broad->m_rayTestStacks.size(), BT_MAX_THREAD_COUNT - 1);
         }
 
-        LockingPolicy detectLockingPolicy()
+        AsyncPhysicsConfig detectAsyncPhysics()
         {
-            if (Settings::physics().mAsyncNumThreads < 1)
-                return LockingPolicy::NoLocks;
-            if (getMaxBulletSupportedThreads() > 1)
-                return LockingPolicy::AllowSharedLocks;
-#ifdef __EMSCRIPTEN__
-            // Bullet is intentionally built without BT_THREADSAFE for the single-threaded WASM
-            // viewer; one exclusive-locked async physics thread is the correct configuration here
-            // (BT_THREADSAFE would add lock overhead with no benefit at async num threads = 1).
-            Log(Debug::Info) << "Bullet built without multithreading; using 1 async physics thread (expected under Emscripten)";
-#else
-            Log(Debug::Warning) << "Bullet was not compiled with multithreading support, 1 async thread will be used";
-#endif
-            return LockingPolicy::ExclusiveLocksOnly;
-        }
-
-        unsigned getNumThreads(LockingPolicy lockingPolicy)
-        {
-            switch (lockingPolicy)
+            const int requested = Settings::physics().mAsyncNumThreads;
+            const unsigned maxThreads = requested < 1 ? 0 : getMaxBulletSupportedThreads();
+            const AsyncPhysicsConfig config = resolveAsyncPhysics(requested, maxThreads);
+            if (config.mLockingPolicy == LockingPolicy::ExclusiveLocksOnly && requested > 1)
             {
-                case LockingPolicy::NoLocks:
-                    return 0;
-                case LockingPolicy::ExclusiveLocksOnly:
-                    return 1;
-                case LockingPolicy::AllowSharedLocks:
-                    return static_cast<unsigned>(std::clamp<int>(
-                        Settings::physics().mAsyncNumThreads, 0, static_cast<int>(getMaxBulletSupportedThreads())));
+#ifdef __EMSCRIPTEN__
+                // The default wasm Bullet is built without BT_THREADSAFE (one exclusive-locked
+                // worker is the right setup at 1). Values above 1 need the deps rebuilt with
+                // OMW_BULLET_MT=1 (wasm-build/build-deps.sh), OT3-213.
+                Log(Debug::Info) << "Bullet built without multithreading; async num threads = " << requested
+                                 << " falls back to 1 (rebuild deps with OMW_BULLET_MT=1 to try more)";
+#else
+                Log(Debug::Warning) << "Bullet was not compiled with multithreading support, 1 async thread will be used";
+#endif
             }
-
-            throw std::runtime_error("Unsupported LockingPolicy: "
-                + std::to_string(static_cast<std::underlying_type_t<LockingPolicy>>(lockingPolicy)));
+            return config;
         }
+
+        unsigned numThreadsFor(LockingPolicy lockingPolicy)
+        {
+            const int requested = Settings::physics().mAsyncNumThreads;
+            return resolveAsyncPhysics(requested,
+                lockingPolicy == LockingPolicy::AllowSharedLocks ? getMaxBulletSupportedThreads() : 1u)
+                .mNumThreads;
+        }
+    }
+
+    AsyncPhysicsConfig resolveAsyncPhysics(int requested, unsigned maxBulletThreads)
+    {
+        if (requested < 1)
+            return { LockingPolicy::NoLocks, 0 };
+        if (maxBulletThreads > 1)
+            return { LockingPolicy::AllowSharedLocks,
+                static_cast<unsigned>(std::clamp<int>(requested, 0, static_cast<int>(maxBulletThreads))) };
+        return { LockingPolicy::ExclusiveLocksOnly, 1 };
     }
 
     class PhysicsTaskScheduler::WorkersSync
@@ -415,8 +419,8 @@ namespace MWPhysics
         , mTimeAccum(0.f)
         , mCollisionWorld(collisionWorld)
         , mDebugDrawer(debugDrawer)
-        , mLockingPolicy(detectLockingPolicy())
-        , mNumThreads(getNumThreads(mLockingPolicy))
+        , mLockingPolicy(detectAsyncPhysics().mLockingPolicy)
+        , mNumThreads(numThreadsFor(mLockingPolicy))
         , mNumJobs(0)
         , mRemainingSteps(0)
         , mLOSCacheExpiry(Settings::physics().mLineofsightKeepInactiveCache)

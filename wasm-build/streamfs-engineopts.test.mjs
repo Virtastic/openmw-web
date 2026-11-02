@@ -21,6 +21,12 @@ assert.deepEqual(engineOpts('?meshcleanup=yes'), []);
 assert.deepEqual(engineOpts('?meshcleanup=0'), [['Models', 'mesh cleanup', 'false']]);
 assert.deepEqual(engineOpts('?tier=low&meshcleanup=1'), [['Models', 'mesh cleanup', 'true']]);
 
+// OT3-213: physics threads 0/1/2 only; anything else leaves the engine default (1).
+assert.deepEqual(engineOpts('?physthreads=0'), [['Physics', 'async num threads', '0']]);
+assert.deepEqual(engineOpts('?physthreads=2&meshcleanup=1'), [['Models', 'mesh cleanup', 'true'], ['Physics', 'async num threads', '2']]);
+assert.deepEqual(engineOpts('?physthreads=3'), []);
+assert.deepEqual(engineOpts('?physthreads=12'), []);
+
 // OT3-211: the atlas switch, visual only, so the URL decides it even in MP.
 assert.deepEqual(engineOpts('?atlas=1'), [['Models', 'texture atlas', 'true']]);
 assert.deepEqual(engineOpts('?atlas=0&meshcleanup=1'), [['Models', 'mesh cleanup', 'true'], ['Models', 'texture atlas', 'false']]);

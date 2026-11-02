@@ -37,6 +37,18 @@ namespace MWPhysics
         AllowSharedLocks,
     };
 
+    struct AsyncPhysicsConfig
+    {
+        LockingPolicy mLockingPolicy;
+        unsigned mNumThreads;
+    };
+
+    /// OT3-213: what [Physics] async num threads turns into, given how many threads this Bullet
+    /// build supports (1 or less = built without BT_THREADSAFE, as the default wasm build is).
+    /// 0 = physics on the main thread; 1 = one worker with exclusive locks; more needs a
+    /// thread-safe Bullet and is clamped to what it supports, otherwise it falls back to 1.
+    AsyncPhysicsConfig resolveAsyncPhysics(int requested, unsigned maxBulletThreads);
+
     class PhysicsTaskScheduler
     {
     public:

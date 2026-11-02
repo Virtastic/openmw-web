@@ -21,6 +21,8 @@ file(GLOB UNITTEST_SRC_FILES
     mwgui/weightedsearch.cpp
 
     mwscript/testscripts.cpp
+
+    mwphysics/testasyncphysics.cpp
 )
 
 if (MSVC)

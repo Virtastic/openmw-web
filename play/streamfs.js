@@ -860,6 +860,8 @@
     // engine default stands.
     //   ?meshcleanup=0|1  [Models] mesh cleanup (solo only: in MP the server's value replaces it)
     //   ?atlas=0|1        [Models] texture atlas (OT3-211; visual only, needs mesh cleanup on)
+    //   ?physthreads=0|1|2  [Physics] async num threads (OT3-213 experiment; absent = the engine
+    //                     default, 1. 2 only takes effect on a Bullet built with OMW_BULLET_MT=1)
     engineOpts(search) {
       const out = [];
       const q = String(search || '');
@@ -867,6 +869,8 @@
       if (m) out.push(['Models', 'mesh cleanup', m[1] === '1' ? 'true' : 'false']);
       const a = /[?&]atlas=([01])\b/.exec(q);
       if (a) out.push(['Models', 'texture atlas', a[1] === '1' ? 'true' : 'false']);
+      const p = /[?&]physthreads=([012])\b/.exec(q);
+      if (p) out.push(['Physics', 'async num threads', p[1]]);
       return out;
     },
 
