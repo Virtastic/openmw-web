@@ -4,7 +4,7 @@
 // dynamic-import by path); config `plugins` selects and orders them. A throwing
 // plugin is logged and skipped — never fatal.
 
-import type { Plugin, PluginApi, PluginPlayer } from './api';
+import type { Plugin, PluginApi, PluginKill, PluginPlayer } from './api';
 import type { ShareFamily } from '../core/quests';
 import { motd } from './builtin/motd';
 import { respawn } from './builtin/respawn';
@@ -13,9 +13,13 @@ import { pvp } from './builtin/pvp';
 import { sharing } from './builtin/sharing';
 import { cellReset } from './builtin/cell-reset';
 import { admin } from './builtin/admin';
+import { bountyBoard } from './builtin/bounty-board';
 import { log } from '../log';
 
-const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset, admin };
+/** OT3-199: how often onTick fires. */
+export const TICK_MS = 10_000;
+
+const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset, admin, 'bounty-board': bountyBoard };
 
 export class HookBus {
   private plugins: Plugin[] = [];
@@ -74,6 +78,23 @@ export class HookBus {
   }
   journalRegress(questId: string): boolean {
     return this.run('onJournalRegress', (p) => p.onJournalRegress?.(this.api, questId)) === true;
+  }
+  // Facts: every plugin hears them (no first-answer-wins).
+  private all(hook: string, fn: (p: Plugin) => void): void {
+    for (const plugin of this.plugins) {
+      try { fn(plugin); } catch (err) {
+        log('error', 'plugins.hook_error', { plugin: plugin.name, hook, error: String(err) });
+      }
+    }
+  }
+  actorKilled(kill: PluginKill): void {
+    this.all('onActorKilled', (p) => p.onActorKilled?.(this.api, kill));
+  }
+  lockOpened(player: PluginPlayer, cellKey: string): void {
+    this.all('onLockOpened', (p) => p.onLockOpened?.(this.api, player, cellKey));
+  }
+  tick(nowMs: number): void {
+    this.all('onTick', (p) => p.onTick?.(this.api, nowMs));
   }
   // false = vetoed (player-targeted combat only).
   playerHit(attacker: PluginPlayer, victimId: number, name: string): boolean {

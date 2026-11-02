@@ -3,9 +3,9 @@
 # replace, tables merge key-by-key).
 
 # Built-in plugins to load, in order. Available: "motd", "respawn", "death-penalty",
-# "pvp", "sharing", "cell-reset", "admin".
+# "pvp", "sharing", "cell-reset", "admin", "bounty-board".
 # (Top-level key: in an override file it must appear before any [table] header.)
-plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin"]
+plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin", "bounty-board"]
 
 [server]
 name = "OpenMW-Web server"        # shown in SessionHelloOk and /status
@@ -326,6 +326,15 @@ scale = 30
 # return to their content-file state and clients are told to reload). Empty = no resets.
 cells = []
 intervalSec = 259200              # 3 days; only applies to the cells listed above
+
+[bounties]
+# OT3-199: daily guild contracts (the `bounty-board` plugin). One per guild per UTC day:
+# Fighters Guild creature hunts, Morag Tong writs against the Sixth House, Thieves Guild lock
+# jobs in a town. Progress is shared by a party; on completion each online member is paid
+# once per guild per day. Off by default: it is a gold source, so the operator opts in.
+enabled = false
+requireMembership = true          # only guild members see, progress and are paid for its contract
+goldPerContract = 150             # paid to each eligible party member on completion
 # DEV/TEST ONLY. Fake players that auto-accept friend requests and party invites, so the
 # social flows can be exercised (and recorded) without a second human. They take real roster
 # slots and write real friend/party rows, so a server strangers can reach must leave this at

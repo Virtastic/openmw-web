@@ -55,7 +55,21 @@ export interface PluginApi {
   shrinesOf?(playerId: number): { shrines: { cellKey: string; x: number; y: number; z: number; ex?: number; ey?: number }[]; outside?: { x: number; y: number } };
   /** OT3-174: the character's base health, when their stats are known. */
   maxHealthOf?(playerId: number): number | undefined;
+  /** OT3-199: the character's rank in a faction (lowercase id, e.g. 'fighters guild'), or
+   *  undefined when not a member (or expelled). */
+  factionRankOf?(playerId: number, factionId: string): number | undefined;
+  /** OT3-199: the party this player is in (stable while it exists), or undefined. */
+  partyIdOf?(playerId: number): number | undefined;
+  /** OT3-199: put items on a player the way the helper reward does (AdminGive), with a line the
+   *  player reads; written to the item ledger as from `server:<source>`. */
+  give?(playerId: number, recordId: string, count: number, note: string, source: string): void;
+  /** OT3-199/201: true the FIRST time this character claims `key` (persisted on the character,
+   *  so a relog or restart does not pay twice); false after. */
+  claimOnce?(playerId: number, key: string): boolean;
 }
+
+/** OT3-199: an actor died; `witnesses` are the humans credited (killer plus those who saw it). */
+export interface PluginKill { recordId: string; cellKey: string; killerId?: number; witnesses: number[] }
 
 export interface Plugin {
   name: string;
@@ -83,4 +97,9 @@ export interface Plugin {
   // M8: per-command veto applied AFTER the rank gate (the `admin` builtin uses it for
   // [admin] allowConsole). Return false to refuse; anything else allows.
   onAdminCommand?(api: PluginApi, actor: PluginPlayer, cmd: string): boolean | void;
+  // OT3-199: every observer sees every kill and unlock (they are facts, not vetoes).
+  onActorKilled?(api: PluginApi, kill: PluginKill): void;
+  onLockOpened?(api: PluginApi, player: PluginPlayer, cellKey: string): void;
+  // OT3-199: a coarse clock (TICK_MS) for anything scheduled.
+  onTick?(api: PluginApi, nowMs: number): void;
 }

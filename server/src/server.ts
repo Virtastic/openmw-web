@@ -22,7 +22,7 @@ import { notifyFromLog, type MailConfig } from './net/admin/notify';
 import { SetupToken } from './net/admin/setup-token';
 import { passwordReset } from './net/admin/reset';
 import { deleteAccount } from './persist/erase';
-import { PlayerStore } from './persist/playerstore';
+import { MAX_CLAIMS, PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
 import { RecordStore } from './persist/recordstore';
 import { BanStore } from './persist/banstore';
@@ -52,7 +52,7 @@ import { Moderation, reportView } from './core/moderation';
 import { Admin, ADMIN_COMMANDS, dashboardRank, operatorRank } from './core/admin';
 import { ResumeStore } from './core/resume';
 import { broadcastChat, makeChatFilter, replayWindow, noviceEligible, type ChatMessageBody } from './core/chat';
-import { HookBus } from './plugins/loader';
+import { HookBus, TICK_MS } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
 import { MoveBroadcaster, interestFromLimits } from './core/movement';
 import { configureAuthority, setOnSilentPeer, noteAnchorsChanged } from './core/authority';
@@ -368,6 +368,41 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       const p = roster.get(playerId);
       return { shrines: (p && playerStore.getCached(p.charId)?.shrines) || [], outside: p?.lastOutside };
     },
+    factionRankOf: (playerId, factionId) => { // OT3-199
+      const p = roster.get(playerId);
+      const f = p ? playerStore.getCached(p.charId)?.factions : undefined;
+      const want = factionId.toLowerCase();
+      const hit = f && Object.entries(f).find(([k]) => k.toLowerCase() === want)?.[1];
+      return hit && !hit.expelled ? hit.rank : undefined;
+    },
+    partyIdOf: (playerId) => {
+      const p = roster.get(playerId);
+      return p ? socialStore.partyOf(p.accountKey)?.id : undefined;
+    },
+    give: (playerId, recordId, count, note, source) => {
+      const p = roster.get(playerId);
+      if (!p || p.system || count <= 0) return;
+      if (recordId.toLowerCase() === GOLD_ID) hintGold(p, 'quest');
+      tradeLedger.write({
+        id: 0, ts: Date.now(), reason: `plugin reward: ${source}`,
+        a: { char: `server:${source}`, name: source, gave: [{ id: recordId, n: count }] },
+        b: { char: p.charId, name: p.name, gave: [] },
+      });
+      p.peer.sendEvent('AdminGive', { recordId, count, note });
+    },
+    claimOnce: (playerId, key) => {
+      const p = roster.get(playerId);
+      if (!p || p.system) return false;
+      let fresh = false;
+      playerStore.update(p.charId, (doc) => {
+        const claims = doc.claims ??= [];
+        if (claims.includes(key)) return;
+        fresh = true;
+        claims.push(key);
+        if (claims.length > MAX_CLAIMS) claims.splice(0, claims.length - MAX_CLAIMS);
+      }, 'now');
+      return fresh;
+    },
     maxHealthOf: (playerId) => {
       const p = roster.get(playerId);
       return p ? playerStore.getCached(p.charId)?.stats?.dynamic?.hp.b : undefined;
@@ -418,6 +453,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
   };
   hooks = new HookBus(config.plugins, api);
+  // OT3-199: kills and unlocks are facts every plugin hears; the tick drives scheduled ones.
+  world.onKill = (kill) => hooks.actorKilled(kill);
+  world.onUnlock = (p, cellKey) => hooks.lockOpened({ id: p.id, name: p.name, rank: p.rank }, cellKey);
+  const pluginTick = setInterval(() => hooks.tick(Date.now()), TICK_MS);
+  pluginTick.unref();
 
   // How much scrollback a newcomer is handed. Enough to see what the room is talking about,
   // short enough that a join is not a wall of text.
@@ -2097,6 +2137,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       devBots?.stop();
       clearInterval(presenceTick);
       schedule.stop();
+      clearInterval(pluginTick);
       unhookGauge();
       for (const u of unhooks) u();
       unhookBackupAge();

@@ -162,6 +162,8 @@ export interface Config {
     cells: string[];
     intervalSec: number;
   };
+  // OT3-199: daily guild contracts (bounty-board plugin). Off by default: it pays gold.
+  bounties: { enabled: boolean; requireMembership: boolean; goldPerContract: number };
   // M8 ops.
   // dashboardToken: bearer for the web admin dashboard (/admin). Empty = the whole
   // dashboard is off, which is the right default for a self-hoster who only wants the
@@ -627,6 +629,11 @@ function validate(t: Tree): Config {
     cellReset: {
       cells: reqStrArray(t, 'cellReset', 'cells'),
       intervalSec: reqNum(t, 'cellReset', 'intervalSec'),
+    },
+    bounties: {
+      enabled: optBool(t, 'bounties', 'enabled', false),
+      requireMembership: optBool(t, 'bounties', 'requireMembership', true),
+      goldPerContract: Math.max(0, optNum(t, 'bounties', 'goldPerContract', 150)),
     },
     dev: {
       // Env wins so a one-off `OMW_DEV_BOTS=3` run needs no config edit and leaves no file

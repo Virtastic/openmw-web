@@ -168,7 +168,12 @@ export interface PlayerDoc {
   // outdoor spot they walked in from (ex/ey; absent when they came from another interior
   // before ever being outside). Respawn picks the nearest. Most recent last, capped.
   shrines?: { cellKey: string; x: number; y: number; z: number; ex?: number; ey?: number }[];
+  // OT3-199/201: once-per-character reward keys already paid (daily contracts, festival gifts).
+  // Most recent last, capped (MAX_CLAIMS): a dropped old key is a day or a year long gone.
+  claims?: string[];
 }
+
+export const MAX_CLAIMS = 256;
 
 type LivePosition = { cellKey: string; x: number; y: number; z: number };
 

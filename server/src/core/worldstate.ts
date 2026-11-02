@@ -486,6 +486,11 @@ export class WorldState {
   // The cells simPeerPass has the peer holding right now (anchors and the ring around each
   // player). Set by server.ts; absent (tests, no peer) = none.
   peerHolds?: (cellKey: string) => boolean;
+  /** OT3-199/200: an actor of `recordId` died in `cellKey`. `killerId` when a player was
+   *  named; `witnesses` are the humans credited with it (the killer and everyone who saw it). */
+  onKill?: (kill: { recordId: string; cellKey: string; killerId?: number; witnesses: number[] }) => void;
+  /** OT3-199: a human unlocked a lock (lockpick, key or Open). */
+  onUnlock?: (player: Player, cellKey: string) => void;
 
   /** Backlog 298: the peer's manifest just became the world's content list (connection.ts
    *  handleHello, ContentGate.setAuthoritative). Every c:<index>:<contentFile> key in the cell
@@ -1248,11 +1253,14 @@ export class WorldState {
       // death (a guard, a fall) still counts for whoever was there, as vanilla counts it for its
       // one player. Someone across the map who never saw it keeps their quest step open.
       const count = this.cells.bumpKill(killedRecordId);
+      const witnesses: number[] = [];
       for (const p of this.roster.inWorld()) {
+        if (!p.system && !p.bot && (p.id === killer || cellsVisible(p.cellKey, cellKey))) witnesses.push(p.id);
         if (p.system || !this.charKills) { p.peer.sendEvent('WorldKillCount', { refId: killedRecordId, count }); continue; }
         if (p.bot || (p.id !== killer && !cellsVisible(p.cellKey, cellKey))) continue;
         p.peer.sendEvent('WorldKillCount', { refId: killedRecordId, count: this.charKills.bump(p.charId, killedRecordId) });
       }
+      this.onKill?.({ recordId: killedRecordId.toLowerCase(), cellKey, ...(killer !== undefined ? { killerId: killer } : {}), witnesses });
       log('info', 'world.kill', { refId: killedRecordId, count, by: killer !== undefined ? player.name : 'unattributed' });
     }
   }
@@ -1781,8 +1789,10 @@ export class WorldState {
     // An unlock is a lockpick, a key or an Open spell, and the reach gate already ran.
     if (lockLevel !== null && !this.mayAlter(player, doc, ref, cellKey, 'ObjectLock')) return;
     if (cellMapFull(doc.locks, ref.key, cellKey, 'locks', player.name)) return;
+    const alreadyOpen = doc.locks[ref.key] === null; // N clients report the same unlock
     doc.locks[ref.key] = lockLevel;
     this.cells.markDirty(cellKey);
+    if (lockLevel === null && !player.system && !alreadyOpen) this.onUnlock?.(player, cellKey);
     this.relayCell(cellKey, 'ObjectLock', {
       ...objRefToJs(ref),
       cellKey,

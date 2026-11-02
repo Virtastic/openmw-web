@@ -29,6 +29,7 @@ export const SECTION_HELP: Record<string, string> = {
   sharing: 'Which parts of world progress are shared between players versus kept per-character.',
   time: 'How fast the in-game clock runs.',
   cellReset: 'Scheduled wipes of cell contents, so looted areas eventually restock.',
+  bounties: 'Daily guild contracts a party can complete together for gold.',
   limits: 'Anti-cheat and anti-flood budgets. Mostly safe to leave alone.',
   moderation: 'Chat logging, the report inbox, and how long both are kept.',
   admin: 'Who owns this server and what the admin surfaces can do.',
@@ -113,6 +114,9 @@ export const HELP: Record<string, FieldHelp> = {
   'time.scale': { text: 'Game seconds per real second. 30 is Morrowind\'s own default; 0 freezes the clock so time only moves when someone rests.' },
   'cellReset.cells': { text: 'Cells wiped on a schedule, containers restocked, doors and objects reset. Empty means nothing is ever reset.' },
   'cellReset.intervalSec': { text: 'How often the cells listed above are reset. Default is three days.' },
+  'bounties.enabled': { text: 'Post one Fighters Guild, Morag Tong and Thieves Guild contract each day. Off by default because it pays gold.' },
+  'bounties.requireMembership': { text: 'Only members of a guild progress and are paid for its contract. Off lets anyone take any guild\'s work.' },
+  'bounties.goldPerContract': { text: 'Gold each eligible party member gets when a contract is done (once per guild per day).' },
 
   // --- limits ---------------------------------------------------------------------------
   'limits.maxConnsPerIp': { text: 'Simultaneous connections allowed from one address. Raise it if several people play from one household and get refused.' },
