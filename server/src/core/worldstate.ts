@@ -21,6 +21,7 @@ import { log } from '../log';
 import { serverWhisper } from './chat';
 import { metrics } from '../metrics';
 import { hintGold } from './economy';
+import { peerPhaseView, type PhaseOverlay } from '../phase/peertags';
 
 const MAX_RECORD_ID = 64;
 const MAX_COUNT = 10000;
@@ -256,6 +257,16 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
   return body;
 }
 
+/** OT3-206: on the peer's copy of a cell state, every active phase is loaded side by side and
+ *  the refs that differ carry `phaseRefs` (refKey -> phase keys). No active overlay: untouched. */
+export function withPeerPhases(body: Record<string, JsLike>, overlays: Record<string, PhaseOverlay> | undefined): void {
+  const view = peerPhaseView({ enabled: body['enabled'] as string[], disabled: body['disabled'] as string[] }, overlays);
+  if (!view) return;
+  body['enabled'] = view.enabled;
+  body['disabled'] = view.disabled;
+  body['phaseRefs'] = view.phaseRefs;
+}
+
 const disabledKeys = (doc: CellDoc): string[] => Object.keys(doc.enabled ?? {}).filter((k) => doc.enabled![k] === false);
 const enabledKeys = (doc: CellDoc): string[] => Object.keys(doc.enabled ?? {}).filter((k) => doc.enabled![k] === true);
 
@@ -459,6 +470,10 @@ export class WorldState {
   onHolderGained?: (cellKey: string) => void;
   /** OT3-113: a character's own NPC locals in one cell (refKey -> name -> value). */
   charMemberVars?: (charId: string, cellKey: string) => Record<string, Record<string, number>> | undefined;
+  /** OT3-206: the cell's ACTIVE phase overlays (phase key -> refs it turns on/off against the
+   *  base). Unset, or nothing active: the peer gets exactly today's body. Server phases (step
+   *  18) wire it; the peer then holds every phase side by side, refs tagged (phase/peertags.ts). */
+  phaseOverlays?: (cellKey: string) => Record<string, PhaseOverlay> | undefined;
   // Is this player (one of) those talking to an NPC (quests.ts)? Wired by server.ts; the
   // actor facts a non-holder may state hang off it (see actorEvent, ActorDisposition).
   talkingTo?: (refKey: string, playerId: number) => boolean;
@@ -2105,8 +2120,10 @@ export class WorldState {
       // MemberVarUpdate and never read back, so a joiner's copy started from the defaults).
       // Not to a character still in creation (prod 2026-10-26): a stored dock-guard `state`
       // of -1 skipped the race menu for every new character after the first (quests.ts memberVar).
-      player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, player.inChargen !== true, player.system ? undefined : player.charId,
-        player.system ? undefined : this.charMemberVars?.(player.charId, cellKey)));
+      const body = cellStateBody(cellKey, doc, deaths, player.inChargen !== true, player.system ? undefined : player.charId,
+        player.system ? undefined : this.charMemberVars?.(player.charId, cellKey));
+      if (player.system) withPeerPhases(body, this.phaseOverlays?.(cellKey));
+      player.peer.sendEvent('WorldCellState', body);
     }
   }
 

@@ -1280,6 +1280,44 @@ handlers.MP_CellSnapshotReplace = function(data)
     handlers.MP_WorldCellState(data)
 end
 
+-- OT3-206: PHASE TAGS ON THE PEER. The server sends the peer every active phase of a cell side
+-- by side (server/src/phase/peertags.ts): the refs that differ between phases arrive enabled
+-- and listed in phaseRefs with the phase keys they are present in. The engine keeps the tag
+-- (mwmp/phases.hpp) and masks collision and AI by it. A ref the new state no longer lists goes
+-- back to base (untagged). No phaseRefs -- every unphased cell, and every player client --
+-- leaves nothing tagged, exactly as before.
+local phaseTagged = {} -- cellKey -> { refKey -> { obj = GameObject, keys = { ... } } }
+local function applyPhaseRefs(cellKey, phaseRefs)
+    if not (mp.isSystem() and mp.setRefPhases) or type(cellKey) ~= 'string' then return end
+    local was = phaseTagged[cellKey] or {}
+    local now = {}
+    if type(phaseRefs) == 'table' then
+        for refKey, keys in pairs(phaseRefs) do
+            local obj = resolveRefKey(refKey)
+            if obj and obj:isValid() and type(keys) == 'table' then
+                pcall(mp.setRefPhases, obj, keys)
+                now[refKey] = { obj = obj, keys = keys }
+            end
+        end
+    end
+    for refKey, e in pairs(was) do
+        if not now[refKey] and e.obj:isValid() then pcall(mp.setRefPhases, e.obj, {}) end
+    end
+    phaseTagged[cellKey] = next(now) and now or nil
+    if next(now) then print('[mp] phase refs ' .. objects.phaseDump(cellKey)) end
+end
+
+-- "<cellKey>: <refKey>=<k1>+<k2> ..." from the engine's own tags, sorted by refKey.
+function objects.phaseDump(cellKey)
+    local rows = {}
+    for refKey, e in pairs(phaseTagged[cellKey] or {}) do
+        local ok, keys = pcall(mp.refPhases, e.obj)
+        rows[#rows + 1] = refKey .. '=' .. ((ok and type(keys) == 'table') and table.concat(keys, '+') or '?')
+    end
+    table.sort(rows)
+    return tostring(cellKey) .. ': ' .. table.concat(rows, ' ')
+end
+
 handlers.MP_WorldCellState = function(data)
     local named = {}
     for _, place in ipairs(data.placed or {}) do
@@ -1366,6 +1404,7 @@ handlers.MP_WorldCellState = function(data)
             pcall(function() obj.enabled = true end)
         end
     end
+    applyPhaseRefs(data.cellKey, data.phaseRefs)
     -- M6 per-object script locals: the same apply path as a live MemberVarUpdate (quests.lua),
     -- one call per variable, so a late arrival's scripted objects resume where the cell left off.
     if deps.memberVarFn then

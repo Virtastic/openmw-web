@@ -5415,5 +5415,55 @@ do
   local t = dofile('./openmw/files/data/scripts/mp/scriptclasses.lua')
   check('the table has the three classes as arrays', type(t) == 'table' and type(t.world) == 'table' and type(t.client) == 'table' and type(t.both) == 'table')
 end
+
+-- OT3-206: the peer tags the refs that differ between active phases; an unphased cell tags nothing.
+print('objects.lua -- the peer tags phased refs and untags what a later state drops (OT3-206)')
+do
+  package.loaded['scripts.mp.objects'] = nil
+  package.loaded['scripts.mp.world'] = nil
+  env = stubs.install({ system = true })
+  local tags = {}
+  local objs = {}
+  local function objFor(index)
+    objs[index] = objs[index] or { id = 'o' .. index, isValid = function() return true end }
+    return objs[index]
+  end
+  env.core.getFormId = function(_, index) return index end
+  package.loaded['openmw.world'].getObjectByFormId = function(index) return objFor(index) end
+  env.mp.setRefPhases = function(obj, keys) tags[obj.id] = (#keys > 0) and table.concat(keys, '+') or nil end
+  env.mp.refPhases = function(obj) local t = {}; for k in (tags[obj.id] or ''):gmatch('[^+]+') do t[#t + 1] = k end; return t end
+  local ty = package.loaded['openmw.types']
+  ty.Weapon = ty.Weapon or {}
+  ty.Weapon.TYPE = ty.Weapon.TYPE or { Arrow = 12, Bolt = 13, MarksmanThrown = 11 }
+  local objects = require('scripts.mp.objects')
+  objects.init({ playerFn = function() return nil end, ownCellKeyFn = function() return 'Raven Rock' end,
+    noticeFn = function() end })
+  local state = objects.handlers.MP_WorldCellState
+  state({ cellKey = 'Raven Rock', enabled = { 'c:10:1', 'c:20:1' },
+    phaseRefs = { ['c:10:1'] = { 'stageA' }, ['c:20:1'] = { 'base', 'stageB' } } })
+  check('each phased ref carries its keys', tags.o10 == 'stageA' and tags.o20 == 'base+stageB')
+  check('the dump lists the key per ref',
+    objects.phaseDump('Raven Rock') == 'Raven Rock: c:10:1=stageA c:20:1=base+stageB', objects.phaseDump('Raven Rock'))
+  state({ cellKey = 'Raven Rock', phaseRefs = { ['c:20:1'] = { 'stageB' } } })
+  check('a ref the next state no longer lists goes back to base', tags.o10 == nil and tags.o20 == 'stageB')
+  state({ cellKey = 'Raven Rock' })
+  check('a state with no phaseRefs leaves nothing tagged', next(tags) == nil)
+  env = stubs.install({ system = false })
+  local called = false
+  env.mp.setRefPhases = function() called = true end
+  ty = package.loaded['openmw.types']
+  ty.Weapon = ty.Weapon or {}
+  ty.Weapon.TYPE = ty.Weapon.TYPE or { Arrow = 12, Bolt = 13, MarksmanThrown = 11 }
+  package.loaded['scripts.mp.objects'] = nil
+  local o2 = require('scripts.mp.objects')
+  o2.init({ playerFn = function() return nil end, ownCellKeyFn = function() return 'x' end, noticeFn = function() end })
+  env.core.getFormId = function(_, index) return index end
+  package.loaded['openmw.world'].getObjectByFormId = function(index) return objFor(index) end
+  o2.handlers.MP_WorldCellState({ cellKey = 'x', phaseRefs = { ['c:10:1'] = { 'a' } } })
+  check('a player client never tags', not called)
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  check('the engine has setRefPhases/refPhases', lb:find('api["setRefPhases"]', 1, true) ~= nil
+    and lb:find('api["refPhases"]', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

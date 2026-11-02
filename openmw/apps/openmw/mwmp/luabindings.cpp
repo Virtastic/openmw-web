@@ -1,6 +1,7 @@
 // Added by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2026.
 // See WASM_ADAPTATIONS.md at the repository root for details.
 #include "luabindings.hpp"
+#include "phases.hpp"
 #include "puppets.hpp"
 
 #include <algorithm>
@@ -252,6 +253,28 @@ namespace MWMP
             setAvatarBounty(obj.as<MWLua::Object>().id(), bounty);
         };
         api["clearAvatars"] = []() { clearAvatars(); };
+        // OT3-206: PHASE TAGS (see phases.hpp). The keys this ref is present in; an empty list
+        // makes it a base ref again (present in every phase), which is every ref until the
+        // server sends a cell with active overlays.
+        api["setRefPhases"] = [](const sol::object& obj, const sol::table& keys) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            std::vector<std::string> list;
+            for (const auto& kv : keys)
+                if (kv.second.is<std::string>())
+                    list.push_back(kv.second.as<std::string>());
+            setRefPhases(obj.as<MWLua::Object>().id(), list);
+        };
+        api["refPhases"] = [](sol::this_state state, const sol::object& obj) {
+            sol::table res(state, sol::create);
+            if (!obj.is<MWLua::Object>())
+                return res;
+            int i = 1;
+            for (const std::string& k : refPhases(obj.as<MWLua::Object>().id()))
+                res[i++] = k;
+            return res;
+        };
+        api["phasedRefCount"] = []() { return phasedRefCount(); };
         // Backlog 145: the owner's faction ranks on their avatar, so an NPC's disposition toward
         // it (getDerivedDisposition with the avatar as "player") sees the same memberships the
         // owner's own engine does. Lua's joinFaction/setFactionRank are player-only. Entries

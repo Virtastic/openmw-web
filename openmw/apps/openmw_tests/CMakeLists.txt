@@ -13,6 +13,8 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testweather.cpp
     mwworld/testsimanchorqueue.cpp
 
+    mwmp/testphases.cpp
+
     mwdialogue/testkeywordsearch.cpp
 
     mwgui/tooltips.cpp
