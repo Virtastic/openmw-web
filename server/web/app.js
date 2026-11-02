@@ -175,14 +175,21 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
 //                 container itself (updates): on the multiplayer server they are the platform's.
 // The rule is "does nothing here", never "sounds like the other mode".
 const NAV = [
-  { group: 'Server', items: [
-    { hash: '#overview', label: 'Overview', icon: 'bi-speedometer2', role: 'viewer' },
+  // THE PAGE MAP (OT3-192): Live, Map, Players, Reports, Broadcasts & maintenance, Audit.
+  // Economy and Signups & abuse join this group once their server endpoints exist.
+  { group: 'Live', items: [
+    { hash: '#overview', label: 'Live', icon: 'bi-speedometer2', role: 'viewer' },
     // NOT IN SINGLE PLAYER, and not because it looks odd there: every control on it acts on
     // a player connected to a world. In single player the browser runs the engine and never
     // connects, so the roster is permanently empty and there is nobody to broadcast to, greet
     // with a message of the day, read a chat log for, report, or hand an item. The page is
     // inert rather than merely unhelpful, so it is removed rather than trimmed.
-    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false },
+    { hash: '#console', label: 'Players', icon: 'bi-people', role: 'moderator', solo: false },
+    { hash: '#reports', label: 'Reports', icon: 'bi-flag', role: 'moderator', solo: false },
+    { hash: '#maintenance', label: 'Broadcasts & maintenance', icon: 'bi-megaphone', role: 'moderator', solo: false },
+    { hash: '#audit', label: 'Audit', icon: 'bi-clipboard-check', role: 'moderator' },
+  ] },
+  { group: 'Content', items: [
     { hash: '#mods', label: 'Mod manager', icon: 'bi-box-seam', role: 'viewer', shared: true },
     { hash: '#gamefiles', label: 'Game files', icon: 'bi-controller', role: 'viewer', shared: true },
   ] },
@@ -208,7 +215,6 @@ const NAV = [
   ] },
   { group: 'Diagnostics', items: [
     { hash: '#logs', label: 'Logs', icon: 'bi-journal-text', role: 'moderator' },
-    { hash: '#audit', label: 'Audit trail', icon: 'bi-clipboard-check', role: 'moderator' },
     // Had a route and a role and no way to reach it.
     { hash: '#metrics', label: 'Metrics', icon: 'bi-graph-up', role: 'moderator' },
   ] },
@@ -216,11 +222,6 @@ const NAV = [
   // "Maintenance & restart", which named one of the four in the sidebar and hid the rest.
   { group: 'Danger zone', items: [
     { hash: '#updates', label: 'Updates', icon: 'bi-cloud-download', role: 'owner', shared: true },
-    // Multiplayer only, same rule as the console: the switch is enforced at the multiplayer
-    // connection gate and by disconnecting the roster. In single player nobody ever passes
-    // either — the browser runs the engine — so the page would claim to close doors it
-    // cannot reach.
-    { hash: '#maintenance', label: 'Maintenance', icon: 'bi-cone-striped', role: 'owner', solo: false },
     { hash: '#rolling', label: 'Rolling restart', icon: 'bi-arrow-repeat', role: 'owner', solo: false },
     { hash: '#backup', label: 'Backup', icon: 'bi-archive', role: 'owner' },
     { hash: '#restart', label: 'Restart', icon: 'bi-power', role: 'owner' },
@@ -2252,12 +2253,38 @@ async function runCmd(line) {
 /** One quoted argument. Player names can contain spaces; commands split on them. */
 const q = (s) => (/\s/.test(s) ? `"${s}"` : s);
 
+// A form card: icon + title in a proper AdminLTE card header, inputs, one action button.
+const tool = (icon, title, blurb, bodyHtml, btnId, btnLabel, extra = '') => html`
+  <div class="card card-outline card-secondary mb-3"><div class="card-header">
+    <h3 class="card-title"><i class="bi ${icon} me-2"></i>${title}</h3></div>
+    <div class="card-body">
+      <p class="small text-secondary">${raw(blurb)}</p>
+      ${raw(bodyHtml)}
+      <button class="btn btn-sm btn-primary mt-2" id="${btnId}">${btnLabel}</button>
+      ${raw(extra)}
+    </div></div>`;
+
+/** Player reports (OT3-192: its own page; was a card on the console). */
+async function pageReports() {
+  setTitle('Reports', 'What players have reported, newest first.');
+  const reports = await worldApi('/reports?limit=100');
+  // The fields /admin/api/reports actually sends (server.ts): ts, reporter, target, reason.
+  // This read at/by/about/text, so every column was blank whenever a report existed.
+  const reportRows = (reports.reports || []).map((r) => html`
+    <tr><td class="small text-secondary text-nowrap">${(r.ts || '').slice(5, 16).replace('T', ' ')}</td>
+      <td>${r.reporter}</td><td>${r.target || '-'}</td><td class="small">${r.reason}</td></tr>`).join('');
+
+  view().innerHTML = html`
+    <div class="card card-outline card-warning mb-3">
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>When</th><th>From</th><th>About</th><th>Report</th></tr></thead>
+        <tbody>${raw(reportRows || html`<tr><td colspan="4" class="vt-empty">No reports. Good.</td></tr>`)}</tbody>
+      </table></div></div>`;
+}
+
 async function pageConsole() {
-  setTitle('Players & commands', 'Who is here, and everything you can do about it.');
-  const [o, reports] = await Promise.all([
-    worldApi('/overview'),
-    worldApi('/reports?limit=20').catch(() => ({ reports: [] })),
-  ]);
+  setTitle('Players', 'Who is here, and everything you can do about it.');
+  const o = await worldApi('/overview');
   const owner = can('owner');
 
   const rosterRows = o.players.length ? o.players.map((p) => html`
@@ -2277,23 +2304,6 @@ async function pageConsole() {
       </td></tr>`).join('')
     : html`<tr><td colspan="5" class="vt-empty">Nobody is playing right now.</td></tr>`;
 
-  // The fields /admin/api/reports actually sends (server.ts): ts, reporter, target, reason.
-  // This read at/by/about/text, so every column was blank whenever a report existed.
-  const reportRows = (reports.reports || []).map((r) => html`
-    <tr><td class="small text-secondary text-nowrap">${(r.ts || '').slice(5, 16).replace('T', ' ')}</td>
-      <td>${r.reporter}</td><td>${r.target || '-'}</td><td class="small">${r.reason}</td></tr>`).join('');
-
-  // A form card: icon + title in a proper AdminLTE card header, inputs, one action button.
-  const tool = (icon, title, blurb, bodyHtml, btnId, btnLabel, extra = '') => html`
-    <div class="card card-outline card-secondary mb-3"><div class="card-header">
-      <h3 class="card-title"><i class="bi ${icon} me-2"></i>${title}</h3></div>
-      <div class="card-body">
-        <p class="small text-secondary">${raw(blurb)}</p>
-        ${raw(bodyHtml)}
-        <button class="btn btn-sm btn-primary mt-2" id="${btnId}">${btnLabel}</button>
-        ${raw(extra)}
-      </div></div>`;
-
   view().innerHTML = html`
     <div class="row">
       <div class="col-lg-7">
@@ -2306,22 +2316,6 @@ async function pageConsole() {
             <tbody>${raw(rosterRows)}</tbody></table></div>
         </div>
 
-        <div class="card card-outline card-warning mb-3"><div class="card-header">
-          <h3 class="card-title"><i class="bi bi-flag me-2"></i>Player reports</h3></div>
-          <div class="table-responsive"><table class="table table-sm mb-0">
-            <thead><tr><th>When</th><th>From</th><th>About</th><th>Report</th></tr></thead>
-            <tbody>${raw(reportRows || html`<tr><td colspan="4" class="vt-empty">No reports. Good.</td></tr>`)}</tbody>
-          </table></div></div>
-
-        ${raw(tool('bi-megaphone', 'Broadcast',
-          'A message to everyone currently playing, shown in their chat.',
-          html`<input class="form-control" id="bcMsg" placeholder="Server restarting in five minutes">`,
-          'bcGo', 'Send to everyone'))}
-
-        ${raw(tool('bi-card-text', 'Message of the day',
-          'Shown to every player when they join. Leave it empty and press save to clear it.',
-          html`<input class="form-control" id="motdMsg">`,
-          'motdGo', 'Save message'))}
       </div>
 
       <div class="col-lg-5">
@@ -2431,16 +2425,6 @@ async function pageConsole() {
     };
   });
 
-  $('#bcGo').onclick = async () => {
-    const msg = $('#bcMsg').value.trim();
-    if (!msg) return;
-    try {
-      await worldApi('/action', { method: 'POST', body: { kind: 'broadcast', detail: msg } });
-      toast('Sent to everyone.');
-      $('#bcMsg').value = '';
-    } catch (e) { toast(e.message, 'danger'); }
-  };
-  $('#motdGo').onclick = () => runCmd(`motd ${$('#motdMsg').value.trim()}`.trim());
   $('#clGo').onclick = () => {
     const n = $('#clName').value.trim();
     if (n) runCmd(`chatlog ${q(n)} ${Number($('#clMin').value) || 60}`);
@@ -4179,11 +4163,20 @@ async function pageMetrics() {
  * page did not render is a null dereference waiting for the next person to split something.
  */
 async function pageMaintenance() {
-  setTitle('Maintenance mode', 'Close the doors before changing anything.');
+  setTitle('Broadcasts & maintenance', 'Tell everyone something, or close the doors.');
   const m = state.maintenance || { on: false, message: '' };
+  const talk = html`
+    ${raw(tool('bi-megaphone', 'Broadcast',
+      'A message to everyone currently playing, shown in their chat.',
+      html`<input class="form-control" id="bcMsg" placeholder="Server restarting in five minutes">`,
+      'bcGo', 'Send to everyone'))}
+    ${raw(tool('bi-card-text', 'Message of the day',
+      'Shown to every player when they join. Leave it empty and press save to clear it.',
+      html`<input class="form-control" id="motdMsg"><div class="vt-out vt-mono mt-2" id="cmdOut"></div>`,
+      'motdGo', 'Save message'))}`;
   view().innerHTML = html`
-    <div class="row"><div class="col-12 col-xl-7">
-    <div class="card card-warning card-outline">
+    <div class="row"><div class="col-12 col-xl-7">${raw(talk)}
+    ${raw(can('owner') ? html`<div class="card card-warning card-outline">
       <div class="card-header"><h3 class="card-title">
         <i class="bi bi-cone-striped me-2"></i>Maintenance mode
         ${raw(m.on ? ' <span class="badge text-bg-warning ms-2">on</span>' : '')}</h3></div>
@@ -4200,9 +4193,20 @@ async function pageMaintenance() {
         placeholder="Back in ten minutes, updating mods">
       <button class="btn ${raw(m.on ? 'btn-outline-secondary' : 'btn-warning')}" id="mToggle">
         ${raw(m.on ? 'Turn maintenance mode off' : 'Turn maintenance mode on')}</button>
-    </div></div></div></div>`;
+    </div></div>` : '')}</div></div>`;
 
-  $('#mToggle').onclick = async () => {
+  $('#bcGo').onclick = async () => {
+    const msg = $('#bcMsg').value.trim();
+    if (!msg) return;
+    try {
+      await worldApi('/action', { method: 'POST', body: { kind: 'broadcast', detail: msg } });
+      toast('Sent to everyone.');
+      $('#bcMsg').value = '';
+    } catch (e) { toast(e.message, 'danger'); }
+  };
+  $('#motdGo').onclick = () => runCmd(`motd ${$('#motdMsg').value.trim()}`.trim());
+  const mt = $('#mToggle');
+  if (mt) mt.onclick = async () => {
     const on = !m.on;
     if (on) {
       const ok = await confirmAction({
@@ -4686,6 +4690,7 @@ async function pageHelp() {
 const ROUTES = {
   '#overview': pageOverview,
   '#console': pageConsole,
+  '#reports': pageReports,
   '#settings': () => pageSettings(),
   '#set-core': () => pageSettings('Core'),
   '#set-gameplay': () => pageSettings('Gameplay'),
@@ -4710,13 +4715,13 @@ const ROUTES = {
 };
 
 const NEEDS = {
-  '#console': 'moderator', '#settings': 'viewer', '#mods': 'viewer',
+  '#console': 'moderator', '#reports': 'moderator', '#settings': 'viewer', '#mods': 'viewer',
   '#set-core': 'viewer', '#set-access': 'viewer', '#set-storage': 'viewer',
   '#set-operations': 'viewer', '#set-gameplay': 'viewer', '#set-platform': 'viewer',
   '#rolling': 'owner',
   '#gamefiles': 'viewer', '#accounts': 'moderator',
   '#sessions': 'owner', '#security': 'viewer', '#logs': 'moderator', '#audit': 'moderator',
-  '#metrics': 'moderator', '#maintenance': 'owner', '#restart': 'owner', '#backup': 'owner',
+  '#metrics': 'moderator', '#maintenance': 'moderator', '#restart': 'owner', '#backup': 'owner',
   '#updates': 'owner', '#help': 'viewer', '#overview': 'viewer',
 };
 

@@ -466,3 +466,15 @@ test('the multiplayer server page is people first, with the world reached by pro
   assert.match(app, /const worldApi = /);
   assert.doesNotMatch(app, /gameId|#game=|openGame|PLATFORM_PATHS/);
 });
+
+test('OT3-192: the page map, each page fed by an endpoint that exists', () => {
+  for (const [hash, label] of [['#overview', 'Live'], ['#console', 'Players'], ['#reports', 'Reports'],
+    ['#maintenance', 'Broadcasts & maintenance'], ['#audit', 'Audit']]) {
+    assert.match(app, new RegExp(`hash: '${hash}', label: '${label}'`), `${label} is not in the nav`);
+  }
+  const reports = /async function pageReports\(\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(reports[0], /worldApi\('\/reports/);
+  const maint = /async function pageMaintenance\(\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(maint[0], /kind: 'broadcast'/);
+  assert.doesNotMatch(app, /api\(`?['"]?\/games/, 'nothing calls the removed world endpoints');
+});
