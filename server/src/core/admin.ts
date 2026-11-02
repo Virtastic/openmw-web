@@ -58,6 +58,23 @@ function outranks(rank: number, name: string, actor: Player): boolean {
   return rank >= actor.rank && name.toLowerCase() !== actor.name.toLowerCase();
 }
 
+// OT3-20: a target's standing is the HIGHEST of its live in-game rank, its account rank and
+// its dashboard role. The dashboard owner usually plays at in-game rank 0, so checking the
+// in-game rank alone let a moderator ban the owner. Returns the refusal sentence, which names
+// the target's rank so the actor knows why, or undefined when the action may go ahead.
+async function refuseTarget(ctx: AdminCtx, actor: Player, name: string, liveRank = 0, accountKey?: string): Promise<string | undefined> {
+  // Unit-test contexts may carry no account store; the live rank still applies then.
+  const account = ctx.accounts
+    ? await ctx.accounts.get(accountKey ?? ctx.accounts.keyForUsername(name) ?? name.toLowerCase())
+    : undefined;
+  const rank = Math.max(liveRank, account?.rank ?? 0, dashboardRank(account?.dashboardRole, account?.rank));
+  if (!outranks(rank, name, actor)) return undefined;
+  const label = RANK_NAMES[rank] ?? `rank ${rank}`;
+  return rank >= 3
+    ? `${name} is not below your rank: they are the ${label}, and staff cannot act on the ${label}.`
+    : `${name} is not below your rank: they are ${label === 'admin' ? 'an' : 'a'} ${label} and you are ${RANK_NAMES[actor.rank] ?? `rank ${actor.rank}`}.`;
+}
+
 const MAX_ARG = 256;
 const BAN_USAGE = '/ban <account> [30m|12h|7d|perm] <reason>';
 const IPBAN_USAGE = '/ipban <player|ip> [30m|12h|7d|perm] <reason>';
@@ -118,7 +135,8 @@ interface AdminCtx {
 async function offlineChar(ctx: AdminCtx, actor: Player, who: string): Promise<{ charKey: string; label: string } | string> {
   if (!ctx.chars) return 'Offline character tools are not available on this world.';
   const online = ctx.roster.findByName(who);
-  if (online && outranks(online.rank, online.name, actor)) return `${online.name} is not below your rank.`;
+  const refused = online && await refuseTarget(ctx, actor, online.name, online.rank, online.accountKey);
+  if (refused) return refused;
   const charKey = online?.charId ?? await ctx.chars.resolve(who);
   if (!charKey) return `No character "${who}".`;
   if (online) {
@@ -138,7 +156,8 @@ async function muteTarget(ctx: AdminCtx, actor: Player, name: string): Promise<{
   const account = await ctx.accounts.get(key);
   if (!account) return `No account named "${name}".`;
   const online = ctx.roster.findByName(account.name);
-  if (outranks(Math.max(online?.rank ?? 0, account.rank), account.name, actor)) return `${account.name} is not below your rank.`;
+  const refused = await refuseTarget(ctx, actor, account.name, online?.rank, key);
+  if (refused) return refused;
   return { key, name: account.name, online };
 }
 
@@ -376,11 +395,12 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
     minRank: 1,
     usage: '/kick <player> [reason]',
     help: 'disconnect a player (they may reconnect)',
-    run(ctx, actor, args) {
+    async run(ctx, actor, args) {
       const name = arg(args, 0);
       const target = targetOf(ctx, name);
       if (!target) return name ? `No player named "${name}".` : 'usage: /kick <player> [reason]';
-      if (outranks(target.rank, target.name, actor)) return `${target.name} is not below your rank.`;
+      const refused = await refuseTarget(ctx, actor, target.name, target.rank, target.accountKey);
+      if (refused) return refused;
       const reason = args.slice(1).join(' ').slice(0, MAX_ARG) || `kicked by ${actor.name}`;
       target.peer.disconnect('KICKED', reason);
       audit(actor, 'kick', { target: target.name, reason });
@@ -512,7 +532,7 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
     minRank: 2,
     usage: '/restore <player|charKey> <minutesAgo> <reason>',
     help: 'restore one character to a snapshot from N minutes ago',
-    run(ctx, actor, args) {
+    async run(ctx, actor, args) {
       const who = arg(args, 0);
       const minutes = Number(args[1]);
       if (!who || !Number.isInteger(minutes) || minutes < 1 || minutes > 7 * 24 * 60 || !arg(args, 2)) {
@@ -520,7 +540,8 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       }
       if (!ctx.restore) return 'Restore is not available on this world.';
       const online = ctx.roster.findByName(who);
-      if (online && outranks(online.rank, online.name, actor)) return `${online.name} is not below your rank.`;
+      const refused = online && await refuseTarget(ctx, actor, online.name, online.rank, online.accountKey);
+      if (refused) return refused;
       const charKey = online?.charId ?? who;
       if (online) {
         // Synchronous: the logout flush lands now, so the restore below is the last write.
@@ -542,10 +563,12 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       const terms = banTerms(args);
       if (!name || !terms) return `usage: ${BAN_USAGE}`;
       const { reason, until } = terms;
-      const account = await ctx.accounts.get(ctx.accounts.keyForUsername(name) ?? name);
+      const key = ctx.accounts.keyForUsername(name) ?? name;
+      const account = await ctx.accounts.get(key);
       if (!account) return `No account named "${name}".`;
       const online = ctx.roster.findByName(account.name);
-      if (outranks(Math.max(online?.rank ?? 0, account.rank), account.name, actor)) return `${account.name} is not below your rank.`;
+      const refused = await refuseTarget(ctx, actor, account.name, online?.rank, key);
+      if (refused) return refused;
       ctx.bans.banAccount(account.name, actor.name, reason, until);
       // The account flag is the permanent marker only: a timed ban lives in bans.db alone, so
       // it can lift itself there (every login path checks bans.db too).
@@ -630,14 +653,15 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
     minRank: 2,
     usage: IPBAN_USAGE,
     help: 'ban the address of an online player, or a literal IP; a timed ban lifts itself',
-    run(ctx, actor, args) {
+    async run(ctx, actor, args) {
       const who = arg(args, 0);
       const terms = banTerms(args);
       if (!who || !terms) return `usage: ${IPBAN_USAGE}`;
       const { reason, until } = terms;
       const target = ctx.roster.findByName(who);
       const ip = target?.ip ?? who;
-      if (target && outranks(target.rank, target.name, actor)) return `${target.name} is not below your rank.`;
+      const refused = target && await refuseTarget(ctx, actor, target.name, target.rank, target.accountKey);
+      if (refused) return refused;
       if (!target && !looksLikeIp(who)) return `No online player named "${who}" and "${who}" is not an IP.`;
       ctx.bans.banIp(ip, actor.name, reason, until);
       for (const p of ctx.roster.inWorld()) if (p.ip === ip) p.peer.disconnect('BANNED', reason);
