@@ -10,7 +10,13 @@ plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "
 [server]
 name = "OpenMW-Web server"        # shown in SessionHelloOk and /status
 motd = "Welcome."                 # sent in SessionWelcome and as a server chat line on join
+# FALLBACK cap, used only while measuredCapacityPerRegion is 0. 256 is not a measurement.
 maxPlayers = 256
+# OT3-139: players ONE region's sim peer holds with its p99 frame under 50 ms, from the soak
+# (soak.ts --attach at 25/50/100/200 bots; OT3-74 / OT3-209). When set (> 0) the cap is this
+# x the number of [[simPeer.regions]] (1 with none) and maxPlayers above is ignored. 0 = not
+# measured yet: the cap stays maxPlayers.
+measuredCapacityPerRegion = 0
 # THE SIM PEER'S CREDENTIAL, and nothing else — it is never checked against a player. `system`
 # is a flag the CLIENT sets in SessionHello, so this is the only thing separating "I am the
 # server's own simulator" from any registered account claiming to be. An EMPTY value refuses

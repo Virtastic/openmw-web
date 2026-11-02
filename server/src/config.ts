@@ -12,7 +12,9 @@ import { log } from './log';
 import { parseRegionDefs, type RegionDef } from './peers/regions';
 
 export interface Config {
-  server: { name: string; motd: string; maxPlayers: number; password: string };
+  /** maxPlayers is the EFFECTIVE cap: measuredCapacityPerRegion x region count when that is set
+   *  (OT3-139), else the configured [server] maxPlayers (256 by default, an unmeasured guess). */
+  server: { name: string; motd: string; maxPlayers: number; password: string; measuredCapacityPerRegion?: number };
   // A headless OpenMW the server runs itself. It holds cell authority for every world, and
   // it is the ONLY thing permitted to simulate NPCs — a player's browser never does it for
   // anyone else. Mandatory: a server that cannot start one refuses to boot (see server.ts),
@@ -363,6 +365,25 @@ function optStr(t: Tree, sec: string, key: string, dflt: string): string {
   return typeof v === 'string' ? v : dflt;
 }
 
+/**
+ * OT3-139: the player cap. A region is one sim peer, and the peer is the ceiling, so the
+ * capacity of a deployment is (players one region's peer holds, as MEASURED by the soak) x
+ * (regions). With no measurement configured the old hard [server] maxPlayers is the fallback.
+ */
+export function effectiveMaxPlayers(measuredPerRegion: number, regionCount: number, fallback: number): number {
+  if (!(measuredPerRegion > 0)) return fallback;
+  return Math.floor(measuredPerRegion) * Math.max(1, Math.floor(regionCount));
+}
+
+function playerCap(t: Tree): number {
+  const fallback = reqNum(t, 'server', 'maxPlayers');
+  const measured = optNum(t, 'server', 'measuredCapacityPerRegion', 0);
+  if (!Number.isFinite(measured) || measured < 0) fail('[server].measuredCapacityPerRegion', 'a number >= 0 (0 = not measured)');
+  let regions = 1;
+  try { regions = Math.max(1, parseRegionDefs((t['simPeer'] as Tree | undefined)?.['regions']).length); } catch { /* reported by [[simPeer.regions]] below */ }
+  return effectiveMaxPlayers(measured, regions, fallback);
+}
+
 function optNum(t: Tree, sec: string, key: string, dflt: number): number {
   const v = (t[sec] as Tree | undefined)?.[key];
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt;
@@ -502,7 +523,8 @@ function validate(t: Tree): Config {
     server: {
       name: reqStr(t, 'server', 'name'),
       motd: reqStr(t, 'server', 'motd'),
-      maxPlayers: reqNum(t, 'server', 'maxPlayers'),
+      maxPlayers: playerCap(t),
+      measuredCapacityPerRegion: optNum(t, 'server', 'measuredCapacityPerRegion', 0),
       password: reqStr(t, 'server', 'password'),
     },
     gateway: { url: reqStr(t, 'gateway', 'url'), serverToken: optStr(t, 'gateway', 'serverToken', '') },
