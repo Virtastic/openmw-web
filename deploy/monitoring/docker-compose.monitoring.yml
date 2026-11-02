@@ -1,0 +1,43 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# OT3-133: the on-box half of monitoring. Layer it over the main stack, from the checkout:
+#
+#   docker compose -f docker-compose.yml -f deploy/monitoring/docker-compose.monitoring.yml up -d
+#
+# Paths below resolve against the project directory (the checkout), like the main file's.
+# Nothing here publishes a port: the agent pushes out, nothing pulls in.
+services:
+  prometheus-agent:
+    image: prom/prometheus:v3.5.0
+    container_name: openmw-web-prom-agent
+    restart: unless-stopped
+    command:
+      - --agent
+      - --config.file=/etc/prometheus/prometheus-agent.yml
+      - --storage.agent.path=/prometheus
+      # Buffer up to the WAL's retention if the hosted backend is unreachable.
+      - --web.listen-address=:9090
+    volumes:
+      - ${REPO_DIR:-.}/deploy/monitoring/agent/prometheus-agent.yml:/etc/prometheus/prometheus-agent.yml:ro
+      - ${REPO_DIR:-.}/deploy/monitoring/secrets:/etc/prometheus/secrets:ro
+      - prom-agent-wal:/prometheus
+    expose:
+      - "9090"
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    container_name: openmw-web-node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+      # Docker's own mounts would page DiskLow for every overlay; the root fs is the one that
+      # filled on 2026-10-23.
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($|/)
+    volumes:
+      - /:/host:ro,rslave
+    expose:
+      - "9100"
+
+volumes:
+  prom-agent-wal:

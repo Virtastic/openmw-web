@@ -1,0 +1,41 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# OT3-133: routing for the HOSTED Alertmanager (upload this file to it; nothing runs it on the
+# box). severity=page wakes someone (alerts.yml, probes.yml); severity=ticket opens a ticket
+# (tickets.yml). the *.invalid URLs are placeholders for the pager
+# integration and the ticket/chat webhook.
+route:
+  receiver: ticket
+  group_by: [alertname, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  routes:
+    - matchers: [severity="page"]
+      receiver: page
+      repeat_interval: 1h
+    - matchers: [severity="ticket"]
+      receiver: ticket
+      # One ticket per incident: re-notify a still-firing ticket rule once a day, not hourly.
+      repeat_interval: 24h
+
+inhibit_rules:
+  # A dead server explains its probes and its sessions: page once. Disk and backup pages
+  # are left alone (a full disk is a likely CAUSE of the crash).
+  - source_matchers: [alertname="ServerDown"]
+    target_matchers: [alertname=~"ProbeDown|SessionsCollapsed|EventLoopStalled"]
+    equal: []
+  # Ticket rules are noise while the same thing is paging.
+  - source_matchers: [severity="page"]
+    target_matchers: [severity="ticket"]
+    equal: []
+
+receivers:
+  - name: page
+    webhook_configs:
+      - url: https://PAGER-WEBHOOK-URL.invalid/replace-me
+        send_resolved: true
+  - name: ticket
+    webhook_configs:
+      - url: https://TICKET-WEBHOOK-URL.invalid/replace-me
+        send_resolved: false

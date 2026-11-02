@@ -3,26 +3,34 @@
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 """Multiplayer health from the gateway log: what is breaking, for whom, and how often.
 
-    ssh <box> 'python3 - --hours 24' < deploy/mp-health.py
+    ssh <box> 'python3 - --hours 24 --data <checkout>/data' < deploy/mp-health.py
 
-Reads /var/log/openmw-mp/openmw-mp.log (+ .1, and .N.gz) -- the JSON lines the gateway, every world
-and the sim peer write, plus each browser's /clientlog lines (errors and the 5 s [telemetry]). Prints
+Reads the logs the server itself writes (log.ts enableFileLog): <data>/logs/server.log for the
+gateway and <data>/worlds/*/logs/server.log for each world (+ their .N rotations) -- the JSON lines
+the gateway, every world and the sim peer write, plus each browser's /clientlog lines (errors and
+the 5 s [telemetry]). OT3-133: it used to read /var/log/openmw-mp/openmw-mp.log, which nothing
+writes on the v2 box, so it reported an empty day. --log still takes an explicit file. Prints
 one plain report: the join funnel, smoothness, and every kind of failure ranked by count, so a new
 problem shows up as a new line near the top instead of something to go digging for.
 stdlib only: the box has python3, not node.
 """
-import argparse, glob, gzip, json, re
+import argparse, glob, gzip, json, os, re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--hours', type=float, default=24)
-ap.add_argument('--log', default='/var/log/openmw-mp/openmw-mp.log')
+ap.add_argument('--data', default='data', help="the server's data dir (compose mounts <checkout>/data at /data)")
+ap.add_argument('--log', action='append', help='a log file to read instead (repeatable); its rotations are read too')
 args = ap.parse_args()
+bases = args.log or [os.path.join(args.data, 'logs', 'server.log')] + sorted(glob.glob(os.path.join(args.data, 'worlds', '*', 'logs', 'server.log')))
 since = (datetime.now(timezone.utc) - timedelta(hours=args.hours)).strftime('%Y-%m-%dT%H:%M:%S')
 
 def lines():
-    for path in sorted(glob.glob(args.log + '*'), reverse=True):
+    paths = [p for b in bases for p in sorted(glob.glob(b + '*'), reverse=True)]
+    if not paths:
+        raise SystemExit(f'no logs under {bases}: pass --data <checkout>/data or --log <file>')
+    for path in paths:
         op = gzip.open if path.endswith('.gz') else open
         try:
             with op(path, 'rt', errors='replace') as f:

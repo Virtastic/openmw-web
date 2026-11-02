@@ -1,0 +1,45 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# OT3-133: Prometheus in AGENT mode on the game box. It keeps no TSDB and evaluates no rules:
+# it scrapes, then remote_writes to a hosted backend that stores the series, runs alerts.yml
+# (and tickets.yml) in its ruler and owns Alertmanager. So a dead box is still noticed:
+# absent(up{job="omwmp"}) is evaluated off-box, where the box's death cannot silence it.
+#
+# PLACEHOLDERS (see README.md "One manual step"):
+#   REMOTE-WRITE-URL.invalid    the hosted backend's Prometheus remote_write endpoint
+#   secrets/remote_write_user   its username / instance id (file, one line)
+#   secrets/remote_write_key    its API key with metrics:write (file, one line)
+#   secrets/metrics_token       the same value as [metrics] token in the server's config.toml
+global:
+  scrape_interval: 15s      # <1 min lag off-box (acceptance): 15 s scrape + ~5-10 s remote_write
+  scrape_timeout: 10s
+  external_labels:
+    box: virtastic-ovh      # one box today; distinguishes it if a second ever appears
+
+scrape_configs:
+  # The gateway's /metrics. Reached on the compose network, never through Caddy: the
+  # Caddyfile keeps /metrics unreachable from the internet, and the token gate stays on.
+  - job_name: omwmp
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/metrics_token
+    static_configs:
+      - targets: ['openmw-web:8080']
+
+  - job_name: node
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # The agent's own health, so a stuck remote_write queue is visible upstream.
+  - job_name: agent
+    static_configs:
+      - targets: ['localhost:9090']
+
+remote_write:
+  - url: https://REMOTE-WRITE-URL.invalid/api/prom/push   # placeholder
+    basic_auth:
+      username_file: /etc/prometheus/secrets/remote_write_user
+      password_file: /etc/prometheus/secrets/remote_write_key
+    queue_config:
+      batch_send_deadline: 5s   # bounds the off-box lag
