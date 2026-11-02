@@ -3,6 +3,7 @@
 // Composition root: wires config, stores, gates, plugins, HTTP and WS into a running
 // server. main.ts is the CLI face; tests call startServer() directly.
 
+import { Arrivals } from './core/arrivals';
 import { VERSION } from './version';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -818,6 +819,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     quests,
     social,
     trades,
+    arrivals: new Arrivals(),
     pvpConsent,
     busy,
     m7,

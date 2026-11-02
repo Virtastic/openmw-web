@@ -4,6 +4,7 @@
 // CONNECTED -> (Hello <= timeout) -> HELLO_OK -> (auth) -> AUTHED -> (Ready) -> IN_WORLD.
 // Text frames = JSON session tier; binary frames = enveloped event tier.
 
+import { Arrivals } from '../core/arrivals';
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { Config } from '../config';
@@ -176,6 +177,7 @@ export interface ServerCtx {
   quests: Quests;
   social: Social;
   trades?: Trades; // OT3-177
+  arrivals?: Arrivals; // OT3-147
   pvpConsent?: PvpConsent; // OT3-163
   busy?: BusyFlags; // OT3-105
   m7: WorldM7;
@@ -1516,6 +1518,12 @@ export class Connection implements Peer {
       rebase: oldCell !== undefined && oldCell !== cellKey };
     player.cellKey = cellKey;
     if (oldCell !== cellKey) this.ctx.social.onCellChange(player, oldCell, cellKey); // OT3-73 party finder
+    // OT3-147: a crowd leaving the census office is spread round the doorstep, not stacked on it.
+    const spread = !this.isSystem && oldCell !== cellKey ? this.ctx.arrivals?.place(oldCell, cellKey, { x, y, z }) : null;
+    if (spread) {
+      player.peer.sendEvent('AdminTeleport', { cellKey, x: spread.x, y: spread.y, z: spread.z });
+      log('debug', 'arrival.spread', { name: player.name, cellKey, x: Math.round(spread.x), y: Math.round(spread.y) });
+    }
     if (oldCell !== cellKey && !this.isSystem) this.ctx.quests.sendPersonalDispositions(player, cellKey); // OT3-155
     const prev = player.pose;
     if (oldCell !== cellKey) this.noteShrine(player, oldCell, cellKey, prev, x, y, z);
