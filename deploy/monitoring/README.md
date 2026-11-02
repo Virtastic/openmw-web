@@ -8,7 +8,8 @@ rule sends are explained in [RUNBOOK.md](RUNBOOK.md).
 | `agent/prometheus-agent.yml` | on the box: scrapes the gateway's `/metrics` and node_exporter, remote_writes off-box | OT3-133 |
 | `docker-compose.monitoring.yml` | on the box: the agent and node_exporter, layered over the main compose file | OT3-133 |
 | `alertmanager.yml` | the hosted Alertmanager: `severity=page` pages, `severity=ticket` opens a ticket | OT3-133 |
-| `alerts.yml` | the hosted ruler: page rules | OT3-140 |
+| `alerts.yml` | the hosted ruler: page rules (+ ProberSilent ticket) | OT3-140, OT3-136 |
+| `probes/` | a small box OUTSIDE OVH: blackbox_exporter + agent probing the public site | OT3-136 |
 
 ## On-box agent and hosted backend (OT3-133)
 
@@ -54,9 +55,31 @@ box. It now reads the logs the server writes itself: `<data>/logs/server.log` (g
 
     ssh <box> 'python3 - --hours 24 --data <checkout>/data' < deploy/mp-health.py
 
+## Outside probes (OT3-136)
+
+Once a minute, from outside OVH, `probes/` checks `https://morrowind.virtastic.app/`, `/worlds`
+and a `/w/vvardenfell` WebSocket handshake (must answer 101), and remote_writes the results to
+the same hosted backend. `ProbeDown` (alerts.yml) pages after two failures in a row, about
+2 min after the site stops answering. `ProberSilent` opens a ticket if the prober itself goes
+quiet. Only the virtastic host is probed; opentes3.com is added when the owner moves it.
+
+`/healthz` is not probed from outside: the Caddyfile keeps it (with `/metrics` and `/status`)
+off the internet. `/worlds` is served by the same gateway process, and the on-box agent covers
+`/healthz`'s process as `up{job="omwmp"}`. To probe `/healthz` literally, add it to the
+`@gateway` matcher in the Caddyfile first.
+
+**The one manual step:** get a small box (or a free-tier VM) at any provider other than OVH,
+copy `probes/` to it, fill `probes/secrets/remote_write_user` and `remote_write_key` and the
+remote_write URL as in OT3-133, then `docker compose -f docker-compose.probes.yml up -d`.
+A hosted synthetic-monitoring service that emits `probe_success{job="probe"}` works too.
+
+Acceptance: `docker stop openmw-web` on the box pages within about 2 min. Stop the container,
+not the world process: the ws probe's dial revives a stopped world, like a player's would.
+
 ### Validating the files
 
 No promtool on the laptop; run it from the images:
 
     docker run --rm -v $PWD/deploy/monitoring:/m --entrypoint promtool prom/prometheus:v3.5.0 check rules /m/alerts.yml
+    docker run --rm -v $PWD/deploy/monitoring/probes/blackbox.yml:/b.yml prom/blackbox-exporter:v0.27.0 --config.file=/b.yml --config.check
     docker run --rm -v $PWD/deploy/monitoring:/m --entrypoint amtool prom/alertmanager:v0.28.1 check-config /m/alertmanager.yml

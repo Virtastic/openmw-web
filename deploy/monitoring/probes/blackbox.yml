@@ -1,0 +1,35 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# OT3-136: blackbox_exporter modules for the OUTSIDE prober (prometheus-probes.yml).
+modules:
+  # The front page (the gateway's sign-in page) and /worlds: 2xx over valid TLS.
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: []        # default: 2xx
+      fail_if_not_ssl: true
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: true
+
+  # The gameplay WebSocket: the /w/<world> handshake must answer 101 Switching Protocols
+  # through Caddy and the gateway's splice. HTTP/1.1 only: an Upgrade cannot ride HTTP/2.
+  # The probe disconnects right after the 101, before SessionHello, so it never takes a slot.
+  ws_handshake:
+    prober: http
+    timeout: 15s                   # a booting world is HELD, not refused (directory.ts)
+    http:
+      method: GET
+      enable_http2: false
+      valid_status_codes: [101]
+      fail_if_not_ssl: true
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: true
+      headers:
+        Connection: Upgrade
+        Upgrade: websocket
+        Sec-WebSocket-Version: "13"
+        Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+        Origin: https://morrowind.virtastic.app

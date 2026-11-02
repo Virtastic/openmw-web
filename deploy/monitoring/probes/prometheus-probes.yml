@@ -1,0 +1,48 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# OT3-136: Prometheus AGENT on a small box OUTSIDE OVH (the "one manual step" in README.md):
+# probes the public site once a minute through blackbox_exporter and remote_writes the
+# results to the same hosted backend as the game box (OT3-133), where ProbeDown in alerts.yml
+# pages. Only the virtastic host for now; opentes3.com is left alone until the owner moves it.
+global:
+  scrape_interval: 1m
+  scrape_timeout: 20s
+  external_labels:
+    prober: outside-ovh          # rename to the prober's provider/region
+
+scrape_configs:
+  # Two scrape jobs (job names must be unique), one job="probe" label for ProbeDown.
+  - job_name: probe_http
+    metrics_path: /probe
+    params: { module: [http_2xx] }
+    static_configs:
+      - targets:
+          - https://morrowind.virtastic.app/
+          # The gateway's own liveness, from outside. /healthz itself stays unproxied (the
+          # Caddyfile keeps it off the internet); /worlds is answered by the same gateway
+          # process, so it fails the same way. The on-box agent covers /healthz as up{job="omwmp"}.
+          - https://morrowind.virtastic.app/worlds
+        labels: { check: http }
+    relabel_configs: &blackbox
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+      - target_label: job
+        replacement: probe
+
+  - job_name: probe_ws
+    metrics_path: /probe
+    params: { module: [ws_handshake] }
+    static_configs:
+      - targets: ['https://morrowind.virtastic.app/w/vvardenfell']
+        labels: { check: ws }
+    relabel_configs: *blackbox
+
+remote_write:
+  - url: https://REMOTE-WRITE-URL.invalid/api/prom/push   # placeholder: same backend as OT3-133
+    basic_auth:
+      username_file: /etc/prometheus/secrets/remote_write_user
+      password_file: /etc/prometheus/secrets/remote_write_key

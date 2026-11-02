@@ -28,9 +28,16 @@ First: `omwmp_disconnects_total` by code over the same minute; ProbeDown firing 
 Stage: harness with 6+ bots, then kill the gateway's network for 30 s.
 
 ## ProbeDown
-An outside probe (front page, /healthz or the /w/ WebSocket handshake) failed for 2 min.
+An outside probe (front page, /worlds or the /w/ WebSocket handshake; `check` label http or ws)
+failed twice running, from the prober outside OVH (probes/).
 First: is ServerDown firing too? If not, the proxy (Caddy) or TLS is the suspect.
-Stage: `docker stop` the world container.
+Stage: `docker stop openmw-web` (the container). Stopping only the world PROCESS does not
+work as a test: the ws probe's dial revives it (directory.ts restart-on-dial), as a player's would.
+
+## ProberSilent
+Ticket, not a page: the outside prober sent nothing for 10 min, so ProbeDown is blind.
+First: the prober box (`docker compose -f docker-compose.probes.yml ps` there), its
+remote_write credentials.
 
 ## DiskLow
 Under 15% free. At 0 bytes deploys die and SQLite writes fail.

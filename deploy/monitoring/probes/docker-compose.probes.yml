@@ -1,0 +1,27 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# OT3-136: run on the OUTSIDE prober box (not the game box), from a copy of deploy/monitoring/probes/:
+#   docker compose -f docker-compose.probes.yml up -d
+services:
+  blackbox:
+    image: prom/blackbox-exporter:v0.27.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    expose: ["9115"]
+
+  prometheus-agent:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --agent
+      - --config.file=/etc/prometheus/prometheus-probes.yml
+      - --storage.agent.path=/prometheus
+    volumes:
+      - ./prometheus-probes.yml:/etc/prometheus/prometheus-probes.yml:ro
+      - ./secrets:/etc/prometheus/secrets:ro
+      - wal:/prometheus
+
+volumes:
+  wal:

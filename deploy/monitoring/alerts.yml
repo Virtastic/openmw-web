@@ -42,11 +42,13 @@ groups:
           runbook_url: deploy/monitoring/RUNBOOK.md#sessionscollapsed
 
       - alert: ProbeDown
+        # 1/min probes (OT3-136): two failed in a row. With scrape and evaluation delay this
+        # pages about 2 min after the site stops answering (the OT3-136 acceptance gate).
         expr: probe_success{job="probe"} == 0
-        for: 2m
+        for: 1m
         labels: { severity: page }
         annotations:
-          summary: '{{ $labels.instance }} failed its outside probe for 2 min.'
+          summary: '{{ $labels.instance }} ({{ $labels.check }}) failed its outside probe twice running.'
           runbook_url: deploy/monitoring/RUNBOOK.md#probedown
 
       - alert: DiskLow
@@ -75,3 +77,15 @@ groups:
         annotations:
           summary: No good SQLite backup for over 2 h.
           runbook_url: deploy/monitoring/RUNBOOK.md#backupstale
+
+  # Not pages: a silent prober means ProbeDown can no longer fire, which someone should fix
+  # in working hours.
+  - name: omwmp-probe-health
+    rules:
+      - alert: ProberSilent
+        expr: absent(probe_success{job="probe"})
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: No outside probe results for 10 min; the prober outside OVH is down or not sending.
+          runbook_url: deploy/monitoring/RUNBOOK.md#probersilent
