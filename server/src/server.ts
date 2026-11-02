@@ -1096,7 +1096,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // launcher prompt for a join password that nothing would ever verify — a door with no
     // lock and no handle. There is no player-facing server password in this protocol.
     requiresPassword: false,
-    allowsRegistration: config.login.allowRegistration && config.login.inviteCode === '',
+    allowsRegistration: config.login.allowRegistration,
     playerCount: roster.humansInWorld().length,
     connectedCount: roster.humanCount, // F3: keeps a world alive while a player is loading / at chargen
     // Live, not configured: the supervisor's own count of running engines. One peer carries

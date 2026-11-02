@@ -314,8 +314,7 @@ Client → server:
   content-file NAMES only (`core.contentFiles.list`, lowercased) — sizes are unreachable,
   so clients always send `size:0` and `names` mode effectively compares name+order.
 - `{"t":"SessionRegister", "account":"name", "password":"…", "serverPassword":"<opt>",
-   "inviteCode":"<opt>", "characterId":"<opt>"}` — `inviteCode` is required when
-   `[login] inviteCode` is set.
+   "characterId":"<opt>"}`
 - `{"t":"SessionLoginRequest", "account":"name", "password":"…", "serverPassword":"<opt>",
    "characterId":"<opt>"}`
 - `{"t":"SessionResume", "token":"<hex>"}` — M8 rejoin-in-place; valid in `HELLO_OK`

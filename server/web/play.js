@@ -97,79 +97,21 @@
   }
 
   let out = '';
-  // THE INVITE LINK. An invite-only server checks the passphrase when an SSO sign-in would
-  // create a new account. Players never type it: it rides in https://<server>/?invite=<code>,
-  // the link the dashboard hands out. Kept for the tab, so a redirect that drops the query
-  // (the front door bouncing through /join) does not lose it.
-  let invited = new URLSearchParams(location.search).get('invite') || '';
-  try {
-    if (invited) sessionStorage.setItem('omwmp:invite', invited);
-    else invited = sessionStorage.getItem('omwmp:invite') || '';
-  } catch { /* storage blocked: the query is all there is */ }
-  // A REFUSED INVITE IS A STALE ONE, and it must be forgotten BEFORE the links are drawn: the
-  // refusal lands back on this page, which re-read the stored code and put it on every provider
-  // link again, so the obvious retry sent the same wrong code (s176). Only the storage was
-  // cleared, further down, after the links already carried it.
-  if (/[#&]mperror=invite_required(&|$)/.test(location.hash)) {
-    invited = '';
-    try { sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ }
-  }
   if (providers.length) {
     for (const p of providers) {
       out += `<a class="prov" href="/auth/${esc(p)}/start">${ICONS[p] || ''}<span>Continue with ${NICE[p]}</span></a>`;
     }
   }
   box.innerHTML = out;
-  // Remembered for a refused 'state' (below): the link that was clicked, invite and all.
+  // Remembered for a refused 'state' (below): the link that was clicked.
   box.addEventListener('click', (e) => {
     const a = e.target.closest('a.prov');
     if (!a) return;
     try { sessionStorage.setItem('omwmp:prov', a.href); } catch { /* blocked */ }
   });
-  if (auth.inviteRequired && invited) {
-    // The server checks it only when the sign-in would create an account; a returning
-    // player's is ignored.
-    for (const a of box.querySelectorAll('a.prov')) {
-      const u = new URL(a.href);
-      u.searchParams.set('invite', invited.trim());
-      a.href = u.href;
-    }
-  }
-
-  // WHERE TO GET A CODE: shown on the invite form AND on a refused sign-in. The refusal note
-  // replaces the form's note, so it carried no link at all (prod 2026-10-19: 36 refused sign-ins
-  // from ~24 people, every one told only to ask "whoever runs it").
-  const helpLink = typeof auth.inviteHelpUrl === 'string' && /^https:\/\//.test(auth.inviteHelpUrl)
-    ? ` <a href="${esc(auth.inviteHelpUrl)}" rel="noopener">Join our Discord to get the invite code.</a>` : '';
-  const help = helpLink || ' Ask whoever runs it for the invite code.';
   if (auth.allowRegistration === false) {
     note('This server is not taking new players: sign-in works for existing accounts, but new '
       + 'ones cannot be created here.');
-  } else if (auth.inviteRequired && !invited) {
-    // NEW PLAYERS TYPE THE CODE. An invite link is not always how a code travels (a Discord
-    // post, a friend reading it out), so the code can also be typed here; it then rides on
-    // every provider link exactly as an invite link's would. Returning players ignore it.
-    const form = document.createElement('form');
-    form.id = 'inviteForm';
-    form.innerHTML = '<label class="fld"><span>Invite code (new players only)</span>'
-      + '<input id="inviteCode" name="invite" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128"></label>';
-    box.prepend(form);
-    const apply = () => {
-      const code = String($('#inviteCode').value || '').trim();
-      try { if (code) sessionStorage.setItem('omwmp:invite', code); else sessionStorage.removeItem('omwmp:invite'); } catch { /* blocked */ }
-      for (const a of box.querySelectorAll('a.prov')) {
-        const u = new URL(a.href);
-        if (code) u.searchParams.set('invite', code); else u.searchParams.delete('invite');
-        a.href = u.href;
-      }
-    };
-    // THE BUTTONS ARE NEVER GREYED. 1.7.6 held them shut until a code was typed or this browser
-    // remembered a sign-in, which locked returning players out on any new browser or cleared
-    // storage (2026-10-26). The server refuses a new account without a code; that is the gate.
-    $('#inviteCode').addEventListener('input', apply);
-    form.addEventListener('submit', (e) => { e.preventDefault(); apply(); });
-    note('This server is invite-only. New players: enter your invite code above, then pick a sign-in. '
-      + 'Returning players sign in as usual.' + help);
   }
 
   /**
@@ -224,7 +166,7 @@
   if (err) {
     history.replaceState(null, '', location.pathname);
     // Words for the codes a player can act on; anything else keeps the code for a bug report.
-    const code = decodeURIComponent(err[1]); // a refused invite was already forgotten, above
+    const code = decodeURIComponent(err[1]);
     // A LOST STATE COOKIE IS RETRIED ONCE, SILENTLY. The callback came back without the cookie
     // its start set (a phone handing the provider page to another app, Back, a reload): 36 of
     // those in a week, and 30 of the 33 people never tried again. The same link usually works.
@@ -240,9 +182,6 @@
     // The codes server/src/auth/routes.ts sends back. The ONE map: /join forwards its mperror here.
     const said = {
       registration_disabled: 'This server is not taking new players.',
-      invite_required: 'This server is invite-only, and that sign-in had no working invite code. '
-        + 'Enter the code above and sign in again.',
-      invite_locked: 'Too many attempts with a wrong invite code. Wait a while before trying again.',
       email_unverified: 'New accounts need a verified email address at that provider. Verify it there, then sign in again.',
       signup_limited: 'Too many new accounts from your network. Wait a while before trying again.',
       banned: 'This account is banned from this server.',
@@ -262,7 +201,7 @@
       bad_callback: 'The sign-in came back incomplete. Try again.',
       account: 'The server could not set up your account. Try again; if it keeps happening, tell whoever runs this server.',
     }[code];
-    note(said ? esc(said) + (code === 'invite_required' ? helpLink : '')
+    note(said ? esc(said)
       : `Sign-in did not finish (${esc(code.replace(/_/g, ' '))}). Try again.`, 'err');
   }
 })();

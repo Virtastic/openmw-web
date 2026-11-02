@@ -21,7 +21,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { startServer, type RunningServer } from '../src/server';
 import { loadConfig, type DeepPartial, type Config } from '../src/config';
 import { LoginTicketStore } from '../src/auth/identities';
-import { checkInvite, resetInviteBudgets } from '../src/auth/invite';
+import { resetSignupBudget } from '../src/auth/signup';
 import { TestClient, tmpDataDir } from './helpers';
 
 // ------------------------------------------------------------- mock provider
@@ -195,7 +195,7 @@ async function boot(
   override: DeepPartial<Config> = {},
   dataDir = tmpDataDir(),
 ): Promise<Harness> {
-  resetInviteBudgets(); // the signup budget is per process; each harness starts with a full one
+  resetSignupBudget(); // the signup budget is per process; each harness starts with a full one
   // An SSO (multiplayer) server refuses to boot without game data (server.ts). These tests
   // exercise auth, not content, so stub the files detectGameData looks for — presence is all
   // it checks. This keeps the production invariant ("no server without files") intact.
@@ -774,53 +774,14 @@ test('SSO respects the server registration policy', async (t) => {
     assert.deepEqual(await accountNames(h.dataDir), []);
   });
 
-  await t.test('an invite-only server requires the invite through SSO too', async (tt) => {
-    resetInviteBudgets();
-    const h = await boot(tt, { login: { inviteCode: 'letmein' } });
-    const without = await ssoLogin(h, { sub: 'invite-1', nameHint: 'NoInvite' });
-    assert.equal(without.error, 'invite_required', without.location);
-
-    const { authorize, cookie } = await startFlow(h, 'google', '?invite=letmein');
+  await t.test('an ?invite= on the start URL is ignored: the invite code is gone (OT3-40)', async (tt) => {
+    resetSignupBudget();
+    const h = await boot(tt);
+    const { authorize, cookie } = await startFlow(h, 'google', '?invite=anything');
     const code = h.idp.issueCode(authorize, { sub: 'invite-2', nameHint: 'Invited' });
     const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
     assert.ok(fragment(res.headers.get('location')).get('mpticket'), res.headers.get('location') ?? '');
     assert.equal((await accountNames(h.dataDir)).length, 1);
-  });
-
-  await t.test('the invite passphrase cannot be brute-forced: guesses run out, then even the right one is refused', async (tt) => {
-    resetInviteBudgets();
-    // The general auth budget (5 a minute per IP) would refuse these starts first; it is not
-    // what is under test, so it is widened here and the passphrase budget stands alone.
-    const h = await boot(tt, { login: { inviteCode: 'letmein' }, limits: { loginPerMinPerIp: 1000 } });
-    const guess = async (sub: string, invite: string): Promise<string | null> => {
-      const { authorize, cookie } = await startFlow(h, 'google', `?invite=${invite}`);
-      const code = h.idp.issueCode(authorize, { sub, nameHint: sub });
-      const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
-      return fragment(res.headers.get('location')).get('mperror');
-    };
-    for (let i = 0; i < 5; i++) assert.equal(await guess('guesser', `wrong-${i}`), 'invite_required');
-    assert.equal(await guess('guesser', 'letmein'), 'invite_locked', 'the right passphrase after the budget ran out');
-    assert.equal(await guess('someone-else', 'letmein'), 'invite_locked', 'the same address is locked, not just the identity');
-    assert.deepEqual(await accountNames(h.dataDir), []);
-  });
-
-  await t.test('a typed invite code ignores case, spaces and 0/O 1/l/I, and nothing else', () => {
-    resetInviteBudgets();
-    assert.equal(checkInvite('Ab0lI1xYz', ' aBOL1i XyZ ', ['k:typed']), 'ok');
-    assert.equal(checkInvite('Ab0lI1xYz', 'Ab0lI1xYq', ['k:typed']), 'wrong');
-  });
-
-  await t.test('sign-ins with no invite at all spend no guesses: the invited player still gets in', async (tt) => {
-    resetInviteBudgets();
-    const h = await boot(tt, { login: { inviteCode: 'letmein' }, limits: { loginPerMinPerIp: 1000 } });
-    for (let i = 0; i < 30; i++) {
-      const out = await ssoLogin(h, { sub: `stranger-${i}`, nameHint: `S${i}` });
-      assert.equal(out.error, 'invite_required', out.location);
-    }
-    const { authorize, cookie } = await startFlow(h, 'google', '?invite=letmein');
-    const code = h.idp.issueCode(authorize, { sub: 'friend', nameHint: 'Friend' });
-    const res = await callback(h, 'google', code, authorize.searchParams.get('state') ?? '', cookie);
-    assert.ok(fragment(res.headers.get('location')).get('mpticket'), res.headers.get('location') ?? '');
   });
 });
 
@@ -866,10 +827,10 @@ test('the /auth routes do not disturb the rest of the HTTP surface', async (t) =
 
 // H6: a verified Google email that matches a dashboard account's name or address is NOT that
 // account. Whoever controls the address at the provider would otherwise hold the dashboard.
-// A first sign-in is a new player (here: one that needs the invite), and nothing is linked.
+// A first sign-in is a new player (here: on a server closed to new accounts), and nothing is linked.
 test('H6: a verified email matching a role holder does not sign in as that account', async (t) => {
-  resetInviteBudgets();
-  const h = await boot(t, { login: { inviteCode: 'letmein' } });
+  resetSignupBudget();
+  const h = await boot(t, { login: { allowRegistration: false } });
   const owner = await fetch(`${h.base}/admin/api/setup/owner`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name: 'realowner@example.com', password: 'a-long-enough-passphrase' }),
@@ -882,7 +843,7 @@ test('H6: a verified email matching a role holder does not sign in as that accou
   assert.doesNotMatch(res.headers.get('location') ?? '', /#t=/, 'an email match minted a dashboard session');
 
   const play = await ssoLogin(h, { sub: 'owner-google', email: 'realowner@example.com' }, 'discord', h.idp2);
-  assert.equal(play.error, 'invite_required', 'an email match signed in as the owner');
+  assert.equal(play.error, 'registration_disabled', 'an email match signed in as the owner');
   assert.deepEqual(await accountNames(h.dataDir), ['realowner@example.com.json']);
 });
 
@@ -947,16 +908,12 @@ test('SSO into the admin dashboard: role required, session lands as /admin#t=', 
   assert.equal(state.role, 'viewer');
 });
 
-// The invite-only front door links new players to where the invite code lives (a Discord, say).
-// Only an https link is passed on, so a typo in config cannot make the sign-in page an open redirect.
-test('the providers answer carries the invite help link, https only', async (t) => {
-  const on = await boot(t, { login: { allowRegistration: true, inviteCode: 'opensesame', inviteHelpUrl: 'https://discord.gg/example' } });
-  const a = (await (await fetch(`${on.base}/auth/providers`)).json()) as { inviteRequired: boolean; inviteHelpUrl: string };
-  assert.equal(a.inviteRequired, true);
-  assert.equal(a.inviteHelpUrl, 'https://discord.gg/example');
-  const bad = await boot(t, { login: { allowRegistration: true, inviteCode: 'opensesame', inviteHelpUrl: 'javascript:alert(1)' } });
-  const b = (await (await fetch(`${bad.base}/auth/providers`)).json()) as { inviteHelpUrl: string };
-  assert.equal(b.inviteHelpUrl, '', 'a non-https help link is dropped');
+// OT3-40: the providers answer no longer says anything about an invite.
+test('the providers answer carries no invite fields', async (t) => {
+  const h = await boot(t);
+  const a = (await (await fetch(`${h.base}/auth/providers`)).json()) as Record<string, unknown>;
+  assert.equal('inviteRequired' in a, false);
+  assert.equal('inviteHelpUrl' in a, false);
 });
 
 test('H2: new SSO accounts need a verified email (Google/Discord) and are budgeted per IP', async (t) => {

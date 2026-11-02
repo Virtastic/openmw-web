@@ -219,7 +219,7 @@ export const DERIVED_FIELDS = [
 // added is masked because of what it is called rather than because it was remembered.
 const SECRET_RE = /pass|secret|token|apikey|webhook|credential|accesskey/i;
 // Fields whose name gives nothing away. Keep this short; prefer naming things clearly.
-const SECRET_KEYS = new Set(['inviteCode']);
+const SECRET_KEYS = new Set<string>([]);
 export const SECRET_MASK = '••••••••';
 
 function isSecret(_section: string, key: string): boolean {
@@ -476,8 +476,7 @@ export interface WizardAnswers {
   /** Which login methods players may use. */
   loginMethods?: string[];
   /** Who may create an account. Independent of deploymentMode. */
-  registration?: 'open' | 'invite' | 'closed';
-  inviteCode?: string;
+  registration?: 'open' | 'closed';
   /** Step 4: extra dashboard accounts are created through the accounts API, not here. */
   owners?: string[];
   /** Step 5: which game content this server expects. */
@@ -543,7 +542,7 @@ export function applyWizard(
   if (a.deliveryModel) set('setup', 'deliveryModel', a.deliveryModel);
   if (a.storage) set('setup', 'storage', a.storage);
   if (a.loginMethods) set('setup', 'loginMethods', a.loginMethods.filter((m) => typeof m === 'string'));
-  if (a.registration) set('setup', 'registration', a.registration);
+  if (a.registration === 'open' || a.registration === 'closed') set('setup', 'registration', a.registration);
   if (a.completed) set('setup', 'completed', true);
 
   if (a.owners && a.owners.length > 0) {
@@ -554,12 +553,14 @@ export function applyWizard(
   // WHO MAY SIGN UP IS ITS OWN ANSWER, not a side effect of the deployment mode. Deriving it
   // meant choosing "single player" silently closed registration, a decision the operator
   // never made and could not see, on a server other people may well be playing on.
-  if (a.registration === 'open') {
-    merge('login', { allowRegistration: true, inviteCode: '' });
-  } else if (a.registration === 'invite') {
-    merge('login', { allowRegistration: true, inviteCode: a.inviteCode ?? '' });
-  } else if (a.registration === 'closed') {
-    merge('login', { allowRegistration: false, inviteCode: '' });
+  // OT3-40: there is no invite-only answer any more (an old page sending 'invite' changes
+  // nothing), and a code an earlier wizard wrote is dropped rather than left to warn forever.
+  if (a.registration === 'open') merge('login', { allowRegistration: true });
+  else if (a.registration === 'closed') merge('login', { allowRegistration: false });
+  const login = next['login'] as Tree | undefined;
+  if (login && ('inviteCode' in login || 'inviteHelpUrl' in login)) {
+    const { inviteCode: _c, inviteHelpUrl: _u, ...rest } = login;
+    next['login'] = rest;
   }
 
   if (a.loginMethods) {

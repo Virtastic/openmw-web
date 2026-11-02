@@ -116,7 +116,6 @@ interface Pending {
   createdAt: number;
   linkAccountKey?: string; // set by /auth/link/:provider — bind, do not log in
   linkAccountName?: string;
-  invite?: string; // [login].inviteCode carried across the round trip
   // This round trip signs in to the ADMIN DASHBOARD, not the game: the callback mints an
   // admin session (for an account that holds a dashboard role) instead of a game ticket.
   adminMode?: boolean;

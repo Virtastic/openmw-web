@@ -5,11 +5,12 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from '../src/server';
 import { tmpDataDir } from './helpers';
 import { readDashboardTree } from '../src/net/admin/settings-store';
+import { DASHBOARD_FILE } from '../src/config';
 import { validAccountName, accountNameProblem } from '../src/core/accounts';
 import { normaliseDomain } from '../src/net/admin/setup-check';
 
@@ -401,13 +402,15 @@ test('registration is its own answer, and single player no longer closes it behi
   assert.equal(written.login?.allowRegistration, true,
     'single player with open sign-ups stays open');
 
-  // Invite mode carries the code, and clears it again when sign-ups are opened up.
+  // OT3-40: an old page's invite answer changes nothing, and a code an earlier wizard wrote
+  // is dropped on the next save rather than left in config.
+  writeFileSync(join(dataDir, DASHBOARD_FILE), '[login]\nallowRegistration = true\ninviteCode = "friends-only"\n');
   assert.equal((await call('/setup', { method: 'POST', token, body: {
     deploymentMode: 'single', registration: 'invite', inviteCode: 'friends-only', completed: true,
   } })).status, 200);
   written = readDashboardTree(dataDir) as { login?: Record<string, unknown> };
   assert.equal(written.login?.allowRegistration, true);
-  assert.equal(written.login?.inviteCode, 'friends-only');
+  assert.equal('inviteCode' in (written.login ?? {}), false, 'the stale code is dropped');
 
   // And closed really is closed, in either mode.
   assert.equal((await call('/setup', { method: 'POST', token, body: {
@@ -415,7 +418,6 @@ test('registration is its own answer, and single player no longer closes it behi
   } })).status, 200);
   written = readDashboardTree(dataDir) as { login?: Record<string, unknown> };
   assert.equal(written.login?.allowRegistration, false, 'multiplayer can be closed too');
-  assert.equal(written.login?.inviteCode, '', 'and the stale code does not linger');
 });
 
 test('S3 credentials are asked for in the browser, stored, and masked on read', async (t) => {
@@ -457,7 +459,7 @@ test('re-running Setup does not blank what it does not re-ask', async (t) => {
   const { call, token, dataDir } = await boot(t);
   assert.equal((await call('/setup', { method: 'POST', token, body: {
     deploymentMode: 'multiplayer', hosting: 'public', domain: 'mp.example.com',
-    registration: 'invite', inviteCode: 'come-in', storage: 's3',
+    registration: 'closed', storage: 's3',
     s3: { endpoint: 'https://x.r2.cloudflarestorage.com', bucket: 'worlds', region: 'auto',
           accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'the-actual-secret' },
     completed: true,
@@ -468,7 +470,7 @@ test('re-running Setup does not blank what it does not re-ask', async (t) => {
   };
   // Everything the wizard needs to pre-fill rather than re-ask.
   assert.equal(state.setup.domain, 'mp.example.com', 'the domain must come back');
-  assert.equal(state.setup.registration, 'invite');
+  assert.equal(state.setup.registration, 'closed');
   assert.equal(state.setup.s3Endpoint, 'https://x.r2.cloudflarestorage.com');
   assert.equal(state.setup.s3Bucket, 'worlds');
   // The keys themselves must NOT: they are secrets. A boolean is enough for the storage

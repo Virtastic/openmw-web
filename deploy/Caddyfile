@@ -39,8 +39,8 @@
 	# Matching "/" alone needs no query guard: index.html?nomw and ?src=local are not "/".
 	#
 	# 2026-10-12: morrowind.virtastic.app is a MULTIPLAYER server now. "/" is no longer the demo
-	# chooser: it is the gateway's sign-in page (Google / Discord / Microsoft, invite code for new
-	# players), routed in @gateway below. /join is launcher.html in DOOR MODE -- the username,
+	# chooser: it is the gateway's sign-in page (Google / Discord / Microsoft),
+	# routed in @gateway below. /join is launcher.html in DOOR MODE -- the username,
 	# character and world steps a signed-in player is handed to (see play/launcher.html <head>).
 	@door path /join
 	rewrite @door /launcher.html

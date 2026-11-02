@@ -331,7 +331,7 @@ export default async function run(ctx) {
 
   // The review step: every answer at once, completed, then the restart the page asks for.
   const answers = {
-    deploymentMode: 'multiplayer', loginMethods: ['password'], registration: 'closed', inviteCode: '',
+    deploymentMode: 'multiplayer', loginMethods: ['password'], registration: 'closed',
     contentProfile: profile, deliveryModel: 'serve', hosting: 'internal', httpPort: 80, domain: '',
     serverName: `Fresh ${tag}`, storage: 'local', domainVerified: '',
     s3: { endpoint: '', bucket: '', region: 'auto', accessKeyId: '', secretAccessKey: '' },

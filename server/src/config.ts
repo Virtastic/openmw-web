@@ -73,9 +73,6 @@ export interface Config {
   };
   login: {
     allowRegistration: boolean;
-    inviteCode: string;
-    /** Where a player without an invite is sent to get one (e.g. the server's Discord). "" = no link. */
-    inviteHelpUrl: string;
     resumeWindowSec: number;
     requireProfile: boolean;
     // The shipped client can auto-register with a FIXED, publicly known password
@@ -529,8 +526,6 @@ function validate(t: Tree): Config {
     },
     login: {
       allowRegistration: reqBool(t, 'login', 'allowRegistration'),
-      inviteCode: reqStr(t, 'login', 'inviteCode'),
-      inviteHelpUrl: reqStr(t, 'login', 'inviteHelpUrl'),
       resumeWindowSec: reqNum(t, 'login', 'resumeWindowSec'),
       requireProfile: reqBool(t, 'login', 'requireProfile'),
       allowHarnessAuth: reqBool(t, 'login', 'allowHarnessAuth'),
@@ -875,6 +870,9 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
   // OT3-49: the per-world [worlds] table is gone (one world; the count cap is [server] maxPlayers).
   if (operatorTrees.some((t) => t && isTree(t['worlds'])))
     log('warn', 'config.ignored_worlds', { fix: 'delete the [worlds] table: one world runs, capped by [server] maxPlayers' });
+  // OT3-40: the invite code is gone. A leftover [login] inviteCode / inviteHelpUrl changes nothing; say so.
+  if (operatorTrees.some((t) => t && isTree(t['login']) && ('inviteCode' in t['login'] || 'inviteHelpUrl' in t['login'])))
+    log('warn', 'config.ignored_invite_code', { fix: 'delete [login] inviteCode and inviteHelpUrl: the invite code was removed; use allowRegistration' });
   // THE GATEWAY CREDENTIAL GENERATES ITSELF. A world process proves to the gateway that it is
   // part of the platform with a shared secret, and without one a player cannot create a world
   // from inside the game at all. Requiring an operator to invent and paste a string into

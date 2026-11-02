@@ -57,8 +57,7 @@ export const HELP: Record<string, FieldHelp> = {
   },
 
   // --- login ----------------------------------------------------------------------------
-  'login.allowRegistration': { text: 'Off means nobody new can sign up; existing accounts still work. Use with an invite code for a closed group.' },
-  'login.inviteCode': { text: 'When set, registration also requires this code. A simple way to run a friends-only server without managing accounts by hand.' },
+  'login.allowRegistration': { text: 'Off means nobody new can sign up; existing accounts still work.' },
   // Not offered any more — a handle is always required (see DERIVED_FIELDS). Kept because the
   // wizard explains the same thing when it asks for the first account.
   'login.requireProfile': { text: 'Every player sets an email and a public username before entering the world. This is always on: the username is what other players see, and without one the only name the server has for somebody is their login identifier.' },

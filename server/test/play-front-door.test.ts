@@ -242,13 +242,8 @@ test('pages name their /admin/static assets by content hash (an edge cache canno
     'a missing file is left alone');
 });
 
-test('a refused invite says where to get one', () => {
-  // The refusal note REPLACES the invite form's note (note() sets innerHTML), so the Discord
-  // link the form showed vanished exactly when a player needed it (prod 2026-10-19: 36 refusals).
-  assert.match(play, /note\(said \? esc\(said\) \+ \(code === 'invite_required' \? helpLink : ''\)/,
-    'the invite_required refusal must carry the invite help link');
-  assert.ok(play.indexOf('const helpLink') < play.indexOf("const err = /[#&]mperror="),
-    'helpLink is defined before the refusal note uses it');
+test('the front door asks for no invite code (OT3-40)', () => {
+  assert.doesNotMatch(play, /inviteRequired|inviteHelpUrl|invite_required|invite_locked|id="inviteCode"/);
 });
 
 test('the front door: sign-in buttons are never greyed, a lost state cookie retries once, Chromium only', () => {

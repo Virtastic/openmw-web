@@ -96,7 +96,6 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 | `[server] maxPlayers` | `16` | sessions past Hello are counted |
 | `[server] password` | `""` | non-empty: Register/Login must carry a matching `serverPassword` |
 | `[login] allowRegistration` | `true` | `false` refuses `SessionRegister` |
-| `[login] inviteCode` | `""` | non-empty: `SessionRegister` must carry a matching `inviteCode` |
 | `[login] resumeWindowSec` | `300` | reserved for M1 session resume |
 | `[content] enforce` | `"names"` | `"names"` \| `"strict"` (M0: stub, behaves like names) \| `"off"` |
 | `[engine] enforce` | `"warn"` | engineHash mismatch: `"warn"` logs, `"refuse"` -> `BAD_ENGINE`, `"off"` skips |

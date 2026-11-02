@@ -170,10 +170,6 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
           capacityReason: cap.reason,
         },
         games: rows,
-        // THE INVITE LINK, owners only: the passphrase is a secret and the link carries
-        // it. The page builds the URL from its own origin; this is only the code.
-        ...(roleAtLeast(role, 'owner') && cfg.login.allowRegistration && cfg.login.inviteCode !== ''
-          ? { inviteCode: cfg.login.inviteCode } : {}),
         players: rows.flatMap((g) => g.players.map((p) => ({
           ...p, game: g.id, gameLabel: g.label, gameMode: g.mode, owner: g.owner,
         }))),

@@ -28,7 +28,7 @@ import { OidcError, OidcService, isProviderId, type ProviderId } from './oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, resolveSsoAccount } from './identities';
 import { log } from '../log';
 import { metrics } from '../metrics';
-import { allowSignup, checkInvite } from './invite';
+import { allowSignup } from './signup';
 import { setMwdataCookie } from '../data/locker-routes';
 
 const STATE_COOKIE = 'omwmp_oauth';
@@ -159,10 +159,6 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       } else {
         pending.returnUrl = resolveReturn(config.auth.returnUrl, req, url.searchParams.get('return'));
       }
-      // The invite code is carried across the round trip so an invite-only server stays
-      // invite-only through SSO (it is checked at account CREATION, in the callback).
-      const invite = url.searchParams.get('invite');
-      if (invite !== null) pending.invite = invite.slice(0, 128);
     }
     setCookie(res, STATE_COOKIE, started.state, {
       maxAgeSec: STATE_COOKIE_MAX_AGE,
@@ -223,16 +219,7 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       // then), so an unverified throwaway is refused.
       if (!identity.email)
         return fail(req, res, 'email_unverified', 'a new account needs a verified email at the provider', ip);
-      // Budgeted per IP, per identity and server-wide (auth/invite.ts): a wrong passphrase
-      // used to cost nothing beyond the general 5-a-minute auth budget.
-      const invite = checkInvite(config.login.inviteCode, pending.invite,
-        [`ip:${ip}`, `id:${identity.iss}|${identity.sub}`]);
-      if (invite === 'locked')
-        return fail(req, res, 'invite_locked', 'too many invite passphrase attempts', ip);
-      if (invite === 'wrong')
-        return fail(req, res, 'invite_required', pending.invite?.trim()
-          ? `wrong invite code (${pending.invite.trim().length} chars)` : 'no invite code', ip);
-      // Last, so a wrong invite or a refused email does not spend the budget.
+      // Last, so a refused email does not spend the budget.
       if (!allowSignup(ip))
         return fail(req, res, 'signup_limited', 'too many new accounts from this address', ip);
     }
@@ -399,12 +386,6 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
         providers: oidc.enabledProviders(),
         allowPasswordLogin: config.auth.allowPasswordLogin,
         allowRegistration: config.login.allowRegistration,
-        // Whether a NEW account needs the invite passphrase. A flag, never the passphrase: the
-        // page asks for it and sends it as ?invite= on /auth/<provider>/start. Without this no
-        // page knew to ask, so an invite-only server refused every SSO sign-up (invite_required).
-        inviteRequired: config.login.allowRegistration && config.login.inviteCode !== '',
-        // Only a public link (an https URL), so a typo cannot turn the sign-in page into an open redirect.
-        inviteHelpUrl: /^https:\/\/[^\s"<>]+$/.test(config.login.inviteHelpUrl) ? config.login.inviteHelpUrl : '',
       });
       return true;
     }

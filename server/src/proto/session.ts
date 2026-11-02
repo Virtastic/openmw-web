@@ -40,7 +40,6 @@ export interface SessionRegister {
   account: string;
   password: string;
   serverPassword?: string;
-  inviteCode?: string; // not in PROTOCOL.md yet; required when [login].inviteCode is set
   characterId?: string; // character slots: which character to play; absent = last played
 }
 export interface SessionLoginRequest {
@@ -188,7 +187,6 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
         account: str(o, 'account'),
         password: str(o, 'password'),
         ...(typeof o['serverPassword'] === 'string' ? { serverPassword: o['serverPassword'] } : {}),
-        ...(typeof o['inviteCode'] === 'string' ? { inviteCode: o['inviteCode'] } : {}),
         ...(charIdField(o)),
       };
     case 'SessionLoginRequest':

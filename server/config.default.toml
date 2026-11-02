@@ -25,8 +25,6 @@ password = ""
 
 [login]
 allowRegistration = true          # false -> SessionRegister is refused (AUTH_FAILED)
-inviteCode = ""                   # non-empty -> SessionRegister must carry a matching inviteCode
-inviteHelpUrl = ""                # where a player without an invite gets one (e.g. a Discord invite); shown on the sign-in page
 resumeWindowSec = 300             # M1 (reserved): how long a dropped session may resume via resumeToken
 requireProfile = false            # true -> SessionReady is refused until email + username are set (ProfileSetup)
 # The shipped client's ?mpauto=1 harness mode logs in with a FIXED, publicly known
@@ -441,8 +439,8 @@ deliveryModel = "esm"
 storage = ""
 # Which sign-in methods the wizard enabled, e.g. ["password", "discord"].
 loginMethods = []
-# "open", "invite" or "closed" - who may create an account. Asked whichever kind of server
-# this is; the real switches it sets are [login].allowRegistration and [login].inviteCode.
+# "open" or "closed" - who may create an account. Asked whichever kind of server
+# this is; the real switch it sets is [login].allowRegistration.
 registration = ""
 # The domain players reach this server on. NOT informational: the dashboard renders the
 # reverse proxy's whole configuration from it, so setting it here is what gets you a

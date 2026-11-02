@@ -334,7 +334,7 @@ const BLANK_ANSWERS = {
   // Who may create an account. ITS OWN QUESTION, asked whichever kind of server this is:
   // it used to be inferred from the deployment mode, so choosing "single player" silently
   // closed registration, which is a decision the operator never made and could not see.
-  registration: null, inviteCode: '',
+  registration: null,
   // The exact domain string that passed the reachability check. Not a boolean: editing
   // the domain afterwards must invalidate the result rather than inherit it.
   domainVerified: '',
@@ -549,7 +549,7 @@ function wireChoices(onPick) {
       // the difference between a helpful default and the silent one this used to apply.
       if (key === 'deploymentMode' && answers.deploymentMode !== value) {
         if (answers.registration === null) {
-          answers.registration = value === 'single' ? 'invite' : 'open';
+          answers.registration = value === 'single' ? 'closed' : 'open';
         }
       }
       answers[key] = value;
@@ -884,28 +884,11 @@ function stepRegistration() {
     <h5>Who can create an account?</h5>
     ${raw(choice('registration', 'open', 'Anyone',
       'Anyone who reaches the server can sign up.'))}
-    ${raw(choice('registration', 'invite', 'Only with an invite code',
-      'They sign up themselves, but only with the code you give them.', 'Good default'))}
     ${raw(choice('registration', 'closed', 'Nobody, I will create the accounts',
-      'Sign-ups refused. You add people from the Accounts page.'))}
-    ${raw(answers.registration === 'invite' ? html`
-      <div class="mt-3">
-        <label class="form-label">Invite code</label>
-        <input class="form-control" id="wzInvite" value="${answers.inviteCode}"
-          placeholder="something only your friends know" maxlength="64">
-      </div>` : '')}`,
-  { disabled: !answers.registration
-      || (answers.registration === 'invite' && answers.inviteCode.trim() === ''),
+      'Sign-ups refused. You add people from the Accounts page.'))}`,
+  { disabled: !answers.registration || answers.registration === 'invite',
     need: 'Choose who may sign up.' });
   wireChoices();
-  const inv = $('#wzInvite');
-  if (inv) {
-    inv.oninput = () => {
-      answers.inviteCode = inv.value;
-      $('#wzNext').disabled = inv.value.trim() === '';
-    };
-    setTimeout(() => inv.focus(), 30);
-  }
 }
 
 function stepContent() {
@@ -1527,7 +1510,7 @@ const LOGIN_LABEL = {
 };
 const REGISTRATION_LABEL = {
   open: 'Anyone can sign up',
-  invite: 'Only with an invite code',
+  invite: 'Invite code (removed; choose again in Setup)',
   closed: 'Nobody, accounts are created by an admin',
 };
 const CONTENT_LABEL = {
@@ -2041,17 +2024,13 @@ function renderPlatformOverview(o, stat, upText) {
       </td></tr>`).join('')
     : html`<tr><td colspan="5" class="vt-empty">No games are running. One starts when somebody plays.</td></tr>`;
 
-  // THE LINK TO SEND PEOPLE. On an invite-only server it carries the passphrase, so a player
-  // just opens it and signs in; the server only hands owners the code.
-  const inviteLink = o.inviteCode
-    ? `${location.origin}/?invite=${encodeURIComponent(o.inviteCode)}` : location.origin;
+  // THE LINK TO SEND PEOPLE: the front door. (OT3-40: no invite code rides on it any more.)
+  const inviteLink = location.origin;
   const inviteCard = html`
     <div class="card card-outline card-success mb-3">
-      <div class="card-header"><h3 class="card-title">${o.inviteCode ? 'Invite link' : 'Join link'}</h3></div>
+      <div class="card-header"><h3 class="card-title">Join link</h3></div>
       <div class="card-body">
-        <p class="text-secondary small mb-2">${o.inviteCode
-          ? 'Send this to anyone you want to let in. It carries the invite, so they open it and sign in; nothing to type. Change the invite code in Settings to stop old links working.'
-          : 'Send this to players: they open it in a browser and sign in.'}</p>
+        <p class="text-secondary small mb-2">Send this to players: they open it in a browser and sign in.</p>
         <div class="d-flex gap-2 align-items-center">
           <code class="vt-mono text-break flex-grow-1" id="inviteLink">${inviteLink}</code>
           <button class="btn btn-sm btn-outline-secondary" id="copyInvite">Copy</button>
