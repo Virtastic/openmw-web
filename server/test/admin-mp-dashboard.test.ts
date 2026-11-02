@@ -265,27 +265,27 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
   // PEOPLE FIRST: who is playing, and in whose game.
   const o = await j(await api('/overview'));
   assert.equal(o.platform, true);
-  const players = o.players as { name: string; game: string; gameLabel: string; level: number }[];
+  const players = o.players as { name: string; game?: string; level: number }[];
   assert.equal(players.length, 1);
   assert.equal(players[0]!.name, 'Runner');
-  assert.equal(players[0]!.game, 'alpha');
-  assert.equal(players[0]!.gameLabel, 'alpha', 'one public world (OT3-28): the label is its name');
+  assert.ok(!('game' in players[0]!), 'one world (OT3-64): a player is not labelled with a game');
   const health = o.health as { games: number; peers: number; capacityReason: string };
   assert.equal(health.games, 1);
   assert.equal(health.peers, 1);
   assert.ok(['count', 'memory'].includes(health.capacityReason));
   assert.ok(o.system, 'the machine reading is on the page where pressure matters');
 
-  // THE PROXY: one sign-in reaches the game, which sees the platform token plus the operator.
-  const proxied = await j(await api('/games/alpha/overview'));
+  // THE PROXY: one sign-in reaches the world, which sees the platform token plus the operator.
+  const proxied = await j(await api('/world/overview'));
   assert.deepEqual(proxied, { proxied: '/admin/api/overview', via: 'alpha' });
   const fwd = seen.headers.at(-1)!;
   assert.equal(fwd.authorization, `Bearer ${config.gateway.serverToken}`);
   assert.equal(fwd[H.key], 'owner@example.com');
   assert.equal(fwd[H.role], 'owner');
-  assert.equal((await api('/games/nope/overview')).status, 502, 'an unknown game is not a crash');
+  assert.equal((await api('/games/alpha/overview')).status, 404, 'no per-game proxy (OT3-64)');
+  assert.equal((await api('/games')).status, 404, 'no games list');
   // A viewer cannot promote themselves by sending the actor headers: they are replaced.
-  await api('/games/alpha/overview', { headers: { [H.role]: 'owner', [H.key]: 'somebody-else' } });
+  await api('/world/overview', { headers: { [H.role]: 'owner', [H.key]: 'somebody-else' } });
   assert.equal(seen.headers.at(-1)![H.key], 'owner@example.com');
 
   // The public listing does NOT carry the roster the supervisor now keeps.
@@ -452,16 +452,15 @@ test('the console renders the fields the server actually sends', () => {
   assert.doesNotMatch(app, /Nobody is in the world right now/, 'one world is not the shape here');
 });
 
-test('the multiplayer server page is people first, with games reached by proxy', () => {
+test('the multiplayer server page is people first, with the world reached by proxy', () => {
   const fn = /function renderPlatformOverview\([\s\S]*?\n\}/.exec(app);
   assert.ok(fn, 'no platform overview');
-  assert.match(fn[0], /In whose game/);
+  assert.doesNotMatch(fn[0], /In whose game/);
   assert.match(fn[0], /sysCards\(o\.system\)/);
   assert.doesNotMatch(fn[0], /o\.world\.id|maxPlayers/, 'one world and one cap are the wrong shape');
   assert.match(fn[0], /data-game-act="stop"/);
   assert.match(fn[0], /data-game-act="discard"/);
-  // Per-game calls carry the game; the platform's own calls do not.
-  assert.match(app, /`\/games\/\$\{gameId\}\$\{path\}`/);
-  assert.match(app, /const PLATFORM_PATHS = /);
-  assert.match(app, /\/\^#game=\(/);
+  // OT3-64: one world. World calls go through /world, and there is no game to open.
+  assert.match(app, /const worldApi = /);
+  assert.doesNotMatch(app, /gameId|#game=|openGame|PLATFORM_PATHS/);
 });

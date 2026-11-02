@@ -27,22 +27,13 @@ Recommended sequencing, cheapest useful thing first:
   idle reaping are day-one requirements the moment it exists, because the cost model goes
   from one container to N.
 
-## E3: rank SCOPE (the part that is not just a window)
+## E3: rank scope (settled: one world)
 
-Rank today is a single global number on the account (`0 player, 1 mod, 2 admin, 3 owner`).
-That is correct for a public world and **wrong the moment a player hosts anything**: being
-the host of your own co-op session must not make you a moderator of the public world, and
-the naive implementation — bump the host's rank — does exactly that.
-
-So rank needs a scope before any hosting exists:
-
-- `world:<id>` — assigned public-world staff. Persisted on the account, as today.
-- `session:<id>` — the host of a private session, and anyone they delegate. Lives and dies
-  with the session; never persisted, never consulted outside it.
-
-Until private sessions exist there is exactly one scope, so the change is small now and
-large later. It is listed here so the decision is made deliberately rather than discovered
-when someone hosts a game and finds they can ban people from the public world.
+Rank is a single global number on the account (`0 player, 1 mod, 2 admin, 3 owner`). There
+is one public world and no hosted sessions, so there is exactly one scope and nothing more to
+build. The `world:<id>` / `session:<id>` split proposed here earlier is dropped (OT3-64). If
+private sessions are ever built, they must not reuse the global rank: hosting a session must
+not make anyone staff of the public world.
 
 ## E3: the window (removed)
 
@@ -50,14 +41,11 @@ The in-game admin window (`scripts/mp/adminui.lua`) and the typed `/slash` path 
 removed once the web dashboard existed: two routes to the same actions were two places for
 the rank check to be wrong, and one of them lived on the player's machine. Operator commands
 now enter only through the dashboard's console (`POST /admin/api/command` → `Admin.exec`),
-which the multiplayer server proxies to whichever game an operator has open. The server
+which the multiplayer server proxies to the world process (`/admin/api/world/*`). The server
 gate is, as before, the only authority.
 
 ## Verification
 
-- Two friends auto-host and join with no config *(only if E1 is built)*.
 - A host kicks from the in-game menu; the kick appears in the audit log.
 - An assigned world admin can act; a non-admin cannot — asserted against the SERVER's
   refusal, not against the button being hidden.
-- A session host has no elevated rights in the public world (the scope test — the one that
-  fails silently and matters most).

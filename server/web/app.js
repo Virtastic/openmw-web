@@ -35,25 +35,17 @@ const token = {
 
 let state = { firstRun: true, authed: false, role: null, name: null, maintenance: { on: false } };
 
-// WHICH GAME. On the multiplayer server the operator opens one of its games, and from then on
-// every per-game call is proxied to that game's process (gateway/admin.ts); one sign-in, one
-// URL. The platform's own calls -- sign-in, setup, the games list, the shared account store,
-// updates -- stay on the platform whatever game is open.
-const GAME_KEY = 'omwmp_admin_game';
-let gameId = (() => { try { return sessionStorage.getItem(GAME_KEY) || ''; } catch { return ''; } })();
-// mods is PLATFORM on the multiplayer server: one game data dir (gameDataDir(sharedDir)) is
-// shared by every game, and only the gateway's /admin/api/mods* routes see it. Proxied to a
-// game it hit that WORLD's empty data dir -- a 2.7 GB upload then "That upload has expired".
-const PLATFORM_PATHS = /^\/(state|login|logout|setup|forgot-password|reset-password|games|rolling-restart|accounts|sessions|totp|updates|update|mods)(\/|\?|$)/;
-const apiPath = (path) => (gameId && !PLATFORM_PATHS.test(path) ? `/games/${gameId}${path}` : path);
-function openGame(id) { gameId = id; try { sessionStorage.setItem(GAME_KEY, id); } catch { /* private mode */ } }
-function closeGame() { gameId = ''; try { sessionStorage.removeItem(GAME_KEY); } catch { /* private mode */ } }
+// THE WORLD. On the multiplayer server the dashboard is served by the gateway, and the one
+// world runs in its own process. Calls that act on players in the world go through the
+// gateway's proxy (/admin/api/world/*, gateway/admin.ts); everything else is the platform's.
+// worldApi() is the one place that choice is made.
+const worldApi = (path, opts) => api(platform() ? `/world${path}` : path, opts);
 
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   if (token.get()) headers.authorization = `Bearer ${token.get()}`;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  const res = await fetch(`/admin/api${apiPath(path)}`, {
+  const res = await fetch(`/admin/api${path}`, {
     // NEVER FROM THE HTTP CACHE. API answers are live state, and a cached one is worse than
     // none: a proxy that answered a single call with a permanent redirect (308, which browsers
     // cache) left every later call replaying that redirect locally, never reaching the server,
@@ -179,12 +171,9 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
 // THREE PLACES THE SAME PAGE CAN BE, and each entry says where it belongs:
 //   solo: false   not in single player -- the page acts on players connected to a world, and
 //                 in single player the browser runs the engine and nobody ever connects.
-//   at: 'game'    only on a game: its own roster. On the multiplayer server
-//                 these appear once a game is open, and act on that game through the proxy.
-//   at: 'platform'  only on the multiplayer server, outside any game: the rolling restart.
-//   shared: true  the shared stores (accounts, admin sessions, game data + mods) and the container itself
-//                 (updates): on the multiplayer server they belong to the platform, so they
-//                 step aside while a game is open rather than pretending to be that game's.
+//   at: 'platform'  only on the multiplayer server: the rolling restart.
+//   shared: true  the shared stores (accounts, admin sessions, game data + mods) and the
+//                 container itself (updates): on the multiplayer server they are the platform's.
 // The rule is "does nothing here", never "sounds like the other mode".
 const NAV = [
   { group: 'Server', items: [
@@ -194,8 +183,7 @@ const NAV = [
     // connects, so the roster is permanently empty and there is nobody to broadcast to, greet
     // with a message of the day, read a chat log for, report, or hand an item. The page is
     // inert rather than merely unhelpful, so it is removed rather than trimmed.
-    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false, at: 'game' },
-    // shared, not at:'game': the multiplayer server has ONE game data dir for all its games.
+    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false },
     { hash: '#mods', label: 'Mod manager', icon: 'bi-box-seam', role: 'viewer', shared: true },
     { hash: '#gamefiles', label: 'Game files', icon: 'bi-controller', role: 'viewer', shared: true },
   ] },
@@ -249,9 +237,7 @@ const platform = () => state.platform === true;
 /** Does this page do anything where the operator is right now? See the NAV comment. */
 function navVisible(i) {
   if (i.solo === false && singlePlayer()) return false;
-  if (i.at === 'platform' && !(platform() && !gameId)) return false;
-  if (i.at === 'game' && platform() && !gameId) return false;
-  if (i.shared && platform() && gameId) return false;
+  if (i.at === 'platform' && !platform()) return false;
   return true;
 }
 
@@ -294,14 +280,7 @@ function paintChrome() {
   $('#topWorld').textContent = state.serverName || '';
 
   const banner = $('#banner');
-  // Which game the operator is looking at, on every page, with the way back. Without it a
-  // roster or a settings form on the multiplayer server has no way of saying WHOSE it is.
-  banner.innerHTML = (platform() && gameId
-    ? html`<div class="callout callout-info py-2">
-        You are looking at one game: <span class="vt-mono">${gameId}</span>.
-        <a href="#games">Back to all games</a>.
-      </div>` : '')
-    + (state.configFallback
+  banner.innerHTML = (state.configFallback
     ? html`<div class="callout callout-warning">
         <h5><i class="bi bi-arrow-counterclockwise me-1"></i> Configuration was rolled back</h5>
         The settings last saved here failed to load, so the server started from an earlier
@@ -1949,7 +1928,7 @@ async function pageOverview() {
     <tr><td>${p.name}</td><td class="text-secondary">${p.account}</td>
       <td>${p.cellKey || "-"}</td><td>${rankLabel(p.rank)}</td><td>${raw(playerFlags(p))}</td></tr>`).join('')
     : html`<tr><td colspan="5" class="vt-empty">Nobody is playing right now.</td></tr>`;
-  const checklist = gameId ? '' : setupChecklist();
+  const checklist = setupChecklist();
   view().innerHTML = html`
     <div class="row">
       ${raw(stat(`Players (of ${o.maxPlayers})`, `${o.players.length}`, 'bi-people', 'primary', '#console'))}
@@ -1986,43 +1965,33 @@ function playerFlags(p) {
   return out;
 }
 
-/** People first: who is playing and in whose game; then the games; then the box. */
+/** People first: who is playing; then the world process; then the box. */
 function renderPlatformOverview(o, stat, upText) {
   const h = o.health || {};
   const games = o.games || [];
   const players = o.players || [];
-  const byId = new Map(games.map((g) => [g.id, g]));
-  // "Michael's game" with the id alongside, small: the name is what an operator recognises,
-  // the id is what the log lines and the proxy use.
   const gameLabel = (g) => html`${g.label} <span class="text-secondary small vt-mono">${g.id}</span>`;
 
-  const playerRows = players.length ? players.map((p) => {
-    const g = byId.get(p.game);
-    return html`
-    <tr><td>${p.name}</td>
-      <td><a href="#game=${p.game}">${raw(g ? gameLabel(g) : esc(p.game))}</a></td>
-      <td>${p.gameMode === 'party' ? 'Party' : 'Solo'}</td>
+  const playerRows = players.length ? players.map((p) => html`
+    <tr><td><a href="#console">${p.name}</a></td>
       <td class="text-secondary">${p.cellKey || '-'}</td>
-      <td>${p.level ?? '-'}</td></tr>`;
-  }).join('')
-    : html`<tr><td colspan="5" class="vt-empty">Nobody is playing right now.</td></tr>`;
+      <td>${p.level ?? '-'}</td></tr>`).join('')
+    : html`<tr><td colspan="3" class="vt-empty">Nobody is playing right now.</td></tr>`;
 
   const owner = can('owner');
   const gameRows = games.length ? games.map((g) => html`
-    <tr><td><a href="#game=${g.id}">${raw(gameLabel(g))}</a></td>
-      <td>${g.mode === 'party' ? 'Party' : 'Solo'}</td>
+    <tr><td>${raw(gameLabel(g))}</td>
       <td>${g.playerCount}${raw(g.connectedCount > g.playerCount
         ? html` <span class="text-secondary small">(+${g.connectedCount - g.playerCount} joining)</span>` : '')}</td>
       <td>${raw(gameStatus(g))}</td>
       <td class="text-end text-nowrap">
-        <a class="btn btn-sm btn-outline-secondary" href="#game=${g.id}">Open</a>
         ${raw(owner ? html`
         <button class="btn btn-sm btn-outline-secondary" data-game-act="stop" data-g="${g.id}"
           title="Stop the process; it starts again when its owner returns">Stop</button>
         <button class="btn btn-sm btn-outline-danger" data-game-act="discard" data-g="${g.id}"
           title="Stop it and delete its data">Discard</button>` : '')}
       </td></tr>`).join('')
-    : html`<tr><td colspan="5" class="vt-empty">No games are running. One starts when somebody plays.</td></tr>`;
+    : html`<tr><td colspan="4" class="vt-empty">No games are running. One starts when somebody plays.</td></tr>`;
 
   // THE LINK TO SEND PEOPLE: the front door. (OT3-40: no invite code rides on it any more.)
   const inviteLink = location.origin;
@@ -2048,13 +2017,13 @@ function renderPlatformOverview(o, stat, upText) {
     <div class="card card-outline card-primary mb-3">
       <div class="card-header"><h3 class="card-title">Playing now</h3></div>
       <div class="table-responsive"><table class="table table-hover mb-0">
-        <thead><tr><th>Player</th><th>In whose game</th><th>Mode</th><th>Where</th><th>Level</th></tr></thead>
+        <thead><tr><th>Player</th><th>Where</th><th>Level</th></tr></thead>
         <tbody>${raw(playerRows)}</tbody></table></div></div>
     <div class="card card-outline card-secondary mb-3">
       <div class="card-header"><h3 class="card-title">Games</h3>
         <div class="card-tools small text-secondary">${capacityText(h.capacityReason)}</div></div>
       <div class="table-responsive"><table class="table table-hover mb-0">
-        <thead><tr><th>Game</th><th>Mode</th><th>Players</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Game</th><th>Players</th><th>Status</th><th></th></tr></thead>
         <tbody>${raw(gameRows)}</tbody></table></div></div>
     ${raw(setupChecklist())}`;
   $('#copyInvite').onclick = async () => {
@@ -2070,9 +2039,6 @@ function renderPlatformOverview(o, stat, upText) {
 function gameStatus(g) {
   if (g.blockedUntil) return html`<span class="badge text-bg-danger">crash backoff</span>`;
   if (!g.up) return html`<span class="badge text-bg-warning">starting</span>`;
-  if (g.reapsInSec !== null && g.reapsInSec !== undefined) {
-    return html`<span class="text-secondary">empty, reaps in ${g.reapsInSec}s</span>`;
-  }
   const m = Math.round(g.uptime / 60);
   const peers = g.peerCount ? `, ${g.peerCount} peer${g.peerCount === 1 ? '' : 's'}` : '';
   return html`up ${m < 60 ? `${m}m` : `${Math.round(m / 60)}h`}${peers}`;
@@ -2320,7 +2286,7 @@ function wireChecklist() {
 async function runCmd(line) {
   const out = $('#cmdOut');
   try {
-    const r = await api('/command', { method: 'POST', body: { line } });
+    const r = await worldApi('/command', { method: 'POST', body: { line } });
     out.textContent = r.message || (r.ok ? 'Done.' : 'Failed.');
     out.scrollIntoView({ block: 'nearest' });
     return r.ok;
@@ -2333,8 +2299,8 @@ const q = (s) => (/\s/.test(s) ? `"${s}"` : s);
 async function pageConsole() {
   setTitle('Players & commands', 'Who is here, and everything you can do about it.');
   const [o, reports] = await Promise.all([
-    api('/overview'),
-    api('/reports?limit=20').catch(() => ({ reports: [] })),
+    worldApi('/overview'),
+    worldApi('/reports?limit=20').catch(() => ({ reports: [] })),
   ]);
   const owner = can('owner');
 
@@ -2502,7 +2468,7 @@ async function pageConsole() {
         if (!ok) return;
       }
       try {
-        const r = await api('/action', { method: 'POST', body: { kind, target } });
+        const r = await worldApi('/action', { method: 'POST', body: { kind, target } });
         toast(r.message || `${kind} done.`, r.ok === false ? 'danger' : 'success');
         if (kind === 'kick' || kind === 'ban') route();
       } catch (e) { toast(e.message, 'danger'); }
@@ -2513,7 +2479,7 @@ async function pageConsole() {
     const msg = $('#bcMsg').value.trim();
     if (!msg) return;
     try {
-      await api('/action', { method: 'POST', body: { kind: 'broadcast', detail: msg } });
+      await worldApi('/action', { method: 'POST', body: { kind: 'broadcast', detail: msg } });
       toast('Sent to everyone.');
       $('#bcMsg').value = '';
     } catch (e) { toast(e.message, 'danger'); }
@@ -2576,7 +2542,7 @@ async function pageConsole() {
     });
     if (!ok) return;
     try {
-      const r = await api('/action', { method: 'POST', body: { kind: 'resetCell', target: cell } });
+      const r = await worldApi('/action', { method: 'POST', body: { kind: 'resetCell', target: cell } });
       toast(r.message || 'Cell reset.', r.ok === false ? 'danger' : 'success');
     } catch (e) { toast(e.message, 'danger'); }
   };
@@ -2623,7 +2589,7 @@ async function pageSettings(only) {
   // reads (GATEWAY_ONLY). On the multiplayer server itself everything shows: what is saved
   // there is the defaults every game starts from.
   const hide = singlePlayer() ? new Set(settingsCache.multiplayerOnly || [])
-    : (!platform() || gameId) ? new Set(settingsCache.gatewayOnly || [])
+    : !platform() ? new Set(settingsCache.gatewayOnly || [])
       : new Set();
   const keep = (names) => names.filter((n) => !hide.has(n));
 
@@ -2785,7 +2751,7 @@ function restartPrompt() {
   const b = $('#banner');
   // On the platform this button restarts the multiplayer server and EVERY game with it;
   // the rolling restart reaches the same settings one game at a time (#381a).
-  const rolling = platform() && !gameId;
+  const rolling = platform();
   b.innerHTML = html`<div class="callout callout-warning d-flex align-items-center">
     <div class="flex-grow-1"><strong>Saved, not live yet.</strong>
       The server reads its settings at startup, so it needs a restart.${raw(rolling
@@ -4266,7 +4232,7 @@ async function pageMaintenance() {
         <i class="bi bi-cone-striped me-2"></i>Maintenance mode
         ${raw(m.on ? ' <span class="badge text-bg-warning ms-2">on</span>' : '')}</h3></div>
       <div class="card-body">
-      <p class="small text-secondary">${raw(platform() && !gameId
+      <p class="small text-secondary">${raw(platform()
         ? 'Closes every game: everyone is disconnected, nobody can start or join a game, and '
           + 'the message is shown instead. Use it before changing settings the games share, so '
           + 'nobody is halfway through something when they restart.'
@@ -4310,7 +4276,7 @@ async function pageRestart() {
       ${raw(state.maintenance?.on || singlePlayer() ? '' : html`<div class="vt-section-note mb-3">
         Nobody has been warned. If people are playing, turn on
         <a href="#maintenance">maintenance mode</a> first.</div>`)}
-      ${raw(platform() && !gameId ? html`<div class="vt-section-note mb-3">
+      ${raw(platform() ? html`<div class="vt-section-note mb-3">
         This restarts the multiplayer server and every game with it. To pick up new settings
         without dropping everyone at once, use the <a href="#rolling">rolling restart</a>.</div>` : '')}
       <button class="btn btn-warning" id="mRestart">Restart the server</button>
@@ -4849,11 +4815,6 @@ async function route() {
   if (!state.authed) return pageLogin();
 
   // Opening a game, and leaving it. A link, so a row on the Overview and a bookmark both work:
-  // /admin#game=<id> opens that game's console; #games goes back to all of them.
-  const game = /^#game=([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(hash);
-  if (game && platform()) { openGame(game[1]); return go('#console'); }
-  if (hash === '#games') { closeGame(); return go('#overview'); }
-  if (gameId && !platform()) closeGame(); // a game context from another origin's storage
 
   // Hiding a nav link is not the same as closing the page: the hash still works when typed,
   // bookmarked, or followed from an older link. Send it home rather than rendering a console

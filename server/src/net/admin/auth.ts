@@ -61,8 +61,8 @@ export const GATEWAY_ACTOR_HEADERS = {
  * THE THIRD PRINCIPAL: the multiplayer server acting for one of its operators.
  *
  * Admin sessions live in memory, per process. The multiplayer server signs an operator in
- * once and then opens the pages of a GAME it supervises on their behalf — a different
- * process, which cannot recognise the session. So the hop is authenticated with the
+ * once and then opens the pages of the WORLD process on their behalf (gateway/admin.ts,
+ * /admin/api/world/*) — a different process, which cannot recognise the session. So the hop is authenticated with the
  * platform's own credential, [gateway].serverToken (the one every game already loads from
  * the shared config), and the acting operator travels in headers so the audit trail names a
  * person rather than a token.

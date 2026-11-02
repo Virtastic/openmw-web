@@ -8,21 +8,19 @@
 // game starts from. Nothing here is a second dashboard — it is the one dashboard, told which
 // process it is running in.
 //
-// Three things are this file's own:
+// Things this file owns:
 //
-//   GET  /admin/api/games                 the games, with owner names and process detail
 //   POST /admin/api/games/:id/stop        [owner] stop one game (revive-on-dial brings it back)
 //   POST /admin/api/games/:id/discard     [owner] stop it and delete its data (type-to-confirm)
 //   POST /admin/api/rolling-restart       [owner] restart every game one at a time
-//   *    /admin/api/games/:id/<anything>  THE PROXY: that game's own /admin/api/<anything>
+//   *    /admin/api/world/<anything>      THE PROXY: the world's own /admin/api/<anything>
 //
-// THE PROXY IS HOW ONE SIGN-IN REACHES EVERY GAME. Admin sessions live in memory per process,
-// so a game cannot recognise the operator's token. The hop is authenticated with the
-// platform credential every game already loads, [gateway].serverToken, and the operator's
-// identity and role travel in headers; the game accepts that pair from loopback only (see
-// gatewayPrincipal in net/admin/auth.ts) and audits the request under the operator's name.
-// Every per-game page — roster, moderation, chat log, quests, mods, game files, the game's
-// own settings — keeps working unchanged behind it.
+// THE PROXY IS HOW THE ONE SIGN-IN REACHES THE WORLD (OT3-64: there is one world, so there is
+// no game to pick). Admin sessions live in memory per process, so the world process cannot
+// recognise the operator's token. The hop is authenticated with the platform credential the
+// world already loads, [gateway].serverToken, and the operator's identity and role travel in
+// headers; the world accepts that pair from loopback only (see gatewayPrincipal in
+// net/admin/auth.ts) and audits the request under the operator's name.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { request as httpRequest } from 'node:http';
@@ -66,23 +64,16 @@ interface GatewayAdminDeps {
   maintenance: AdminDeps['maintenance'];
 }
 
-/** A game as the dashboard shows it: the owner's NAME first, the id alongside. */
+/** The world process as the dashboard shows it. */
 interface GameRow {
   id: string;
-  mode: string;
   up: boolean;
-  abandoned: boolean;
-  owner: string | null;
-  ownerName: string | null;
-  /** "Michael's game", or the game's own name when it has no owner on record. */
   label: string;
   playerCount: number;
   connectedCount: number;
   maxPlayers: number;
   peerCount: number;
   uptime: number;
-  /** Seconds until the reaper takes an empty game, or null while someone is in it. */
-  reapsInSec: number | null;
   pid: number | null;
   blockedUntil: number | null;
   fastCrashes: number;
@@ -102,25 +93,15 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
   const token = (): string => deps.config().gateway.serverToken;
 
   const gameRow = (g: WorldInfo, now: number): GameRow => {
-    // Same cross-process rule as a world's displayName: the gateway has touched almost no
-    // accounts, so without the shared usernames table every game would be labelled with its
-    // owner's ACCOUNT KEY — the login identifier, on an operator's screen and in the audit
-    // line — instead of the handle players know them by.
-    // OT3-28: one public world, no owner. The row keeps its shape for the frozen dashboard.
     return {
       id: g.id,
-      mode: 'public',
       up: g.up,
-      abandoned: g.abandoned,
-      owner: null,
-      ownerName: null,
       label: g.name,
       playerCount: g.playerCount,
       connectedCount: g.connectedCount,
       maxPlayers: g.maxPlayers,
       peerCount: g.peerCount,
       uptime: Math.round((now - g.startedAt) / 1000),
-      reapsInSec: null,
       pid: g.pid ?? null,
       blockedUntil: g.blockedUntil ?? null,
       fastCrashes: g.fastCrashes,
@@ -132,7 +113,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     return deps.worlds.list().map((g) => gameRow(g, now));
   };
 
-  const refuse = { ok: false, message: 'Open a game first: this acts on the players of one game, and the multiplayer server has none of its own.' };
+  const refuse = { ok: false, message: 'This acts on players in the world: use the Players page, which goes to the world process.' };
 
   const base = adminRoutes({
     dataDir: deps.sharedDir,
@@ -149,9 +130,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     version: deps.version,
     clientDir: existsSync(defaultClientDir()) ? defaultClientDir() : undefined,
 
-    // PEOPLE FIRST. Rows are players, each labelled with whose game they are in; the games
-    // and the box's health come after. This is the reading the page exists to give here,
-    // and the one a single game's "World" card and player cap could never give.
+    // PEOPLE FIRST: who is playing, then the world process and the box's health.
     overview: async (role) => {
       const now = Date.now();
       const cap = deps.worlds.capacity();
@@ -170,9 +149,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
           capacityReason: cap.reason,
         },
         games: rows,
-        players: rows.flatMap((g) => g.players.map((p) => ({
-          ...p, game: g.id, gameLabel: g.label, gameMode: g.mode, owner: g.owner,
-        }))),
+        players: rows.flatMap((g) => g.players),
       };
     },
     reports: async (limit) => ({
@@ -255,9 +232,17 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     const path = url.pathname;
     const method = req.method ?? 'GET';
 
-    if (method === 'GET' && path === '/admin/api/games') {
-      if (!await gate(req, res, auth, 'viewer')) return true;
-      json(res, 200, { games: games() });
+    if (path === '/admin/api/world' || path.startsWith('/admin/api/world/')) {
+      // The world's own API. The role check is viewer HERE (is this a signed-in operator at
+      // all); the world applies its own per-route role to the one forwarded in the headers.
+      const ctx = await gate(req, res, auth, 'viewer');
+      if (!ctx) return true;
+      const world = deps.worlds.list()[0];
+      if (!world || !world.up) {
+        json(res, 502, { error: 'The world is not running right now. It starts again when somebody plays.' });
+        return true;
+      }
+      proxy(req, res, world.port, `/admin/api/${path.slice('/admin/api/world/'.length)}${url.search}`, ctx, token());
       return true;
     }
     if (method === 'POST' && path === '/admin/api/rolling-restart') {
@@ -306,19 +291,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
           : { ok: false, error: 'no such game, running or on disk' });
         return true;
       }
-
-      // Everything else is that game's own API. The role check is viewer HERE — is this a
-      // signed-in operator at all — and the game applies its own per-route role to the one
-      // forwarded in the headers, so a moderator gets exactly what a moderator gets on the
-      // game directly.
-      const ctx = await gate(req, res, auth, 'viewer');
-      if (!ctx) return true;
-      const game = deps.worlds.get(id);
-      if (!game || !game.up) {
-        json(res, 502, { error: 'That game is not running right now. It starts again when its owner comes back.' });
-        return true;
-      }
-      proxy(req, res, game.port, `/admin/api/${rest}${url.search}`, ctx, token());
+      json(res, 404, { error: 'not found' });
       return true;
     }
 
