@@ -593,9 +593,12 @@ dispatch.SessionWelcome = function(msg)
     -- M2: non-null playerRecord = stored snapshot to restore (json.null when fresh).
     net.playerRecord = (type(msg.playerRecord) == 'table' and msg.playerRecord ~= json.null)
         and msg.playerRecord or nil
-    -- M5: server rules the client must honour locally (PvP gating, difficulty display).
+    -- M5: server rules the client must honour locally (PvP gating, difficulty).
     net.flags = (type(msg.flags) == 'table' and msg.flags ~= json.null) and msg.flags or {}
     mp.set('pvp', tostring(net.flags.pvp == true))
+    -- OT3-88: the server's difficulty is the one combat scales with, on this side and the peer's
+    -- (whichever rules the body). The engine prefers it over the local slider from here on.
+    if type(net.flags.difficulty) == 'number' then pcall(mp.setDifficulty, net.flags.difficulty) end
     -- Which movement model this world runs (the WoW model: the client owns its position), so a
     -- scenario asserts the right thing: under it there is no reconcile stream to wait for.
     mp.set('clientAuthority', tostring(net.flags.clientAuthority == true))

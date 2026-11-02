@@ -240,8 +240,8 @@ export function helloOk(serverName: string, contentPolicy: 'names' | 'strict' | 
   return JSON.stringify({ t: 'SessionHelloOk', serverName, contentPolicy });
 }
 
-// M5: rule flags the client reflects locally (difficulty is applied client-side, in the
-// victim's own combat pipeline — the server never computes damage).
+// M5: rule flags the client reflects locally. difficulty (OT3-88) overrides the local slider
+// in the engine of whichever side rules the body -- the server never computes damage.
 interface SessionFlags {
   pvp: boolean;
   difficulty: number;

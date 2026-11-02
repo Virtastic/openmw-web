@@ -395,6 +395,24 @@ namespace MWMP
 
     namespace
     {
+        bool sDifficultySet = false;
+        int sDifficulty = 0;
+    }
+
+    void setDifficultyOverride(int difficulty)
+    {
+        // Same range the settings sanitizer clamps the slider to.
+        sDifficulty = std::clamp(difficulty, -500, 500);
+        sDifficultySet = true;
+    }
+
+    int effectiveDifficulty(int local)
+    {
+        return sDifficultySet ? sDifficulty : local;
+    }
+
+    namespace
+    {
         float sFallOwed = 0.f;
         bool sFallKnockdown = false;
     }

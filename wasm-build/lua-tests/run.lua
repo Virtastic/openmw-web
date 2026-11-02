@@ -5244,5 +5244,17 @@ do
   check('engageCombat is skipped for a busy avatar', i ~= nil and j ~= nil and i < j)
   check('the busy mark goes with the avatar', (pp:match('void setAvatar%\(.-\n    }') or ''):find('busyAvatars().erase(ref)', 1, true) ~= nil)
 end
+-- OT3-88: the server's difficulty wins over the local slider, client and peer alike.
+print('net.lua / difficultyscaling.cpp -- the server difficulty is enforced (OT3-88)')
+do
+  local nl = io.open('./openmw/files/data/scripts/mp/net.lua'):read('*a')
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  local ds = io.open('./openmw/apps/openmw/mwmechanics/difficultyscaling.cpp'):read('*a')
+  local fn = nl:match('dispatch%.SessionWelcome = function%(msg%)(.-)\nend') or ''
+  check('SessionWelcome hands flags.difficulty to the engine',
+    fn:find('pcall(mp.setDifficulty, net.flags.difficulty)', 1, true) ~= nil and lb:find('api["setDifficulty"]', 1, true) ~= nil)
+  check('scaleDamage reads the server value before the slider',
+    ds:find('MWMP::effectiveDifficulty(Settings::game().mDifficulty)', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

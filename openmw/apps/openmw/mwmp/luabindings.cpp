@@ -601,6 +601,8 @@ namespace MWMP
                 "MPStartGlobalScript");
         };
         api["setLocalSummons"] = [](bool enabled) { setLocalSummons(enabled); };
+        // OT3-88: the server's [rules].difficulty wins over the local slider (scaleDamage).
+        api["setDifficulty"] = [](int difficulty) { setDifficultyOverride(difficulty); };
         // Peer only: the world owner's level, which levelled lists roll against everywhere
         // (mwmechanics/actors.cpp nearestAvatarLevel). 0 = no owner known, nearest avatar rules.
         api["setPartyLevel"] = [](int level) { setPartyLevel(level); };

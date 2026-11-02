@@ -203,6 +203,15 @@ namespace MWMP
      *  overlay stay, they are what the player feels. */
     inline bool peerRulesBody() { return !localSummonsEnabled(); }
 
+    /** OT3-88: the SERVER's [rules].difficulty (SessionWelcome.flags.difficulty), set by
+     *  scripts/mp/net.lua on both the client and the sim peer. Once set it replaces the local
+     *  difficulty slider in scaleDamage, so whichever side rules the body (the peer while a
+     *  holder exists, the client in degraded mode) scales with the server's value and a
+     *  player's own slider no longer changes anything in MP. */
+    void setDifficultyOverride(int difficulty);
+    /** The server's difficulty when one was set, else `local` (singleplayer: the slider). */
+    int effectiveDifficulty(int local);
+
     /** CLIENT ONLY: the fall damage the gate above did not apply. Under the WoW model the avatar
      *  is PLACED on the owner's poses and never falls by itself, so nobody took it at all (prod
      *  2026-10-23: long falls cost nothing). character.cpp records it here; Lua (identity.lua)

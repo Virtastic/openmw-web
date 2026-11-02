@@ -17,7 +17,8 @@ float scaleDamage(float damage, const MWWorld::Ptr& attacker, const MWWorld::Ptr
     static const float fDifficultyMult
         = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>().find("fDifficultyMult")->mValue.getFloat();
 
-    const float difficultyTerm = 0.01f * Settings::game().mDifficulty;
+    // MP (OT3-88): the server's [rules].difficulty, not this machine's slider.
+    const float difficultyTerm = 0.01f * MWMP::effectiveDifficulty(Settings::game().mDifficulty);
 
     // MP: an AVATAR is a player for difficulty purposes. On the sim peer `player` is the peer's
     // own idle dummy, so without this no real player's damage was ever scaled -- silently

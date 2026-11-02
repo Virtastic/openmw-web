@@ -2218,7 +2218,8 @@ export class Connection implements Peer {
     this.sendText(
       welcome(this.player.id, sessionToken, this.ctx.motd(), this.outSeq, record, {
         pvp: this.ctx.config.rules.pvp,
-        difficulty: this.ctx.config.rules.difficulty,
+        // OT3-88: enforced by the engine on both sides; clamp to the engine's slider range.
+        difficulty: Math.max(-500, Math.min(500, Math.round(this.ctx.config.rules.difficulty))),
         renderLod: this.ctx.config.limits.renderLod,
         lodNearRadius: this.ctx.config.limits.lodNearRadius,
         lodMidRadius: this.ctx.config.limits.lodMidRadius,
