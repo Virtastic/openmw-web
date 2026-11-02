@@ -268,10 +268,15 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
   assert.equal(players.length, 1);
   assert.equal(players[0]!.name, 'Runner');
   assert.ok(!('game' in players[0]!), 'one world (OT3-64): a player is not labelled with a game');
-  const health = o.health as { games: number; peers: number; capacityReason: string };
-  assert.equal(health.games, 1);
-  assert.equal(health.peers, 1);
-  assert.ok(['count', 'memory'].includes(health.capacityReason));
+  // OT3-34: one World health card, no games list.
+  assert.ok(!('games' in o) && !('health' in o), 'no per-game table data');
+  const world = o.world as { id: string; up: boolean; playerCount: number; peerCount: number; uptime: number; players?: unknown };
+  assert.equal(world.id, 'alpha');
+  assert.equal(world.up, true);
+  assert.equal(world.playerCount, 1);
+  assert.equal(world.peerCount, 1);
+  assert.equal(typeof world.uptime, 'number');
+  assert.ok(!('players' in world), 'the roster is once, at the top');
   assert.ok(o.system, 'the machine reading is on the page where pressure matters');
 
   // THE PROXY: one sign-in reaches the world, which sees the platform token plus the operator.
@@ -453,7 +458,8 @@ test('the multiplayer server page is people first, with the world reached by pro
   assert.ok(fn, 'no platform overview');
   assert.doesNotMatch(fn[0], /In whose game/);
   assert.match(fn[0], /sysCards\(o\.system\)/);
-  assert.doesNotMatch(fn[0], /o\.world\.id|maxPlayers/, 'one world and one cap are the wrong shape');
+  assert.match(fn[0], /worldCard\(w\)/, 'OT3-34: one World health card');
+  assert.doesNotMatch(app, /Games running|<h3 class="card-title">Games<\/h3>|gameRows/, 'no Games table');
   assert.doesNotMatch(app, /data-game-act|\/discard|\/stop`/, 'OT3-37: no Discard/Stop');
   assert.match(app, /worldApi\('\/peers\/rolling-restart'/);
   // OT3-64: one world. World calls go through /world, and there is no game to open.

@@ -1963,27 +1963,16 @@ function playerFlags(p) {
   return out;
 }
 
-/** People first: who is playing; then the world process; then the box. */
+/** People first: who is playing; then the one world's health; then the box. */
 function renderPlatformOverview(o, stat, upText) {
-  const h = o.health || {};
-  const games = o.games || [];
+  const w = o.world;
   const players = o.players || [];
-  const gameLabel = (g) => html`${g.label} <span class="text-secondary small vt-mono">${g.id}</span>`;
 
   const playerRows = players.length ? players.map((p) => html`
     <tr><td><a href="#console">${p.name}</a></td>
       <td class="text-secondary">${p.cellKey || '-'}</td>
       <td>${p.level ?? '-'}</td></tr>`).join('')
     : html`<tr><td colspan="3" class="vt-empty">Nobody is playing right now.</td></tr>`;
-
-  const gameRows = games.length ? games.map((g) => html`
-    <tr><td>${raw(gameLabel(g))}</td>
-      <td>${g.playerCount}${raw(g.connectedCount > g.playerCount
-        ? html` <span class="text-secondary small">(+${g.connectedCount - g.playerCount} joining)</span>` : '')}</td>
-      <td>${raw(gameStatus(g))}</td>
-      <td class="text-end text-nowrap">
-      </td></tr>`).join('')
-    : html`<tr><td colspan="4" class="vt-empty">No games are running. One starts when somebody plays.</td></tr>`;
 
   // THE LINK TO SEND PEOPLE: the front door. (OT3-40: no invite code rides on it any more.)
   const inviteLink = location.origin;
@@ -2000,23 +1989,16 @@ function renderPlatformOverview(o, stat, upText) {
   view().innerHTML = html`
     ${raw(inviteCard)}
     <div class="row">
-      ${raw(stat('Playing now', `${players.length}`, 'bi-people', 'primary'))}
-      ${raw(stat(h.capacity ? `Games running (of ${h.capacity})` : 'Games running', `${h.games ?? games.length}`, 'bi-collection-play', 'success'))}
-      ${raw(stat('Sim peers', `${h.peers ?? 0}`, 'bi-cpu', 'info'))}
+      ${raw(stat('Playing now', `${players.length}`, 'bi-people', 'primary', '#console'))}
       ${raw(stat('Server uptime', upText, 'bi-clock-history', 'secondary'))}
       ${raw(sysCards(o.system))}
     </div>
+    ${raw(worldCard(w))}
     <div class="card card-outline card-primary mb-3">
       <div class="card-header"><h3 class="card-title">Playing now</h3></div>
       <div class="table-responsive"><table class="table table-hover mb-0">
         <thead><tr><th>Player</th><th>Where</th><th>Level</th></tr></thead>
         <tbody>${raw(playerRows)}</tbody></table></div></div>
-    <div class="card card-outline card-secondary mb-3">
-      <div class="card-header"><h3 class="card-title">Games</h3>
-        <div class="card-tools small text-secondary">${capacityText(h.capacityReason)}</div></div>
-      <div class="table-responsive"><table class="table table-hover mb-0">
-        <thead><tr><th>Game</th><th>Players</th><th>Status</th><th></th></tr></thead>
-        <tbody>${raw(gameRows)}</tbody></table></div></div>
     ${raw(setupChecklist())}`;
   $('#copyInvite').onclick = async () => {
     try {
@@ -2027,12 +2009,33 @@ function renderPlatformOverview(o, stat, upText) {
   wireChecklist();
 }
 
-function gameStatus(g) {
-  if (g.blockedUntil) return html`<span class="badge text-bg-danger">crash backoff</span>`;
-  if (!g.up) return html`<span class="badge text-bg-warning">starting</span>`;
-  const m = Math.round(g.uptime / 60);
-  const peers = g.peerCount ? `, ${g.peerCount} peer${g.peerCount === 1 ? '' : 's'}` : '';
-  return html`up ${m < 60 ? `${m}m` : `${Math.round(m / 60)}h`}${peers}`;
+/**
+ * THE WORLD HEALTH CARD (OT3-34). One world, so one card: is it up, how many are in it, how
+ * many sim peers it runs, how long since it started. Replaces the per-game table.
+ */
+function worldCard(w) {
+  if (!w) {
+    return html`<div class="card card-outline card-warning mb-3"><div class="card-body">
+      The world is not running. It starts when somebody plays.</div></div>`;
+  }
+  const m = Math.round((w.uptime || 0) / 60);
+  const up = m < 60 ? `${m}m` : `${Math.round(m / 60)}h`;
+  let status, tone;
+  if (w.blockedUntil) { status = 'crash backoff'; tone = 'danger'; }
+  else if (!w.up) { status = 'starting'; tone = 'warning'; }
+  else { status = 'up'; tone = 'success'; }
+  const joining = w.connectedCount > w.playerCount ? ` (+${w.connectedCount - w.playerCount} joining)` : '';
+  return html`
+    <div class="card card-outline card-${raw(tone)} mb-3" id="worldCard">
+      <div class="card-header"><h3 class="card-title"><i class="bi bi-globe-americas me-2"></i>World:
+        ${w.name} <span class="badge text-bg-${raw(tone)} ms-1">${status}</span></h3>
+        <div class="card-tools small text-secondary vt-mono">${w.id}</div></div>
+      <div class="card-body"><div class="row text-center">
+        <div class="col"><div class="fs-4">${w.playerCount}${joining}</div><div class="small text-secondary">players (of ${w.maxPlayers})</div></div>
+        <div class="col"><div class="fs-4">${w.peerCount}</div><div class="small text-secondary">sim peers (<a href="#map">health</a>)</div></div>
+        <div class="col"><div class="fs-4">${w.up ? up : '-'}</div><div class="small text-secondary">uptime</div></div>
+        ${raw(w.fastCrashes ? html`<div class="col"><div class="fs-4 text-danger">${w.fastCrashes}</div><div class="small text-secondary">recent crashes</div></div>` : '')}
+      </div></div></div>`;
 }
 
 /** "just now" / "3m ago" — a timestamp is not what the question wanted. */
@@ -2046,17 +2049,6 @@ function ago(at) {
 const mb = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Math.round(n / 1048576)} MB`);
 /** A transfer rate: mb() would round a quiet server's few hundred KB/s down to "0 MB/s". */
 const rate = (n) => (n < 1048576 ? `${Math.round(n / 1024)} KB/s` : `${(n / 1048576).toFixed(1)} MB/s`);
-
-/**
- * Why the Games card cannot take more. The gateway says 'memory' for a cap derived from the
- * memory budget, and 'mem' / 'cpu' when live pressure has frozen it at what is running.
- */
-function capacityText(reason) {
-  if (reason === 'memory') return 'Room for more is bound by memory.';
-  if (reason === 'mem') return 'Memory is under pressure: no new games until some close.';
-  if (reason === 'cpu') return 'CPU load is high: no new games until it eases.';
-  return 'Room for more is bound by the game count.';
-}
 
 /**
  * Machine health, as the cards that replace the multiplayer ones.

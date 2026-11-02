@@ -62,11 +62,11 @@ interface GatewayAdminDeps {
   maintenance: AdminDeps['maintenance'];
 }
 
-/** The world process as the dashboard shows it. */
-interface GameRow {
+/** The one world, as the dashboard's World health card shows it (OT3-34). */
+interface WorldCard {
   id: string;
   up: boolean;
-  label: string;
+  name: string;
   playerCount: number;
   connectedCount: number;
   maxPlayers: number;
@@ -88,11 +88,11 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
   if (!deps.accounts.hasDashboardOwner()) setupToken.arm();
   const token = (): string => deps.config().gateway.serverToken;
 
-  const gameRow = (g: WorldInfo, now: number): GameRow => {
+  const worldCard = (g: WorldInfo, now: number): WorldCard => {
     return {
       id: g.id,
       up: g.up,
-      label: g.name,
+      name: g.name,
       playerCount: g.playerCount,
       connectedCount: g.connectedCount,
       maxPlayers: g.maxPlayers,
@@ -104,9 +104,9 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
       players: g.players,
     };
   };
-  const games = (): GameRow[] => {
-    const now = Date.now();
-    return deps.worlds.list().map((g) => gameRow(g, now));
+  const theWorld = (): WorldCard | null => {
+    const w = deps.worlds.list()[0];
+    return w ? worldCard(w, Date.now()) : null;
   };
 
   const refuse = { ok: false, message: 'This acts on players in the world: use the Players page, which goes to the world process.' };
@@ -129,23 +129,15 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     // PEOPLE FIRST: who is playing, then the world process and the box's health.
     overview: async (role) => {
       const now = Date.now();
-      const cap = deps.worlds.capacity();
       const cfg = deps.config();
-      const rows = games();
+      const world = theWorld();
       return {
         platform: true,
         uptime: Math.round((now - startedAt) / 1000),
         system: await sysInfo(),
-        health: {
-          games: deps.worlds.running,
-          peers: deps.worlds.peersRunning,
-          committedMb: null,
-          budgetMb: null,
-          capacity: Number.isFinite(cap.cap) ? cap.cap : null,
-          capacityReason: cap.reason,
-        },
-        games: rows,
-        players: rows.flatMap((g) => g.players),
+        // One world (OT3-34): its health card, or null before it has started.
+        world: world && { ...world, players: undefined },
+        players: world?.players ?? [],
       };
     },
     reports: async (limit) => ({
