@@ -14,6 +14,8 @@ COPY test ./test
 COPY bots ./bots
 COPY config.default.toml ./
 COPY web ./web
+# test/questscan.test.ts runs tools/scan-quests.mjs.
+COPY tools ./tools
 RUN npm run build
 
 # Test gate: `docker build --target test` fails the deploy if typecheck or tests fail.

@@ -150,6 +150,8 @@ COPY server/config.default.toml ./
 # single-player dashboard suite, the front door, update wiring), and without this the whole
 # stage only ever passed off a stale build cache.
 COPY server/web ./web
+# test/questscan.test.ts runs tools/scan-quests.mjs.
+COPY server/tools ./tools
 RUN npm run build && npm test
 
 FROM runtime AS tier2
