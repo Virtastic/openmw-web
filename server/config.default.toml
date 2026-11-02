@@ -3,9 +3,9 @@
 # replace, tables merge key-by-key).
 
 # Built-in plugins to load, in order. Available: "motd", "respawn", "death-penalty",
-# "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals".
+# "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals", "world-events".
 # (Top-level key: in an override file it must appear before any [table] header.)
-plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals"]
+plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals", "world-events"]
 
 [server]
 name = "OpenMW-Web server"        # shown in SessionHelloOk and /status
@@ -344,6 +344,24 @@ goldPerContract = 150             # paid to each eligible party member on comple
 enabled = false
 giftGold = 0                      # gold added to each festival gift
 dates = []                        # move a festival: "witches=5/30" (id=month/day, month 1-12)
+
+[worldEvents]
+# OT3-200: open-world events (the `world-events` plugin). Every intervalMin one starts in the
+# weather region with most players: a blight storm, a Daedric incursion or a Sixth House raid.
+# The region's sim peer spawns its creatures beside the players outdoors there, and the sky
+# changes for blight (Blight) and raids (Ashstorm). Anyone in the region can join: a kill of an
+# event creature scores 3 for the killer and 1 for each player who saw it, and each minute in
+# the region scores 1. At the end everyone at or above `threshold` is paid rewardGold.
+# Off by default: it spawns hostile creatures next to players and pays gold.
+enabled = false
+intervalMin = 120                 # real minutes between event starts
+durationMin = 15                  # how long one runs
+minPlayers = 1                    # players needed in the region for an event to start there
+threshold = 5                     # contribution points needed to be rewarded
+rewardGold = 200
+spawnCount = 3                    # creatures per spawn (one spawn beside each of up to 4 players)
+kinds = ["blight", "daedric", "sixthhouse"]  # rotated in this order
+spawns = []                       # replace a kind's creatures: "daedric=scamp,dremora"
 # DEV/TEST ONLY. Fake players that auto-accept friend requests and party invites, so the
 # social flows can be exercised (and recorded) without a second human. They take real roster
 # slots and write real friend/party rows, so a server strangers can reach must leave this at

@@ -317,6 +317,23 @@ export class WeatherRegions {
     return this.ctx.modRegions?.[regionName];
   }
 
+  /** OT3-200: the server sets a region's sky (an open-world event). Sent as a `restore` so the
+   *  region's holder applies it too (world.lua MP_WorldWeather), then persisted like a holder's
+   *  report; the holder's own sim carries on from it. */
+  force(name: string, current: number): void {
+    if (!region(name) || weatherId(current) === undefined) return;
+    if (!this.admit(name, 'event')) return;
+    this.enqueue(() => {
+      const state: WeatherState = { current };
+      this.ctx.weather[name] = state;
+      this.lastSaidAt.set(name, this.now());
+      this.authority.setSnapshot(name, state as unknown as JsLike);
+      this.ctx.save();
+      for (const p of this.ctx.roster.inWorld()) p.peer.sendEvent('WorldWeather', { region: name, current, restore: true });
+      log('info', 'weather.forced', { region: name, current });
+    });
+  }
+
   // Join: replay every known region's weather so a fresh client isn't blank until the
   // holder's next transition (which can be many minutes out). ModRegion chances first: they
   // decide what the region rolls next, so a joiner who inherits a region rolls the blight.

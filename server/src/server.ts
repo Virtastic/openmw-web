@@ -390,6 +390,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       });
       p.peer.sendEvent('AdminGive', { recordId, count, note });
     },
+    regionOf: (playerId) => m7.weather.regionOf(playerId), // OT3-200: as the client declared it
+    spawnNear: (playerId, recordId, count) => {
+      const p = roster.get(playerId);
+      const holder = p?.cellKey !== undefined ? world.holderOf(p.cellKey) : undefined;
+      const peer = holder !== undefined ? roster.get(holder) : undefined;
+      if (!p || !peer?.system) return false; // never on a human's engine: theirs is not the world's
+      peer.peer.sendEvent('QuestSpawn', { recordId, count: Math.min(10, Math.max(1, Math.trunc(count))), forId: playerId });
+      return true;
+    },
     claimOnce: (playerId, key) => {
       const p = roster.get(playerId);
       if (!p || p.system) return false;
@@ -442,6 +451,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       unscheduleCellReset: (cellKey) => m7.unscheduleCellReset(cellKey),
       scheduledResets: () => m7.scheduledResets(),
       resetCell: (cellKey) => m7.resetCellNow(cellKey),
+      forceWeather: (region, weatherId) => m7.weather.force(region, weatherId), // OT3-200
       promoteOwner: async (account) => {
         const found = await accounts.get(account);
         if (!found) return false;

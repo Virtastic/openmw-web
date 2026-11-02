@@ -98,3 +98,21 @@ test('the silence clock is per region and restarts on a grant', async () => {
   await h.tick(1);
   assert.equal(h.weather.holderOf('Ascadian Isles'), 1, 'and hands back when it too goes quiet');
 });
+
+// OT3-200: an event sets the sky; the holder must apply it too, so it goes as a `restore`.
+test('force() sets a region\'s weather for everyone, holder included, and persists it', async () => {
+  const h = harness();
+  const [a, b] = [h.add(1), h.add(2)];
+  h.enter(a, 'Ashlands Region');
+  h.enter(b, 'Ashlands Region');
+  await h.tick(0);
+  h.weather.force('Ashlands Region', 7);
+  await h.tick(0);
+  for (const p of [a, b]) {
+    assert.deepEqual(sentOf(p).filter((e) => e.name === 'WorldWeather').at(-1)?.body, { region: 'Ashlands Region', current: 7, restore: true });
+  }
+  assert.deepEqual(h.weather.currentWeather('Ashlands Region'), { current: 7 });
+  h.weather.force('Ashlands Region', 999); // not a weather id
+  await h.tick(0);
+  assert.deepEqual(h.weather.currentWeather('Ashlands Region'), { current: 7 });
+});

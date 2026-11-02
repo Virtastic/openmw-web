@@ -20,6 +20,9 @@ interface PluginWorld {
   resetCell(cellKey: string): Promise<void>;
   // M8: promote an existing account to owner (rank 3). Resolves false if unknown.
   promoteOwner(account: string): Promise<boolean>;
+  /** OT3-200: set a region's weather now (0-based vanilla id), for everyone including its
+   *  holder (a WorldWeather `restore`); persisted as the region's weather. */
+  forceWeather?(region: string, weatherId: number): void;
 }
 
 export interface PluginPlayer {
@@ -66,6 +69,11 @@ export interface PluginApi {
   /** OT3-199/201: true the FIRST time this character claims `key` (persisted on the character,
    *  so a relog or restart does not pay twice); false after. */
   claimOnce?(playerId: number, key: string): boolean;
+  /** OT3-200: the weather region this player last declared (the engine's region id), if any. */
+  regionOf?(playerId: number): string | undefined;
+  /** OT3-200: have the sim peer simulating this player's cell spawn `count` of `recordId`
+   *  beside them (QuestSpawn). False when no sim peer holds that cell. */
+  spawnNear?(playerId: number, recordId: string, count: number): boolean;
 }
 
 /** OT3-199: an actor died; `witnesses` are the humans credited (killer plus those who saw it). */

@@ -166,6 +166,11 @@ export interface Config {
   bounties: { enabled: boolean; requireMembership: boolean; goldPerContract: number };
   // OT3-201: calendar festivals (festivals plugin). dates: "id=month/day" overrides, month 1-based.
   festivals: { enabled: boolean; giftGold: number; dates: string[] };
+  // OT3-200: open-world events (world-events plugin).
+  worldEvents: {
+    enabled: boolean; intervalMin: number; durationMin: number; minPlayers: number;
+    threshold: number; rewardGold: number; spawnCount: number; kinds: string[]; spawns: string[];
+  };
   // M8 ops.
   // dashboardToken: bearer for the web admin dashboard (/admin). Empty = the whole
   // dashboard is off, which is the right default for a self-hoster who only wants the
@@ -641,6 +646,17 @@ function validate(t: Tree): Config {
       enabled: optBool(t, 'festivals', 'enabled', false),
       giftGold: Math.max(0, optNum(t, 'festivals', 'giftGold', 0)),
       dates: optStrArray(t, 'festivals', 'dates', []),
+    },
+    worldEvents: {
+      enabled: optBool(t, 'worldEvents', 'enabled', false),
+      intervalMin: Math.max(1, optNum(t, 'worldEvents', 'intervalMin', 120)),
+      durationMin: Math.max(1, optNum(t, 'worldEvents', 'durationMin', 15)),
+      minPlayers: Math.max(1, optNum(t, 'worldEvents', 'minPlayers', 1)),
+      threshold: Math.max(0, optNum(t, 'worldEvents', 'threshold', 5)),
+      rewardGold: Math.max(0, optNum(t, 'worldEvents', 'rewardGold', 200)),
+      spawnCount: Math.min(10, Math.max(1, optNum(t, 'worldEvents', 'spawnCount', 3))),
+      kinds: optStrArray(t, 'worldEvents', 'kinds', ['blight', 'daedric', 'sixthhouse']),
+      spawns: optStrArray(t, 'worldEvents', 'spawns', []),
     },
     dev: {
       // Env wins so a one-off `OMW_DEV_BOTS=3` run needs no config edit and leaves no file
