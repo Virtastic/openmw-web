@@ -2773,7 +2773,23 @@ namespace MWWorld
 
     void World::phaseTagChanged(const MWWorld::Ptr& ptr, std::uint64_t mask)
     {
+        const MWPhysics::Object* object = mPhysics->getObject(ptr);
+        const bool wasTagged = object != nullptr && object->getPhaseMask() != 0;
         mPhysics->setPhaseMask(ptr, mask);
+        // OT3-208: a phase-only object leaves the shared navmesh, and joins it again when it
+        // goes back to base (the same rule Scene's addObject applies on load). Doors keep their
+        // links; the door's own collision is still masked.
+        if (object == nullptr || ptr.getClass().isDoor() || wasTagged == (mask != 0)
+            || object->getShapeInstance()->mVisualCollisionType != Resource::VisualCollisionType::None)
+            return;
+        const DetourNavigator::ObjectId id(object);
+        if (mask != 0)
+            mNavigator->removeObject(id, nullptr);
+        else
+            mNavigator->addObject(id,
+                DetourNavigator::ObjectShapes(object->getShapeInstance(),
+                    DetourNavigator::ObjectTransform{ ptr.getRefData().getPosition(), ptr.getCellRef().getScale() }),
+                object->getTransform(), nullptr);
     }
 
     void World::setSimAnchors(

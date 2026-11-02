@@ -43,6 +43,7 @@
 #include "../mwrender/postprocessor.hpp"
 #include "../mwrender/renderingmanager.hpp"
 
+#include "../mwmp/phases.hpp"
 #include "../mwphysics/actor.hpp"
 #include "../mwphysics/heightfield.hpp"
 #include "../mwphysics/object.hpp"
@@ -204,7 +205,11 @@ namespace
                         object->getShapeInstance(), objectTransform, connectionStart, connectionEnd),
                     transform, navigatorUpdateGuard);
             }
-            else if (object->getShapeInstance()->mVisualCollisionType == Resource::VisualCollisionType::None)
+            // OT3-208: the navmesh is shared by every phase, so a phase-only object stays out
+            // of it: other phases path straight through, and its own phase walks around it by
+            // collision (World::phaseTagChanged keeps this in step on a retag).
+            else if (object->getShapeInstance()->mVisualCollisionType == Resource::VisualCollisionType::None
+                && MWMP::phaseMaskOf(ptr.getCellRef().getRefNum()) == 0)
             {
                 navigator.addObject(DetourNavigator::ObjectId(object),
                     DetourNavigator::ObjectShapes(object->getShapeInstance(), objectTransform), object->getTransform(),

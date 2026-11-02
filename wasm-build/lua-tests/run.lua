@@ -5489,5 +5489,27 @@ do
     select(2, ps:gsub('setPhaseMask%(MWMP::phaseMaskOf%(ptr%.getCellRef%(%)%.getRefNum%(%)%)%)', '')) == 2)
   check('a live retag reaches physics', lb:find('getWorld()->phaseTagChanged(ptr, mask)', 1, true) ~= nil)
 end
+-- OT3-208: actors path, target and collide within their own phase.
+print('actors.cpp / aicombat.cpp / scene.cpp -- actors stay in their own phase (OT3-208)')
+do
+  local ac = io.open('./openmw/apps/openmw/mwmechanics/actors.cpp'):read('*a')
+  local ai = io.open('./openmw/apps/openmw/mwmechanics/aicombat.cpp'):read('*a')
+  local sc = io.open('./openmw/apps/openmw/mwworld/scene.cpp'):read('*a')
+  local wi = io.open('./openmw/apps/openmw/mwworld/worldimp.cpp'):read('*a')
+  local pc = io.open('./openmw/apps/openmw/mwphysics/projectileconvexcallback.hpp'):read('*a')
+  local i = ac:find('if (!MWMP::phasesMeet(\n                                        actor.getPtr().getCellRef().getRefNum(), other.getCellRef().getRefNum()))', 1, true)
+  local j = ac:find('engageCombat(actor.getPtr(), other, cachedAllies', 1, true)
+  check('no fresh fight with an actor in another phase', i ~= nil and j ~= nil and i < j)
+  check('a guard does not pursue an avatar in another phase', ac:find('if (!MWMP::phasesMeet(ptr.getCellRef().getRefNum(), ref))', 1, true) ~= nil)
+  local x = ai:find('if (!MWMP::phasesMeet(actor.getCellRef().getRefNum(), target.getCellRef().getRefNum()))', 1, true)
+  check('a running fight ends when the target leaves the phase', x ~= nil and x < (ai:find('No actions for totally static creatures', 1, true) or 0))
+  check('phase-only objects stay out of the shared navmesh on load',
+    sc:find('&& MWMP::phaseMaskOf(ptr.getCellRef().getRefNum()) == 0', 1, true) ~= nil)
+  local fn = wi:match('void World::phaseTagChanged%(.-\n    }') or ''
+  check('a retag moves the object out of / back into the navmesh',
+    fn:find('mNavigator->removeObject(id, nullptr)', 1, true) ~= nil and fn:find('mNavigator->addObject(id,', 1, true) ~= nil
+    and fn:find('wasTagged == (mask != 0)', 1, true) ~= nil)
+  check('shots fly in their caster\'s phase', pc:find('phasesCollide(mCaster, proxy)', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

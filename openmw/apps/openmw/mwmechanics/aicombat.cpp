@@ -17,6 +17,7 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
+#include "../mwmp/phases.hpp"
 
 #include "actorutil.hpp"
 #include "aicombataction.hpp"
@@ -123,6 +124,11 @@ namespace MWMechanics
             return true;
 
         if (actor == target) // This should never happen.
+            return true;
+
+        // OT3-208: a target that is (now) in another phase is gone for this actor -- a stage
+        // moved the player on, or the fight was picked up by retaliation across phases.
+        if (!MWMP::phasesMeet(actor.getCellRef().getRefNum(), target.getCellRef().getRefNum()))
             return true;
 
         // No actions for totally static creatures

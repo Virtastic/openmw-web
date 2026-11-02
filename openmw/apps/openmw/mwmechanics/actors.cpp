@@ -3,6 +3,7 @@
 
 #include "actors.hpp"
 
+#include "../mwmp/phases.hpp"
 #include "../mwmp/puppets.hpp"
 
 #include <algorithm>
@@ -1268,6 +1269,9 @@ namespace MWMechanics
                     const ESM::RefNum ref = body.getCellRef().getRefNum();
                     if (!MWMP::isAvatar(ref) || body.getClass().getCreatureStats(body).isDead())
                         continue;
+                    // OT3-208: a guard in another phase does not see this player.
+                    if (!MWMP::phasesMeet(ptr.getCellRef().getRefNum(), ref))
+                        continue;
                     // A werewolf avatar is not pursued for its bounty (as the player is not, above).
                     if (body.getClass().isNpc() && body.getClass().getNpcStats(body).isWerewolf())
                         continue;
@@ -1758,6 +1762,11 @@ namespace MWMechanics
                                 // OT3-105: a player in a menu or dialogue is not picked as a
                                 // fresh target (a fight already running carries on).
                                 if (MWMP::isAvatarBusy(other.getCellRef().getRefNum()))
+                                    continue;
+                                // OT3-208: an actor only sees, and so only picks, actors in its
+                                // own phase (mwmp/phases.hpp); untagged actors see everyone.
+                                if (!MWMP::phasesMeet(
+                                        actor.getPtr().getCellRef().getRefNum(), other.getCellRef().getRefNum()))
                                     continue;
                                 engageCombat(actor.getPtr(), other, cachedAllies,
                                     other == player || MWMP::isAvatar(other.getCellRef().getRefNum()));

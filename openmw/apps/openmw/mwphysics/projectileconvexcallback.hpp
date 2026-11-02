@@ -3,6 +3,8 @@
 
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 
+#include "phasefilter.hpp"
+
 class btCollisionObject;
 
 namespace MWPhysics
@@ -22,6 +24,14 @@ namespace MWPhysics
         }
 
         btScalar addSingleResult(btCollisionWorld::LocalConvexResult& result, bool normalInWorldSpace) override;
+
+        // OT3-208: a shot flies in its caster's phase: it passes through another phase's refs
+        // and actors.
+        bool needsCollision(btBroadphaseProxy* proxy) const override
+        {
+            return btCollisionWorld::ClosestConvexResultCallback::needsCollision(proxy)
+                && (mCaster == nullptr || phasesCollide(mCaster, proxy));
+        }
 
     private:
         const btCollisionObject* mCaster;
