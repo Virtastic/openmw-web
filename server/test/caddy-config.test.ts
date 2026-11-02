@@ -9,7 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderCaddyfile, launcherEnabled } from '../src/net/admin/caddy-config';
+import { renderCaddyfile } from '../src/net/admin/caddy-config';
 
 test('every site block hands everything to the server and serves nothing from disk', () => {
   for (const opts of [{ domain: '' }, { domain: 'mp.example.test' }, { domain: '', internal: true, port: 8080 }]) {
@@ -40,16 +40,6 @@ test('localhost keeps a site block even with a domain, so a typo cannot lock the
   const out = renderCaddyfile({ domain: 'mp.example.test' });
   assert.match(out, /^localhost \{$/m);
   assert.match(out, /^mp\.example\.test \{$/m);
-});
-
-test('only an explicit truthy value switches the launcher on', () => {
-  // The default must be off, so an unset or empty variable cannot quietly expose it.
-  for (const v of [undefined, '', ' ', '0', 'false', 'no', 'off']) {
-    assert.equal(launcherEnabled(v === undefined ? {} : { OMW_ENABLE_LAUNCHER: v }), false, `"${v}"`);
-  }
-  for (const v of ['1', 'true', 'TRUE', 'yes', 'on', ' on ']) {
-    assert.equal(launcherEnabled({ OMW_ENABLE_LAUNCHER: v }), true, `"${v}"`);
-  }
 });
 
 // --- internal hosting is plain HTTP on a chosen port --------------------------------------------

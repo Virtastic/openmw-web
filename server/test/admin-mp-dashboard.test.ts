@@ -155,10 +155,9 @@ test('finishing the wizard writes the mode marker the entrypoint reads', async (
   assert.equal((await post('/setup', { deploymentMode: 'multiplayer', completed: true }, token)).status, 200);
   assert.equal(marker(), 'gateway', 'multiplayer starts the multiplayer server');
   // A half-finished run must not flip the process.
-  assert.equal((await post('/setup', { deploymentMode: 'single' }, token)).status, 200);
-  assert.equal(marker(), 'gateway', 'an unfinished wizard writes nothing');
-  assert.equal((await post('/setup', { deploymentMode: 'single', completed: true }, token)).status, 200);
-  assert.equal(marker(), 'single', 'and back again, from the same page');
+  // Single player is gone (OT3-228, follows CL6): the wizard refuses it and the marker stays.
+  assert.equal((await post('/setup', { deploymentMode: 'single', completed: true }, token)).status, 400);
+  assert.equal(marker(), 'gateway', 'a refused answer writes nothing');
 
   const state = await (await fetch(`${base}/state`)).json() as Record<string, unknown>;
   assert.equal(state.platform, false, 'a game says it is a game');

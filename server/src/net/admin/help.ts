@@ -165,8 +165,7 @@ export const HELP: Record<string, FieldHelp> = {
     text: 'The port the bundled proxy listens on for internal hosting. Change it if something else on this machine already has port 80, or if you forward a different one. Publish the same port for the caddy service in docker-compose.yml, or nothing outside the container reaches it. Ignored for public hosting, which is 443.',
   },
   'setup.deploymentMode': {
-    text: 'Whether this is a private one-person world ("single") or a shared one ("multiplayer"). It decides which boot mode the sign-in page hands the player, whether the server needs its own copy of the game, and how much of this dashboard applies.',
-    danger: 'Switching to multiplayer means the server has to run the world itself: it needs the game files and the simulator, and it will refuse to start without them.',
+    text: 'Always "multiplayer": this server runs one shared world. Any other value refuses to boot.',
   },
   'setup.contentProfile': {
     text: 'Which edition the game data check expects: "morrowind", "expansions" (Tribunal and Bloodmoon), or "tamriel-rebuilt". It sets what the Game data page treats as missing.',

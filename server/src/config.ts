@@ -695,8 +695,8 @@ function validate(t: Tree): Config {
       hosting: reqStr(t, 'setup', 'hosting'),
       deploymentMode: reqStr(t, 'setup', 'deploymentMode'),
       httpPort: optNum(t, 'setup', 'httpPort', 80),
-      // CL2: v2 delivers by esm only. The frozen wizard still writes "serve" (CL14); whatever is
-      // stored, esm is what runs, so nothing is ever served ungated.
+      // CL2: v2 delivers by esm only. The wizard now records "esm" (OT3-148); whatever an
+      // older file stores, esm is what runs, so nothing is ever served ungated.
       deliveryModel: 'esm',
       storage: reqStr(t, 'setup', 'storage'),
       loginMethods: reqStrArray(t, 'setup', 'loginMethods'),
@@ -795,8 +795,8 @@ function dashboardLayers(dataDir: string): { tree: Tree; from: string; broken?: 
   return out;
 }
 
-/** CL6: v2 is one multiplayer world. The frozen wizard still offers "single" (CL14), and a
- *  server set to it would boot into a mode nothing serves any more, so refuse to start and say
+/** CL6: v2 is one multiplayer world. The wizard no longer offers "single" (OT3-228), but a
+ *  server an older wizard or a hand edit set to it would boot into a mode nothing serves any more, so refuse to start and say
  *  why. "" is a setup that never finished, which has always run as multiplayer. */
 export function assertMultiplayer(config: Config): void {
   const m = config.setup.deploymentMode;

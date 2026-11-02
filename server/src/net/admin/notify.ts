@@ -15,7 +15,7 @@
 
 import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { createConnection, type Socket } from 'node:net';
-import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { log, onLog } from '../../log';
 
 export interface MailConfig {
@@ -211,13 +211,6 @@ export class ResetTokens {
 // links. Constant-time comparison is not needed on a hash lookup, but the hash is.
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('base64url');
-}
-
-/** Guard against timing differences leaking whether an account exists. */
-export function constantTimeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
 // ---------------------------------------------------------------------------------------

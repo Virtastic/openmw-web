@@ -163,14 +163,7 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
   });
 }
 
-// NOTHING IS HIDDEN BY DEPLOYMENT MODE. The roster and moderation page used to be hidden on
-// a "single player" server, from when that answer was taken to mean nobody else could ever
-// be there. It does not: it describes who the world is FOR, and friends can join either
-// way. Hiding the page that shows who is currently playing, on a server they are playing
-// on, is a worse fault than showing a page that happens to be empty.
-// THREE PLACES THE SAME PAGE CAN BE, and each entry says where it belongs:
-//   solo: false   not in single player -- the page acts on players connected to a world, and
-//                 in single player the browser runs the engine and nobody ever connects.
+// NOTHING IS HIDDEN BY DEPLOYMENT MODE: there is one, multiplayer (OT3-228, follows CL6).
 //   shared: true  the shared stores (accounts, admin sessions, game data + mods) and the
 //                 container itself (updates): on the multiplayer server they are the platform's.
 // The rule is "does nothing here", never "sounds like the other mode".
@@ -179,15 +172,10 @@ const NAV = [
   // Economy and Signups & abuse join this group once their server endpoints exist.
   { group: 'Live', items: [
     { hash: '#overview', label: 'Live', icon: 'bi-speedometer2', role: 'viewer' },
-    { hash: '#map', label: 'Map', icon: 'bi-map', role: 'viewer', solo: false },
-    // NOT IN SINGLE PLAYER, and not because it looks odd there: every control on it acts on
-    // a player connected to a world. In single player the browser runs the engine and never
-    // connects, so the roster is permanently empty and there is nobody to broadcast to, greet
-    // with a message of the day, read a chat log for, report, or hand an item. The page is
-    // inert rather than merely unhelpful, so it is removed rather than trimmed.
-    { hash: '#console', label: 'Players', icon: 'bi-people', role: 'moderator', solo: false },
-    { hash: '#reports', label: 'Reports', icon: 'bi-flag', role: 'moderator', solo: false },
-    { hash: '#maintenance', label: 'Broadcasts & maintenance', icon: 'bi-megaphone', role: 'moderator', solo: false },
+    { hash: '#map', label: 'Map', icon: 'bi-map', role: 'viewer' },
+    { hash: '#console', label: 'Players', icon: 'bi-people', role: 'moderator' },
+    { hash: '#reports', label: 'Reports', icon: 'bi-flag', role: 'moderator' },
+    { hash: '#maintenance', label: 'Broadcasts & maintenance', icon: 'bi-megaphone', role: 'moderator' },
     { hash: '#audit', label: 'Audit', icon: 'bi-clipboard-check', role: 'moderator' },
   ] },
   { group: 'Content', items: [
@@ -203,11 +191,11 @@ const NAV = [
   // the legacy #settings hash -- present in the file and absent from the page.
   { group: 'Configuration', items: [
     { hash: '#set-core', label: 'Core', icon: 'bi-sliders', role: 'viewer' },
-    { hash: '#set-gameplay', label: 'Gameplay', icon: 'bi-dice-5', role: 'viewer', solo: false },
+    { hash: '#set-gameplay', label: 'Gameplay', icon: 'bi-dice-5', role: 'viewer' },
     { hash: '#set-access', label: 'Access', icon: 'bi-key', role: 'viewer' },
     { hash: '#set-storage', label: 'Storage', icon: 'bi-hdd-stack', role: 'viewer' },
     { hash: '#set-operations', label: 'Operations', icon: 'bi-gear-wide-connected', role: 'viewer' },
-    { hash: '#set-platform', label: 'Platform (advanced)', icon: 'bi-diagram-3', role: 'viewer', solo: false },
+    { hash: '#set-platform', label: 'Platform (advanced)', icon: 'bi-diagram-3', role: 'viewer' },
   ] },
   { group: 'People', items: [
     { hash: '#accounts', label: 'Accounts', icon: 'bi-person-lines-fill', role: 'moderator', shared: true },
@@ -223,7 +211,7 @@ const NAV = [
   // "Maintenance & restart", which named one of the four in the sidebar and hid the rest.
   { group: 'Danger zone', items: [
     { hash: '#updates', label: 'Updates', icon: 'bi-cloud-download', role: 'owner', shared: true },
-    { hash: '#rolling', label: 'Rolling restart', icon: 'bi-arrow-repeat', role: 'owner', solo: false },
+    { hash: '#rolling', label: 'Rolling restart', icon: 'bi-arrow-repeat', role: 'owner' },
     { hash: '#backup', label: 'Backup', icon: 'bi-archive', role: 'owner' },
     { hash: '#restart', label: 'Restart', icon: 'bi-power', role: 'owner' },
   ] },
@@ -231,15 +219,8 @@ const NAV = [
 
 const RANK = { viewer: 0, moderator: 1, owner: 2 };
 const can = (need) => state.authed && RANK[state.role] >= RANK[need];
-/** True when this deployment was set up as a private, one-person world. */
-const singlePlayer = () => state.setup?.deploymentMode === 'single';
 /** True when the process answering is the multiplayer server, not a game. */
 const platform = () => state.platform === true;
-/** Does this page do anything where the operator is right now? See the NAV comment. */
-function navVisible(i) {
-  if (i.solo === false && singlePlayer()) return false;
-  return true;
-}
 
 function paintChrome() {
   // Signed out, or anywhere inside first-time setup, there IS no dashboard: no sidebar, no
@@ -256,8 +237,7 @@ function paintChrome() {
   if (!state.authed || setupPending) { nav.innerHTML = ''; }
   else {
     nav.innerHTML = NAV.map((g) => {
-      // `solo: false` marks a page that cannot do anything in a one-person deployment.
-      const items = g.items.filter((i) => can(i.role) && navVisible(i));
+      const items = g.items.filter((i) => can(i.role));
       if (!items.length) return '';
       return html`<li class="nav-header">${g.group}</li>` + items.map((i) => html`
         <li class="nav-item">
@@ -304,11 +284,13 @@ const go = (hash) => { if (location.hash === hash) route(); else location.hash =
 // ---------------------------------------------------------------------------------------
 // first run: the setup wizard
 // ---------------------------------------------------------------------------------------
-// Order is deliberate and each answer narrows the next question: identity, then what kind of
-// server this is, then everything that only makes sense given that answer. A single-player
-// deployment never sees the questions that only matter with strangers on the box.
+// Order is deliberate and each answer narrows the next question. There is no "what kind of
+// server" question: multiplayer is the only deployment (OT3-228, follows CL6).
 const BLANK_ANSWERS = {
-  deploymentMode: null, loginMethods: ['password'], contentProfile: null,
+  // Multiplayer is the only deployment (CL6), so it is not a question (OT3-228). Player sign-in
+  // is single sign-on only (CL13: password auth is for the sim peer, harness and loopback), so
+  // no method is preselected.
+  deploymentMode: 'multiplayer', loginMethods: [], contentProfile: null,
   // Not a question: 'esm' is the only delivery model v2 runs. Sent so the stored record says
   // what runs (OT3-148); the server ignores any other value.
   deliveryModel: 'esm', hosting: null, domain: '', httpPort: 80, serverName: '', storage: 'local',
@@ -320,7 +302,7 @@ const BLANK_ANSWERS = {
   // the domain afterwards must invalidate the result rather than inherit it.
   domainVerified: '',
   s3: { endpoint: '', bucket: '', region: 'auto', accessKeyId: '', secretAccessKey: '' },
-  ssoCreds: { discord: {}, google: {}, microsoft: {} },
+  ssoCreds: { discord: {}, google: {} },
 };
 
 /**
@@ -332,13 +314,12 @@ function seedFromServer() {
   // Fills gaps only: an answer already given in this browser session, typed or clicked -
   // beats the stored one, so seeding never undoes an edit in progress.
   const s = state.setup || {};
-  answers.deploymentMode ||= s.deploymentMode || null;
   answers.contentProfile ||= s.contentProfile || null;
   answers.hosting ||= s.hosting || null;
   answers.httpPort ||= s.httpPort || 80;
   if (s.storage && answers.storage === 'local') answers.storage = s.storage;
   if (Array.isArray(s.loginMethods) && s.loginMethods.length
-      && answers.loginMethods.length === 1 && answers.loginMethods[0] === 'password') {
+      && answers.loginMethods.length === 0) {
     answers.loginMethods = [...s.loginMethods];
   }
   answers.serverName ||= state.serverName || '';
@@ -387,25 +368,16 @@ let step = restored.step;
 // known, the only address available is whatever the operator happens to be browsing on —
 // http://localhost:8090 — so the wizard confidently handed out a redirect URL that the
 // provider would later reject. Everything that needs the domain is asked after it.
-//
-// The sign-in and co-admin questions are asked in BOTH modes: "single player" describes who
-// the world is for, not whether anyone else can ever reach it, and people who do join still
-// need a way to sign in.
 const wizardSteps = () => {
-  // EVERY RUN ASKS THE SAME ELEVEN QUESTIONS. The server name used to be multiplayer-only,
-  // which made the step count change from 11 to 12 the moment the mode was chosen, and a
-  // total that moves under you is unsettling on the one screen where you most want to know
-  // how much is left. A world you play alone still has a name, and it is shown on its own
-  // sign-in page, so asking is not a wasted step.
+  // EVERY RUN ASKS THE SAME TEN QUESTIONS, so the total never moves under you.
   //
   // THE ONE EXCEPTION is Tamriel Rebuilt, and it is an exception because it is not a
   // question: it is a second upload. TR is a separate download from the base game and no
   // amount of dragging Data Files produces it, so the operator who picked that profile is
   // asked for its archive on its own screen, after the game itself is in. Everyone else
-  // never sees the step and still counts eleven.
+  // never sees the step and still counts ten.
   return [
     'owner',
-    'mode',
     'content',
     'hosting',
     'name',
@@ -421,7 +393,7 @@ const wizardSteps = () => {
 
 /** Short labels for the progress rail, so the steps are named rather than anonymous ticks. */
 const STEP_LABEL = {
-  owner: 'Account', mode: 'Type', login: 'Sign-in', registration: 'Sign-ups',
+  owner: 'Account', login: 'Sign-in', registration: 'Sign-ups',
   content: 'Content', hosting: 'Access',
   name: 'Name', storage: 'Storage', files: 'Data', tr: 'Tamriel', client: 'Player app', review: 'Review',
 };
@@ -519,20 +491,6 @@ function wireChoices(onPick) {
     el.onclick = () => {
       const key = el.dataset.choice;
       const value = el.dataset.value;
-      // CHANGING THE MODE CLEARS ONLY WHAT THE OTHER MODE DOES NOT ASK, which is now just
-      // the server name. This used to also wipe the sign-in methods, the hosting choice and
-      // the domain, from when those were multiplayer-only questions. They are asked in both
-      // modes now, so clearing them means going back one step to flip the mode and silently
-      // losing the domain you had already typed, and with it the certificate that domain
-      // was about to get.
-      // The mode's whole job now: preselect the sign-up policy that suits it. Not forced,
-      // and the next-but-one step shows what was chosen and lets it be changed, which is
-      // the difference between a helpful default and the silent one this used to apply.
-      if (key === 'deploymentMode' && answers.deploymentMode !== value) {
-        if (answers.registration === null) {
-          answers.registration = value === 'single' ? 'closed' : 'open';
-        }
-      }
       answers[key] = value;
       if (onPick) onPick();
       saveWizard();
@@ -588,7 +546,6 @@ function renderWizard() {
   pushWizardStep();
 
   if (name === 'owner') return stepOwner();
-  if (name === 'mode') return stepMode();
   if (name === 'login') return stepLogin();
   if (name === 'registration') return stepRegistration();
   if (name === 'content') return stepContent();
@@ -718,21 +675,6 @@ function stepOwner() {
   if (oForm) oForm.onsubmit = (e) => { e.preventDefault(); $('#wzNext').click(); };
 }
 
-function stepMode() {
-  wizardShell(html`
-    <h5>Single player or multiplayer?</h5>
-    ${raw(choice('deploymentMode', 'single', 'Single Player',
-      'Your own world, played on your own. Friends can still join if you invite them, and you '
-      + 'decide who may sign up in a moment.'))}
-    ${raw(choice('deploymentMode', 'multiplayer', 'Multiplayer',
-      'Built for other people from the start. Everyone gets their own game, can open it to '
-      + 'friends or join someone else\'s, and the server simulates the world for all of them. '
-      + 'Finishing setup restarts this container as the multiplayer server. You get one extra '
-      + 'question, the name players see when they join.', '', 'warning'))}`,
-  { disabled: !answers.deploymentMode, need: 'Choose one to carry on.' });
-  wireChoices();
-}
-
 /**
  * Ticked single sign-on providers that still have no keys.
  *
@@ -742,7 +684,7 @@ function stepMode() {
  * chose. Every place that shows the choice says which ones are unfinished.
  */
 function ssoNeedingKeys() {
-  return ['discord', 'google', 'microsoft'].filter((p) => {
+  return ['discord', 'google'].filter((p) => {
     if (!answers.loginMethods.includes(p)) return false;
     const c = answers.ssoCreds?.[p] || {};
     const stored = (state.setup?.ssoConfigured || []).includes(p);
@@ -752,7 +694,7 @@ function ssoNeedingKeys() {
 
 function stepLogin() {
   const has = (m) => answers.loginMethods.includes(m);
-  const sso = ['discord', 'google', 'microsoft'].filter(has)
+  const sso = ['discord', 'google'].filter(has)
     .map((m) => LOGIN_LABEL[m] || m);
   const box = (id, label, blurb) => html`
     <label class="vt-choice vt-check ${raw(has(id) ? 'sel' : '')}">
@@ -763,20 +705,14 @@ function stepLogin() {
   // answer to "am I using SSO, passwords, or both", the point of the question.
   // One line saying what the ticks add up to. The point of the question is "am I using
   // single sign-on, passwords, or both", and a list of ticked boxes is not that answer.
-  let summary;
-  if (has('password') && sso.length) summary = `Password or ${sso.join(', ')}.`;
-  else if (has('password')) summary = 'Passwords only.';
-  else if (sso.length) summary = `${sso.join(', ')} only. Password sign-in is off.`;
-  else summary = 'Nothing selected, so nobody can sign in.';
+  // No password box (OT3-228, follows CL13): a public player cannot sign in with one.
+  const summary = sso.length ? `${sso.join(' or ')}.` : 'Nothing selected, so nobody can sign in.';
 
   wizardShell(html`
     <h5>How will players sign in?</h5>
     <p class="text-secondary small">Tick as many as you like.</p>
-    ${raw(box('password', 'Username and password', 'Held on this server. Nothing to set up.'))}
-    <div class="text-secondary small text-uppercase mt-3 mb-2">Single sign-on</div>
     ${raw(box('discord', 'Discord', ''))}
     ${raw(box('google', 'Google', ''))}
-    ${raw(box('microsoft', 'Microsoft', ''))}
     <div class="vt-section-note mt-3">${raw(summary)}</div>
     ${raw(ssoNeedingKeys().length ? html`<div class="vt-field-danger mt-2">
       <strong>${ssoNeedingKeys().map((p) => LOGIN_LABEL[p]).join(' and ')}
@@ -785,12 +721,11 @@ function stepLogin() {
       page at all.</strong> Fill them in below, or leave this and add them later under
       Settings, single sign-on. Nothing breaks either way, but nobody can use
       ${raw(ssoNeedingKeys().length === 1 ? 'it' : 'them')} until you do.</div>` : '')}
-    ${raw(['discord', 'google', 'microsoft'].filter(has).map((p) => {
+    ${raw(['discord', 'google'].filter(has).map((p) => {
       const c = answers.ssoCreds?.[p] || {};
       const helpUrl = {
         discord: 'https://discord.com/developers/applications',
         google: 'https://console.cloud.google.com/apis/credentials',
-        microsoft: 'https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
       }[p];
       // Ticking a provider opens its keys right here, the step that asks the question is
       // the step that takes the answer, not a pointer at a settings page for later.
@@ -1007,9 +942,7 @@ function stepHosting() {
 function stepName() {
   wizardShell(html`
     <h5>What is this server called?</h5>
-    <p class="text-secondary small">${answers.deploymentMode === 'single'
-      ? 'Shown on your sign-in page and at the top of this dashboard.'
-      : 'Shown to players when they browse or join.'}</p>
+    <p class="text-secondary small">Shown to players when they browse or join.</p>
     <input class="form-control form-control-lg" id="wzName" value="${answers.serverName}"
       placeholder="My Morrowind server" maxlength="64">`,
   { disabled: answers.serverName.trim() === '',
@@ -1203,8 +1136,8 @@ async function stepFiles() {
 
 /**
  * The player app: the browser game itself (./play, about 350 MB), which no Docker image
- * carries. Without it sign-in works and then there is no game, and setup.sh was the only
- * thing that ever installed it, so an operator who ran the compose file by hand finished
+ * carries. Without it sign-in works and then there is no game, and the (since removed) setup
+ * script was the only thing that ever installed it, so an operator who ran the compose file by hand finished
  * this wizard on a server nobody could play on (issue #203).
  */
 async function stepClient() {
@@ -1487,7 +1420,6 @@ const LOGIN_LABEL = {
   password: 'Username and password',
   discord: 'Discord',
   google: 'Google',
-  microsoft: 'Microsoft',
 };
 const REGISTRATION_LABEL = {
   open: 'Anyone can sign up',
@@ -1530,7 +1462,6 @@ let tamrielMissing = false;
 function stepReview() {
   const line = (k, v) => html`<dt class="col-sm-5 fw-normal text-secondary">${k}</dt>
     <dd class="col-sm-7">${v}</dd>`;
-  const mp = answers.deploymentMode === 'multiplayer';
   wizardShell(html`
     <h5>Ready to apply</h5>
     ${raw(gameDataIncomplete ? html`
@@ -1555,8 +1486,7 @@ function stepReview() {
         not appear on the sign-in page. Add them any time under Settings, single sign-on.
       </div>` : '')}
     <dl class="row small mt-3">
-      ${raw(line('Server', mp ? 'Multiplayer' : 'Single player'))}
-      ${raw(mp ? line('Server name', answers.serverName || '(unset)') : '')}
+      ${raw(line('Server name', answers.serverName || '(unset)'))}
       ${raw(line('Sign-in methods', answers.loginMethods.length
         ? answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ')
         : '(none)'))}
@@ -1572,9 +1502,8 @@ function stepReview() {
     </dl>
     ${raw(html`
       <div class="vt-section-note mb-3">
-        <strong>${raw(mp ? 'Getting players in.' : 'Your address.')}</strong> ${raw(mp
-          ? 'Send them this address, they open it in a browser, nothing to install:'
-          : 'This is where you play, and where anyone you invite would join:')}
+        <strong>Getting players in.</strong> Send them this address, they open it in a browser,
+        nothing to install:
         ${raw(joinAddress() ? html`
           <pre class="vt-mono mb-1 mt-2" id="joinLink">${joinAddress()}</pre>
           <button class="btn btn-sm btn-outline-secondary" id="copyJoin">Copy link</button>`
@@ -1807,9 +1736,9 @@ function pageLogin(totpRequired = false, notice = '') {
   // fetch is best-effort: with no providers (or no network) the password form stands alone.
   fetch('/auth/providers').then((r) => r.json()).then((auth) => {
     const box = $('#liSso');
-    // The launcher's provider buttons and order (Google, Discord, Microsoft), marks from
+    // The launcher's provider buttons and order (Google, Discord), marks from
     // providers.js, so the operator's door matches the players'.
-    const providers = ['google', 'discord', 'microsoft'].filter((p) => (auth.providers || []).includes(p));
+    const providers = ['google', 'discord'].filter((p) => (auth.providers || []).includes(p));
     if (!box || !providers.length) return;
     const icons = window.PROVIDER_ICONS || {};
     box.innerHTML = html`
@@ -1890,36 +1819,10 @@ async function pageOverview() {
   const up = Math.round(o.uptime / 60);
   const upText = up < 60 ? `${up}m` : `${Math.round(up / 60)}h`;
 
-  // A SINGLE-PLAYER DASHBOARD IS A DIFFERENT PAGE, not the multiplayer one with things
-  // greyed out. The world card named an internal id ("default") nobody chose and links to a
-  // page about a world that has no other inhabitants; the player table has columns for rank
-  // and location that only mean something when there are other people to outrank or find.
-  // What an operator running this for themselves actually wants to know is whether the
-  // machine is healthy, so that takes the space back.
-  const solo = singlePlayer();
   const playing = o.playing || [];
 
-  if (solo) {
-    view().innerHTML = html`
-      <div class="row">
-        ${raw(stat('Playing now', `${playing.length}`, 'bi-controller', 'primary'))}
-        ${raw(stat('Server uptime', upText, 'bi-clock-history', 'secondary'))}
-        ${raw(sysCards(o.system))}
-      </div>
-      <div class="card card-outline card-primary">
-        <div class="card-header"><h3 class="card-title">Playing now</h3></div>
-        <div class="table-responsive"><table class="table table-hover mb-0">
-          <thead><tr><th>Account</th><th>Last seen</th></tr></thead>
-          <tbody>${raw(playing.length ? playing.map((p) => html`
-            <tr><td>${p.account}</td><td class="text-secondary">${ago(p.lastSeen)}</td></tr>`).join('')
-            : html`<tr><td colspan="2" class="vt-empty">Nobody is playing right now.</td></tr>`)}
-          </tbody></table></div></div>`;
-    return;
-  }
-
-  // THE MULTIPLAYER SERVER IS A THIRD PAGE. It runs one game per person playing, so a single
-  // "World" card and one player cap are the wrong shape here the way the roster count was the
-  // wrong shape in single player. What its operator wants to know is who is playing and in
+  // THE MULTIPLAYER SERVER IS ITS OWN PAGE. It runs one game per person playing, so a single
+  // "World" card and one player cap are the wrong shape here. What its operator wants to know is who is playing and in
   // whose game, then whether the box has room for more.
   if (o.platform) return renderPlatformOverview(o, stat, upText);
 
@@ -2120,13 +2023,10 @@ function renderSaves(account, r) {
     ${raw(can('owner') ? html`
       <label class="btn btn-sm btn-outline-secondary mb-0">Import a save<input type="file"
         accept=".omwsave" data-saveup hidden></label>
-      <!-- NO SCOPE CHOOSER. This server is one thing or the other — the wizard decided that,
-           it decides which PROGRAM the container runs, and the dashboard already branches on
-           it everywhere else. Asking again at the moment of an import invited an operator to
-           file a save into the half of the server nobody here is playing, where it would sit
-           looking successful and never appear in anyone's load list. -->
+      <!-- NO SCOPE CHOOSER: imports go into multiplayer, the only mode (CL6). Old 'solo'
+           saves are still listed and downloadable. -->
       <span class="text-secondary small ms-2" data-savescope
-        data-scope="${raw(singlePlayer() ? 'solo' : 'mp')}">into ${raw(singlePlayer() ? 'single player' : 'multiplayer')}</span>
+        data-scope="mp">into multiplayer</span>
       <div class="mt-1" data-savemsg></div>` : '')}`;
 }
 
@@ -2194,9 +2094,8 @@ function setupChecklist() {
     // screen mentioned it. Derived from a live check, so it clears itself once staged.
     ...(clientStaged === false
       ? [{ done: false, hash: '#updates',
-           label: 'Install the game engine, or nobody can play: run ./setup.sh (Windows: '
-             + '.\\setup.ps1), or unzip the openmw-web release zip into the "play" folder of '
-             + 'your checkout. Your Morrowind files are separate and are not what this is about.' }]
+           label: 'Install the game engine, or nobody can play: install it from the Updates page, '
+             + 'or unzip the openmw-web release zip into the "play" folder of your checkout. Your Morrowind files are separate and are not what this is about.' }]
       : []),
     // Only shown when there IS an unfinished provider, so it is a live problem rather than
     // a permanent nag: a sign-in button the operator chose and cannot see.
@@ -2589,26 +2488,15 @@ async function pageSettings(only) {
   const grouped = new Set(settingsCache.groups.flatMap((g) => g.sections));
   const others = settingsCache.sections.filter((s) => !grouped.has(s.name) && !s.name.includes('.'));
 
-  // A SINGLE-PLAYER SERVER IS NOT A MULTIPLAYER ONE WITH THE PLAYERS MISSING. Roughly half
-  // these sections are read by a world this deployment never runs, or describe how people
-  // treat each other when there is only one of them. Showing all 26 makes the handful that
-  // matter hard to find, and every hidden one is a question the operator cannot answer
-  // usefully. The server decides which those are; see MULTIPLAYER_ONLY.
-  //
-  // Hidden, not disabled, and never deleted: the values stay in the file, so a server that
-  // later becomes multiplayer gets them all back exactly as they were.
-  // Two cuts, both named by the server. In single player, the sections a lone player cannot
-  // use (MULTIPLAYER_ONLY). In a game's dashboard, the sections only the multiplayer server
-  // reads (GATEWAY_ONLY). On the multiplayer server itself everything shows: what is saved
-  // there is the defaults every game starts from.
-  const hide = singlePlayer() ? new Set(settingsCache.multiplayerOnly || [])
-    : !platform() ? new Set(settingsCache.gatewayOnly || [])
-      : new Set();
+  // One cut, named by the server: in a game's dashboard, the sections only the multiplayer
+  // server reads (GATEWAY_ONLY). On the multiplayer server itself everything shows: what is
+  // saved there is the defaults every game starts from. Hidden, never deleted.
+  const hide = !platform() ? new Set(settingsCache.gatewayOnly || []) : new Set();
   const keep = (names) => names.filter((n) => !hide.has(n));
 
   const groups = [...settingsCache.groups, ...(others.length ? [{ group: 'Other', sections: others.map((s) => s.name) }] : [])]
     .map((g) => ({ ...g, sections: keep(g.sections) }))
-    // A group whose every section is multiplayer-only ("Platform (advanced)") goes with them,
+    // A group whose every section is hidden goes with them,
     // rather than sitting there as a heading that opens onto nothing.
     .filter((g) => g.sections.length)
     // Matched case-insensitively on the group's own name, so the nav entry and the grouping
@@ -2691,24 +2579,16 @@ function renderSection(s) {
       </div>`;
   }).join('');
 
-  // NOTHING IS BADGED "not used" ANY MORE. It used to mark auth, login and moderation as
-  // inert on a single-player server, which was built on the idea that nobody else could ever
-  // be there. People can be: "single player" says who the world is for, not who can reach
-  // it. Telling an operator a section does nothing, while it quietly governs whether their
-  // friends can sign in, is worse than saying nothing at all.
-  const inert = false;
-
   // A section holding a flagged-dangerous field wears the red header, so the risk is
   // visible from the accordion, not only after scrolling into the field.
   const hasDanger = s.fields.some((f) => f.danger);
   const tone = hasDanger ? 'card-danger' : 'card-secondary';
   return html`
-    <div class="card ${raw(tone)} card-outline mb-3 ${raw(inert ? 'opacity-75' : '')}" data-section="${s.name}">
+    <div class="card ${raw(tone)} card-outline mb-3" data-section="${s.name}">
       <div class="card-header d-flex align-items-center">
         <h3 class="card-title">
           ${raw(hasDanger ? '<i class="bi bi-exclamation-triangle me-2"></i>' : '')}${s.label || s.name}
-          <span class="vt-mono text-secondary small ms-2">[${s.name}]</span>
-          ${raw(inert ? '<span class="badge text-bg-secondary ms-2">not used, this is a single-player server</span>' : '')}</h3>
+          <span class="vt-mono text-secondary small ms-2">[${s.name}]</span></h3>
         <button class="btn btn-sm btn-primary ms-auto" data-save="${s.name}">
           <i class="bi bi-check-lg me-1"></i>Save</button>
       </div>
@@ -4306,7 +4186,7 @@ async function pageRestart() {
       <p class="small text-secondary">The server reads its settings, its load order and its mod
         list at startup, so anything saved since the last start takes effect here. Players are
         disconnected and can reconnect once it is back, usually within a few seconds.</p>
-      ${raw(state.maintenance?.on || singlePlayer() ? '' : html`<div class="vt-section-note mb-3">
+      ${raw(state.maintenance?.on ? '' : html`<div class="vt-section-note mb-3">
         Nobody has been warned. If people are playing, turn on
         <a href="#maintenance">maintenance mode</a> first.</div>`)}
       ${raw(platform() ? html`<div class="vt-section-note mb-3">
@@ -4443,104 +4323,13 @@ async function pageUpdates() {
     srv.innerHTML = html`<div class="text-success">
       <i class="bi bi-check-circle me-1"></i>You are on v${r.current}, the newest release.</div>`;
   } else {
-    let st = null;
-    try { st = await api('/update/status'); } catch { /* rendered as agent-not-running below */ }
-    if (!st?.agent?.alive) {
-      // No updater container: the honest fallback is the command line, with the exact
-      // commands rather than a shrug. Deployments from before the updater existed land
-      // here until their one-time migration.
-      srv.innerHTML = html`
-        <p><strong>${latestTag} is out</strong> (you run v${r.current}). ${raw(changed)}</p>
-        <p class="small mb-1">The updater container is not running, so the button cannot do
-          it for you. On the machine hosting this, run:</p>
-        <pre class="vt-mono small mb-1">./setup.sh --update</pre>
-        <p class="small text-secondary mb-0">(Windows: <span class="vt-mono">.\\setup.ps1 -Update</span>.
-          If you installed before updates existed, that same command adds the updater;
-          the button works from then on.)</p>`;
-    } else {
-      srv.innerHTML = html`
-        <p><strong>${latestTag} is out</strong> (you run v${r.current}). ${raw(changed)}</p>
-        <button class="btn btn-primary" id="updSrvGo">Update to ${latestTag}</button>`;
-      $('#updSrvGo').onclick = async () => {
-        const btn = $('#updSrvGo');
-        btn.disabled = true; // a double-click must not stack two confirms on one modal
-        const yes = await confirmAction({
-          title: `Update the server to ${latestTag}?`,
-          // No links in this body: navigating under an open modal strands it. The Backup
-          // page is linked right below the cards instead.
-          body: 'The server downloads the new release and restarts, which signs everyone out for a '
-            + 'minute or two. Your data is untouched: accounts, saves, settings, game files '
-            + 'and mods all stay exactly as they are. If you want a safety copy anyway, do '
-            + 'that from the Backup page first.',
-          danger: 'Update',
-        });
-        if (!yes) { btn.disabled = false; return; }
-        try {
-          const res = await api('/update/server', { method: 'POST' });
-          if (!res.ok) { toast(res.error || 'Could not request the update.', 'danger'); btn.disabled = false; return; }
-        } catch (e) {
-          // 409 means an update is already requested: watching it is the right response.
-          if (e.status !== 409) { toast(e.message, 'danger'); btn.disabled = false; return; }
-        }
-        watchServerUpdate(srv, st?.status?.startedAt ?? null);
-      };
-      // A request already pending (another tab, another owner): watch it instead of
-      // offering a button that would answer 409.
-      if (st.requested) watchServerUpdate(srv, st.status?.startedAt ?? null);
-    }
-  }
-
-  // Follow the updater's status file until it restarts us or fails. The status file
-  // survives from PREVIOUS runs, so a run is identified by its startedAt: only frames whose
-  // startedAt differs from the baseline captured before the request count. That also keeps
-  // browser and server clocks out of ever being compared - a skewed browser clock must not
-  // replay an old failure or declare a working updater missing.
-  function watchServerUpdate(el, baseline) {
-    const started = Date.now();
-    let lastUpdated = null;
-    let stalePolls = 0;
-    installPhase(el, 'Update requested', 'waiting for the updater to pick it up (up to 30 seconds)');
-    const timer = setInterval(async () => {
-      // The operator left the page: this watch has nowhere to paint and must not keep
-      // polling (or seize the view with waitForRestart) from the shadows.
-      if (!el.isConnected) { clearInterval(timer); return; }
-      let st;
-      try { st = await api('/update/status'); } catch { return; }
-      const cur = st.status && st.status.startedAt !== baseline ? st.status : null;
-      if (!cur) {
-        if (Date.now() - started > 90000 && !st.requested) {
-          clearInterval(timer);
-          installFail(el, 'The updater never picked the request up. Check its log: '
-            + 'docker logs openmw-web-updater');
-        }
-        return;
-      }
-      if (cur.phase === 'failed') {
-        clearInterval(timer);
-        installFail(el, cur.error || 'The update failed; the server was left as it was.');
-        return;
-      }
-      if (cur.phase === 'restarting' || cur.phase === 'done') {
-        clearInterval(timer);
-        waitForRestart();
-        return;
-      }
-      // Stuck = the updater's own updatedAt stopped changing (it refreshes every 20s while
-      // a step runs), measured in polls rather than wall-clock arithmetic.
-      if (cur.updatedAt === lastUpdated) {
-        if (++stalePolls > 300) {
-          clearInterval(timer);
-          installFail(el, 'The updater seems stuck (no progress for ten minutes). Check its '
-            + 'log: docker logs openmw-web-updater. The server is still running.');
-          return;
-        }
-      } else { lastUpdated = cur.updatedAt; stalePolls = 0; }
-      const mins = Math.round((Date.now() - started) / 60000);
-      // 'pulling' covers the tag fetch and the ~1 GB image download, so it is the phase that
-      // takes time; a minute count keeps a slow line from looking stuck.
-      const label = `Downloading ${cur.tag || 'the release'}${mins ? ` (${mins} min so far)` : ''}`;
-      installPhase(el, 'Updating the server', label);
-    }, 2000);
+    // NO UPDATE BUTTON (OT3-228, follows CL12): v2 is hosted-only and deployed from the
+    // compose stack, so there is no updater agent for a button to ask. Say what is out and
+    // how a release reaches this server.
+    srv.innerHTML = html`
+      <p><strong>${latestTag} is out</strong> (you run v${r.current}). ${raw(changed)}</p>
+      <p class="small text-secondary mb-0">This server is updated by redeploying the compose
+        stack with the new <span class="vt-mono">OPENMW_WEB_TAG</span>, not from the dashboard.</p>`;
   }
 
   function installFail(el, message) {
@@ -4559,7 +4348,7 @@ async function pageUpdates() {
       not from here.</p>`;
   } else if (!e.writable) {
     // NOT WRITABLE IS THE NORMAL DOCKER CASE: play/ belongs to whoever cloned the repo, and the
-    // server runs as its own user. This used to promise that `./setup.sh --update` grants the
+    // server runs as its own user. This used to promise that the (removed) setup script's update grants the
     // access (it changes no ownership) and to suggest `chown 1000:1000` (the wrong uid for the
     // multiplayer image), so a server with NO engine sent its owner in circles (2026-10-19).
     // Say what is true: whether players can play, and the one step that fixes it.
@@ -4572,8 +4361,7 @@ async function pageUpdates() {
       : html`<p class="mb-1 text-warning"><i class="bi bi-exclamation-triangle me-1"></i><strong>No game
           engine is installed, so nobody can play.</strong> Sign-in works, then the game page
           fails with "Could not load the game engine".</p>
-        <p class="small mb-0">Fix: run <span class="vt-mono">./setup.sh</span> (Windows:
-          <span class="vt-mono">.\\setup.ps1</span>) in the checkout, which installs it, or unzip
+        <p class="small mb-0">Fix: unzip
           <span class="vt-mono">openmw-web-${latestTag}.zip</span> from the
           <a href="https://github.com/Virtastic/openmw-web/releases" target="_blank" rel="noopener">releases page</a>
           into <span class="vt-mono">./play</span>. Reload the game page afterwards; no restart needed.</p>`;
@@ -4848,12 +4636,6 @@ async function route() {
   if (!state.authed) return pageLogin();
 
   // Opening a game, and leaving it. A link, so a row on the Overview and a bookmark both work:
-
-  // Hiding a nav link is not the same as closing the page: the hash still works when typed,
-  // bookmarked, or followed from an older link. Send it home rather than rendering a console
-  // whose every button would act on a world nobody is connected to.
-  const item = NAV.flatMap((g) => g.items).find((i) => i.hash === hash);
-  if (item && !navVisible(item)) return go('#overview');
 
   const need = NEEDS[hash];
   if (need && !can(need)) {

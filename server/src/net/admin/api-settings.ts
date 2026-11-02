@@ -28,37 +28,8 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
     sections: ['simPeer', 'gateway', 'worlds'],
     note: 'How the multiplayer server sizes itself and how each game simulates its world. ' +
       'Saved here, these are the defaults every game starts with; a game\'s own dashboard ' +
-      'can override the ones it reads for itself. A single self-hosted game only needs the ' +
-      'sim peer section.',
+      'can override the ones it reads for itself.',
   },
-];
-
-/**
- * Sections that cannot do anything in a single-player deployment.
- *
- * The test is structural, not stylistic: in single player the browser runs the engine and the
- * server keeps accounts, a locker and (when the operator asked it to) a copy of the game
- * files. It simulates no world and there is no second person, so every setting below is read
- * by something that never runs here.
- *
- *   rules, economy, time, cellReset        the server's own world simulation, which does not exist
- *   sharing, moderation                    two or more people, one of whom needs moderating
- *   authority                              handing cell ownership between peers; there is one peer
- *   content, engine                        checks run against a client as it JOINS; nobody joins
- *   simPeer, gateway, worlds               the headless engine and the multi-world supervisor
- *
- * Deliberately NOT hidden: [admin] carries the dashboard's own owners and token, [limits]
- * still rate-limits sign-in, [locker] is how the one player gets their files, and
- * [login]/[auth] are how they sign in. A section that does part of its job here stays.
- *
- * Hidden, never deleted: the values stay in the file untouched, so switching a server to
- * multiplayer later brings them all back exactly as they were.
- */
-export const MULTIPLAYER_ONLY = [
-  'rules', 'economy', 'time', 'cellReset',
-  'sharing', 'moderation', 'authority',
-  'content', 'engine',
-  'simPeer', 'gateway', 'worlds',
 ];
 
 /**
@@ -71,37 +42,8 @@ export const MULTIPLAYER_ONLY = [
  */
 export const GATEWAY_ONLY = ['worlds'];
 
-/**
- * Individual fields hidden in single player, for a DIFFERENT reason than the sections above.
- *
- * Those are hidden because they do nothing here. This one works perfectly well: the admin API
- * is real in single player and a token would authenticate against it. It is hidden because
- * there is no plausible use for it — it exists so a cron job can drive the API of a server
- * with players on it — and because leaving a standing credential on screen invites somebody
- * to fill it in. A field whose only outcomes are "empty" or "a moderator credential you did
- * not need" is not a choice worth offering one person running their own game.
- *
- * Hidden, never cleared: an existing value keeps working and comes back if the deployment
- * ever becomes multiplayer.
- */
-export const SOLO_HIDE_FIELDS = ['admin.dashboardToken'];
-
-/**
- * Sections where single player KEEPS only a named few fields, because listing the casualties
- * would be longer than listing the survivors.
- *
- * [limits] is twenty-three knobs and twenty-one of them budget a connected player: messages per
- * second, movement updates, actor streams, buffered bytes, connections per address, interest
- * radius, the whole LOD ladder. None of that exists when the browser runs the engine and nobody
- * connects. What survives is the sign-in rate limit, which still guards the front door, and
- * whether a proxy's client-IP header is trusted, which is a property of the deployment.
- *
- * Inverted deliberately: a knob added to [limits] later is almost certainly another
- * per-connection budget, so defaulting it to hidden here is right more often than not.
- */
-export const SOLO_KEEP_FIELDS: Record<string, string[]> = {
-  limits: ['loginPerMinPerIp', 'trustCloudflareIp'],
-};
+// No single-player field cuts (OT3-228, follows CL6): a deployment other than multiplayer
+// refuses to boot, so every field shows.
 
 /**
  * Fields the SERVER works out, which an operator must therefore not be asked for.
@@ -300,13 +242,11 @@ export function settingsView(dataDir: string, config: unknown): {
   groups: typeof SECTION_GROUPS;
   sections: SectionView[];
   fallback: string | null;
-  multiplayerOnly: string[];
   gatewayOnly: string[];
 } {
   const cfg = config as Record<string, unknown>;
   const overrides = readDashboardTree(dataDir);
   const sections: SectionView[] = [];
-  const soloMode = (cfg.setup as { deploymentMode?: string } | undefined)?.deploymentMode === 'single';
   // A domain means the wizard already asked for the origin, generated the proxy config from it
   // and issued a certificate for it, so the locker base is derived and restating it is a second
   // chance to get it wrong. With no domain nobody was ever asked, and the derived value is
@@ -336,14 +276,11 @@ export function settingsView(dataDir: string, config: unknown): {
       // forms that edit them. The row was not just redundant, it told the operator the
       // opposite of what the next panel proved.
       if (value !== null && typeof value === 'object' && !Array.isArray(value)) continue;
-      // Fields the operator is not asked for: derived by the server, or pointless in a
-      // one-person deployment. Filtered HERE rather than in the page, because the server
+      // Fields the operator is not asked for, because the server derives them. Filtered HERE rather than in the page, because the server
       // already knows both facts and a field that is never sent cannot be saved by accident.
       const path = `${name}.${key}`;
       if (DERIVED_FIELDS.includes(path)) continue;
       if (hasDomain && path === 'locker.publicBase') continue;
-      if (soloMode && SOLO_HIDE_FIELDS.includes(path)) continue;
-      if (soloMode && SOLO_KEEP_FIELDS[name] && !SOLO_KEEP_FIELDS[name]!.includes(key)) continue;
       const type = fieldType(value);
       const secret = isSecret(name, key);
       const h = helpFor(name, key);
@@ -399,9 +336,6 @@ export function settingsView(dataDir: string, config: unknown): {
     groups: SECTION_GROUPS,
     sections,
     fallback: (cfg.dashboardFallback as string | undefined) ?? null,
-    // Sent rather than duplicated in the page: which sections need a world is a fact about
-    // the config, and it belongs next to the grouping that already lives here.
-    multiplayerOnly: MULTIPLAYER_ONLY,
     gatewayOnly: GATEWAY_ONLY,
   };
 }
@@ -470,8 +404,9 @@ export function applySection(
 // --- the onboarding wizard ------------------------------------------------------------------
 
 export interface WizardAnswers {
-  /** Step 2: what kind of deployment this is. Drives which later steps run at all. */
-  deploymentMode?: 'single' | 'multiplayer';
+  /** What kind of deployment this is. Multiplayer only since CL6: 'single' refuses boot, so
+   *  applyWizard refuses it too rather than store an answer the next boot dies on. */
+  deploymentMode?: 'multiplayer';
   /** Which login methods players may use. */
   loginMethods?: string[];
   /** Who may create an account. Independent of deploymentMode. */
@@ -510,6 +445,10 @@ export function applyWizard(
   a: WizardAnswers,
   sharedDir?: string,
 ): { ok: true } | { ok: false; error: string } {
+  if (a.deploymentMode !== undefined && a.deploymentMode !== 'multiplayer') {
+    return { ok: false, error: `deploymentMode "${String(a.deploymentMode)}" is not offered: `
+      + 'this server runs one shared multiplayer world.' };
+  }
   const current = readDashboardTree(dataDir);
   const next: Tree = { ...current };
   const set = (section: string, key: string, value: unknown): void => {
@@ -537,7 +476,7 @@ export function applyWizard(
   if (a.hosting === 'internal') set('setup', 'domain', '');
   else if (a.domain !== undefined) set('setup', 'domain', normaliseDomain(a.domain));
   // The pivot answers, ALL of them. An earlier version kept only two, which meant the
-  // dashboard could never branch on "is this single player?" and re-running the wizard
+  // dashboard could never branch on the deployment and re-running the wizard
   // presented every question blank, the two complaints that forced this rewrite.
   if (a.deploymentMode) set('setup', 'deploymentMode', a.deploymentMode);
   if (a.storage) set('setup', 'storage', a.storage);

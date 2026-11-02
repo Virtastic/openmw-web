@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { LockerSessionStore } from '../src/auth/identities';
 import { createSysInfo } from '../src/net/admin/sysinfo';
 import {
-  applySection, applyWizard, DERIVED_FIELDS, MULTIPLAYER_ONLY, SECTION_GROUPS, SOLO_KEEP_FIELDS,
+  applySection, applyWizard, DERIVED_FIELDS, SECTION_GROUPS,
   settingsView,
 } from '../src/net/admin/api-settings';
 import { ENUM_OPTIONS } from '../src/config';
@@ -86,15 +86,11 @@ test('system readings are real numbers, and rates need two samples', async () =>
 
 // --- the page ------------------------------------------------------------------------------
 
-test('the single-player dashboard drops the multiplayer furniture', () => {
-  const solo = /if \(solo\) \{[\s\S]*?\r?\n    return;\r?\n  \}/.exec(app); // \r?: CRLF checkouts
-  assert.ok(solo, 'no single-player branch on the overview');
-  assert.doesNotMatch(solo[0], /setupChecklist\(\)/, 'the getting-started widget must be gone');
-  assert.doesNotMatch(solo[0], /'World'/, 'the world card names an id nobody chose');
-  assert.doesNotMatch(solo[0], /maxPlayers/, 'a player cap is meaningless here');
-  // And keeps what a solo operator actually wants.
-  assert.match(solo[0], /Playing now/);
-  assert.match(solo[0], /sysCards\(o\.system\)/);
+test('there is no single-player branch anywhere in the dashboard (OT3-228, follows CL6)', () => {
+  // A deployment other than multiplayer refuses to boot, so a branch for it is dead code.
+  assert.doesNotMatch(app, /singlePlayer|navVisible|solo: false|if \(solo\)|stepMode/);
+  assert.doesNotMatch(app, /'deploymentMode', 'single'/);
+  assert.match(app, /deploymentMode: 'multiplayer'/, 'the wizard sends the only mode');
 });
 
 test('a game keeps its own dashboard, and the multiplayer server gets a third', () => {
@@ -104,35 +100,8 @@ test('a game keeps its own dashboard, and the multiplayer server gets a third', 
   assert.match(app, /stat\(`Players \(of \$\{o\.maxPlayers\}\)`/);
   assert.match(app, /stat\('World', o\.world\.id/);
   // The multiplayer server runs a game per person, so those two tiles are the wrong shape
-  // THERE the way the roster count was in single player. It gets people first.
+  // THERE. It gets people first.
   assert.match(app, /if \(o\.platform\) return renderPlatformOverview/);
-});
-
-// --- settings that need a world, or a second person ------------------------------------------
-
-test('the sections a lone player cannot use are named', () => {
-  // Each of these is read by the server's own world simulation, by a join handshake, or by
-  // there being somebody else. None of the three happens in single player.
-  for (const s of ['rules', 'economy', 'time', 'cellReset', 'sharing', 'moderation',
-    'authority', 'content', 'engine', 'simPeer', 'gateway', 'worlds']) {
-    assert.ok(MULTIPLAYER_ONLY.includes(s), `${s} should be hidden in single player`);
-  }
-});
-
-test('sections that still do part of their job are NOT hidden', () => {
-  // The cut is "does nothing here", not "sounds multiplayer-ish". [admin] holds the
-  // dashboard's own owners and token, [limits] still rate-limits sign-in, [locker] is how the
-  // one player gets their files, [login]/[auth] are how they sign in.
-  for (const s of ['server', 'login', 'auth', 'admin', 'limits', 'locker', 'metrics',
-    'notifications', 'integrations', 'dev']) {
-    assert.ok(!MULTIPLAYER_ONLY.includes(s), `${s} still matters in single player`);
-  }
-});
-
-test('every hidden name is a real section, not a typo', () => {
-  // A misspelling here hides nothing and is invisible: the page just keeps showing it.
-  const known = new Set([...SECTION_GROUPS.flatMap((g) => g.sections), 'engine']);
-  assert.deepEqual(MULTIPLAYER_ONLY.filter((s) => !known.has(s)), []);
 });
 
 // --- fields the operator is not asked for ----------------------------------------------------
@@ -148,7 +117,7 @@ test('publicBase is not offered once the server knows the origin, in either mode
   // and upload URLs pointing at their OWN loopback. The server warns and names [locker]
   // publicBase as the fix -- which the dashboard then refused to accept, leaving the operator
   // hand-editing config.toml, the one thing this dashboard exists to avoid.
-  for (const mode of ['single', 'multiplayer']) {
+  for (const mode of ['multiplayer']) {
     const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
       setup: { deploymentMode: mode, domain: 'example.test' },
       locker: { publicBase: '', maxBytesPerAccount: 1 },
@@ -171,16 +140,12 @@ test('publicBase IS offered when no domain was ever captured', () => {
     'with no domain the operator must be able to say what origin their players use');
 });
 
-test('the shared admin token is offered in multiplayer and not in single player', () => {
-  const build = (deploymentMode: string) => settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
-    setup: { deploymentMode }, admin: { dashboardToken: '', allowConsole: false },
+test('the shared admin token is offered (no single-player cut)', () => {
+  const admin = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: { deploymentMode: 'multiplayer' }, admin: { dashboardToken: '', allowConsole: false },
   }).sections.find((s) => s.name === 'admin')!;
-
-  assert.ok(build('multiplayer').fields.some((f) => f.key === 'dashboardToken'));
-  const solo = build('single');
-  assert.deepEqual(solo.fields.filter((f) => f.key === 'dashboardToken'), []);
-  // The rest of [admin] still matters here, so the section must survive.
-  assert.ok(solo.fields.some((f) => f.key === 'allowConsole'));
+  assert.ok(admin.fields.some((f) => f.key === 'dashboardToken'));
+  assert.ok(admin.fields.some((f) => f.key === 'allowConsole'));
 });
 
 test('a nested table is a form, not also an "unsupported" row above it', () => {
@@ -256,47 +221,13 @@ test('nothing user-facing still links to the closed wizard hash', () => {
   assert.doesNotMatch(app, /href="#setup"/);
 });
 
-test('the list ships with the settings payload', () => {
+test('the page hides only the gateway-only sections, and drops groups left empty', () => {
   const view = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
     server: { name: 'x' }, rules: { pvp: true },
   });
-  assert.deepEqual(view.multiplayerOnly, MULTIPLAYER_ONLY);
-});
-
-test('the page filters by it and drops groups left empty', () => {
-  // "Platform (advanced)" is simPeer/gateway/worlds and nothing else, so in single player it
-  // must go entirely rather than remain as a heading that opens onto nothing.
-  // The single-player cut first; a game's dashboard hides the multiplayer server's own
-  // sections instead; the multiplayer server hides nothing (it holds every game's defaults).
-  assert.match(app, /const hide = singlePlayer\(\) \? new Set\(settingsCache\.multiplayerOnly \|\| \[\]\)/);
-  assert.match(app, /new Set\(settingsCache\.gatewayOnly \|\| \[\]\)/);
+  assert.equal('multiplayerOnly' in view, false, 'no single-player section list is sent');
+  assert.match(app, /const hide = !platform\(\) \? new Set\(settingsCache\.gatewayOnly \|\| \[\]\)/);
   assert.match(app, /\.filter\(\(g\) => g\.sections\.length\)/);
-  const platform = SECTION_GROUPS.find((g) => g.group.startsWith('Platform'))!;
-  assert.deepEqual(platform.sections.filter((s) => !MULTIPLAYER_ONLY.includes(s)), [],
-    'the whole Platform group must be hidden, or the group survives with a gap in it');
-});
-
-// --- pages that cannot work in a one-person deployment ---------------------------------------
-
-test('Players & commands is marked unavailable in single player', () => {
-  // Every control on it acts on a player connected to a world. In single player the browser
-  // runs the engine and never connects, so there is nobody to broadcast to or hand an item.
-  assert.match(app, /hash: '#console'[^}]*solo: false/);
-});
-
-test('the sidebar filters those pages out', () => {
-  assert.match(app, /i\.solo === false && singlePlayer\(\)/);
-});
-
-test('and the hash is closed too, not merely unlinked', () => {
-  // A hidden link is still a working URL when typed, bookmarked, or followed from an older
-  // link, which would land on a console whose every button acts on an empty world.
-  // One predicate decides both the sidebar and the hash, so they cannot disagree.
-  const guard = /if \(item && !navVisible\(item\)\) return go\('#overview'\);/.exec(app);
-  assert.ok(guard, 'no route guard for hidden pages');
-  const visible = /function navVisible\(i\) \{[\s\S]*?\n\}/.exec(app);
-  assert.ok(visible, 'no navVisible');
-  assert.match(visible[0], /i\.solo === false && singlePlayer\(\)/);
 });
 
 test('multiplayer still reaches the console', () => {
@@ -401,34 +332,12 @@ test('filenames out of an uploaded zip are escaped, not injected', () => {
   assert.match(chooser[0], /html`\$\{c\.plugins\.length === 1/);
 });
 
-test('[limits] keeps only the two knobs that still do anything in single player', () => {
-  // Twenty-one of its twenty-three budget a CONNECTED player: messages per second, movement
-  // updates, actor streams, buffered bytes, connections per address, interest radius, the LOD
-  // ladder. None of that exists when the browser runs the engine and nobody connects.
-  const limits = {
-    msgsPerSec: 60, moveMsgsPerSec: 40, bytesPerSec: 1, maxConnsPerIp: 3, interestRadius: 1,
-    lodNearHz: 1, renderLod: true, loginPerMinPerIp: 10, trustCloudflareIp: false,
-  };
-  const solo = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+test('[limits] shows every knob (no single-player cut)', () => {
+  const limits = { msgsPerSec: 60, loginPerMinPerIp: 10, trustCloudflareIp: false };
+  const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
     setup: { deploymentMode: 'single' }, limits,
   }).sections.find((s) => s.name === 'limits')!;
-  assert.deepEqual(solo.fields.map((f) => f.key).sort(), ['loginPerMinPerIp', 'trustCloudflareIp']);
-
-  // Multiplayer still gets all of them: this is a view, not a deletion.
-  const mp = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
-    setup: { deploymentMode: 'multiplayer' }, limits,
-  }).sections.find((s) => s.name === 'limits')!;
-  assert.equal(mp.fields.length, Object.keys(limits).length);
-});
-
-test('every name in the solo keep-list is a real field', () => {
-  // A typo here would hide the field it was meant to keep, silently.
-  const all = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
-    setup: { deploymentMode: 'multiplayer' },
-    limits: { loginPerMinPerIp: 1, trustCloudflareIp: false, msgsPerSec: 1 },
-  }).sections.find((s) => s.name === 'limits')!;
-  const known = new Set(all.fields.map((f) => f.key));
-  assert.deepEqual(SOLO_KEEP_FIELDS.limits!.filter((k) => !known.has(k)), []);
+  assert.equal(v.fields.length, Object.keys(limits).length);
 });
 
 // --- the pages the sidebar actually offers ------------------------------------------------------

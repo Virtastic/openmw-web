@@ -124,19 +124,6 @@ ${plain === 'off' ? `	# No certificates and no HTTP->HTTPS redirect. Without thi
   return `${header(internal ? 'off' : domain === '' ? 'no-redirects' : 'auto')}${blocks.join('\n')}\n`;
 }
 
-/**
- * Is the launcher switched on? Environment only, and off unless explicitly set.
- *
- * Not a config key and not a dashboard toggle: it decides whether a development page is
- * exposed, which is a property of how this container was started rather than an answer about
- * the server. Keeping it out of the config also keeps it out of the settings UI, where it
- * would read as a feature an operator ought to have an opinion about.
- */
-export function launcherEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.OMW_ENABLE_LAUNCHER ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-}
-
 /** Where the generated config lives inside the shared data directory. */
 export function caddyfilePath(dataDir: string): string {
   return join(dataDir, 'caddy', 'Caddyfile');

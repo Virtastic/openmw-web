@@ -126,17 +126,16 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   const applied = await call('/setup', { method: 'POST', token, body: {
     // deliveryModel 'verify' ON PURPOSE: the question is gone from the wizard and the server
     // must not store it: only 'esm', the model v2 runs, is recorded (OT3-43, OT3-148).
-    deploymentMode: 'single', contentProfile: 'expansions', deliveryModel: 'verify',
+    deploymentMode: 'multiplayer', contentProfile: 'expansions', deliveryModel: 'verify',
     hosting: 'internal', storage: 'local', loginMethods: ['password'], completed: true,
   } });
   assert.equal(applied.status, 200);
 
   // The pivot answers, ALL of them, written to the override file the next boot loads: this
-  // is what lets the UI hide multiplayer pages on a single-player deployment, and what
-  // re-entering Setup pre-fills from. An earlier build kept only two of these and threw the
+  // is what re-entering Setup pre-fills from. An earlier build kept only two of these and threw the
   // rest away, which is why "single player" still showed every multiplayer menu.
   const written = readDashboardTree(dataDir) as { setup?: Record<string, unknown> };
-  assert.equal(written.setup?.deploymentMode, 'single');
+  assert.equal(written.setup?.deploymentMode, 'multiplayer');
   assert.equal(written.setup?.contentProfile, 'expansions');
   assert.equal(written.setup?.deliveryModel, undefined, "'verify' is dropped, not stored");
   assert.equal(written.setup?.hosting, 'internal');
@@ -409,29 +408,26 @@ test('the wizard configures HTTPS itself instead of naming a file to edit', asyn
   assert.doesNotMatch(readFileSync(caddyfile, 'utf8'), /mp\.example\.com/);
 });
 
-test('registration is its own answer, and single player no longer closes it behind your back', async (t) => {
+test('registration is its own answer', async (t) => {
   const { call, token, dataDir } = await boot(t);
 
-  // The bug: picking "single player" used to force allowRegistration=false, a decision the
-  // operator never made and could not see, on a server their friends may well be joining.
   assert.equal((await call('/setup', { method: 'POST', token, body: {
-    deploymentMode: 'single', registration: 'open', completed: true,
+    deploymentMode: 'multiplayer', registration: 'open', completed: true,
   } })).status, 200);
   let written = readDashboardTree(dataDir) as { login?: Record<string, unknown> };
-  assert.equal(written.login?.allowRegistration, true,
-    'single player with open sign-ups stays open');
+  assert.equal(written.login?.allowRegistration, true, 'open sign-ups stay open');
 
   // OT3-40: an old page's invite answer changes nothing, and a code an earlier wizard wrote
   // is dropped on the next save rather than left in config.
   writeFileSync(join(dataDir, DASHBOARD_FILE), '[login]\nallowRegistration = true\ninviteCode = "friends-only"\n');
   assert.equal((await call('/setup', { method: 'POST', token, body: {
-    deploymentMode: 'single', registration: 'invite', inviteCode: 'friends-only', completed: true,
+    deploymentMode: 'multiplayer', registration: 'invite', inviteCode: 'friends-only', completed: true,
   } })).status, 200);
   written = readDashboardTree(dataDir) as { login?: Record<string, unknown> };
   assert.equal(written.login?.allowRegistration, true);
   assert.equal('inviteCode' in (written.login ?? {}), false, 'the stale code is dropped');
 
-  // And closed really is closed, in either mode.
+  // And closed really is closed.
   assert.equal((await call('/setup', { method: 'POST', token, body: {
     deploymentMode: 'multiplayer', registration: 'closed', completed: true,
   } })).status, 200);
@@ -571,7 +567,7 @@ test('the reachability nonce is served, and is the only thing at that path', asy
 });
 
 test('a server set to single player refuses to boot, and says why', async () => {
-  // CL6: v2 is one multiplayer world. The frozen wizard can still store "single" (CL14); a
+  // CL6: v2 is one multiplayer world. An older wizard or a hand edit can still leave "single"; a
   // restart onto it must stop with the fix in the message, not come up as a mode nothing serves.
   const dataDir = tmpDataDir();
   const first = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
@@ -580,11 +576,15 @@ test('a server set to single player refuses to boot, and says why', async () => 
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(OWNER),
   });
   const token = (await owner.json() as { token: string }).token;
-  await call('/setup', {
+  // The wizard refuses 'single' now (OT3-228), so the stale answer is written the way an
+  // older wizard or a hand edit left it.
+  const refused = await call('/setup', {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ deploymentMode: 'single', completed: true }),
   });
+  assert.equal(refused.status, 400, 'the wizard refuses single');
+  assert.equal(saveTree(dataDir, { setup: { deploymentMode: 'single', completed: true } }).ok, true);
   await first.close();
 
   // Restart, so the stored answer is loaded the way a real restart loads it.

@@ -35,13 +35,11 @@ test('compose: the server image is pulled from GHCR, pinned by OPENMW_WEB_TAG', 
   assert.ok(!compose.includes('docker.sock'), 'no container holds the docker socket');
 });
 
-test('the dashboard drives both updates through the real routes', (t) => {
+test('the dashboard drives the client update through the real routes', (t) => {
   if (!rootPresent) { t.skip('repo root not in this build context'); return; }
   for (const needle of [
-    "api('/updates')", "api('/update/status')",
-    "api('/update/server', { method: 'POST' })", "api('/update/engine', { method: 'POST' })",
+    "api('/updates')", "api('/update/engine', { method: 'POST' })",
     '/mods/install/progress?token=',
-    'waitForRestart()',
     // The terminal-frame contract with startEngineUpdate, pinned from the consuming side
     // (update-engine.test.ts pins the producing side).
     "note.startsWith('done:')", "note.startsWith('error:')",
@@ -52,11 +50,12 @@ test('the dashboard drives both updates through the real routes', (t) => {
   assert.match(app, /never touches your data/i, 'the data-safety promise is stated to the operator');
 });
 
-test('applying is never automatic anywhere', (t) => {
+test('there is no server updater (OT3-228, follows CL12)', (t) => {
   if (!rootPresent) { t.skip('repo root not in this build context'); return; }
-  // Nothing but the owner route writes the update flag.
-  const server = read('server/src/net/admin/update-server.ts');
-  assert.ok(server.includes("join(dataDir, 'update-requested')"));
+  // No agent exists to act on a request, so neither the route nor the button may remain.
+  assert.ok(!existsSync(join(root, 'server/src/net/admin/update-server.ts')));
   const routes = read('server/src/net/admin/routes.ts');
-  assert.ok(routes.includes("gate(req, res, auth, 'owner')"), 'update routes are owner-gated');
+  assert.ok(!routes.includes("'/admin/api/update/server'") && !routes.includes("'/admin/api/update/status'"));
+  assert.ok(!app.includes("api('/update/server'") && !app.includes("api('/update/status')"));
+  assert.ok(!app.includes('setup.sh'), 'no pointer at the removed setup script');
 });

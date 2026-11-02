@@ -74,7 +74,6 @@ import {
   type Choice,
 } from './mod-install';
 import { engineStatus, resolveLatestRelease, startEngineUpdate } from './update-engine';
-import { requestServerUpdate, updateStatus } from './update-server';
 import { listSaves, saveDownload, saveUploadUrl, saveUploaded, type SavesDeps } from './api-saves';
 import type { LogEntry } from '../../log';
 import { readCharacterCards } from '../../persist/playerstore';
@@ -90,8 +89,9 @@ import { join } from 'node:path';
  * the log line says what to do by hand.
  */
 export const MODE_FILE = '.mode';
-export function writeModeMarker(dir: string, mode: 'single' | 'multiplayer'): void {
-  const marker = mode === 'multiplayer' ? 'gateway' : 'single';
+export function writeModeMarker(dir: string, _mode: 'multiplayer'): void {
+  // Multiplayer only (OT3-228, follows CL6): applyWizard refuses any other mode.
+  const marker = 'gateway';
   try {
     writeFileSync(join(dir, MODE_FILE), `${marker}\n`);
     log('info', 'admin.mode_written', { mode: marker });
@@ -767,7 +767,7 @@ export function adminRoutes(deps: AdminDeps) {
       // half-answered run cannot flip the process, and at the shared dir, which is the
       // entrypoint's $DATA in both modes. The restart the page asks for next re-enters the
       // entrypoint and comes back on the other program — both of which serve this dashboard.
-      if (body.completed === true && (body.deploymentMode === 'single' || body.deploymentMode === 'multiplayer')) {
+      if (body.completed === true && body.deploymentMode === 'multiplayer') {
         writeModeMarker(deps.sharedDir ?? deps.dataDir, body.deploymentMode);
       }
       // Apply the hosting answer to the proxy immediately. Caddy watches this file, so the
@@ -898,29 +898,6 @@ export function adminRoutes(deps: AdminDeps) {
       if (!await gate(req, res, auth, 'owner', true)) return true;
       const token = url.searchParams.get('token') ?? '';
       json(res, 200, /^[0-9a-f]{32}$/.test(token) ? (getInstallProgress(token) ?? { pct: null }) : { pct: null });
-      return true;
-    }
-    // Ask the updater container to update the server itself. The answer is immediate:
-    // the actual work happens in that container, and the dashboard follows it through the
-    // status route below. The tag in the flag file is audit-trail only - the updater
-    // computes what to check out from git and executes nothing we write here.
-    if (method === 'POST' && path === '/admin/api/update/server') {
-      const ctx = await gate(req, res, auth, 'owner');
-      if (!ctx) return true;
-      const rel = await resolveLatestRelease();
-      if (!rel.ok) { json(res, 200, { ok: false, error: rel.error }); return true; }
-      const r = requestServerUpdate(deps.dataDir, rel.tag, ctx.accountKey);
-      if (!r.ok && r.busy) { json(res, 409, r); return true; }
-      if (r.ok) log('warn', 'admin.update.server', { by: ctx.accountKey, tag: rel.tag });
-      json(res, 200, r);
-      return true;
-    }
-    // Budget-exempt like the install progress route: the dashboard polls this every couple
-    // of seconds through a whole build, and rate-limiting an owner out of watching their
-    // own update would be self-sabotage.
-    if (method === 'GET' && path === '/admin/api/update/status') {
-      if (!await gate(req, res, auth, 'owner', true)) return true;
-      json(res, 200, updateStatus(deps.dataDir));
       return true;
     }
     // Kick off a game-client update. Fire-and-forget on purpose: the download is hundreds
