@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <components/esm3/refnum.hpp>
@@ -261,6 +262,33 @@ namespace MWMP
     void markScriptPlaced(ESM::RefNum ref);
     bool takeScriptPlaced(ESM::RefNum ref);
     std::vector<ScriptNote> takeScriptNotes();
+    /** OT3-95: WHERE EACH MWSCRIPT RUNS (script classes). Every engine used to run every local and
+     *  global script, so a world script (a door's lock, a lookout's state) ran once per client and
+     *  once more on the peer. The table (scripts/mp/scriptclasses.lua, module 03) names a class
+     *  per script id:
+     *    'world'  -- the world's: only the sim peer runs it; a client skips it and forwards an
+     *                activation of its object to the holder (ScriptNote 'scriptactivate') and a
+     *                StartScript of it to the peer ('startscript').
+     *    'client' -- the player's: only the triggering client runs it; the peer skips it.
+     *    'both'   -- runs everywhere (what every script did before this table).
+     *  An EMPTY table means "not classified yet" and everything runs, as before. Once a table is
+     *  set, a script it does not name still runs everywhere but is reported
+     *  (takeUnclassifiedScripts), and the sweep fails on it. Singleplayer never consults it. */
+    enum class ScriptClass : char
+    {
+        Unclassified = 0,
+        Both,
+        Client,
+        World,
+    };
+    void setScriptClass(std::string_view scriptId, ScriptClass cls);
+    void clearScriptClasses();
+    ScriptClass scriptClassOf(std::string_view scriptId);
+    /** False when this engine must skip `scriptId` (see above). */
+    bool scriptRunsHere(std::string_view scriptId);
+    /** Ids this engine ran that the (non-empty) table does not name, each once. */
+    std::vector<std::string> takeUnclassifiedScripts();
+
     /** The wire's cell key (scripts/mp cellKeyOfObj): "x,y" for an exterior, the lower-cased
      *  name otherwise. */
     std::string cellKeyOf(const MWWorld::CellStore& cell);

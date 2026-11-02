@@ -114,6 +114,7 @@
 #include "mwmechanics/mechanicsmanagerimp.hpp"
 
 #include "mwstate/statemanagerimp.hpp"
+#include "mwmp/puppets.hpp"
 
 #include "profile.hpp"
 
@@ -223,6 +224,10 @@ void OMW::Engine::executeLocalScripts()
     std::pair<ESM::RefId, MWWorld::Ptr> script;
     while (localScripts.getNext(script))
     {
+        // OT3-95: script classes (mwmp/puppets.hpp) -- a world script runs on the peer only,
+        // a client one on the client only.
+        if (!MWMP::scriptRunsHere(script.first.getRefIdString()))
+            continue;
         MWScript::InterpreterContext interpreterContext(&script.second.getRefData().getLocals(), script.second);
         mScriptManager->run(script.first, interpreterContext);
     }

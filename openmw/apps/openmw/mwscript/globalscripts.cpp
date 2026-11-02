@@ -13,6 +13,7 @@
 #include "../mwbase/scriptmanager.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwworld/worldmodel.hpp"
+#include "../mwmp/puppets.hpp"
 
 #include "interpretercontext.hpp"
 
@@ -175,7 +176,9 @@ namespace MWScript
     {
         for (const auto& script : mScripts)
         {
-            if (script.second->mRunning)
+            // OT3-95: a script whose class belongs on another engine stays "running" (so
+            // ScriptRunning and saves agree everywhere) but is not executed here.
+            if (script.second->mRunning && MWMP::scriptRunsHere(script.first.getRefIdString()))
             {
                 MWScript::InterpreterContext context(script.second);
                 if (!MWBase::Environment::get().getScriptManager()->run(script.first, context))

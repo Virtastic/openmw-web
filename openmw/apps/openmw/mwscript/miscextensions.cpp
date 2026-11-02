@@ -73,6 +73,7 @@
 #include "../mwmechanics/spellcasting.hpp"
 
 #include "../mwrender/animation.hpp"
+#include "../mwmp/puppets.hpp"
 
 #include "interpretercontext.hpp"
 #include "ref.hpp"
@@ -195,6 +196,15 @@ namespace MWScript
                 }
 
                 MWBase::Environment::get().getScriptManager()->getGlobalScripts().addScript(name, target);
+                // OT3-95: a client starting a WORLD script cannot run it (the class gate skips it
+                // here); the peer must. Note it; Lua forwards it (ScriptStart).
+                if (MWMP::isClient() && MWMP::scriptClassOf(name.getRefIdString()) == MWMP::ScriptClass::World)
+                {
+                    MWMP::ScriptNote note;
+                    note.mKind = "startscript";
+                    note.mRecordId = name.getRefIdString();
+                    MWMP::recordScriptNote(std::move(note));
+                }
             }
         };
 

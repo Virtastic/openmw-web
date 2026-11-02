@@ -513,6 +513,76 @@ namespace MWMP
         return out;
     }
 
+    namespace
+    {
+        std::unordered_map<std::string, ScriptClass>& scriptClasses()
+        {
+            static std::unordered_map<std::string, ScriptClass> v;
+            return v;
+        }
+        struct Unclassified
+        {
+            std::unordered_set<std::string> mSeen; // reported once per id per session
+            std::vector<std::string> mPending;
+        };
+        Unclassified& unclassified()
+        {
+            static Unclassified v;
+            return v;
+        }
+    }
+
+    void setScriptClass(std::string_view scriptId, ScriptClass cls)
+    {
+        scriptClasses()[Misc::StringUtils::lowerCase(scriptId)] = cls;
+    }
+
+    void clearScriptClasses()
+    {
+        scriptClasses().clear();
+    }
+
+    ScriptClass scriptClassOf(std::string_view scriptId)
+    {
+        const auto& table = scriptClasses();
+        if (table.empty())
+            return ScriptClass::Unclassified;
+        const auto it = table.find(Misc::StringUtils::lowerCase(scriptId));
+        return it == table.end() ? ScriptClass::Unclassified : it->second;
+    }
+
+    bool scriptRunsHere(std::string_view scriptId)
+    {
+        static const bool mp = std::getenv("OPENMW_MP_URL") != nullptr;
+        if (!mp || scriptClasses().empty())
+            return true;
+        switch (scriptClassOf(scriptId))
+        {
+            case ScriptClass::World:
+                return !isClient();
+            case ScriptClass::Client:
+                return isClient();
+            case ScriptClass::Both:
+                return true;
+            case ScriptClass::Unclassified:
+            default:
+            {
+                Unclassified& u = unclassified();
+                std::string id = Misc::StringUtils::lowerCase(scriptId);
+                if (u.mSeen.size() < 4096 && u.mSeen.insert(id).second)
+                    u.mPending.push_back(std::move(id));
+                return true; // a hole in the table must not break the game; the sweep reports it
+            }
+        }
+    }
+
+    std::vector<std::string> takeUnclassifiedScripts()
+    {
+        std::vector<std::string> out;
+        out.swap(unclassified().mPending);
+        return out;
+    }
+
     std::string cellKeyOf(const MWWorld::CellStore& cell)
     {
         const MWWorld::Cell* c = cell.getCell();

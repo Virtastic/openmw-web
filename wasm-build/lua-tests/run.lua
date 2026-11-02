@@ -5372,5 +5372,42 @@ do
   local hm = w:match('handlers%.MP_WorldModRegion = function%(data%)(.-)\nend') or ''
   check('MP_WorldModRegion applies through mp.modRegion', hm:find('pcall(mp.modRegion, data.region, data.chances)', 1, true) ~= nil)
 end
+-- OT3-95: script classes. The engine consults the table; world scripts run on the holder only.
+print('scriptclasses.lua / engine -- each script class runs only where it should (OT3-95)')
+do
+  local gs = io.open('./openmw/apps/openmw/mwscript/globalscripts.cpp'):read('*a')
+  local en = io.open('./openmw/apps/openmw/engine.cpp'):read('*a')
+  local wb = io.open('./openmw/apps/openmw/mwlua/worldbindings.cpp'):read('*a')
+  local me = io.open('./openmw/apps/openmw/mwscript/miscextensions.cpp'):read('*a')
+  local pp = io.open('./openmw/apps/openmw/mwmp/puppets.cpp'):read('*a')
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  local av = io.open('./openmw/files/data/scripts/mp/avatars.lua'):read('*a')
+  local cm = io.open('./openmw/files/data/CMakeLists.txt'):read('*a')
+  check('global scripts run only where their class says', (gs:match('void GlobalScripts::run%(%)(.-)\n    }') or ''):find('MWMP::scriptRunsHere(script.first.getRefIdString())', 1, true) ~= nil)
+  check('local scripts run only where their class says', (en:match('executeLocalScripts%(%)(.-)\n}') or ''):find('if (!MWMP::scriptRunsHere(script.first.getRefIdString()))', 1, true) ~= nil)
+  local runs = pp:match('bool scriptRunsHere%(std::string_view scriptId%)(.-)\n    }\n') or ''
+  check('an empty table runs everything; world skips clients, client skips the peer',
+    runs:find('scriptClasses().empty()', 1, true) ~= nil and runs:find('return !isClient();', 1, true) ~= nil
+    and runs:find('case ScriptClass::Client:\n                return isClient();', 1, true) ~= nil)
+  local act = wb:match('api%["_runStandardActivationAction"%](.-)\n        };') or ''
+  local fwd, std = act:find('note.mKind = "scriptactivate"', 1, true), act:find('getRefData().activate()', 1, true)
+  check('a client forwards a world-script activation instead of acting', fwd ~= nil and std ~= nil and fwd < std)
+  check('a client StartScript of a world script is noted', me:find('note.mKind = "startscript"', 1, true) ~= nil)
+  check('the bindings exist', lb:find('api["setScriptClasses"]', 1, true) ~= nil and lb:find('api["takeUnclassifiedScripts"]', 1, true) ~= nil
+    and lb:find('api["activateForScript"]', 1, true) ~= nil)
+  check('quests.lua hands the table to the engine at load', q:find("pcall(mp.setScriptClasses, scriptClasses)", 1, true) ~= nil
+    and q:find("require('scripts.mp.scriptclasses')", 1, true) ~= nil)
+  check('the note poller routes scriptactivate / startscript and reports unclassified scripts',
+    av:find('quests.noteScriptActivate(n)', 1, true) ~= nil and av:find('quests.noteStartScript(n)', 1, true) ~= nil
+    and av:find('quests.reportUnclassifiedScripts()', 1, true) ~= nil)
+  local ha = q:match('handlers%.MP_ScriptActivate = function%(data%)(.-)\nend') or ''
+  check('only the peer applies a forwarded activation', ha:find('if not mp.isSystem()', 1, true) ~= nil and ha:find('pcall(mp.activateForScript, obj)', 1, true) ~= nil)
+  local hs = q:match('handlers%.MP_ScriptStart = function%(data%)(.-)\nend') or ''
+  check('only the peer starts a forwarded script', hs:find('if not mp.isSystem()', 1, true) ~= nil and hs:find('pcall(mp.startGlobalScript, data.script)', 1, true) ~= nil)
+  check('scriptclasses.lua is in the install list', cm:find('scripts/mp/scriptclasses.lua', 1, true) ~= nil)
+  local t = dofile('./openmw/files/data/scripts/mp/scriptclasses.lua')
+  check('the table has the three classes as arrays', type(t) == 'table' and type(t.world) == 'table' and type(t.client) == 'table' and type(t.both) == 'table')
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

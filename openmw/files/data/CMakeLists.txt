@@ -144,6 +144,7 @@ set(BUILTIN_DATA_FILES
     scripts/mp/puppet.lua
     scripts/mp/quests.lua
     scripts/mp/reconcile.lua
+    scripts/mp/scriptclasses.lua
     scripts/mp/retry.lua
     scripts/mp/social.lua
     scripts/mp/viewdist.lua

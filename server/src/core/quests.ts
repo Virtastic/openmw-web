@@ -98,7 +98,11 @@ export const QUEST_EVENTS = new Set([
   'TopicsLearned',
   'GlobalScriptsUpdate',
   'ObjectActivated',
+  'ScriptActivate',
+  'ScriptStart',
 ]);
+// OT3-95: a script record id (MWScript ids are short; vanilla's longest is well under 32).
+const SCRIPT_ID = /^[A-Za-z0-9_ ]{1,64}$/;
 // A campaign's running global scripts: vanilla plus the expansions start well under a hundred.
 const MAX_SCRIPTS = 256;
 
@@ -210,6 +214,8 @@ export class Quests {
       case 'DialogueLock': this.dialogueLock(player, body); break;
       case 'GlobalScriptsUpdate': this.scripts(player, body); break;
       case 'ObjectActivated': this.activated(player, body); break;
+      case 'ScriptActivate': this.scriptActivate(player, body); break;
+      case 'ScriptStart': this.scriptStart(player, body); break;
     }
     return true;
   }
@@ -224,6 +230,39 @@ export class Quests {
     if (player.system === true) return;
     if (!cellsVisible(player.cellKey, cellKey)) { this.drop(player, 'ObjectActivated', 'activation from afar'); return; }
     player.questTriggerAt = Date.now();
+  }
+
+  // OT3-95: a client activated an object whose local script is WORLD-class (scripts/mp/
+  // scriptclasses.lua). That script runs only on the cell's holder, so the activation goes there
+  // -- reach-gated exactly like ObjectActivated, and it stamps the same quest trace.
+  private scriptActivate(player: Player, body: LTable): void {
+    const ref = parseObjRef(body);
+    const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+    if (!ref || !cellKey) { this.drop(player, 'ScriptActivate', 'invalid shape'); return; }
+    if (player.system === true) return; // the peer runs these scripts itself
+    if (!cellsVisible(player.cellKey, cellKey)) { this.drop(player, 'ScriptActivate', 'activation from afar'); return; }
+    player.questTriggerAt = Date.now();
+    const holderId = this.ctx.holderOf?.(cellKey);
+    const holder = holderId === undefined ? undefined : this.ctx.roster.get(holderId);
+    if (!holder || holder.system !== true) {
+      // Nobody (or a client) simulates the cell: no engine runs world scripts there.
+      this.drop(player, 'ScriptActivate', 'no peer holds the cell');
+      return;
+    }
+    holder.peer.sendEvent('ScriptActivate', { ...objRefToJs(ref), cellKey, by: player.id });
+  }
+
+  // OT3-95: a client's StartScript of a WORLD-class global script. Only a peer runs those, so it
+  // goes to the peer for the player's cell. Starting a script already running is a no-op there.
+  private scriptStart(player: Player, body: LTable): void {
+    const script = str(body.get('script'), 64);
+    if (!script || !SCRIPT_ID.test(script)) { this.drop(player, 'ScriptStart', 'invalid shape'); return; }
+    if (player.system === true) return;
+    const peer = this.ctx.peerFor?.(player.cellKey) ?? this.ctx.worldPeer?.();
+    if (!peer) { this.drop(player, 'ScriptStart', 'no peer'); return; }
+    player.questTriggerAt = Date.now();
+    log('info', 'quest.script_start', { from: player.name, script });
+    peer.peer.sendEvent('ScriptStart', { script: script.toLowerCase() });
   }
 
   // ---------------------------------------------------------------- global scripts

@@ -14,6 +14,7 @@ local net = require('scripts.mp.net')
 local objects = require('scripts.mp.objects')
 local actors = require('scripts.mp.actors')
 local worldmp = require('scripts.mp.world')
+local quests = require('scripts.mp.quests')
 local reconcile = require('scripts.mp.reconcile')
 
 local M = {}
@@ -655,6 +656,7 @@ end
 local NOTE_SENDS_PER_SEC = 20
 local pendingNotes, noteSendSec, noteSendCount = {}, 0, 0
 local function scriptNotesTick()
+    quests.reportUnclassifiedScripts() -- OT3-95
     local ok, notes = pcall(mp.takeScriptNotes)
     if ok and notes then
         for _, n in ipairs(notes) do pendingNotes[#pendingNotes + 1] = n end
@@ -677,6 +679,10 @@ local function scriptNotesTick()
         elseif n.kind == 'crimecombat' or n.kind == 'scriptcombat' then
             -- scriptcombat: a world script's StartCombat Player on a puppet (same claim)
             actors.noteCrimeCombat(n)
+        elseif n.kind == 'scriptactivate' then
+            quests.noteScriptActivate(n) -- OT3-95
+        elseif n.kind == 'startscript' then
+            quests.noteStartScript(n) -- OT3-95
         elseif n.kind == 'weather' then
             worldmp.noteChangeWeather(n) -- OT3-83
         elseif n.kind == 'modregion' then

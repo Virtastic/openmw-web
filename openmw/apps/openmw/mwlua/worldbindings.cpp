@@ -39,6 +39,7 @@
 #include "context.hpp"
 #include "corebindings.hpp"
 #include "mwscriptbindings.hpp"
+#include "../mwmp/puppets.hpp"
 
 namespace MWLua
 {
@@ -259,6 +260,25 @@ namespace MWLua
             });
 
         api["_runStandardActivationAction"] = [context](const GObject& object, const GObject& actor) {
+            // OT3-95: a WORLD-class local script does not run on a client, so its OnActivate
+            // would never fire and the default action would bypass it (a scripted door opening
+            // without its lock check). The holder runs it instead: note the activation, act on
+            // nothing here.
+            if (MWMP::isClient())
+            {
+                const MWWorld::Ptr& objPtr = object.ptr();
+                const ESM::RefId& script = objPtr.getClass().getScript(objPtr);
+                if (!script.empty() && MWMP::scriptClassOf(script.getRefIdString()) == MWMP::ScriptClass::World)
+                {
+                    MWMP::ScriptNote note;
+                    note.mKind = "scriptactivate";
+                    note.mRef = objPtr.getCellRef().getRefNum();
+                    if (objPtr.isInCell())
+                        note.mCellKey = MWMP::cellKeyOf(*objPtr.getCell());
+                    MWMP::recordScriptNote(std::move(note));
+                    return;
+                }
+            }
             if (!object.ptr().getRefData().activate())
                 return;
             context.mLuaManager->addAction(

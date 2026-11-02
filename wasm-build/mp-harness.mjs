@@ -1278,6 +1278,17 @@ for (const file of files) {
         + ` (export allowLuaErrors = true to tolerate them knowingly):\n`
         + [...luaErrs, ...peerLuaErrs].slice(0, 5).map((l) => '  ' + l.trim()).join('\n'));
     }
+    // OT3-95: A SCRIPT THE CLASS TABLE DOES NOT NAME FAILS THE SCENARIO. Each engine prints
+    // "[mp] UNCLASSIFIED SCRIPT <id>" once per id (quests.lua reportUnclassifiedScripts) as soon
+    // as scripts/mp/scriptclasses.lua lists anything; an empty table prints nothing.
+    const unclassified = [...new Set([
+      ...clients.flatMap((c) => c.logMatches?.(/UNCLASSIFIED SCRIPT /) ?? []),
+      ...peerBufs.flatMap((b) => b.join('').split(NL).filter((l) => l.includes('UNCLASSIFIED SCRIPT '))),
+    ].map((l) => l.replace(/^.*UNCLASSIFIED SCRIPT /, '').trim()))];
+    if (!err && unclassified.length) {
+      err = new Error(`${unclassified.length} script(s) ran that scripts/mp/scriptclasses.lua does not classify: `
+        + unclassified.slice(0, 20).join(', '));
+    }
     await Promise.all(clients.map((c) => c.close()));
     server?.stop();
   }

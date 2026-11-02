@@ -50,6 +50,7 @@
 #include "../mwmechanics/magiceffects.hpp"
 #include <components/esm3/loadmgef.hpp>
 
+#include "../mwworld/action.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/player.hpp"
@@ -589,6 +590,46 @@ namespace MWMP
             for (std::size_t i = 1; i <= chances.size() && i <= 10; ++i)
                 v.push_back(static_cast<uint8_t>(std::clamp(chances.get_or(i, 0), 0, 100)));
             MWBase::Environment::get().getWorld()->modRegion(ESM::RefId::stringRefId(region), v);
+        };
+        // OT3-95: the script-class table (scripts/mp/scriptclasses.lua). `classes` maps a class
+        // name ('world' | 'client' | 'both') to an array of script ids. Replaces the table.
+        api["setScriptClasses"] = [](sol::table classes) {
+            clearScriptClasses();
+            const std::pair<const char*, ScriptClass> names[]
+                = { { "world", ScriptClass::World }, { "client", ScriptClass::Client }, { "both", ScriptClass::Both } };
+            for (const auto& [name, cls] : names)
+            {
+                sol::optional<sol::table> ids = classes[name];
+                if (!ids)
+                    continue;
+                for (std::size_t i = 1; i <= ids->size(); ++i)
+                {
+                    sol::optional<std::string> id = (*ids)[i];
+                    if (id && !id->empty())
+                        setScriptClass(*id, cls);
+                }
+            }
+        };
+        api["takeUnclassifiedScripts"] = [](sol::this_state state) {
+            sol::table out(state, sol::create);
+            int i = 1;
+            for (std::string& id : takeUnclassifiedScripts())
+                out[i++] = std::move(id);
+            return out;
+        };
+        // OT3-95: the holder's half of a forwarded activation of a world-script object. Buffers
+        // OnActivate for its script exactly as a local activation would (RefData::activate); an
+        // object whose script never asked for OnActivate gets the standard action instead.
+        api["activateForScript"] = [luaManager = context.mLuaManager](const MWLua::GObject& object) {
+            luaManager->addAction(
+                [object] {
+                    const MWWorld::Ptr& ptr = object.ptr();
+                    if (!ptr.getRefData().activate())
+                        return; // OnActivate is now set; the script runs it next frame
+                    MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+                    ptr.getClass().activate(ptr, player)->execute(player);
+                },
+                "mpActivateForScript");
         };
         api["runningGlobalScripts"] = [](sol::this_state state) {
             sol::table out(state, sol::create);

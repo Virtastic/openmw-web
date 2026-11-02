@@ -23,8 +23,16 @@ local I = require('openmw.interfaces')
 
 local json = require('scripts.mp.json')
 local shared = require('scripts.mp.shared')
+local scriptClasses = require('scripts.mp.scriptclasses')
 
 local quests = {}
+
+-- OT3-95: hand the engine the script-class table (mwmp/puppets.hpp ScriptClass) before any
+-- script runs. Nil-guarded: an engine baked before the binding runs everything, as before.
+if mp.setScriptClasses then
+    local ok, err = pcall(mp.setScriptClasses, scriptClasses)
+    if not ok then print('[mp] setScriptClasses failed: ' .. tostring(err)) end
+end
 
 -- injected by global.lua at init: {playerFn, ownCellKeyFn, ownIdFn, noticeFn,
 --                                  rosterNameFn, isMpPuppetFn}
@@ -1077,6 +1085,49 @@ handlers.MP_DialogueLockResult = function(data)
             holderId = data.holderId and string.format('%.0f', data.holderId) or nil, holder = who })
         notice(refName(obj) .. ' is talking to ' .. who .. ' — wait your turn')
     end
+end
+
+-- OT3-95 (ScriptNote 'scriptactivate'): this client activated an object whose local script is
+-- WORLD-class. The script does not run here, so the holder must see the activation.
+function quests.noteScriptActivate(n)
+    if n.ref == nil or type(n.cellKey) ~= 'string' or n.cellKey == '' then return end
+    mp.sendEvent('ScriptActivate', { ref = n.ref, cellKey = n.cellKey })
+end
+
+-- OT3-95 (ScriptNote 'startscript'): this client started a WORLD-class global script, which
+-- only the peer runs.
+function quests.noteStartScript(n)
+    if type(n.recordId) ~= 'string' or n.recordId == '' then return end
+    mp.sendEvent('ScriptStart', { script = n.recordId })
+end
+
+-- OT3-95: scripts this engine ran that the class table does not name. The sweep fails on the line.
+function quests.reportUnclassifiedScripts()
+    if not mp.takeUnclassifiedScripts then return end
+    local ok, ids = pcall(mp.takeUnclassifiedScripts)
+    if not ok or not ids then return end
+    for _, id in ipairs(ids) do print('[mp] UNCLASSIFIED SCRIPT ' .. tostring(id)) end
+end
+
+-- The holder's half of a forwarded world-script activation (server: quests.ts scriptActivate).
+handlers.MP_ScriptActivate = function(data)
+    if not mp.isSystem() or not mp.activateForScript then return end
+    local obj = data.ref
+    if data.net ~= nil and deps.objOfNet then obj = deps.objOfNet(data.net) end
+    local okValid, valid = pcall(function() return obj:isValid() end)
+    if not (okValid and valid) then
+        print('[mp] script activate: object not here (' .. tostring(data.cellKey) .. ')')
+        return
+    end
+    local ok, err = pcall(mp.activateForScript, obj)
+    if not ok then print('[mp] script activate failed: ' .. tostring(err)) end
+end
+
+-- A world-class global script a client started: the peer runs it.
+handlers.MP_ScriptStart = function(data)
+    if not mp.isSystem() or type(data.script) ~= 'string' then return end
+    local ok, err = pcall(mp.startGlobalScript, data.script)
+    if not ok then print('[mp] script start "' .. data.script .. '" failed: ' .. tostring(err)) end
 end
 
 quests.handlers = handlers
