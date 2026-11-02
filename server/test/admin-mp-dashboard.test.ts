@@ -478,3 +478,15 @@ test('OT3-192: the page map, each page fed by an endpoint that exists', () => {
   assert.match(maint[0], /kind: 'broadcast'/);
   assert.doesNotMatch(app, /api\(`?['"]?\/games/, 'nothing calls the removed world endpoints');
 });
+
+test('OT3-193: the live map draws players by region and a health row per region peer', () => {
+  assert.match(app, /hash: '#map', label: 'Map'/);
+  const fn = /async function pageMap\(\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(fn[0], /worldApi\('\/overview'\)/);
+  assert.match(fn[0], /o\.peers/);
+  assert.match(fn[0], /p\.region/);
+  assert.match(fn[0], /setInterval/, 'it refreshes live');
+  const server = readFileSync(join(process.cwd(), 'src', 'server.ts'), 'utf8');
+  assert.match(server, /peers: peerHealthImpl\(\)/, 'the world overview carries peer health');
+  assert.match(server, /region: p\.cellKey \? regionOfImpl\(p\.cellKey\)/);
+});

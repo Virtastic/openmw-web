@@ -546,6 +546,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let allPeersImpl: () => Player[] = () => [];
   // OT3-37: the dashboard's rolling restart, one region peer at a time (assigned below).
   let peerRollImpl: () => string[] | 'busy' = () => [];
+  // OT3-193: per-region peer health and the cell -> region map, for the dashboard's live map.
+  let peerHealthImpl: () => unknown[] = () => [];
+  let regionOfImpl: (cellKey: string) => string | null = () => null;
   const stateCtx: StateCtx = {
     onDamaged: (p) => busy.damaged(p),
     worldPeer: () => worldPeerImpl(),
@@ -1012,7 +1015,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         // The roster's mute/unmute buttons were the only way to mute, and nothing showed
         // whether someone WAS muted.
         muted: socialRef?.isMuted(SocialStore.SERVER_MUTER, p.accountKey) ?? false,
+        // OT3-193: where on the map, and which region peer simulates them.
+        region: p.cellKey ? regionOfImpl(p.cellKey) : null,
+        pos: p.pose ? { x: Math.round(p.pose.x), y: Math.round(p.pose.y) } : null,
       })),
+      peers: peerHealthImpl(),
     }),
     reports: async (limit) => ({
       reports: (await moderation.reports.list(Math.min(Math.max(1, limit || 20), 100))).map(reportView),
@@ -1793,6 +1800,28 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // pass has brought a NEW peer up for that region (a promoted warm spare, or a fresh start).
   // The world process, and every other region, keeps running throughout. A region that does
   // not come back halts the roll rather than taking the rest down with it.
+  regionOfImpl = (cellKey) => regionMap.regionOf(cellKey);
+  peerHealthImpl = () => {
+    const sys = roster.inWorld().filter((pp) => pp.system === true);
+    const rows = regionMap.ids.map((region) => {
+      const holder = sys.find((pp) => simPeers.keyOfAccount(pp.name) === region)
+        ?? (region === regionMap.defaultId ? lastPeerOfRegion.get(region) !== undefined
+          ? sys.find((pp) => pp.id === lastPeerOfRegion.get(region)) : undefined : undefined);
+      const load = peerLoad.sample(region);
+      return {
+        region,
+        running: simPeers.has(region),
+        holderId: holder?.id ?? null,
+        heldCells: rtOf(region).claimed.size,
+        frameP50: load ? Math.round(load.p50) : null,
+        frameP99: load ? Math.round(load.p99) : null,
+        simReal: load ? Math.round(load.simReal * 100) / 100 : null,
+        actors: load?.actors ?? null,
+      };
+    });
+    return wantSpare() ? [...rows, { region: SPARE_KEY, running: simPeers.has(SPARE_KEY), holderId: null,
+      heldCells: 0, frameP50: null, frameP99: null, simReal: null, actors: null, spare: true }] : rows;
+  };
   let peerRolling = false;
   peerRollImpl = () => {
     if (peerRolling) return 'busy';

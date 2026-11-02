@@ -179,6 +179,7 @@ const NAV = [
   // Economy and Signups & abuse join this group once their server endpoints exist.
   { group: 'Live', items: [
     { hash: '#overview', label: 'Live', icon: 'bi-speedometer2', role: 'viewer' },
+    { hash: '#map', label: 'Map', icon: 'bi-map', role: 'viewer', solo: false },
     // NOT IN SINGLE PLAYER, and not because it looks odd there: every control on it acts on
     // a player connected to a world. In single player the browser runs the engine and never
     // connects, so the roster is permanently empty and there is nobody to broadcast to, greet
@@ -2263,6 +2264,76 @@ const tool = (icon, title, blurb, bodyHtml, btnId, btnLabel, extra = '') => html
       <button class="btn btn-sm btn-primary mt-2" id="${btnId}">${btnLabel}</button>
       ${raw(extra)}
     </div></div>`;
+
+/**
+ * THE LIVE MAP AND PEER HEALTH (OT3-193). Every online player on the exterior grid, coloured
+ * by the region peer that simulates them, and one row per region peer: running, holder, held
+ * cells, frame times. Fed by the world's /overview (players[].region/pos, peers[]); redraws
+ * every 3 s while the page is open.
+ */
+const CELL_UNITS = 8192;
+const REGION_TONES = ['#0d6efd', '#198754', '#d63384', '#fd7e14', '#6f42c1', '#20c997', '#dc3545', '#6c757d'];
+async function pageMap() {
+  setTitle('Map', 'Who is where, and the health of each region peer. Live.');
+  view().innerHTML = html`<div id="mapBox"></div>`;
+  const box = $('#mapBox');
+  const draw = async () => {
+    let o;
+    try { o = await worldApi('/overview'); } catch (e) {
+      box.innerHTML = html`<div class="callout callout-warning">${e.message}</div>`;
+      return;
+    }
+    if (!box.isConnected) return;
+    const peers = (o.peers || []).filter((p) => !p.spare);
+    const toneOf = new Map(peers.map((p, i) => [p.region, REGION_TONES[i % REGION_TONES.length]]));
+    const players = o.players || [];
+    const outside = players.filter((p) => p.pos && /^-?\d+,-?\d+$/.test(p.cellKey || ''));
+    const inside = players.filter((p) => !outside.includes(p));
+    // Vvardenfell's grid is roughly -20..30 x -20..30; widen to whoever is outside it.
+    let x0 = -20, x1 = 30, y0 = -20, y1 = 30;
+    for (const p of outside) {
+      const cx = Math.floor(p.pos.x / CELL_UNITS), cy = Math.floor(p.pos.y / CELL_UNITS);
+      x0 = Math.min(x0, cx - 1); x1 = Math.max(x1, cx + 2); y0 = Math.min(y0, cy - 1); y1 = Math.max(y1, cy + 2);
+    }
+    const W = 520, sc = W / (x1 - x0), H = Math.round((y1 - y0) * sc);
+    const px = (x) => ((x / CELL_UNITS) - x0) * sc, py = (y) => H - ((y / CELL_UNITS) - y0) * sc;
+    const dots = outside.map((p) => html`<circle cx="${px(p.pos.x).toFixed(1)}" cy="${py(p.pos.y).toFixed(1)}" r="5"
+      fill="${toneOf.get(p.region) || '#6c757d'}" stroke="#fff"><title>${p.name} (${p.cellKey}, ${p.region || '?'})</title></circle>`).join('');
+    const legend = peers.map((p) => html`<span class="me-3 small"><span class="d-inline-block rounded-circle me-1"
+      style="width:10px;height:10px;background:${toneOf.get(p.region)}"></span>${p.region}</span>`).join('');
+    const health = (p) => {
+      if (!p.running) return html`<span class="badge text-bg-secondary">idle</span>`;
+      if (p.holderId === null) return html`<span class="badge text-bg-warning">starting</span>`;
+      if (p.frameP99 !== null && p.frameP99 > 100) return html`<span class="badge text-bg-warning">slow</span>`;
+      return html`<span class="badge text-bg-success">healthy</span>`;
+    };
+    const peerRows = (o.peers || []).map((p) => html`
+      <tr><td>${p.spare ? 'warm spare' : p.region}</td><td>${raw(p.spare ? (p.running
+        ? html`<span class="badge text-bg-info">ready</span>` : html`<span class="badge text-bg-secondary">down</span>`) : health(p))}</td>
+        <td>${p.holderId ?? '-'}</td><td>${p.heldCells}</td>
+        <td>${p.frameP50 ?? '-'} / ${p.frameP99 ?? '-'} ms</td><td>${p.simReal ?? '-'}</td>
+        <td>${players.filter((q) => q.region === p.region).length}</td></tr>`).join('')
+      || html`<tr><td colspan="7" class="vt-empty">No peer data.</td></tr>`;
+    box.innerHTML = html`
+      <div class="row">
+        <div class="col-xl-7"><div class="card card-outline card-primary mb-3">
+          <div class="card-header"><h3 class="card-title"><i class="bi bi-map me-2"></i>Players, ${players.length} online</h3>
+            <div class="card-tools">${raw(legend)}</div></div>
+          <div class="card-body"><svg id="liveMap" viewBox="0 0 ${W} ${H}" class="w-100 border rounded"
+            style="background:#e9f2f9" role="img" aria-label="Map of online players">${raw(dots)}</svg>
+            ${raw(inside.length ? html`<p class="small text-secondary mt-2 mb-0">Indoors: ${inside
+              .map((p) => `${p.name} (${p.cellKey || '?'}, ${p.region || '?'})`).join(', ')}</p>` : '')}
+          </div></div></div>
+        <div class="col-xl-5"><div class="card card-outline card-secondary mb-3">
+          <div class="card-header"><h3 class="card-title"><i class="bi bi-cpu me-2"></i>Region peers</h3></div>
+          <div class="table-responsive"><table class="table table-sm mb-0" id="peerHealth">
+            <thead><tr><th>Region</th><th>Health</th><th>Holder</th><th>Cells</th><th>Frame p50/p99</th><th>Sim/real</th><th>Players</th></tr></thead>
+            <tbody>${raw(peerRows)}</tbody></table></div></div></div>
+      </div>`;
+  };
+  await draw();
+  const timer = setInterval(() => { if (!box.isConnected) clearInterval(timer); else void draw(); }, 3000);
+}
 
 /** Player reports (OT3-192: its own page; was a card on the console). */
 async function pageReports() {
@@ -4691,6 +4762,7 @@ const ROUTES = {
   '#overview': pageOverview,
   '#console': pageConsole,
   '#reports': pageReports,
+  '#map': pageMap,
   '#settings': () => pageSettings(),
   '#set-core': () => pageSettings('Core'),
   '#set-gameplay': () => pageSettings('Gameplay'),
@@ -4715,7 +4787,7 @@ const ROUTES = {
 };
 
 const NEEDS = {
-  '#console': 'moderator', '#reports': 'moderator', '#settings': 'viewer', '#mods': 'viewer',
+  '#console': 'moderator', '#reports': 'moderator', '#map': 'viewer', '#settings': 'viewer', '#mods': 'viewer',
   '#set-core': 'viewer', '#set-access': 'viewer', '#set-storage': 'viewer',
   '#set-operations': 'viewer', '#set-gameplay': 'viewer', '#set-platform': 'viewer',
   '#rolling': 'owner',
