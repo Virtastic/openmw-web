@@ -80,6 +80,7 @@ local regionHolder = {} -- region -> holderId (0 = nobody)
 local lastWeatherSent = nil -- fingerprint of the last WorldWeather we broadcast
 local lastWeatherAt = 0
 local weatherApplied = nil -- last inbound {region, current} we applied
+local modRegionApplied = 0 -- OT3-83: relayed ModRegion bodies applied (scenario evidence)
 
 local netToLocal = {} -- recordNetId -> local record id
 local localToNet = {} -- local record id -> recordNetId
@@ -624,6 +625,27 @@ handlers.MP_WorldWeather = function(data)
     print(string.format('[mp] weather applied: %s current=%s next=%s target=%s', data.region, tostring(data.current), tostring(data.next), tostring(target)))
 end
 
+-- OT3-83: a script's ChangeWeather on a NON-holder, forwarded by the server to us, the holder.
+-- Applied like any change of ours: the next tickWeather says it to everyone.
+handlers.MP_WorldWeatherScript = function(data)
+    if type(data.region) ~= 'string' or type(data.current) ~= 'number' then return end
+    if not isHolderOf(data.region) then return end -- lost the region meanwhile: the new holder's sky wins
+    local rec = weatherRecordAt(data.current)
+    if not rec then return end
+    local ok, err = pcall(function() core.weather.changeWeather(data.region, rec) end)
+    if not ok then print('[mp] script changeWeather(' .. data.region .. ') failed: ' .. tostring(err)) end
+end
+
+-- OT3-83: ModRegion (endgame blight) somebody's script ran, saved by the server and replayed at
+-- join. mp.modRegion applies without noting, so this never echoes back.
+handlers.MP_WorldModRegion = function(data)
+    if type(data.region) ~= 'string' or type(data.chances) ~= 'table' then return end
+    if not mp.modRegion then return end -- engine baked before the binding
+    local ok, err = pcall(mp.modRegion, data.region, data.chances)
+    if not ok then print('[mp] modRegion(' .. data.region .. ') failed: ' .. tostring(err)) end
+    modRegionApplied = modRegionApplied + 1
+end
+
 handlers.MP_RecordCreateAck = function(data)
     if data.tempId == nil then return end -- no key, nothing to clear: t[nil] = nil throws, and a throwing handler goes silent
     local localId = pendingRecords[data.tempId]
@@ -760,6 +782,7 @@ local function mirror()
     mp.set('weatherHolder', holder and string.format('%.0f', holder) or 'none')
     mp.set('isWeatherHolder', tostring(isHolderOf(ownRegion)))
     mp.set('weatherApplied', weatherApplied and json.encode(weatherApplied) or '')
+    mp.set('modRegionApplied', tostring(modRegionApplied))
     local recs = {}
     local described = {}
     for netId, localId in pairs(netToLocal) do
@@ -988,6 +1011,36 @@ function worldmp.describeRecord(recordId)
         end
     end
     return nil
+end
+
+-- Region ids from a ScriptNote are the script's spelling; the server keys regions by what
+-- cell.region reports here. Map case-insensitively onto a region we already know of.
+local function canonRegion(region)
+    local low = string.lower(region)
+    if ownRegion and string.lower(ownRegion) == low then return ownRegion end
+    for r in pairs(regionHolder) do
+        if string.lower(r) == low then return r end
+    end
+    return region
+end
+
+-- OT3-83 (ScriptNote kind='weather'): a script ran ChangeWeather here. The holder's own tick
+-- already says it; anyone else forwards it, or the holder's next say overwrites it.
+function worldmp.noteChangeWeather(n)
+    if type(n.region) ~= 'string' or type(n.weather) ~= 'number' then return end
+    local region = canonRegion(n.region)
+    if isHolderOf(region) then
+        lastWeatherSent = nil -- say it now, not at the next resay
+        return
+    end
+    mp.sendEvent('WorldWeatherScript', { region = region, current = n.weather })
+end
+
+-- OT3-83 (ScriptNote kind='modregion'): a script ran ModRegion here (endgame blight). The server
+-- saves the chances and replays them to everyone, now and at every join.
+function worldmp.noteModRegion(n)
+    if type(n.region) ~= 'string' or type(n.chances) ~= 'table' then return end
+    mp.sendEvent('WorldModRegion', { region = canonRegion(n.region), chances = n.chances })
 end
 
 -- @testhook begin (blanked out of release bakes: wasm-build/strip-testhooks.awk)

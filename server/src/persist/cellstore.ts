@@ -200,12 +200,15 @@ interface WorldM7State {
   time: WorldTimeState;
   // Last known weather per region, handed to the next region authority on claim.
   weather: Record<string, WeatherState>;
+  // OT3-83: ModRegion chances a script set (endgame blight), region -> per-weather chances.
+  // Replayed to every joiner; the engine keeps them only in memory.
+  modRegions?: Record<string, number[]>;
   resets: Record<string, CellResetEntry>; // cellKey -> schedule
 }
 
 function emptyWorldM7State(): WorldM7State {
   // Morrowind's own start date; timeScale 30 = vanilla.
-  return { time: { gameHour: 9, day: 16, month: 7, year: 427, timeScale: 30 }, weather: {}, resets: {} };
+  return { time: { gameHour: 9, day: 16, month: 7, year: 427, timeScale: 30 }, weather: {}, modRegions: {}, resets: {} };
 }
 
 interface GlobalDoc {
@@ -295,6 +298,7 @@ export class CellStore {
         this.m7 = {
           time: { ...base.time, ...g.m7.time },
           weather: g.m7.weather ?? {},
+          modRegions: g.m7.modRegions ?? {},
           resets: g.m7.resets ?? {},
         };
       }

@@ -564,6 +564,17 @@ namespace MWMP
                 e["z"] = n.mPos[2];
                 if (n.mHasRot)
                     e["rotZ"] = n.mRotZ;
+                if (!n.mRegion.empty())
+                    e["region"] = n.mRegion;
+                if (n.mKind == "modregion")
+                {
+                    sol::table chances(state, sol::create);
+                    for (std::size_t c = 0; c < n.mChances.size(); ++c)
+                        chances[c + 1] = static_cast<int>(n.mChances[c]);
+                    e["chances"] = chances;
+                }
+                if (n.mWeather >= 0)
+                    e["weather"] = n.mWeather;
                 out[i++] = e;
             }
             return out;
@@ -571,6 +582,14 @@ namespace MWMP
         // Backlog 219: the global scripts running here (Sleepers, VampireCheck, MoveMehra...),
         // and a way to start one. Vanilla Lua exposes neither: getGlobalScript needs a name and
         // nothing starts a script. Persisted on the campaign so a relog keeps them running.
+        // OT3-83: apply a relayed ModRegion (endgame blight) WITHOUT noting it again -- the
+        // opcode notes, this does not, so a relay never echoes back to the server.
+        api["modRegion"] = [](std::string_view region, sol::table chances) {
+            std::vector<uint8_t> v;
+            for (std::size_t i = 1; i <= chances.size() && i <= 10; ++i)
+                v.push_back(static_cast<uint8_t>(std::clamp(chances.get_or(i, 0), 0, 100)));
+            MWBase::Environment::get().getWorld()->modRegion(ESM::RefId::stringRefId(region), v);
+        };
         api["runningGlobalScripts"] = [](sol::this_state state) {
             sol::table out(state, sol::create);
             int i = 1;

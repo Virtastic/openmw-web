@@ -13,6 +13,7 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwmp/puppets.hpp"
 #include "../mwworld/esmstore.hpp"
 
 namespace MWScript
@@ -88,7 +89,17 @@ namespace MWScript
 
                 const ESM::Region* reg = MWBase::Environment::get().getESMStore()->get<ESM::Region>().search(region);
                 if (reg)
+                {
                     MWBase::Environment::get().getWorld()->changeWeather(region, id);
+                    // OT3-83: only the region holder's sky is broadcast, so a script run on any
+                    // other engine would be overwritten at the holder's next say. Note it; Lua
+                    // forwards it to the holder (WorldWeatherScript).
+                    MWMP::ScriptNote note;
+                    note.mKind = "weather";
+                    note.mRegion = region.getRefIdString();
+                    note.mWeather = id;
+                    MWMP::recordScriptNote(std::move(note));
+                }
                 else
                     runtime.getContext().report("Warning: Region \"" + region.getRefIdString() + "\" was not found");
             }
@@ -112,6 +123,13 @@ namespace MWScript
                 }
 
                 MWBase::Environment::get().getWorld()->modRegion(ESM::RefId::stringRefId(region), chances);
+                // OT3-83: endgame blight. The chances live only in this engine's WeatherManager;
+                // note them so Lua relays them to the server, which saves and replays them.
+                MWMP::ScriptNote note;
+                note.mKind = "modregion";
+                note.mRegion = std::string(region);
+                note.mChances = std::move(chances);
+                MWMP::recordScriptNote(std::move(note));
             }
         };
 

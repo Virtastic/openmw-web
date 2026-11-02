@@ -247,6 +247,11 @@ namespace MWMP
         // position (1.7.1): the actor's z rotation after the move, when the op set one.
         bool mHasRot = false;
         float mRotZ = 0.f;
+        // OT3-83 weather: modregion (ModRegion: the region's new weather chances, endgame blight)
+        // and weather (ChangeWeather: mWeather is the script weather id). Both name mRegion.
+        std::string mRegion;
+        std::vector<uint8_t> mChances;
+        int mWeather = -1;
     };
     void recordScriptNote(ScriptNote note);
     /** OT3-75: an MWScript PlaceItem / PlaceItemCell / PlaceAt* just created this object. The

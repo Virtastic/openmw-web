@@ -5341,5 +5341,36 @@ do
   end
   check('nothing else sets the view distance', others == 0)
 end
+
+-- OT3-83: ModRegion and a non-holder's script ChangeWeather reach the server.
+print('skyextensions.cpp / world.lua -- ModRegion relayed and saved, script ChangeWeather forwarded (OT3-83)')
+do
+  local sk = io.open('./openmw/apps/openmw/mwscript/skyextensions.cpp'):read('*a')
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  local w = io.open('./openmw/files/data/scripts/mp/world.lua'):read('*a')
+  local av = io.open('./openmw/files/data/scripts/mp/avatars.lua'):read('*a')
+  local mr = sk:match('class OpModRegion(.-)\n        };') or ''
+  local cw = sk:match('class OpChangeWeather(.-)\n        };') or ''
+  check('OpModRegion notes the region chances', mr:find('note.mKind = "modregion"', 1, true) ~= nil
+    and mr:find('note.mChances', 1, true) ~= nil)
+  check('OpChangeWeather notes the change only after applying it',
+    (cw:find('changeWeather(region, id)', 1, true) or math.huge) < (cw:find('note.mKind = "weather"', 1, true) or 0))
+  check('takeScriptNotes hands region, chances and weather to Lua', lb:find('e["chances"] = chances', 1, true) ~= nil
+    and lb:find('e["region"] = n.mRegion', 1, true) ~= nil and lb:find('e["weather"] = n.mWeather', 1, true) ~= nil)
+  local apply = lb:match('api%["modRegion"%] = (.-)\n        };') or ''
+  check('mp.modRegion applies without noting (no echo)', apply:find('modRegion(', 1, true) ~= nil
+    and apply:find('recordScriptNote', 1, true) == nil)
+  check('the note poller routes weather and modregion notes', av:find("n.kind == 'weather' then\n            worldmp.noteChangeWeather(n)", 1, true) ~= nil
+    and av:find("n.kind == 'modregion' then\n            worldmp.noteModRegion(n)", 1, true) ~= nil)
+  local ncw = w:match('function worldmp%.noteChangeWeather%(n%)(.-)\nend') or ''
+  check('a non-holder forwards a script ChangeWeather; the holder only re-says',
+    ncw:find("mp.sendEvent('WorldWeatherScript'", 1, true) ~= nil and ncw:find('isHolderOf(region)', 1, true) ~= nil)
+  check('noteModRegion sends WorldModRegion', (w:match('function worldmp%.noteModRegion%(n%)(.-)\nend') or ''):find("mp.sendEvent('WorldModRegion'", 1, true) ~= nil)
+  local hs = w:match('handlers%.MP_WorldWeatherScript = function%(data%)(.-)\nend') or ''
+  check('MP_WorldWeatherScript applies only while still the holder', hs:find('if not isHolderOf(data.region) then return end', 1, true) ~= nil
+    and hs:find('core.weather.changeWeather', 1, true) ~= nil)
+  local hm = w:match('handlers%.MP_WorldModRegion = function%(data%)(.-)\nend') or ''
+  check('MP_WorldModRegion applies through mp.modRegion', hm:find('pcall(mp.modRegion, data.region, data.chances)', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

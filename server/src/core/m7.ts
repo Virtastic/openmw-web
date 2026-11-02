@@ -136,6 +136,8 @@ const M7_EVENTS = new Set([
   'WorldTimeRequest',
   'WorldRegionChange',
   'WorldWeather',
+  'WorldWeatherScript',
+  'WorldModRegion',
   'RecordCreate',
   'WorldMapExplored',
 ]);
@@ -179,6 +181,7 @@ export class WorldM7 {
     this.weather = new WeatherRegions({
       roster: ctx.roster,
       weather: m7.weather,
+      modRegions: (m7.modRegions ??= {}),
       save: () => ctx.cells.saveShared(),
     });
   }
@@ -264,6 +267,8 @@ export class WorldM7 {
       }
       case 'WorldRegionChange': this.weather.changeRegion(player, body); break;
       case 'WorldWeather': this.weather.handleWeather(player, body); break;
+      case 'WorldWeatherScript': this.weather.handleScriptWeather(player, body); break;
+      case 'WorldModRegion': this.weather.handleModRegion(player, body); break;
       case 'RecordCreate': this.recordCreate(player, body); break;
       case 'WorldMapExplored': this.mapExplored(player, body); break;
     }

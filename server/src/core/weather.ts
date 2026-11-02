@@ -42,12 +42,31 @@ export const HOLDER_SILENCE_MS = 3 * 60_000;
 interface WeatherCtx {
   roster: Roster;
   weather: Record<string, WeatherState>; // lives in the CellStore global doc
+  modRegions?: Record<string, number[]>; // OT3-83: ModRegion chances, same doc
   save(): void;
   now?: () => number; // tests drive the clock
 }
 
 function region(v: LValue | undefined): string | undefined {
   return typeof v === 'string' && v.length > 0 && v.length <= MAX_REGION ? v : undefined;
+}
+
+// ModRegion takes up to ten chances (one per vanilla weather), each clamped 0..100 by the opcode.
+const MAX_CHANCES = 10;
+function chances(v: LValue | undefined): number[] | undefined {
+  if (!(v instanceof Map)) return undefined;
+  const list: LValue[] = [];
+  for (let i = 1; i <= v.size; i++) {
+    if (!v.has(i)) return undefined; // a Lua array, nothing else
+    list.push(v.get(i) as LValue);
+  }
+  if (list.length === 0 || list.length > MAX_CHANCES) return undefined;
+  const out: number[] = [];
+  for (const c of list) {
+    if (typeof c !== 'number' || !Number.isInteger(c) || c < 0 || c > 100) return undefined;
+    out.push(c);
+  }
+  return out;
 }
 
 function weatherId(v: LValue | undefined): number | undefined {
@@ -69,7 +88,7 @@ export class WeatherRegions {
 
   constructor(private readonly ctx: WeatherCtx) {
     this.now = ctx.now ?? Date.now;
-    this.known = new Set(Object.keys(ctx.weather));
+    this.known = new Set([...Object.keys(ctx.weather), ...Object.keys(ctx.modRegions ?? {})]);
     this.authority = new Authority({
       grant: (playerId, key, _epoch, snapshot) => {
         this.lastSaidAt.set(key, this.now());
@@ -229,9 +248,82 @@ export class WeatherRegions {
     }
   }
 
+  // Admit a region against the world-wide bound (see MAX_REGIONS). False = refuse.
+  private admit(name: string, from: string): boolean {
+    if (this.known.has(name)) return true;
+    if (this.known.size >= MAX_REGIONS) {
+      if (!this.floodLogged) {
+        this.floodLogged = true;
+        log('warn', 'weather.region_flood', { from, region: name, cap: MAX_REGIONS });
+      }
+      return false;
+    }
+    this.known.add(name);
+    return true;
+  }
+
+  // OT3-83: C->S WorldWeatherScript {region, current} -- a script's ChangeWeather ran on an engine
+  // that does not hold the region. Forwarded to the holder (it applies and says it as usual), or,
+  // with nobody holding the region, made the region's saved weather and broadcast directly.
+  // The holder itself never needs this: its own tick already says the change.
+  handleScriptWeather(player: Player, body: LTable): void {
+    const name = region(body.get('region'));
+    const current = weatherId(body.get('current'));
+    if (!name || current === undefined) {
+      log('warn', 'weather.script_dropped', { from: player.name, why: 'invalid shape' });
+      return;
+    }
+    this.enqueue(() => {
+      const holder = this.authority.holderOf(name);
+      if (holder === player.id) return;
+      if (holder !== undefined) {
+        this.send(holder, 'WorldWeatherScript', { region: name, current });
+        log('info', 'weather.script_forwarded', { from: player.name, region: name, current, holderId: holder });
+        return;
+      }
+      if (!this.admit(name, player.name)) return;
+      const state: WeatherState = { current };
+      this.ctx.weather[name] = state;
+      this.ctx.save();
+      for (const p of this.ctx.roster.inWorld()) {
+        if (p.id !== player.id) p.peer.sendEvent('WorldWeather', { region: name, ...stateBody(state) });
+      }
+    });
+  }
+
+  // OT3-83: C->S WorldModRegion {region, chances} -- endgame blight. Any engine's script may run
+  // it (a dialogue result on the speaker's client, a global script on the peer), and it is a
+  // world fact, not a holder's sim: saved, relayed to everyone else, replayed at every join.
+  handleModRegion(player: Player, body: LTable): void {
+    const name = region(body.get('region'));
+    const list = chances(body.get('chances'));
+    if (!name || !list) {
+      log('warn', 'weather.modregion_dropped', { from: player.name, why: 'invalid shape' });
+      return;
+    }
+    const store = (this.ctx.modRegions ??= {});
+    const prev = store[name];
+    if (prev && prev.length === list.length && prev.every((c, i) => c === list[i])) return; // a repeat
+    if (!this.admit(name, player.name)) return;
+    store[name] = list;
+    this.ctx.save();
+    log('info', 'weather.modregion', { from: player.name, region: name, chances: list.join(',') });
+    for (const p of this.ctx.roster.inWorld()) {
+      if (p.id !== player.id) p.peer.sendEvent('WorldModRegion', { region: name, chances: list });
+    }
+  }
+
+  modRegionOf(regionName: string): number[] | undefined {
+    return this.ctx.modRegions?.[regionName];
+  }
+
   // Join: replay every known region's weather so a fresh client isn't blank until the
-  // holder's next transition (which can be many minutes out).
+  // holder's next transition (which can be many minutes out). ModRegion chances first: they
+  // decide what the region rolls next, so a joiner who inherits a region rolls the blight.
   sendSyncTo(player: Player): void {
+    for (const [name, list] of Object.entries(this.ctx.modRegions ?? {})) {
+      player.peer.sendEvent('WorldModRegion', { region: name, chances: list });
+    }
     for (const [name, state] of Object.entries(this.ctx.weather)) {
       player.peer.sendEvent('WorldWeather', { region: name, ...stateBody(state) });
     }
