@@ -594,6 +594,19 @@ test('one account, several providers', async (t) => {
   const sessionToken = welcome['sessionToken'] as string;
   const linker = (await onlineNames(h))[0]!;
 
+  await t.test('OT3-45: a Discord sign-in skips re-consent (prompt=none), a Google one does not', async () => {
+    assert.equal((await startFlow(h, 'discord')).authorize.searchParams.get('prompt'), 'none');
+    assert.equal((await startFlow(h, 'google')).authorize.searchParams.get('prompt'), null);
+  });
+
+  await t.test('OT3-45: a Discord refusal comes back as provider_refused', async () => {
+    const { authorize, cookie } = await startFlow(h, 'discord');
+    const res = await fetch(`${h.base}/auth/discord/callback?error=access_denied&state=${encodeURIComponent(authorize.searchParams.get('state') ?? '')}`, {
+      redirect: 'manual', headers: { cookie: `omwmp_oauth=${encodeURIComponent(cookie)}` },
+    });
+    assert.equal(fragment(res.headers.get('location')).get('mperror'), 'provider_refused');
+  });
+
   await t.test('linking requires a live game session', async () => {
     const res = await fetch(`${h.base}/auth/link/discord`, { redirect: 'manual' });
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'not_signed_in');
@@ -625,6 +638,7 @@ test('one account, several providers', async (t) => {
     assert.equal(start.status, 302);
     const authorize = new URL(start.headers.get('location')!);
     assert.equal(authorize.origin, h.idp2.issuer);
+    assert.equal(authorize.searchParams.get('prompt'), null, 'OT3-45: a link always shows the Discord consent screen');
     const code = h.idp2.issueCode(authorize, { sub: 'google-sub-1', nameHint: 'Some Other Name' });
     const done = await callback(h, 'discord', code, authorize.searchParams.get('state') ?? '', cookieOf(start));
     assert.equal(fragment(done.headers.get('location')).get('mplink'), 'discord');

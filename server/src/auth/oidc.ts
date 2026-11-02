@@ -286,7 +286,15 @@ export class OidcService {
     url.searchParams.set('code_challenge', challenge);
     url.searchParams.set('code_challenge_method', 'S256'); // never "plain"
     if (DEFAULTS[id].kind === 'oidc') url.searchParams.set('nonce', nonce);
-    if (id === 'discord') url.searchParams.set('prompt', 'none'); // skip re-consent on every login
+    // OT3-45. Discord's prompt=none is NOT the OIDC one: it never fails with
+    // login_required/consent_required. It skips the authorize screen only when this Discord
+    // user already granted these scopes; a first grant still shows it, and a refusal comes
+    // back as ?error=access_denied (callback -> mperror=provider_refused). Sign-in keeps it
+    // (one click per login, the same silent SSO Google gives a signed-in browser). LINKING
+    // drops it: attaching a Discord identity to an existing account must show the user which
+    // Discord account is about to be bound, never silently take whoever is signed into
+    // Discord in this browser (a shared machine, a second Discord account).
+    if (id === 'discord' && !link) url.searchParams.set('prompt', 'none');
     return { url: url.toString(), state };
   }
 
