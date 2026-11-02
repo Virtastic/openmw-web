@@ -257,15 +257,85 @@ export function notifyEvent(cfg: NotifyConfig, event: string, fields: Record<str
 }
 
 /**
+ * OT3-143: dedupe and rate limit for notifyFromLog. A log line is an EVENT, not an incident:
+ * a crash loop or a flood of identical errors logs the same thing hundreds of times, and each
+ * one used to become a mail or a webhook post.
+ *
+ *  - DEDUPE: the first event of a kind is sent at once; the same kind again within
+ *    `dedupeMs` is counted, not sent. The next one sent after the window carries
+ *    `repeats` = how many were held back, so nothing is lost silently. "The same kind" is the
+ *    event name plus its fields with numbers masked (incidentKey), so 1,000 copies of one
+ *    error differing only in a count, port or timestamp are one incident, while two bans of
+ *    two different accounts are two.
+ *  - RATE LIMIT: at most `maxPerWindow` notifications per `windowMs` across all kinds, so a
+ *    storm of DIFFERENT errors still cannot flood an inbox. Held-back events add to their
+ *    kind's `repeats` as above.
+ *
+ * Pure (time is passed in) so the tests drive it without timers.
+ */
+export interface NotifyGateOptions { dedupeMs: number; maxPerWindow: number; windowMs: number; maxKeys: number }
+export const NOTIFY_GATE_DEFAULTS: NotifyGateOptions = {
+  dedupeMs: 15 * 60_000, maxPerWindow: 20, windowMs: 60 * 60_000, maxKeys: 1000,
+};
+
+/** Event name + fields, numbers masked: a counter, port, duration or id in a message does not make a new incident. */
+export function incidentKey(event: string, fields: Record<string, unknown>): string {
+  const mask = (v: unknown): unknown => typeof v === 'number' ? '#'
+    : typeof v === 'string' ? v.replace(/\d+/g, '#') : v;
+  const keys = Object.keys(fields).sort();
+  return `${event} ${JSON.stringify(keys.map((k) => [k, mask(fields[k])]))}`;
+}
+
+export class NotifyGate {
+  private readonly o: NotifyGateOptions;
+  // Insertion-ordered: the oldest kind is the first evicted when the map is full.
+  private readonly kinds = new Map<string, { lastSent: number; held: number }>();
+  private sent: number[] = [];
+
+  constructor(opts: Partial<NotifyGateOptions> = {}) { this.o = { ...NOTIFY_GATE_DEFAULTS, ...opts }; }
+
+  /** undefined = hold it back; a number = send it, carrying that many held-back repeats. */
+  admit(key: string, now: number): number | undefined {
+    const k = this.kinds.get(key);
+    if (k && now - k.lastSent < this.o.dedupeMs) { k.held++; return undefined; }
+    this.sent = this.sent.filter((t) => now - t < this.o.windowMs);
+    if (this.sent.length >= this.o.maxPerWindow) {
+      if (k) k.held++;
+      else this.remember(key, { lastSent: -Infinity, held: 1 });
+      return undefined;
+    }
+    this.sent.push(now);
+    const repeats = k?.held ?? 0;
+    this.remember(key, { lastSent: now, held: 0 });
+    return repeats;
+  }
+
+  private remember(key: string, v: { lastSent: number; held: number }): void {
+    this.kinds.delete(key);
+    this.kinds.set(key, v);
+    if (this.kinds.size > this.o.maxKeys) this.kinds.delete(this.kinds.keys().next().value!);
+  }
+}
+
+/**
  * Operational alerts ride the log stream the server already writes, filtered by the
  * operator's [notifications].events list. One subscriber for both programs — a game and the
  * multiplayer server — so a world.* or gateway.* event can alert the same way a ban does.
- * Nothing is sent unless they configured it. Returns the unsubscribe.
+ * Nothing is sent unless they configured it. Deduped and rate-limited (NotifyGate): one
+ * notification per incident, not per log line. Returns the unsubscribe.
  */
-export function notifyFromLog(cfg: () => NotifyConfig): () => void {
+export function notifyFromLog(
+  cfg: () => NotifyConfig,
+  gate: NotifyGate = new NotifyGate(),
+  now: () => number = Date.now,
+): () => void {
   return onLog((entry) => {
     const { ts: _ts, level: _level, event, ...fields } = entry;
     if (event.startsWith('notify.')) return; // never report on the reporter
-    notifyEvent(cfg(), event, fields);
+    const c = cfg();
+    if (!c.events.includes(event)) return; // only listed events count against the limits
+    const repeats = gate.admit(incidentKey(event, fields), now());
+    if (repeats === undefined) return;
+    notifyEvent(c, event, repeats > 0 ? { ...fields, repeats } : fields);
   });
 }

@@ -1,0 +1,69 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# OT3-143: ticket rules. Non-urgent signals open a ticket (severity=ticket), never a page.
+# ONCE PER INCIDENT: each rule is a sustained condition (`for:`), not a per-event match, and
+# alertmanager.yml groups by alertname with a 24 h repeat for tickets and inhibits tickets
+# while anything pages. Every rule has a floor so a quiet hour cannot trip a ratio.
+groups:
+  - name: omwmp-ticket
+    rules:
+      - alert: SignupSpike
+        # Accounts created in the last hour over 5x the hourly average of the last 7 days.
+        expr: |
+          increase(omwmp_accounts_created_total{job="omwmp"}[1h])
+            > 5 * increase(omwmp_accounts_created_total{job="omwmp"}[7d]) / 168
+          and increase(omwmp_accounts_created_total{job="omwmp"}[1h]) >= 10
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $value | humanize }} sign-ups in the last hour, over 5x the 7-day hourly baseline (bot wave or a link going round).'
+          runbook_url: deploy/monitoring/RUNBOOK.md#signupspike
+
+      - alert: AuthFailureRate
+        expr: |
+          sum(rate(omwmp_auth_total{job="omwmp",result!="success"}[15m]))
+            / sum(rate(omwmp_auth_total{job="omwmp"}[15m])) > 0.2
+          and sum(increase(omwmp_auth_total{job="omwmp"}[15m])) >= 20
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $value | humanizePercentage }} of sign-in attempts failing over 15 min.'
+          runbook_url: deploy/monitoring/RUNBOOK.md#authfailurerate
+
+      - alert: AbnormalDisconnects
+        # Server-side drops that are not a player leaving, a re-login, a kick/ban or a shutdown,
+        # plus keepalive reaps, as a share of sessions opened.
+        expr: |
+          (
+            sum(increase(omwmp_disconnects_total{job="omwmp",code!~"CLIENT_CLOSE|SUPERSEDED|KICKED|BANNED|SHUTDOWN"}[30m]))
+            + sum(increase(omwmp_pong_timeout_drops_total{job="omwmp"}[30m]))
+          ) / sum(increase(omwmp_connections_opened_total{job="omwmp"}[30m])) > 0.1
+          and sum(increase(omwmp_connections_opened_total{job="omwmp"}[30m])) >= 10
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $value | humanizePercentage }} of sessions ended abnormally over 30 min.'
+          runbook_url: deploy/monitoring/RUNBOOK.md#abnormaldisconnects
+
+      - alert: BackpressureDropsRising
+        # Lossy frames dropped on backed-up sockets, at more than twice the rate of the hour
+        # before and at least 1/s: clients or the box falling behind.
+        expr: |
+          sum(rate(omwmp_backpressure_dropped_total{job="omwmp"}[15m]))
+            > 2 * sum(rate(omwmp_backpressure_dropped_total{job="omwmp"}[1h] offset 15m))
+          and sum(rate(omwmp_backpressure_dropped_total{job="omwmp"}[15m])) > 1
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: Backpressure drops rising, {{ $value | humanize }}/s over 15 min.
+          runbook_url: deploy/monitoring/RUNBOOK.md#backpressuredropsrising
+
+      - alert: JoinSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(omwmp_join_latency_seconds_bucket{job="omwmp"}[30m]))) > 30
+          and sum(increase(omwmp_join_latency_seconds_count{job="omwmp"}[30m])) >= 5
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: Join p95 {{ $value | humanizeDuration }} over 30 min (socket accept to in-world).
+          runbook_url: deploy/monitoring/RUNBOOK.md#joinslow

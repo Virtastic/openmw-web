@@ -1,0 +1,48 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# promtool unit tests for tickets.yml: each rule fires on its condition, as ONE alert, and
+# stays quiet below its floor.
+rule_files: [tickets.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      # 60 failed / 100 attempts per 15 min, sustained.
+      - series: omwmp_auth_total{job="omwmp",op="sso",result="success"}
+        values: 0+4x40
+      - series: omwmp_auth_total{job="omwmp",op="sso",result="AUTH_FAILED"}
+        values: 0+6x40
+      # Joins taking 60 s.
+      - series: omwmp_join_latency_seconds_bucket{job="omwmp",le="30"}
+        values: 0x60
+      - series: omwmp_join_latency_seconds_bucket{job="omwmp",le="60"}
+        values: 0+1x60
+      - series: omwmp_join_latency_seconds_bucket{job="omwmp",le="+Inf"}
+        values: 0+1x60
+      - series: omwmp_join_latency_seconds_count{job="omwmp"}
+        values: 0+1x60
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AuthFailureRate
+        exp_alerts:
+          - exp_labels: { severity: ticket }
+            exp_annotations:
+              summary: 60% of sign-in attempts failing over 15 min.
+              runbook_url: deploy/monitoring/RUNBOOK.md#authfailurerate
+      - eval_time: 50m
+        alertname: JoinSlow
+        exp_alerts:
+          - exp_labels: { severity: ticket }
+            exp_annotations:
+              summary: Join p95 58.5s over 30 min (socket accept to in-world).
+              runbook_url: deploy/monitoring/RUNBOOK.md#joinslow
+
+  # Below the floor: 3 attempts, all failed, must not open a ticket.
+  - interval: 1m
+    input_series:
+      - series: omwmp_auth_total{job="omwmp",op="sso",result="AUTH_FAILED"}
+        values: 0 1 2 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AuthFailureRate
+        exp_alerts: []

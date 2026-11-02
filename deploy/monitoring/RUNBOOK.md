@@ -70,6 +70,36 @@ not made its first one in 2 h; both link here.
 First: the server log for backup errors; disk space; the backup target's credentials.
 Stage: point the backup target at a path that does not exist.
 
+## Tickets (tickets.yml, OT3-143)
+These open a ticket, never a page. Each is a sustained condition, so one incident is one ticket.
+
+### SignupSpike
+Sign-ups in the last hour over 5x the 7-day hourly average (and at least 10). A bot wave or a
+link going round. First: the `auth.sso_ok` / `frontdoor.*` log lines by IP; invite-code use.
+
+### AuthFailureRate
+Over 20% of sign-in attempts failing for 15 min (at least 20 attempts). A provider outage, an
+expired OAuth secret, or credential stuffing. First: `omwmp_auth_total` by `op` and `result`;
+`auth.sso_failed` codes in mp-health.py.
+
+### AbnormalDisconnects
+Over 10% of sessions ending in a server-side drop or keepalive reap over 30 min.
+First: `omwmp_disconnects_total` by code; RATE and BACKLOG point at clients, the rest at the
+server.
+
+### BackpressureDropsRising
+Lossy frames dropped on backed-up sockets at over 1/s and twice the hour before. Clients on bad
+links, or the box's outbound falling behind. First: `omwmp_outbound_buffered_bytes`, box
+network, `omwmp_backpressure_dropped_total` by `kind`.
+
+### JoinSlow
+Join p95 over 30 s for 15 min. First: whether the world is booting or its peer restarting
+(`omwmp_simpeer_*`), `omwmp_op_queue_wait_seconds`.
+
+### In-process notifications (notifyFromLog)
+The `[notifications]` mail/webhook tap is deduped: the same event (numbers masked) is sent once
+per 15 min, the next one carrying `repeats=N`, and no more than 20 go out per hour in total.
+
 ## Not covered yet
 - A direct process start-time metric: ProcessRestarted infers restarts from counter resets
   until metrics.ts exports `process_start_time_seconds`.

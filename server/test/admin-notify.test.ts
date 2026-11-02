@@ -12,7 +12,8 @@ import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
 import { startServer } from '../src/server';
 import { tmpDataDir } from './helpers';
-import { ResetTokens, notifyEvent } from '../src/net/admin/notify';
+import { ResetTokens, notifyEvent, notifyFromLog, NotifyGate, incidentKey } from '../src/net/admin/notify';
+import { log } from '../src/log';
 
 const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' };
 
@@ -204,4 +205,58 @@ test('a config rollback is announced, because a silent revert is the worst case'
   const { recentLogs } = await import('../src/log');
   const fallback = recentLogs(500, 'admin.config_fallback');
   assert.ok(fallback.length > 0, 'the operator has to be told their saved settings did not load');
+});
+
+// ---------------------------------------------------------------------------------------
+// OT3-143: one notification per incident, not per log line
+// ---------------------------------------------------------------------------------------
+
+test('a burst of 1,000 identical log errors produces one notification', async (t) => {
+  const received: Array<Record<string, unknown>> = [];
+  const hook: Server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => { received.push(JSON.parse(body)); res.writeHead(204); res.end(); });
+  });
+  hook.listen(0, '127.0.0.1');
+  await once(hook, 'listening');
+  t.after(() => hook.close());
+  const url = `http://127.0.0.1:${(hook.address() as { port: number }).port}/hook`;
+  let clock = 1_000_000;
+  const unhook = notifyFromLog(() => ({
+    host: '', port: 587, user: '', pass: '', from: '', to: '',
+    webhookUrl: url, events: ['test.burst_error'],
+  }), new NotifyGate(), () => clock);
+  t.after(unhook);
+
+  // Identical but for a number in the message, as a real flood usually is.
+  for (let i = 0; i < 1000; i++) log('error', 'test.burst_error', { error: `ECONNRESET after ${i} ms` });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(received.length, 1, 'one notification for the whole burst');
+  assert.equal(received[0]!.repeats, undefined, 'the first one carries no repeat count');
+
+  // After the dedupe window the next one goes out and says how many were held back.
+  clock += 16 * 60_000;
+  log('error', 'test.burst_error', { error: 'ECONNRESET after 5 ms' });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(received.length, 2);
+  assert.equal(received[1]!.repeats, 999, 'nothing is dropped silently');
+});
+
+test('dedupe keys on the incident: numbers are masked, different subjects are not', () => {
+  assert.equal(incidentKey('e', { error: 'port 8080', n: 1 }), incidentKey('e', { n: 7, error: 'port 9090' }));
+  assert.notEqual(incidentKey('admin.ban', { account: 'alice' }), incidentKey('admin.ban', { account: 'bob' }));
+  assert.notEqual(incidentKey('a.x', {}), incidentKey('a.y', {}));
+});
+
+test('the gate rate-limits distinct incidents and carries held ones forward', () => {
+  const g = new NotifyGate({ dedupeMs: 60_000, maxPerWindow: 3, windowMs: 3_600_000 });
+  assert.equal(g.admit('a', 0), 0);
+  assert.equal(g.admit('a', 1), undefined, 'same incident inside the window is held');
+  assert.equal(g.admit('b', 2), 0);
+  assert.equal(g.admit('c', 3), 0);
+  assert.equal(g.admit('d', 4), undefined, 'a fourth distinct incident in the hour is over the limit');
+  // An hour on, the limit has room again and d goes out with its held copy counted.
+  assert.equal(g.admit('d', 3_600_010), 1);
+  assert.equal(g.admit('a', 3_600_011), 1, 'a went out once, then one copy was held');
 });

@@ -9,6 +9,7 @@ rule sends are explained in [RUNBOOK.md](RUNBOOK.md).
 | `docker-compose.monitoring.yml` | on the box: the agent and node_exporter, layered over the main compose file | OT3-133 |
 | `alertmanager.yml` | the hosted Alertmanager: `severity=page` pages, `severity=ticket` opens a ticket | OT3-133 |
 | `alerts.yml` | the hosted ruler: page rules (+ ProberSilent ticket) | OT3-140, OT3-136 |
+| `tickets.yml` | the hosted ruler: ticket rules (`severity=ticket`) | OT3-143 |
 | `probes/` | a small box OUTSIDE OVH: blackbox_exporter + agent probing the public site | OT3-136 |
 
 ## On-box agent and hosted backend (OT3-133)
@@ -26,7 +27,7 @@ whole box or the agent does.
 1. **The one manual step: create the hosted backend.** Any service that takes Prometheus
    remote_write and runs a ruler with Alertmanager works (Grafana Cloud, a self-run
    Mimir/Prometheus off OVH, ...). From it, note the remote_write URL, a username/instance id,
-   and an API key with metrics write. Upload `alerts.yml` (and later rule files) to its ruler
+   and an API key with metrics write. Upload `alerts.yml` and `tickets.yml` to its ruler
    and `alertmanager.yml` to its Alertmanager, replacing the two `*.invalid` webhook URLs with
    the pager integration and the ticket/chat webhook.
 2. On the box, in the checkout:
@@ -80,7 +81,7 @@ not the world process: the ws probe's dial revives a stopped world, like a playe
 
 No promtool on the laptop; run it from the images:
 
-    docker run --rm -v $PWD/deploy/monitoring:/m --entrypoint promtool prom/prometheus:v3.5.0 check rules /m/alerts.yml
-    docker run --rm -v $PWD/deploy/monitoring:/m -w /m --entrypoint promtool prom/prometheus:v3.5.0 test rules alerts.test.yml
+    docker run --rm -v $PWD/deploy/monitoring:/m --entrypoint promtool prom/prometheus:v3.5.0 check rules /m/alerts.yml /m/tickets.yml
+    docker run --rm -v $PWD/deploy/monitoring:/m -w /m --entrypoint promtool prom/prometheus:v3.5.0 test rules alerts.test.yml tickets.test.yml
     docker run --rm -v $PWD/deploy/monitoring/probes/blackbox.yml:/b.yml prom/blackbox-exporter:v0.27.0 --config.file=/b.yml --config.check
     docker run --rm -v $PWD/deploy/monitoring:/m --entrypoint amtool prom/alertmanager:v0.28.1 check-config /m/alertmanager.yml
