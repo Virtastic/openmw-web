@@ -2,13 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // ONE SCRAPE TARGET, EVERY WORLD IN IT.
 //
-// metrics.ts stamps `world="<id>"` on every series a spawned world emits — carefully, at the
-// single formatting chokepoint — and it was invisible: worlds listen on internal ports that
-// deploy/Caddyfile does not proxy, so nothing outside the container could ever reach a world's
-// /metrics. The gateway folds them in.
-//
-// Prometheus rejects a payload that repeats # HELP / # TYPE for a metric name, and every world
-// emits the same names, so the fold has to dedupe the metadata while keeping every sample.
+// Worlds listen on internal ports that deploy/Caddyfile does not proxy, so the gateway folds
+// their /metrics into its own. OT3-195: no world= label any more, so the fold dedupes both the
+// metadata AND same-keyed series (summing them), and keeps each family contiguous.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -18,7 +14,7 @@ import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import type { ChildProcess } from 'node:child_process';
 import { WorldSupervisor } from '../src/gateway/worlds';
-import { startDirectory } from '../src/gateway/directory';
+import { startDirectory, foldExpositions } from '../src/gateway/directory';
 
 const TOKEN = 'scrape-token';
 
@@ -37,7 +33,10 @@ function fakeWorld(id: string): Promise<{ port: number; close: () => Promise<voi
       // reason the fold has to dedupe rather than concatenate.
       res.end(`# HELP omwmp_sessions_in_world PLAYERS currently in world.\n`
         + `# TYPE omwmp_sessions_in_world gauge\n`
-        + `omwmp_sessions_in_world{world="${id}"} 7\n`);
+        + `omwmp_sessions_in_world 7\n`
+        + `# HELP omwmp_peer_up 1 when the region has a connected sim peer.\n`
+        + `# TYPE omwmp_peer_up gauge\n`
+        + `omwmp_peer_up{region="${id}"} 1\n`);
       return;
     }
     res.writeHead(404); res.end();
@@ -86,9 +85,14 @@ test('the gateway scrape carries every world, with valid metadata', async (t) =>
   assert.equal(res.status, 200);
   const body = await res.text();
 
-  // Both worlds present, told apart by the label metrics.ts stamps.
-  assert.match(body, /omwmp_sessions_in_world\{world="alpha"\} 7/);
-  assert.match(body, /omwmp_sessions_in_world\{world="beta"\} 7/);
+  assert.ok(!body.includes('world='), 'no world label anywhere (OT3-195)');
+  // Same series from gateway (0) and both worlds (7 each): one line, summed.
+  const sess = body.split('\n').filter((l) => l.startsWith('omwmp_sessions_in_world '));
+  assert.deepEqual(sess, ['omwmp_sessions_in_world 14']);
+  assert.match(body, /omwmp_peer_up\{region="alpha"\} 1/);
+  assert.match(body, /omwmp_peer_up\{region="beta"\} 1/);
+  const keys = body.split('\n').filter((l) => l && !l.startsWith('#')).map((l) => l.slice(0, l.lastIndexOf(' ')));
+  assert.equal(new Set(keys).size, keys.length, 'a duplicate series makes the payload invalid');
 
   // VALID EXPOSITION: metadata declared once, however many worlds emit the same metric.
   const helps = body.split('\n').filter((l) => l.startsWith('# HELP '));
@@ -130,5 +134,14 @@ test('a world that does not answer is skipped, not fatal', async (t) => {
     { headers: { authorization: `Bearer ${TOKEN}` } });
   assert.equal(res.status, 200, 'one unreachable world must not fail the endpoint');
   const body = await res.text();
-  assert.match(body, /world="good"/, 'the healthy world is still reported');
+  assert.match(body, /omwmp_peer_up\{region="good"\} 1/, 'the healthy world is still reported');
+});
+
+test('foldExpositions: families stay contiguous, histograms sum, metadata once', () => {
+  const a = '# HELP h x\n# TYPE h histogram\nh_bucket{le="1"} 1\nh_bucket{le="+Inf"} 2\nh_sum 3\nh_count 2\n'
+    + '# HELP g y\n# TYPE g gauge\ng 0\n';
+  const b = '# HELP g y\n# TYPE g gauge\ng 5\n# HELP h x\n# TYPE h histogram\nh_bucket{le="1"} 1\nh_bucket{le="+Inf"} 1\nh_sum 0.5\nh_count 1\n';
+  assert.equal(foldExpositions([a, b]),
+    '# HELP h x\n# TYPE h histogram\nh_bucket{le="1"} 2\nh_bucket{le="+Inf"} 3\nh_sum 3.5\nh_count 3\n'
+    + '# HELP g y\n# TYPE g gauge\ng 5\n');
 });

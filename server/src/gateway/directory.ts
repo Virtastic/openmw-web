@@ -85,28 +85,58 @@ interface DirectoryDeps {
 
 /** Fold the gateway's metrics together with every world's into one valid exposition.
  *
- *  Prometheus rejects a payload that repeats `# HELP`/`# TYPE` for a metric name, and every
- *  world emits the same names — so the metadata is kept from whoever declares it first and the
- *  sample lines are simply concatenated. That is safe precisely because metrics.ts stamps
- *  `world="<id>"` on every series from a spawned world, so same-named samples do not collide.
+ *  Every process renders the same registry, so the same metric NAME and often the same SERIES
+ *  (name + label set) appear in several sources: a world-side gauge reads 0 on the gateway,
+ *  a gateway-side one reads 0 on the world. Prometheus rejects repeated # HELP/# TYPE and
+ *  duplicate series, and wants each family's samples contiguous. So the fold groups samples
+ *  by family (the last # TYPE seen), keeps metadata from the first declarer, and SUMS samples
+ *  with the same series key. Summing is right for counters, histogram buckets/sums/counts and
+ *  for gauges that only one process ever moves off zero (OT3-195: no world= label to tell
+ *  sources apart any more; per-region series carry `region` from their call sites).
  *
  *  A slow or wedged world must not hang the scrape: each fetch is bounded, and a world that
- *  does not answer is skipped rather than failing the whole endpoint — a monitoring system that
- *  goes blind because one world is sick is worse than one reporting the other nine. */
-async function aggregateMetrics(deps: DirectoryDeps, token: string | undefined): Promise<string> {
-  const seenMeta = new Set<string>();
-  const out: string[] = [];
-  const absorb = (text: string): void => {
+ *  does not answer is skipped rather than failing the whole endpoint. */
+export function foldExpositions(texts: string[]): string {
+  interface Family { meta: string[]; samples: Map<string, number> }
+  const families = new Map<string, Family>();
+  const family = (name: string): Family => {
+    let f = families.get(name);
+    if (!f) { f = { meta: [], samples: new Map() }; families.set(name, f); }
+    return f;
+  };
+  for (const text of texts) {
+    let current = '';
     for (const line of text.split('\n')) {
       if (line === '') continue;
-      if (line.startsWith('# HELP ') || line.startsWith('# TYPE ')) {
-        if (seenMeta.has(line)) continue;
-        seenMeta.add(line);
+      const m = /^# (HELP|TYPE) (\S+)/.exec(line);
+      if (m) {
+        current = m[2]!;
+        const f = family(current);
+        if (!f.meta.some((l) => l.startsWith(`# ${m[1]} `))) f.meta.push(line);
+        continue;
       }
-      out.push(line);
+      if (line.startsWith('#')) continue;
+      const sp = line.lastIndexOf(' ');
+      if (sp <= 0) continue;
+      const key = line.slice(0, sp);
+      const v = Number(line.slice(sp + 1));
+      const name = key.split('{')[0]!;
+      const f = family(current !== '' && name.startsWith(current) ? current : name);
+      f.samples.set(key, (f.samples.get(key) ?? 0) + v);
     }
-  };
-  absorb(renderMetrics());
+  }
+  const out: string[] = [];
+  for (const f of families.values()) {
+    out.push(...f.meta);
+    for (const [k, v] of f.samples) {
+      out.push(`${k} ${Number.isNaN(v) ? 'NaN' : v === Infinity ? '+Inf' : v === -Infinity ? '-Inf' : v}`);
+    }
+  }
+  return `${out.join('\n')}\n`;
+}
+
+async function aggregateMetrics(deps: DirectoryDeps, token: string | undefined): Promise<string> {
+  const texts: string[] = [renderMetrics()];
   const headers = token ? { authorization: `Bearer ${token}` } : undefined;
   await Promise.all(deps.worlds.list().filter((w) => w.up).map(async (w) => {
     try {
@@ -114,13 +144,13 @@ async function aggregateMetrics(deps: DirectoryDeps, token: string | undefined):
         ...(headers ? { headers } : {}),
         signal: AbortSignal.timeout(2000),
       });
-      if (r.ok) absorb(await r.text());
+      if (r.ok) texts.push(await r.text());
       else log('warn', 'metrics.world_scrape_status', { id: w.id, status: r.status });
     } catch (err) {
       log('warn', 'metrics.world_unreachable', { id: w.id, error: String(err) });
     }
   }));
-  return `${out.join('\n')}\n`;
+  return foldExpositions(texts);
 }
 
 interface RunningDirectory {
@@ -266,8 +296,8 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       //
       // Each world listens on an internal port that nothing publishes (deploy/Caddyfile proxies
       // only /w, /auth, /locker, /worlds), so a world's /metrics was unreachable from
-      // outside the container — the per-world `world=` label metrics.ts stamps so carefully had
-      // no way to be seen. One scrape target, every world in it.
+      // outside the container. One scrape target, every world in it (OT3-195: no world= label;
+      // the fold sums same-keyed series, see foldExpositions).
       // Its own IIFE rather than making the whole request handler async: every other branch
       // here is synchronous, and widening them all to async would change when their errors
       // surface. A scrape that throws still answers, with the gateway's own series — going

@@ -22,25 +22,14 @@ function escapeLabel(v: string): string {
   return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }
 
-// F4: every series from this process carries world="<id>" when the gateway started it
-// (OMW_WORLD_ID). Applied HERE, at the single formatting chokepoint, rather than at each
-// call site — a metric that silently lacks the label would be indistinguishable from
-// another world's in an aggregated scrape, which is precisely the mistake this prevents.
-// Empty for a standalone world, so a single-server scrape is byte-identical to before.
-// Read at RENDER time, not module load: scrapes are infrequent so the cost is nil, and it
-// removes a class of bug where the value is fixed before the environment is fully set up
-// (which also made it untestable without re-importing the module).
-function worldId(): string {
-  return process.env['OMW_WORLD_ID'] ?? '';
-}
-
+// OT3-195: there is one world, so no series carries a world= label. Per-capacity series
+// (players, peers) are labelled by `region` at their call sites instead; the gateway's
+// /metrics fold dedupes same-named series by summing (gateway/directory.ts).
 function renderLabels(labels: Labels, extra?: [string, string]): string {
   const parts = Object.keys(labels)
     .sort()
     .map((k) => `${k}="${escapeLabel(labels[k]!)}"`);
   if (extra) parts.push(`${extra[0]}="${escapeLabel(extra[1])}"`);
-  const w = worldId();
-  if (w !== '') parts.push(`world="${escapeLabel(w)}"`);
   return parts.length === 0 ? '' : `{${parts.join(',')}}`;
 }
 

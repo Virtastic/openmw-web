@@ -257,36 +257,24 @@ test('metrics: every registered metric renders a HELP and TYPE line', () => {
   }
 });
 
-// F4: with many worlds, an aggregated scrape must be able to tell them apart. The label is
-// applied at the single formatting chokepoint so no metric can silently lack it.
-test('metrics: every series carries world= when the gateway named this world', () => {
+// OT3-195: one world, so no world= label, even if a stale OMW_WORLD_ID is in the env.
+test('metrics: no series carries a world label', () => {
   const prev = process.env['OMW_WORLD_ID'];
   process.env['OMW_WORLD_ID'] = 'alices-game';
   try {
     resetMetrics();
     metrics.connOpened.inc({});
     metrics.disconnects.inc({ code: 'RATE' });
+    const un1 = metrics.sessionsInRegion.addCollector(() => [{ labels: { region: 'vvardenfell' }, value: 3 }]);
+    const un2 = metrics.peerUp.addCollector(() => [{ labels: { region: 'vvardenfell' }, value: 1 }]);
     const text = renderMetrics();
-
-    const series = text.split('\n').filter((l: string) => l && !l.startsWith('#'));
-    assert.ok(series.length > 0, 'there must be series to check');
-    const unlabelled = series.filter((l: string) => !l.includes('world="alices-game"'));
-    assert.deepEqual(unlabelled, [],
-      `every series must carry the world label; these did not:\n${unlabelled.join('\n')}`);
-
-    // Existing labels survive alongside it rather than being replaced.
-    assert.ok(text.includes('code="RATE"') && text.includes('world="alices-game"'),
-      'the world label is ADDED to existing labels, not substituted for them');
+    un1(); un2();
+    assert.ok(!text.includes('world='), 'no world label anywhere');
+    assert.ok(!/omwmp_worlds_/.test(text), 'no worlds gauges');
+    assert.match(text, /omwmp_sessions_in_region\{region="vvardenfell"\} 3/);
+    assert.match(text, /omwmp_peer_up\{region="vvardenfell"\} 1/);
   } finally {
     if (prev === undefined) delete process.env['OMW_WORLD_ID'];
     else process.env['OMW_WORLD_ID'] = prev;
   }
-});
-
-test('metrics: a standalone world emits no world label at all', () => {
-  // A single self-hosted server's scrape must be byte-identical to before this change —
-  // an empty world="" on every series would be noise in every existing dashboard.
-  assert.equal(process.env['OMW_WORLD_ID'], undefined, 'this test assumes no world id');
-  const text = renderMetrics();
-  assert.ok(!text.includes('world='), 'no world label when the world is not named');
 });
