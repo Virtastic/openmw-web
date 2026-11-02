@@ -232,6 +232,10 @@ interface View {
 // mechanism covers dirty-poses, force-include-on-visibility, and force-include-on-approach.
 export class MoveBroadcaster {
   private perRecipient = new Map<number, Map<number, View>>();
+  // OT3-77: the reverse of perRecipient -- sender id -> the recipients holding a view of it. relayNow
+  // fans an accepted pose out to exactly these, instead of scanning every recipient in the world
+  // for each pose (N players x 15 Hz x N recipients is what made Node the wall before the peer).
+  private readonly watchers = new Map<number, Set<number>>();
   private timer?: NodeJS.Timeout;
   private tickNo = 0;
   private readonly s: InterestSettings;
@@ -251,6 +255,8 @@ export class MoveBroadcaster {
   // flatten, and it is asserted directly in the tests — CPU time is a proxy that moves for
   // a dozen unrelated reasons, whereas this counts the exact work the index removes.
   pairsExamined = 0;
+  /** Recipients relayNow looked at, ever: bounded by who watches the sender, not by the world. */
+  relayExamined = 0;
 
   constructor(
     private readonly roster: Roster,
@@ -322,7 +328,12 @@ export class MoveBroadcaster {
     const liveIds = new Set<number>();
     for (const p of inWorld) liveIds.add(p.id);
     // Drop state for recipients that left.
-    for (const id of this.perRecipient.keys()) if (!liveIds.has(id)) this.perRecipient.delete(id);
+    for (const [id, views] of this.perRecipient) {
+      if (liveIds.has(id)) continue;
+      for (const sid of views.keys()) this.unwatch(sid, id);
+      this.perRecipient.delete(id);
+    }
+    for (const id of this.watchers.keys()) if (!liveIds.has(id)) this.watchers.delete(id);
     for (const id of this.relayedAt.keys()) if (!liveIds.has(id)) this.relayedAt.delete(id);
     // SENDERS ARE HUMANS ONLY. The sim peer is infrastructure with an avatar standing wherever
     // it happens to simulate from — broadcasting its pose made every client spawn a PUPPET of
@@ -437,6 +448,9 @@ export class MoveBroadcaster {
       if (!view) {
         view = { version: -1, seenTick: tickNo, sent: false, near: false };
         views.set(sender.id, view);
+        let w = this.watchers.get(sender.id);
+        if (!w) { w = new Set(); this.watchers.set(sender.id, w); }
+        w.add(recipient.id);
       } else {
         view.seenTick = tickNo; // mark BEFORE any skip: skipped != out of view
       }
@@ -470,8 +484,11 @@ export class MoveBroadcaster {
     if ((sender.pose.flags & POSE_EDGE_BITS) === 0 && now - (this.relayedAt.get(sender.id) ?? -Infinity) < RELAY_MIN_MS) return;
     this.relayedAt.set(sender.id, now);
     let frame: Buffer | undefined;
-    for (const [rid, views] of this.perRecipient) {
-      const view = views.get(sender.id);
+    const watching = this.watchers.get(sender.id);
+    if (!watching) return;
+    for (const rid of watching) {
+      this.relayExamined++;
+      const view = this.perRecipient.get(rid)?.get(sender.id);
       if (!view || !view.near || view.version < 0 || view.version === sender.poseVersion) continue;
       const recipient = this.roster.get(rid);
       // The peer already heard it (connection.ts handleMove); the tick covers it otherwise.
@@ -493,11 +510,19 @@ export class MoveBroadcaster {
     for (const [id, view] of views) {
       if (view.seenTick === tickNo) continue;
       views.delete(id);
+      this.unwatch(id, recipient.id);
       // Only when a pose actually landed: `sent` false means the client never spawned a
       // puppet for this id, so a despawn would be noise. Exactly one signal per transition
       // — the map entry is gone, so a re-entry starts from scratch.
       if (view.sent) recipient.peer.sendEvent('PlayerLeaveView', { id });
     }
+  }
+
+  private unwatch(senderId: number, recipientId: number): void {
+    const w = this.watchers.get(senderId);
+    if (!w) return;
+    w.delete(recipientId);
+    if (w.size === 0) this.watchers.delete(senderId);
   }
 
   private flush(recipient: Player, seq: number, tickNo: number): void {

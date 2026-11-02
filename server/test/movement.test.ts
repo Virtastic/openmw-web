@@ -521,6 +521,29 @@ test('relayNow: a near observer gets the pose on arrival, mid/far stay on the ti
   assert.equal(h.updates(2, 1), before2 + 3);
 });
 
+test('OT3-77 relayNow fans out to the sender\'s watchers only: 200 players, 50 in one hub', () => {
+  const h = harness(settings({ interestRadius: 0, lodNearRadius: 100_000, lodMidRadius: 200_000, lodNearHz: 15, lodMidHz: 5, lodFarHz: 1 }));
+  // 50 in the hub, 150 spread one per far cell (nobody else sees them).
+  const hub: Player[] = [];
+  for (let i = 1; i <= 50; i++) hub.push(h.add(i, '0,0', i * 10));
+  for (let i = 51; i <= 200; i++) h.add(i, `${(i - 50) * 10},${(i - 50) * 10}`, 0);
+  h.bc.tick();
+  const sender = hub[0]!;
+  const before = h.updates(2, 1);
+  const examined0 = h.bc.relayExamined;
+  h.moveTo(sender, 5);
+  h.bc.relayNow(sender);
+  assert.equal(h.updates(2, 1), before + 1, 'a hub mate still gets the pose on arrival');
+  // The other 49 hub players, at most -- never the 150 who cannot see the hub.
+  assert.ok(h.bc.relayExamined - examined0 <= 50, `examined ${h.bc.relayExamined - examined0} recipients for one pose`);
+  // A loner's pose touches nobody.
+  const loner = h.add(201, '5000,5000', 0); // joined after the tick: nobody holds a view of it yet
+  const examined1 = h.bc.relayExamined;
+  h.moveTo(loner, 5);
+  h.bc.relayNow(loner);
+  assert.ok(h.bc.relayExamined - examined1 <= 1);
+});
+
 test('an unchanged 0x0103 is not resent', () => {
   const sent: number[] = [];
   const p = {
