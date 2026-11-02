@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from '../src/server';
 import { tmpDataDir } from './helpers';
-import { readDashboardTree } from '../src/net/admin/settings-store';
+import { readDashboardTree, saveTree } from '../src/net/admin/settings-store';
 import { DASHBOARD_FILE } from '../src/config';
 import { validAccountName, accountNameProblem } from '../src/core/accounts';
 import { normaliseDomain } from '../src/net/admin/setup-check';
@@ -125,7 +125,7 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   const { call, token, dataDir } = await boot(t);
   const applied = await call('/setup', { method: 'POST', token, body: {
     // deliveryModel 'verify' ON PURPOSE: the question is gone from the wizard and the server
-    // must store no delivery answer even when the request sends one (OT3-43).
+    // must not store it: only 'esm', the model v2 runs, is recorded (OT3-43, OT3-148).
     deploymentMode: 'single', contentProfile: 'expansions', deliveryModel: 'verify',
     hosting: 'internal', storage: 'local', loginMethods: ['password'], completed: true,
   } });
@@ -138,7 +138,7 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   const written = readDashboardTree(dataDir) as { setup?: Record<string, unknown> };
   assert.equal(written.setup?.deploymentMode, 'single');
   assert.equal(written.setup?.contentProfile, 'expansions');
-  assert.equal(written.setup?.deliveryModel, undefined);
+  assert.equal(written.setup?.deliveryModel, undefined, "'verify' is dropped, not stored");
   assert.equal(written.setup?.hosting, 'internal');
   assert.equal(written.setup?.storage, 'local');
   assert.deepEqual(written.setup?.loginMethods, ['password']);
@@ -178,6 +178,25 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   // And a field the wizard does not own still saves through the same endpoint.
   const ok = await call('/settings/server', { token, method: 'PUT', body: { name: 'Renamed' } });
   assert.equal(ok.status, 200, 'an ordinary setting must still be editable');
+});
+
+test("the wizard saves deliveryModel 'esm', /state reads it back, and a stale 'serve' is dropped", async (t) => {
+  const { call, token, dataDir } = await boot(t);
+  // A file an earlier wizard wrote, claiming a delivery model v2 never runs.
+  assert.equal(saveTree(dataDir, { setup: { deliveryModel: 'serve' } }).ok, true);
+  const pre = await call('/setup', { method: 'POST', token, body: { deliveryModel: 'serve' } });
+  assert.equal(pre.status, 200);
+  assert.equal((readDashboardTree(dataDir) as { setup?: Record<string, unknown> }).setup?.deliveryModel,
+    undefined, "a stale 'serve' is dropped, and a new one is not stored");
+
+  const applied = await call('/setup', { method: 'POST', token, body: {
+    deploymentMode: 'multiplayer', deliveryModel: 'esm', loginMethods: ['google'],
+  } });
+  assert.equal(applied.status, 200);
+  const written = readDashboardTree(dataDir) as { setup?: Record<string, unknown> };
+  assert.equal(written.setup?.deliveryModel, 'esm');
+  const state = await (await call('/state', { token })).json() as { setup: Record<string, unknown> };
+  assert.equal(state.setup.deliveryModel, 'esm', 'the record round-trips through /state');
 });
 
 test('wizard SSO credentials land in config, and read back masked', async (t) => {

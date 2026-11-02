@@ -92,11 +92,12 @@ test('the delivery question is gone from the wizard, not merely gated', () => {
   assert.doesNotMatch(app, /stepDelivery/, 'the delivery step must not exist');
   assert.doesNotMatch(app, /playerUploads/, 'no trace of the removed flag in the page');
   assert.doesNotMatch(app, /'delivery',/, 'no delivery entry in the step list');
-  // OT3-43: nor does an answer travel. v2 runs esm whatever is stored, so the page sends none.
-  assert.doesNotMatch(app, /deliveryModel/);
+  // The answer still travels, as the one value v2 runs (OT3-148).
+  assert.match(app, /deliveryModel: 'esm'/);
+  assert.doesNotMatch(app, /deliveryModel: '(serve|verify)'/);
 });
 
-test('the server stores no delivery answer, whatever the page did', () => {
+test('the server no longer forces serve', () => {
   const routes = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'routes.ts'), 'utf8');
   const handler = /if \(method === 'POST' && path === '\/admin\/api\/setup'\) \{[\s\S]*?\n    \}/.exec(routes)!;
   assert.doesNotMatch(handler[0], /body\.deliveryModel = 'serve';/);

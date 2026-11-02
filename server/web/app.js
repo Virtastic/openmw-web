@@ -309,7 +309,9 @@ const go = (hash) => { if (location.hash === hash) route(); else location.hash =
 // deployment never sees the questions that only matter with strangers on the box.
 const BLANK_ANSWERS = {
   deploymentMode: null, loginMethods: ['password'], contentProfile: null,
-  hosting: null, domain: '', httpPort: 80, serverName: '', storage: 'local',
+  // Not a question: 'esm' is the only delivery model v2 runs. Sent so the stored record says
+  // what runs (OT3-148); the server ignores any other value.
+  deliveryModel: 'esm', hosting: null, domain: '', httpPort: 80, serverName: '', storage: 'local',
   // Who may create an account. ITS OWN QUESTION, asked whichever kind of server this is:
   // it used to be inferred from the deployment mode, so choosing "single player" silently
   // closed registration, which is a decision the operator never made and could not see.

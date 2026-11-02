@@ -759,9 +759,8 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       const body = await readJson<WizardAnswers>(req, res);
       if (body === undefined) return true;
-      // OT3-43: there is no delivery answer (v2 runs esm whatever is stored). WizardAnswers no
-      // longer has the field, and applyWizard never reads it, so a request that sends one
-      // changes nothing.
+      // Delivery is not a question (v2 runs esm whatever is stored): applyWizard records
+      // 'esm' when sent and drops any other value, so a request cannot store 'serve'.
       const result = applyWizard(deps.dataDir, body, deps.sharedDir);
       if (!result.ok) { json(res, 400, { error: result.error }); return true; }
       // THE CHOICE STARTS THE SERVER IT NAMES. Written only when the wizard is FINISHED, so a

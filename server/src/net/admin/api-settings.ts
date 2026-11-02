@@ -480,6 +480,10 @@ export interface WizardAnswers {
   owners?: string[];
   /** Step 5: which game content this server expects. */
   contentProfile?: 'morrowind' | 'expansions' | 'tamriel-rebuilt';
+  /** How players get the game files. 'esm' is the only model v2 runs (OT3-148): a player
+   *  uploads the three master files, verified by hash. Not a question on the page; the answer
+   *  is sent so the stored record says what runs. Any other value is ignored. */
+  deliveryModel?: 'esm';
   /** Step 7: reachable from the internet, or LAN only? */
   hosting?: 'public' | 'internal';
   httpPort?: number;
@@ -597,12 +601,13 @@ export function applyWizard(
   // fallback without one is the account key.
   if (a.completed === true) merge('login', { requireProfile: true });
 
-  // OT3-43: NO DELIVERY ANSWER. The wizard stopped asking, and config.ts runs esm whatever
-  // [setup].deliveryModel says, so storing an answer recorded something that never ran. A
-  // stale 'serve' or 'verify' an earlier wizard wrote is dropped, so the file stops claiming
-  // a delivery model this server does not use.
-  const setupSec = next['setup'] as Tree | undefined;
-  if (setupSec && 'deliveryModel' in setupSec) {
+  // DELIVERY: 'esm' or nothing. config.ts runs esm whatever [setup].deliveryModel says, so the
+  // only answer worth storing is the one that runs (OT3-148). Anything else, including a stale
+  // 'serve' or 'verify' an earlier wizard wrote, is dropped rather than left claiming a
+  // delivery model this server does not use (OT3-43).
+  const setupSec = (next['setup'] as Tree | undefined) ?? {};
+  if (a.deliveryModel === 'esm') set('setup', 'deliveryModel', 'esm');
+  else if ('deliveryModel' in setupSec && setupSec.deliveryModel !== 'esm') {
     const { deliveryModel: _d, ...rest } = setupSec;
     next['setup'] = rest;
   }
