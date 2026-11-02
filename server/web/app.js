@@ -171,7 +171,6 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
 // THREE PLACES THE SAME PAGE CAN BE, and each entry says where it belongs:
 //   solo: false   not in single player -- the page acts on players connected to a world, and
 //                 in single player the browser runs the engine and nobody ever connects.
-//   at: 'platform'  only on the multiplayer server: the rolling restart.
 //   shared: true  the shared stores (accounts, admin sessions, game data + mods) and the
 //                 container itself (updates): on the multiplayer server they are the platform's.
 // The rule is "does nothing here", never "sounds like the other mode".
@@ -222,7 +221,7 @@ const NAV = [
     // either — the browser runs the engine — so the page would claim to close doors it
     // cannot reach.
     { hash: '#maintenance', label: 'Maintenance', icon: 'bi-cone-striped', role: 'owner', solo: false },
-    { hash: '#rolling', label: 'Rolling restart', icon: 'bi-arrow-repeat', role: 'owner', at: 'platform' },
+    { hash: '#rolling', label: 'Rolling restart', icon: 'bi-arrow-repeat', role: 'owner', solo: false },
     { hash: '#backup', label: 'Backup', icon: 'bi-archive', role: 'owner' },
     { hash: '#restart', label: 'Restart', icon: 'bi-power', role: 'owner' },
   ] },
@@ -237,7 +236,6 @@ const platform = () => state.platform === true;
 /** Does this page do anything where the operator is right now? See the NAV comment. */
 function navVisible(i) {
   if (i.solo === false && singlePlayer()) return false;
-  if (i.at === 'platform' && !platform()) return false;
   return true;
 }
 
@@ -1978,18 +1976,12 @@ function renderPlatformOverview(o, stat, upText) {
       <td>${p.level ?? '-'}</td></tr>`).join('')
     : html`<tr><td colspan="3" class="vt-empty">Nobody is playing right now.</td></tr>`;
 
-  const owner = can('owner');
   const gameRows = games.length ? games.map((g) => html`
     <tr><td>${raw(gameLabel(g))}</td>
       <td>${g.playerCount}${raw(g.connectedCount > g.playerCount
         ? html` <span class="text-secondary small">(+${g.connectedCount - g.playerCount} joining)</span>` : '')}</td>
       <td>${raw(gameStatus(g))}</td>
       <td class="text-end text-nowrap">
-        ${raw(owner ? html`
-        <button class="btn btn-sm btn-outline-secondary" data-game-act="stop" data-g="${g.id}"
-          title="Stop the process; it starts again when its owner returns">Stop</button>
-        <button class="btn btn-sm btn-outline-danger" data-game-act="discard" data-g="${g.id}"
-          title="Stop it and delete its data">Discard</button>` : '')}
       </td></tr>`).join('')
     : html`<tr><td colspan="4" class="vt-empty">No games are running. One starts when somebody plays.</td></tr>`;
 
@@ -2033,7 +2025,6 @@ function renderPlatformOverview(o, stat, upText) {
     } catch { toast('Could not copy, select the link and copy it yourself.', 'danger'); }
   };
   wireChecklist();
-  wireGameActions();
 }
 
 function gameStatus(g) {
@@ -2042,33 +2033,6 @@ function gameStatus(g) {
   const m = Math.round(g.uptime / 60);
   const peers = g.peerCount ? `, ${g.peerCount} peer${g.peerCount === 1 ? '' : 's'}` : '';
   return html`up ${m < 60 ? `${m}m` : `${Math.round(m / 60)}h`}${peers}`;
-}
-
-function wireGameActions() {
-  view().querySelectorAll('[data-game-act]').forEach((b) => {
-    b.onclick = async () => {
-      const kind = b.dataset.gameAct, id = b.dataset.g;
-      const ok = kind === 'stop'
-        ? await confirmAction({
-          title: `Stop ${id}?`,
-          body: html`<p>Everyone in it is disconnected. It starts again when its owner comes back.</p>`,
-          danger: 'Stop',
-        })
-        : await confirmAction({
-          title: `Discard ${id}?`,
-          body: html`<p>Stops the game and deletes its data: dropped items, containers, cell
-            state. Characters live in the shared store and are not touched.</p>`,
-          danger: 'Discard',
-          typeToConfirm: id,
-        });
-      if (!ok) return;
-      try {
-        const r = await api(`/games/${id}/${kind}`, { method: 'POST', body: { confirm: id } });
-        toast(r.message || `${kind} done.`);
-        route();
-      } catch (e) { toast(e.message, 'danger'); }
-    };
-  });
 }
 
 /** "just now" / "3m ago" — a timestamp is not what the question wanted. */
@@ -2749,13 +2713,13 @@ function wireSettings() {
  *  "restart the container" and leaving them to work out how is not a finished feature. */
 function restartPrompt() {
   const b = $('#banner');
-  // On the platform this button restarts the multiplayer server and EVERY game with it;
-  // the rolling restart reaches the same settings one game at a time (#381a).
+  // On the platform this button restarts the multiplayer server and the world with it. The
+  // rolling restart (per region peer, OT3-37) keeps the world up but does not reload settings.
   const rolling = platform();
   b.innerHTML = html`<div class="callout callout-warning d-flex align-items-center">
     <div class="flex-grow-1"><strong>Saved, not live yet.</strong>
       The server reads its settings at startup, so it needs a restart.${raw(rolling
-        ? ' This restarts every game at once; to keep the platform up, use the <a href="#rolling">rolling restart</a> instead.' : '')}</div>
+        ? ' This restarts the multiplayer server and the world. (The <a href="#rolling">rolling restart</a> only restarts the sim peers.)' : '')}</div>
     <button class="btn btn-warning btn-sm" id="doRestart">
       <i class="bi bi-arrow-repeat me-1"></i>${rolling ? 'Restart everything now' : 'Restart now'}</button></div>`;
   $('#doRestart').onclick = async () => {
@@ -4277,8 +4241,8 @@ async function pageRestart() {
         Nobody has been warned. If people are playing, turn on
         <a href="#maintenance">maintenance mode</a> first.</div>`)}
       ${raw(platform() ? html`<div class="vt-section-note mb-3">
-        This restarts the multiplayer server and every game with it. To pick up new settings
-        without dropping everyone at once, use the <a href="#rolling">rolling restart</a>.</div>` : '')}
+        This restarts the multiplayer server and the world with it: everyone is disconnected.
+        To restart only the sim peers, use the <a href="#rolling">rolling restart</a>.</div>` : '')}
       <button class="btn btn-warning" id="mRestart">Restart the server</button>
     </div></div></div></div>`;
 
@@ -4300,34 +4264,32 @@ async function pageRestart() {
  * it but a signal from inside the container.
  */
 async function pageRolling() {
-  setTitle('Rolling restart', 'Restart every game one at a time, so the platform never goes dark.');
+  setTitle('Rolling restart', 'Restart the sim peers one region at a time; the world stays up.');
   view().innerHTML = html`
     <div class="row"><div class="col-12 col-xl-7">
     <div class="card card-warning card-outline">
       <div class="card-header"><h3 class="card-title">
-        <i class="bi bi-arrow-repeat me-2"></i>Rolling restart</h3></div>
+        <i class="bi bi-arrow-repeat me-2"></i>Restart the region peers in turn</h3></div>
       <div class="card-body">
-      <p class="small text-secondary">Each game is drained, restarted, and waited for before the
-        next one is touched, so a settings change reaches every game without the whole platform
-        going down at once. Empty games go first and the busiest last. If a game does not come
-        back the roll stops there and says so in the log, rather than turning one failure into
-        an outage. Players in a game being restarted are disconnected and can rejoin as soon as
-        it is back: seconds for a vanilla game, minutes where the sim peer reloads Tamriel
-        Rebuilt.</p>
-      <button class="btn btn-warning" id="rollGo">Restart every game, one at a time</button>
+      <p class="small text-secondary">Each region's sim peer is stopped, and the next is not
+        touched until a new peer has taken that region over (a warm spare if one is running,
+        otherwise a fresh start). Players stay connected; creatures in the region being
+        restarted pause for the seconds it takes, or minutes where the peer reloads Tamriel
+        Rebuilt. If a region does not come back the roll stops there and says so in the log.
+        The world itself is never stopped from here, and settings are not reloaded.</p>
+      <button class="btn btn-warning" id="rollGo">Restart the peers, one region at a time</button>
     </div></div></div></div>`;
   $('#rollGo').onclick = async () => {
     const ok = await confirmAction({
       title: 'Start a rolling restart?',
-      body: html`<p>Every game restarts in turn. Each one's players are disconnected while it
-        does: a few seconds for a vanilla game, minutes for one whose sim peer reloads
-        Tamriel Rebuilt.</p>`,
+      body: html`<p>Every region peer restarts in turn. Players stay connected.</p>`,
       danger: 'Start',
     });
     if (!ok) return;
     try {
-      const r = await api('/rolling-restart', { method: 'POST' });
-      toast(r.games ? `Rolling ${r.games} game${r.games === 1 ? '' : 's'}. Watch the Overview.` : 'Nothing to restart.');
+      const r = await worldApi('/peers/rolling-restart', { method: 'POST' });
+      const n = (r.regions || []).length;
+      toast(n ? `Rolling ${n} region peer${n === 1 ? '' : 's'}. Watch the Logs.` : 'No peer is running.');
     } catch (e) { toast(e.message, 'danger'); }
   };
 }

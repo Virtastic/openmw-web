@@ -544,6 +544,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let peerForImpl: (cellKey?: string) => Player | undefined = () => undefined;
   let isPeerImpl: (p: Player) => boolean = () => false;
   let allPeersImpl: () => Player[] = () => [];
+  // OT3-37: the dashboard's rolling restart, one region peer at a time (assigned below).
+  let peerRollImpl: () => string[] | 'busy' = () => [];
   const stateCtx: StateCtx = {
     onDamaged: (p) => busy.damaged(p),
     worldPeer: () => worldPeerImpl(),
@@ -958,6 +960,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // restart policy brings the process back with whatever was just saved.
       process.kill(process.pid, 'SIGTERM');
     },
+    rollingRestartPeers: () => peerRollImpl(),
     exportData: async (res) => exportDataDir(opts.dataDir, res),
 
     // Savegames for the dashboard. Same storage and same shared dir the player path uses, so
@@ -1784,6 +1787,43 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     log('error', 'simpeer.restart_silent', { holderId, region, cells: cells.length });
     simPeers.stop(region);
   });
+
+  // OT3-37: ROLLING RESTART, PER REGION PEER. Each running region peer is stopped (the same
+  // clean stop the silent-peer restart uses), and the next is not touched until the authority
+  // pass has brought a NEW peer up for that region (a promoted warm spare, or a fresh start).
+  // The world process, and every other region, keeps running throughout. A region that does
+  // not come back halts the roll rather than taking the rest down with it.
+  let peerRolling = false;
+  peerRollImpl = () => {
+    if (peerRolling) return 'busy';
+    const regions = regionMap.ids.filter((r) => simPeers.has(r));
+    peerRolling = true;
+    const sysOf = (r: string): Player | undefined => roster.inWorld()
+      .find((pp) => pp.system === true && simPeers.keyOfAccount(pp.name) === r);
+    const wait = (ms: number): Promise<void> => new Promise((res) => { setTimeout(res, ms).unref(); });
+    void (async () => {
+      const restarted: string[] = [];
+      for (const r of regions) {
+        const old = sysOf(r)?.id;
+        log('info', 'simpeer.rolling_restart', { region: r });
+        simPeers.stop(r);
+        const deadline = Date.now() + config.simPeer.startTimeoutMs + 30_000;
+        let back = false;
+        while (Date.now() < deadline && !closed) {
+          await wait(500);
+          const now = sysOf(r);
+          if (now && now.id !== old) { back = true; break; }
+        }
+        if (!back) {
+          log('error', 'simpeer.rolling_restart_halted', { region: r, restarted: restarted.length });
+          break;
+        }
+        restarted.push(r);
+      }
+      log('info', 'simpeer.rolling_restart_done', { restarted: restarted.join(','), of: regions.length });
+    })().finally(() => { peerRolling = false; });
+    return regions;
+  };
 
   const ipTracker = new IpConnTracker(config.limits.maxConnsPerIp);
   const connections = new Set<Connection>();

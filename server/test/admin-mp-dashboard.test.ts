@@ -229,11 +229,10 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
 
   const accounts = new AccountStore(sharedDir);
   const maintenance = platformMaintenance({ worlds, sharedDir, worldsDir, token: () => config.gateway.serverToken });
-  let rolls = 0;
   const admin = gatewayAdminRoutes({
     worlds, sharedDir, config: () => config, accounts, sessions: new AdminSessionStore(),
     version: 'test', publicBase: () => 'http://test',
-    restart: () => {}, rollingRestart: () => { rolls++; return Promise.resolve({ restarted: [], failed: [] }); },
+    restart: () => {},
     maintenance,
   });
   const dir = await startDirectory({
@@ -307,10 +306,9 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
   assert.equal((await api('/maintenance', { method: 'POST', body: JSON.stringify({ on: false, message: '' }) })).status, 200);
   assert.ok(!existsSync(join(sharedDir, 'maintenance')));
 
-  // ACTIONS. Discard is type-to-confirm; a game on disk but not running is discardable too.
-  assert.equal((await api('/games/beta/discard', { method: 'POST', body: JSON.stringify({ confirm: 'wrong' }) })).status, 400);
-  assert.equal((await api('/games/beta/discard', { method: 'POST', body: JSON.stringify({ confirm: 'beta' }) })).status, 200);
-  assert.ok(!existsSync(join(worldsDir, 'beta')));
+  // OT3-37: nothing on the API discards or stops the shared world.
+  assert.equal((await api('/games/beta/discard', { method: 'POST', body: JSON.stringify({ confirm: 'beta' }) })).status, 404);
+  assert.ok(existsSync(join(worldsDir, 'beta')), 'no discard route');
   // UNBAN WITHOUT A GAME (backlog 380): bans.db is shared, so the platform can lift one
   // itself; every other kind still needs a game's roster and is refused as before.
   const bans = new BanStore(sharedDir);
@@ -325,11 +323,9 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
   assert.equal(again.ok, false, 'lifting nothing says so');
   const kick = await j(await api('/action', { method: 'POST', body: JSON.stringify({ kind: 'kick', target: 'Runner' }) }));
   assert.equal(kick.ok, false, 'a kick still needs a game');
-  assert.equal((await api('/rolling-restart', { method: 'POST' })).status, 200);
-  assert.equal(rolls, 1);
-  assert.equal((await api('/games/alpha/stop', { method: 'POST' })).status, 200);
-  await new Promise((r) => setTimeout(r, 20));
-  assert.equal(worlds.get('alpha'), undefined, 'stopped');
+  assert.equal((await api('/rolling-restart', { method: 'POST' })).status, 404, 'no whole-world roll');
+  assert.equal((await api('/games/alpha/stop', { method: 'POST' })).status, 404);
+  assert.ok(worlds.get('alpha'), 'still running');
 });
 
 // Backlog 188 / commit 0833ff36: gateway/admin.ts deleteAccount relays a kick to every running
@@ -381,7 +377,7 @@ test('platform delete-account kicks before it erases', async (t) => {
   const admin = gatewayAdminRoutes({
     worlds, sharedDir, config: () => config, accounts, sessions: new AdminSessionStore(),
     version: 'test', publicBase: () => 'http://test',
-    restart: () => {}, rollingRestart: () => Promise.resolve({ restarted: [], failed: [] }), maintenance,
+    restart: () => {}, maintenance,
   });
   const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0, admin, maintenance: () => maintenance.get() });
   t.after(async () => { await dir.close(); worlds.stopAll(); await accounts.close(); });
@@ -428,7 +424,7 @@ test('every settings group has a sidebar entry, and the orphaned pages are reach
 // #381 (dashboard notes a, b, d, e, f, g): source checks on the page, settingsView for the
 // derived switch, loadConfig for the reap window.
 test('#381 the dashboard notes: rolling offered from the banner, log filter, derived peer switch, reap in config, minutes copy, install banner', () => {
-  assert.match(app, /Saved, not live yet[\s\S]{0,400}href="#rolling"/, 'a: the restart banner does not offer the rolling restart');
+  assert.match(app, /Saved, not live yet[\s\S]{0,400}href="#rolling"/, 'a: the restart banner names the rolling restart');
   assert.match(app, /id="logFind"/, 'b: the log page has no filter box');
   assert.match(app, /\$\('#logFind'\)\.oninput = draw/, 'b: the filter box redraws nothing');
   const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), { setup: { deploymentMode: 'multiplayer' }, simPeer: { enabled: true, maxPeers: 1 } });
@@ -458,8 +454,8 @@ test('the multiplayer server page is people first, with the world reached by pro
   assert.doesNotMatch(fn[0], /In whose game/);
   assert.match(fn[0], /sysCards\(o\.system\)/);
   assert.doesNotMatch(fn[0], /o\.world\.id|maxPlayers/, 'one world and one cap are the wrong shape');
-  assert.match(fn[0], /data-game-act="stop"/);
-  assert.match(fn[0], /data-game-act="discard"/);
+  assert.doesNotMatch(app, /data-game-act|\/discard|\/stop`/, 'OT3-37: no Discard/Stop');
+  assert.match(app, /worldApi\('\/peers\/rolling-restart'/);
   // OT3-64: one world. World calls go through /world, and there is no game to open.
   assert.match(app, /const worldApi = /);
   assert.doesNotMatch(app, /gameId|#game=|openGame|PLATFORM_PATHS/);

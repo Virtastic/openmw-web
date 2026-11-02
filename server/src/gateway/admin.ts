@@ -10,10 +10,10 @@
 //
 // Things this file owns:
 //
-//   POST /admin/api/games/:id/stop        [owner] stop one game (revive-on-dial brings it back)
-//   POST /admin/api/games/:id/discard     [owner] stop it and delete its data (type-to-confirm)
-//   POST /admin/api/rolling-restart       [owner] restart every game one at a time
 //   *    /admin/api/world/<anything>      THE PROXY: the world's own /admin/api/<anything>
+//
+// OT3-37: no route here stops or discards the world, and the rolling restart is the world's
+// own (POST /admin/api/peers/rolling-restart, one region peer at a time), reached by proxy.
 //
 // THE PROXY IS HOW THE ONE SIGN-IN REACHES THE WORLD (OT3-64: there is one world, so there is
 // no game to pick). Admin sessions live in memory per process, so the world process cannot
@@ -40,7 +40,7 @@ import { IpRateLimiter } from '../net/ratelimit';
 import { clientIp, CLIENT_IP_HEADER, type HttpRoute } from '../net/http';
 import { adminRoutes, type AdminDeps } from '../net/admin/routes';
 import { gate, GATEWAY_ACTOR_HEADERS, type AuthContext, type AuthDeps } from '../net/admin/auth';
-import { json, readJson } from '../net/admin/util';
+import { json } from '../net/admin/util';
 import { SetupToken } from '../net/admin/setup-token';
 import { createSysInfo } from '../net/admin/sysinfo';
 import { exportDataDir, summariseMetrics } from '../net/admin/ops';
@@ -59,8 +59,6 @@ interface GatewayAdminDeps {
   publicBase: () => string;
   saveStorage?: AdminDeps['saveStorage'];
   restart: (reason: string) => void;
-  /** 'busy' while a roll is already in flight; otherwise the roll, which may take minutes. */
-  rollingRestart: () => Promise<{ restarted: string[]; failed: string[] }> | 'busy';
   maintenance: AdminDeps['maintenance'];
 }
 
@@ -79,8 +77,6 @@ interface GameRow {
   fastCrashes: number;
   players: WorldInfo['players'];
 }
-
-const GAME_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
   const startedAt = Date.now();
@@ -226,11 +222,8 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     apiLimiter: new IpRateLimiter(600),
   };
 
-  const GAME = /^\/admin\/api\/games\/([^/]+)(?:\/(.*))?$/;
-
   return async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
     const path = url.pathname;
-    const method = req.method ?? 'GET';
 
     if (path === '/admin/api/world' || path.startsWith('/admin/api/world/')) {
       // The world's own API. The role check is viewer HERE (is this a signed-in operator at
@@ -245,56 +238,6 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
       proxy(req, res, world.port, `/admin/api/${path.slice('/admin/api/world/'.length)}${url.search}`, ctx, token());
       return true;
     }
-    if (method === 'POST' && path === '/admin/api/rolling-restart') {
-      const ctx = await gate(req, res, auth, 'owner');
-      if (!ctx) return true;
-      const roll = deps.rollingRestart();
-      if (roll === 'busy') { json(res, 409, { error: 'A rolling restart is already running.' }); return true; }
-      log('warn', 'admin.rolling_restart', { by: ctx.accountKey, games: deps.worlds.running });
-      // Answer NOW. A roll waits for each game to drain and come back, minutes for a busy
-      // platform, and a request held open that long dies at the proxy. The outcome is in the
-      // log (gateway.rolling_restart_done), and the games table shows it happening.
-      json(res, 200, { ok: true, started: true, games: deps.worlds.running });
-      return true;
-    }
-
-    const m = GAME.exec(path);
-    if (m) {
-      const id = m[1] ?? '';
-      const rest = m[2] ?? '';
-      if (!GAME_ID.test(id)) { json(res, 400, { error: 'not a game id' }); return true; }
-
-      if (method === 'POST' && rest === 'stop') {
-        const ctx = await gate(req, res, auth, 'owner');
-        if (!ctx) return true;
-        if (!deps.worlds.get(id)) { json(res, 404, { error: 'no such game' }); return true; }
-        deps.worlds.stop(id, true); // an operator's stop holds against the owner's redial
-        log('warn', 'admin.game_stopped', { by: ctx.accountKey, game: id });
-        json(res, 200, { ok: true, message: `stopping ${id}; it comes back when its owner returns` });
-        return true;
-      }
-      if (method === 'POST' && rest === 'discard') {
-        const ctx = await gate(req, res, auth, 'owner');
-        if (!ctx) return true;
-        const body = await readJson<{ confirm?: string }>(req, res);
-        if (body === undefined) return true;
-        // Type-to-confirm, like account erasure: this deletes a game's data and a stray
-        // click is a real failure mode in a browser.
-        if (String(body.confirm ?? '') !== id) {
-          json(res, 400, { error: 'confirmation did not match the game id' });
-          return true;
-        }
-        const gone = await deps.worlds.discard(id, { by: ctx.accountKey });
-        if (gone) log('warn', 'admin.game_discarded', { by: ctx.accountKey, game: id });
-        json(res, gone ? 200 : 404, gone
-          ? { ok: true, message: `discarded ${id}` }
-          : { ok: false, error: 'no such game, running or on disk' });
-        return true;
-      }
-      json(res, 404, { error: 'not found' });
-      return true;
-    }
-
     return base(req, res, url);
   };
 }

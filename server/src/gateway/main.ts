@@ -125,8 +125,9 @@ const frontDoor = await buildFrontDoor(sharedDir, undefined, port, adminSessions
 // ROLL THE WORLDS WITHOUT TAKING THE PLATFORM DOWN.
 //
 // WorldSupervisor.rollingRestart() was written, tested twice, and then reachable from nowhere:
-// no route, no signal, no command. It has two callers now — SIGHUP, the ordinary idiom for
-// "reload gracefully" from inside the container, and the dashboard's Rolling restart page.
+// no route, no signal, no command. Its caller is SIGHUP, the ordinary idiom for "reload
+// gracefully" from inside the container. The dashboard's rolling restart is per region peer
+// inside the world (OT3-37), not this.
 //
 // Guarded against overlap: a second request while a roll is in flight would interleave two
 // sequences over the same worlds, and the "wait for the old process to exit" step of one would
@@ -175,7 +176,6 @@ const adminRoute = gatewayAdminRoutes({
     // policy brings this process back — through the entrypoint, which re-reads the mode.
     process.kill(process.pid, 'SIGTERM');
   },
-  rollingRestart: requestRoll,
   maintenance,
 });
 // THE REVERSE PROXY'S CONFIG, regenerated from the current answers on every boot — the same

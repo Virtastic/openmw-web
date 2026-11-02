@@ -145,6 +145,9 @@ export interface AdminDeps {
   clientDir?: string;
   maintenance: { get(): { on: boolean; message: string }; set(on: boolean, message: string): void };
   restart(reason: string): void;
+  /** OT3-37: restart the region sim peers one at a time (the world stays up). Returns the
+   *  regions it will roll, or 'busy' while a roll is in flight; the roll runs on and logs. */
+  rollingRestartPeers?(): string[] | 'busy';
   exportData(res: ServerResponse): Promise<void>;
   deleteAccount(key: string): Promise<{ ok: boolean; message: string }>;
 
@@ -1262,6 +1265,16 @@ export function adminRoutes(deps: AdminDeps) {
       // for something that actually worked.
       json(res, 200, { ok: true });
       setTimeout(() => deps.restart(`admin dashboard (${ctx.accountKey})`), 250).unref();
+      return true;
+    }
+    if (method === 'POST' && path === '/admin/api/peers/rolling-restart' && deps.rollingRestartPeers) {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const roll = deps.rollingRestartPeers();
+      if (roll === 'busy') { json(res, 409, { error: 'A rolling restart is already running.' }); return true; }
+      log('warn', 'admin.peer_rolling_restart', { by: ctx.accountKey, regions: roll.join(',') });
+      // Answer now: each peer takes tens of seconds to come back. The log has the outcome.
+      json(res, 200, { ok: true, started: true, regions: roll });
       return true;
     }
     if (method === 'GET' && path === '/admin/api/export') {
