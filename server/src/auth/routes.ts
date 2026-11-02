@@ -116,6 +116,8 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
   // provider wrote is ever reflected into the response.
   const fail = (req: IncomingMessage, res: ServerResponse, code: string, detail: string, ip: string): true => {
     log('warn', 'auth.sso_failed', { code, detail, ip });
+    if (code === 'signup_limited' || code === 'email_unverified' || code === 'registration_disabled')
+      metrics.signupRefused.inc({ reason: code }); // OT3-192
     metrics.auth.inc({ op: 'sso', result: 'AUTH_FAILED' });
     const back = resolveReturn(config.auth.returnUrl, req, null);
     if (back === '') sendText(res, 400, `sso error: ${code}`);

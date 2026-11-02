@@ -147,6 +147,16 @@ export class BanStore {
     return Object.keys(this.doc.ips).filter((k) => live(this.doc.ips[k]));
   }
 
+  /** OT3-192: the live bans with who/when/why, newest first (the Signups & abuse page). Read
+   *  from the db, not the boot snapshot: bans.db is shared with other processes (see read()). */
+  entries(now = Date.now()): { scope: 'account' | 'ip'; key: string; entry: BanEntry }[] {
+    const rows = this.db.prepare('SELECT scope, key, by, at, reason, until FROM bans ORDER BY at DESC').all() as
+      { scope: string; key: string; by: string; at: string; reason: string; until: string | null }[];
+    return rows.map((r) => ({ scope: (r.scope === 'ip' ? 'ip' : 'account') as 'account' | 'ip', key: r.key,
+      entry: { by: r.by, at: r.at, reason: r.reason, ...(r.until ? { until: r.until } : {}) } as BanEntry }))
+      .filter((b) => live(b.entry, now));
+  }
+
   private put(scope: 'account' | 'ip', key: string, e: BanEntry): void {
     this.run(() =>
       this.db

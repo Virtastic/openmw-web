@@ -38,7 +38,7 @@ import { PvpConsent } from './core/pvp-consent';
 import { BusyFlags } from './core/busy';
 import { Titles } from './core/titles';
 import { HelperRewards } from './core/helperrewards';
-import { GOLD_ID, hintGold } from './core/economy';
+import { GOLD_ID, hintGold, type GoldSource } from './core/economy';
 import { serverWhisper } from './core/chat';
 import { Binding } from './core/binding';
 import { AdminAudit, LoginLog } from './core/admin-audit';
@@ -287,6 +287,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // OT3-177: the swap writes both docs; the ledger sits next to them in the shared dir.
   // Built before Admin: /restoreitem (OT3-181) writes to it too.
   const tradeLedger = new TradeLedger(sharedDir);
+  const logins = new LoginLog(sharedDir); // OT3-186; also read by the Signups & abuse page
   const admin = new Admin({
     questRepair,
     roster,
@@ -303,7 +304,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
     allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
     audit: new AdminAudit(opts.dataDir),
-    logins: new LoginLog(sharedDir), // OT3-186
+    logins, // OT3-186
     schedule, // OT3-190
     restore: (charKey, at) => playerStore.restoreTo(charKey, at), // OT3-184
     setMuted: (acct, muted, until, reason) => socialRef?.setServerMuted(acct, muted, until, reason), // OT3-185
@@ -989,6 +990,41 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
     recentLogs: (limit, filter) => logHistory(limit, filter),
     metricsSnapshot: () => summariseMetrics(),
+    // OT3-192: the Economy page. OT3-189's counters as JSON: gold in/out by source since this
+    // process started, and the items gained most over the last 1-2 hours.
+    economy: () => {
+      const sources: GoldSource[] = ['loot', 'merchant', 'quest', 'trade', 'admin', 'other'];
+      const rows = sources.map((source) => ({ source,
+        in: metrics.goldIn.get({ source }) ?? 0, out: metrics.goldOut.get({ source }) ?? 0 }));
+      return { since: new Date(startedAt).toISOString(), gold: rows, topItems: metrics.itemMovers.topItems() };
+    },
+    // OT3-192: the Signups & abuse page. Accounts made lately and who is still on H2 probation,
+    // sign-ups the per-address limiter refused (this process), addresses shared across
+    // accounts (OT3-186 login history), and the live bans.
+    signups: (days) => {
+      const now = Date.now();
+      const since = now - Math.min(Math.max(1, days || 7), 90) * 86_400_000;
+      const probMs = config.limits.probationHours * 3_600_000;
+      const recent = accounts.listAll()
+        .map((a) => ({ a, created: Date.parse(a.createdAt) }))
+        .filter(({ created }) => Number.isFinite(created) && created >= since)
+        .sort((x, y) => y.created - x.created);
+      return {
+        probationHours: config.limits.probationHours,
+        processSince: new Date(startedAt).toISOString(),
+        refused: Object.fromEntries(['signup_limited', 'email_unverified', 'registration_disabled']
+          .map((reason) => [reason, metrics.signupRefused.get({ reason }) ?? 0])),
+        accounts: recent.slice(0, 200).map(({ a, created }) => ({
+          account: a.name, username: a.username ?? null, createdAt: a.createdAt,
+          probationUntil: (a.rank ?? 0) === 0 && probMs > 0 && created + probMs > now ? new Date(created + probMs).toISOString() : null,
+          banned: !!bans.isAccountBanned(a.name),
+          lastIp: logins.recent(a.name, 1)[0]?.ip ?? null,
+        })),
+        total: recent.length,
+        sharedIps: logins.sharedIps(since),
+        bans: bans.entries().map((b) => ({ scope: b.scope, key: b.key, ...b.entry })),
+      };
+    },
 
     // Absent on other layouts, and the update routes say so honestly.
     clientDir,

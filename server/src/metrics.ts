@@ -244,14 +244,17 @@ export class TopMovers extends Metric {
     this.cur.set(item, (this.cur.get(item) ?? 0) + n);
   }
 
-  render(out: string[], now = Date.now()): void {
+  /** The top N over the current + previous window, most gained first (OT3-192 Economy page). */
+  topItems(now = Date.now()): { item: string; n: number }[] {
     this.roll(now);
     const sum = new Map(this.prev);
     for (const [k, v] of this.cur) sum.set(k, (sum.get(k) ?? 0) + v);
+    return [...sum].sort((a, b) => b[1] - a[1]).slice(0, this.top).map(([item, n]) => ({ item, n }));
+  }
+
+  render(out: string[], now = Date.now()): void {
     out.push(`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} gauge`);
-    for (const [item, n] of [...sum].sort((a, b) => b[1] - a[1]).slice(0, this.top)) {
-      out.push(`${this.name}${renderLabels({ item })} ${n}`);
-    }
+    for (const { item, n } of this.topItems(now)) out.push(`${this.name}${renderLabels({ item })} ${n}`);
   }
 
   reset(): void {
@@ -381,6 +384,9 @@ export const metrics = {
   // kind: bad_lser | unknown_event | reserved_type | binary_before_in_world | internal_error
   protocolErrors: reg(new Counter('omwmp_protocol_errors_total', 'Malformed or out-of-state client frames.', ['kind'])),
   // op: register | login | resume; result: success | AUTH_FAILED | BANNED | RATE
+  // OT3-192: SSO sign-ups refused before an account existed. reason: signup_limited (the
+  // per-address budget, auth/signup.ts) | email_unverified | registration_disabled.
+  signupRefused: reg(new Counter('omwmp_signup_refused_total', 'New-account sign-ups refused, by reason.', ['reason'])),
   auth: reg(new Counter('omwmp_auth_total', 'Authentication attempts, by operation and outcome.', ['op', 'result'])),
   // Counted apart from omwmp_auth_total because it is the outcome of the OTHER session:
   // the incoming auth still succeeded. Mirrors omwmp_disconnects_total{code="SUPERSEDED"}.

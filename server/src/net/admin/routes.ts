@@ -37,6 +37,8 @@
 //   POST /admin/api/saves/uploaded     [owner]     confirm one landed
 //   GET  /admin/api/logs               [moderator] ring buffer + on-disk history
 //   GET  /admin/api/metrics            [moderator] the existing registry, as JSON
+//   GET  /admin/api/economy            [moderator] gold sources/sinks, top item movers (OT3-192)
+//   GET  /admin/api/signups?days=      [moderator] new accounts, probation, limiter, shared IPs, bans (OT3-192)
 //   GET  /admin/api/accounts           [moderator]
 //   POST /admin/api/accounts/role      [owner]
 //   POST /admin/api/accounts/password  [owner]     set a player's password (forgot it)
@@ -138,6 +140,10 @@ export interface AdminDeps {
   commandCatalog(): { name: string; usage: string; help: string; minRank: number; inGameOnly?: boolean }[];
   recentLogs(limit: number, filter: string): LogEntry[];
   metricsSnapshot(): unknown;
+  /** OT3-192: the Economy page (gold sources and sinks, top item movers). */
+  economy?(): unknown;
+  /** OT3-192: the Signups & abuse page (recent accounts, probation, limiter, shared IPs, bans). */
+  signups?(days: number): unknown;
   gameDataDir: string;
   /** Shown in the dashboard footer. */
   version: string;
@@ -1008,6 +1014,18 @@ export function adminRoutes(deps: AdminDeps) {
     if (method === 'GET' && path === '/admin/api/metrics') {
       if (!await gate(req, res, auth, 'moderator')) return true;
       json(res, 200, deps.metricsSnapshot());
+      return true;
+    }
+
+    // OT3-192: the Economy and Signups & abuse pages. Absent deps (the gateway) = 404 below.
+    if (method === 'GET' && path === '/admin/api/economy' && deps.economy) {
+      if (!await gate(req, res, auth, 'moderator')) return true;
+      json(res, 200, deps.economy());
+      return true;
+    }
+    if (method === 'GET' && path === '/admin/api/signups' && deps.signups) {
+      if (!await gate(req, res, auth, 'moderator')) return true;
+      json(res, 200, deps.signups(Number(url.searchParams.get('days') ?? 7)));
       return true;
     }
 

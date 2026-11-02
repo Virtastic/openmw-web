@@ -82,6 +82,14 @@ export class LoginLog {
       .all(account.toLowerCase(), limit) as unknown as LoginRow[];
   }
 
+  /** OT3-192: addresses more than one account logged in from since `since`, busiest first. */
+  sharedIps(since: number, limit = 20): { ip: string; accounts: string[]; last: number }[] {
+    const rows = this.db.prepare(`SELECT ip, GROUP_CONCAT(DISTINCT account) AS accts, MAX(ts) AS last
+      FROM logins WHERE ts >= ? GROUP BY ip HAVING COUNT(DISTINCT account) > 1
+      ORDER BY COUNT(DISTINCT account) DESC, last DESC LIMIT ?`).all(since, limit) as unknown as { ip: string; accts: string; last: number }[];
+    return rows.map((r) => ({ ip: r.ip, accounts: r.accts.split(','), last: r.last }));
+  }
+
   /** Other accounts seen on any address this account used, with the shared address. */
   sharingIp(account: string, limit = 20): { account: string; ip: string }[] {
     return this.db.prepare(`SELECT DISTINCT o.account AS account, o.ip AS ip FROM logins o

@@ -28,6 +28,7 @@ import { BanStore } from '../src/persist/banstore';
 import { AdminSessionStore } from '../src/auth/identities';
 import { loadConfig } from '../src/config';
 import { startServer } from '../src/server';
+import { metrics } from '../src/metrics';
 import { tmpDataDir } from './helpers';
 
 const app = readFileSync(join(process.cwd(), 'web', 'app.js'), 'utf8');
@@ -468,6 +469,7 @@ test('the multiplayer server page is people first, with the world reached by pro
 
 test('OT3-192: the page map, each page fed by an endpoint that exists', () => {
   for (const [hash, label] of [['#overview', 'Live'], ['#console', 'Players'], ['#reports', 'Reports'],
+    ['#economy', 'Economy'], ['#signups', 'Signups & abuse'],
     ['#maintenance', 'Broadcasts & maintenance'], ['#audit', 'Audit']]) {
     assert.match(app, new RegExp(`hash: '${hash}', label: '${label}'`), `${label} is not in the nav`);
   }
@@ -476,6 +478,24 @@ test('OT3-192: the page map, each page fed by an endpoint that exists', () => {
   const maint = /async function pageMaintenance\(\) \{[\s\S]*?\n\}/.exec(app)!;
   assert.match(maint[0], /kind: 'broadcast'/);
   assert.doesNotMatch(app, /api\(`?['"]?\/games/, 'nothing calls the removed world endpoints');
+});
+
+test('OT3-192: the Economy and Signups & abuse pages render from their own endpoints', async (t) => {
+  assert.match(/async function pageEconomy\(\) \{[\s\S]*?\n\}/.exec(app)![0], /worldApi\('\/economy'\)/);
+  assert.match(/async function pageSignups\(\) \{[\s\S]*?\n\}/.exec(app)![0], /worldApi\('\/signups/);
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { admin: { dashboardToken: 'ot3-192' } } });
+  t.after(() => server.close());
+  const get = async (p: string, auth = true) => fetch(`http://127.0.0.1:${server.port}/admin/api${p}`,
+    { headers: auth ? { authorization: 'Bearer ot3-192' } : {} });
+  assert.equal((await get('/economy', false)).status, 401);
+  metrics.goldIn.inc({ source: 'quest' }, 25);
+  metrics.itemMovers.add('ot3_192_probe', 3);
+  const e = await (await get('/economy')).json() as { gold: { source: string; in: number }[]; topItems: { item: string }[] };
+  assert.ok(e.gold.find((r) => r.source === 'quest')!.in >= 25, 'gold sources come from omwmp_gold_in_total');
+  assert.ok(e.topItems.some((i) => i.item === 'ot3_192_probe'), 'top movers come from omwmp_item_top_movers');
+  const s = await (await get('/signups?days=7')).json() as Record<string, unknown>;
+  for (const k of ['probationHours', 'refused', 'accounts', 'sharedIps', 'bans']) assert.ok(k in s, `signups lacks ${k}`);
 });
 
 test('OT3-193: the live map draws players by region and a health row per region peer', () => {

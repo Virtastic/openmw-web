@@ -168,13 +168,15 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
 //                 container itself (updates): on the multiplayer server they are the platform's.
 // The rule is "does nothing here", never "sounds like the other mode".
 const NAV = [
-  // THE PAGE MAP (OT3-192): Live, Map, Players, Reports, Broadcasts & maintenance, Audit.
-  // Economy and Signups & abuse join this group once their server endpoints exist.
+  // THE PAGE MAP (OT3-192): Live, Map, Players, Reports, Economy, Signups & abuse,
+  // Broadcasts & maintenance, Audit.
   { group: 'Live', items: [
     { hash: '#overview', label: 'Live', icon: 'bi-speedometer2', role: 'viewer' },
     { hash: '#map', label: 'Map', icon: 'bi-map', role: 'viewer' },
     { hash: '#console', label: 'Players', icon: 'bi-people', role: 'moderator' },
     { hash: '#reports', label: 'Reports', icon: 'bi-flag', role: 'moderator' },
+    { hash: '#economy', label: 'Economy', icon: 'bi-coin', role: 'moderator' },
+    { hash: '#signups', label: 'Signups & abuse', icon: 'bi-person-exclamation', role: 'moderator' },
     { hash: '#maintenance', label: 'Broadcasts & maintenance', icon: 'bi-megaphone', role: 'moderator' },
     { hash: '#audit', label: 'Audit', icon: 'bi-clipboard-check', role: 'moderator' },
   ] },
@@ -2252,6 +2254,76 @@ async function pageReports() {
         <thead><tr><th>When</th><th>From</th><th>About</th><th>Report</th></tr></thead>
         <tbody>${raw(reportRows || html`<tr><td colspan="4" class="vt-empty">No reports. Good.</td></tr>`)}</tbody>
       </table></div></div>`;
+}
+
+const fmtTs = (iso) => (iso || '').slice(5, 16).replace('T', ' ');
+
+/** Gold sources and sinks, and the items gained fastest (OT3-192 over OT3-189's counters). */
+async function pageEconomy() {
+  setTitle('Economy', 'Where gold comes from and where it goes. A dupe shows as a spike, usually on "other".');
+  const e = await worldApi('/economy');
+  const tin = e.gold.reduce((a, r) => a + r.in, 0);
+  const tout = e.gold.reduce((a, r) => a + r.out, 0);
+  const goldRows = e.gold.map((r) => html`
+    <tr><td>${r.source}</td><td class="text-end">${r.in.toLocaleString()}</td>
+      <td class="text-end">${r.out.toLocaleString()}</td><td class="text-end">${(r.in - r.out).toLocaleString()}</td></tr>`).join('');
+  const itemRows = e.topItems.map((i) => html`<tr><td class="vt-mono">${i.item}</td><td class="text-end">${i.n.toLocaleString()}</td></tr>`).join('');
+  view().innerHTML = html`
+    <div class="row"><div class="col-lg-7">
+      <div class="card card-outline card-primary mb-3"><div class="card-header">
+        <h3 class="card-title"><i class="bi bi-coin me-2"></i>Gold by source, since ${fmtTs(e.since)}</h3></div>
+        <div class="table-responsive"><table class="table table-sm mb-0">
+          <thead><tr><th>Source</th><th class="text-end">Into inventories</th><th class="text-end">Out of inventories</th><th class="text-end">Net</th></tr></thead>
+          <tbody>${raw(goldRows)}</tbody>
+          <tfoot><tr class="fw-semibold"><td>Total</td><td class="text-end">${tin.toLocaleString()}</td>
+            <td class="text-end">${tout.toLocaleString()}</td><td class="text-end">${(tin - tout).toLocaleString()}</td></tr></tfoot>
+        </table></div></div>
+    </div><div class="col-lg-5">
+      <div class="card card-outline card-secondary mb-3"><div class="card-header">
+        <h3 class="card-title"><i class="bi bi-graph-up-arrow me-2"></i>Items gained most, last 1-2 hours</h3></div>
+        <div class="table-responsive"><table class="table table-sm mb-0">
+          <thead><tr><th>Item</th><th class="text-end">Gained</th></tr></thead>
+          <tbody>${raw(itemRows || html`<tr><td colspan="2" class="vt-empty">Nothing gained yet.</td></tr>`)}</tbody>
+        </table></div></div>
+    </div></div>`;
+}
+
+/** New accounts, H2 probation, the sign-up limiter, shared addresses and bans (OT3-192). */
+async function pageSignups() {
+  setTitle('Signups & abuse', 'Who joined lately, who is still on probation, and who shares an address.');
+  const s = await worldApi('/signups?days=7');
+  const onProb = s.accounts.filter((a) => a.probationUntil).length;
+  const refused = Object.entries(s.refused).map(([k, n]) => html`<span class="badge text-bg-secondary me-2">${k.replace(/_/g, ' ')}: ${n}</span>`).join('');
+  const acctRows = s.accounts.map((a) => html`
+    <tr><td class="small text-secondary text-nowrap">${fmtTs(a.createdAt)}</td><td>${a.username || a.account}</td>
+      <td class="small">${raw(a.banned ? '<span class="badge text-bg-danger">banned</span>'
+        : a.probationUntil ? html`<span class="badge text-bg-warning">probation to ${fmtTs(a.probationUntil)}</span>` : '')}</td>
+      <td class="small vt-mono">${a.lastIp || '-'}</td></tr>`).join('');
+  const ipRows = s.sharedIps.map((r) => html`
+    <tr><td class="small vt-mono">${r.ip}</td><td class="small">${r.accounts.join(', ')}</td>
+      <td class="small text-secondary text-nowrap">${fmtTs(new Date(r.last).toISOString())}</td></tr>`).join('');
+  const banRows = s.bans.map((b) => html`
+    <tr><td class="small">${b.scope}</td><td class="small vt-mono">${b.key}</td><td class="small">${b.reason}</td>
+      <td class="small">${b.by}</td><td class="small text-secondary text-nowrap">${fmtTs(b.at)}</td>
+      <td class="small text-secondary text-nowrap">${b.until ? fmtTs(b.until) : 'never'}</td></tr>`).join('');
+  const table = (title, icon, head, rows, empty, n) => html`
+    <div class="card card-outline card-secondary mb-3"><div class="card-header">
+      <h3 class="card-title"><i class="bi ${icon} me-2"></i>${title}</h3></div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr>${raw(head.map((h) => html`<th>${h}</th>`).join(''))}</tr></thead>
+        <tbody>${raw(rows || html`<tr><td colspan="${n}" class="vt-empty">${empty}</td></tr>`)}</tbody>
+      </table></div></div>`;
+  view().innerHTML = html`
+    <div class="row"><div class="col-12">
+      <p class="small text-secondary">${s.total} new accounts in the last 7 days, ${onProb} still on probation
+        (${s.probationHours} h: no drops or container puts, no global chat).
+        Sign-ups refused since ${fmtTs(s.processSince)}: ${raw(refused)}</p>
+    </div><div class="col-lg-6">
+      ${raw(table('New accounts, last 7 days', 'bi-person-plus', ['Created', 'Account', 'Status', 'Last address'], acctRows, 'No new accounts.', 4))}
+    </div><div class="col-lg-6">
+      ${raw(table('Addresses shared by several accounts', 'bi-diagram-3', ['Address', 'Accounts', 'Last seen'], ipRows, 'No shared addresses.', 3))}
+      ${raw(table('Bans in force', 'bi-slash-circle', ['Scope', 'Who', 'Reason', 'By', 'When', 'Until'], banRows, 'No bans.', 6))}
+    </div></div>`;
 }
 
 async function pageConsole() {
@@ -4552,6 +4624,8 @@ const ROUTES = {
   '#overview': pageOverview,
   '#console': pageConsole,
   '#reports': pageReports,
+  '#economy': pageEconomy,
+  '#signups': pageSignups,
   '#map': pageMap,
   '#settings': () => pageSettings(),
   '#set-core': () => pageSettings('Core'),
@@ -4577,7 +4651,7 @@ const ROUTES = {
 };
 
 const NEEDS = {
-  '#console': 'moderator', '#reports': 'moderator', '#map': 'viewer', '#settings': 'viewer', '#mods': 'viewer',
+  '#console': 'moderator', '#reports': 'moderator', '#economy': 'moderator', '#signups': 'moderator', '#map': 'viewer', '#settings': 'viewer', '#mods': 'viewer',
   '#set-core': 'viewer', '#set-access': 'viewer', '#set-storage': 'viewer',
   '#set-operations': 'viewer', '#set-gameplay': 'viewer', '#set-platform': 'viewer',
   '#rolling': 'owner',
