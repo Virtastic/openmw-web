@@ -16,6 +16,38 @@ groups:
           summary: The game server is not answering /metrics scrapes.
           runbook_url: deploy/monitoring/RUNBOOK.md#serverdown
 
+      - alert: ProcessRestarted
+        # A crash that Docker restarts within seconds never shows as up == 0 (ServerDown).
+        # Counters restart at 0 with the process, so a reset of one that is non-zero soon
+        # after boot (a sim peer is spawned per region) marks a restart. A planned deploy
+        # fires it too: silence it in Alertmanager for the deploy window.
+        # TODO(metrics.ts owner): a process_start_time_seconds gauge would say this directly.
+        expr: |
+          resets(omwmp_simpeer_spawned_total{job="omwmp"}[10m]) > 0
+          or increase(omwmp_server_crashes_total{job="omwmp"}[10m]) > 0
+        labels: { severity: page }
+        annotations:
+          summary: The game server process restarted in the last 10 min (crash or deploy).
+          runbook_url: deploy/monitoring/RUNBOOK.md#processrestarted
+
+      - alert: SimPeerCrashing
+        # The supervisor restarts a crashed peer, so one crash is a ticket's worth; repeated
+        # crashes mean a region's NPCs keep freezing for everyone in it.
+        expr: increase(omwmp_simpeer_crashed_total{job="omwmp"}[15m]) >= 3
+        labels: { severity: page }
+        annotations:
+          summary: Sim peers crashed {{ $value | humanize }} times in 15 min.
+          runbook_url: deploy/monitoring/RUNBOOK.md#simpeercrashing
+
+      - alert: PeerFrameSlow
+        # 50 ms is the peer's frame pace; a p99 over it for 5 min slows sim time in the region.
+        expr: omwmp_peer_frame_interval_ms{job="omwmp",quantile="0.99"} > 50
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: Region {{ $labels.region }} peer frame p99 {{ $value | humanize }} ms for 5 min.
+          runbook_url: deploy/monitoring/RUNBOOK.md#peerframeslow
+
       - alert: EventLoopStalled
         expr: omwmp_event_loop_delay_p99_seconds > 0.1
         for: 5m

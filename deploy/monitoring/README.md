@@ -81,5 +81,6 @@ not the world process: the ws probe's dial revives a stopped world, like a playe
 No promtool on the laptop; run it from the images:
 
     docker run --rm -v $PWD/deploy/monitoring:/m --entrypoint promtool prom/prometheus:v3.5.0 check rules /m/alerts.yml
+    docker run --rm -v $PWD/deploy/monitoring:/m -w /m --entrypoint promtool prom/prometheus:v3.5.0 test rules alerts.test.yml
     docker run --rm -v $PWD/deploy/monitoring/probes/blackbox.yml:/b.yml prom/blackbox-exporter:v0.27.0 --config.file=/b.yml --config.check
     docker run --rm -v $PWD/deploy/monitoring:/m --entrypoint amtool prom/alertmanager:v0.28.1 check-config /m/alertmanager.yml

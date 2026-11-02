@@ -1,0 +1,63 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# promtool unit tests for alerts.yml (README.md "Validating the files"). These prove the
+# expressions and timings; the staged test on a box (RUNBOOK.md "Stage:") is still the gate.
+rule_files: [alerts.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: up{job="omwmp"}
+        values: 1 1 0 0 0
+      - series: probe_success{job="probe",instance="https://morrowind.virtastic.app/",check="http"}
+        values: 1 1 0 0 0
+      - series: omwmp_peer_frame_interval_ms{job="omwmp",region="vvardenfell",quantile="0.99"}
+        values: 40 60 60 60 60 60 60 60
+      - series: omwmp_simpeer_spawned_total{job="omwmp"}
+        values: 3 3 3 0 1 1
+      - series: node_filesystem_avail_bytes{job="node",fstype="ext4",mountpoint="/"}
+        values: 10x10
+      - series: node_filesystem_size_bytes{job="node",fstype="ext4",mountpoint="/"}
+        values: 100x10
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ServerDown
+        exp_alerts:
+          - exp_labels: { severity: page, job: omwmp }
+            exp_annotations:
+              summary: The game server is not answering /metrics scrapes.
+              runbook_url: deploy/monitoring/RUNBOOK.md#serverdown
+      - eval_time: 2m
+        alertname: ProbeDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: ProbeDown
+        exp_alerts:
+          - exp_labels: { severity: page, job: probe, instance: "https://morrowind.virtastic.app/", check: http }
+            exp_annotations:
+              summary: https://morrowind.virtastic.app/ (http) failed its outside probe twice running.
+              runbook_url: deploy/monitoring/RUNBOOK.md#probedown
+      - eval_time: 5m
+        alertname: PeerFrameSlow
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: PeerFrameSlow
+        exp_alerts:
+          - exp_labels: { severity: page, job: omwmp, region: vvardenfell, quantile: "0.99" }
+            exp_annotations:
+              summary: Region vvardenfell peer frame p99 60 ms for 5 min.
+              runbook_url: deploy/monitoring/RUNBOOK.md#peerframeslow
+      - eval_time: 4m
+        alertname: ProcessRestarted
+        exp_alerts:
+          - exp_labels: { severity: page, job: omwmp }
+            exp_annotations:
+              summary: The game server process restarted in the last 10 min (crash or deploy).
+              runbook_url: deploy/monitoring/RUNBOOK.md#processrestarted
+      - eval_time: 6m
+        alertname: DiskLow
+        exp_alerts:
+          - exp_labels: { severity: page, job: node, fstype: ext4, mountpoint: / }
+            exp_annotations:
+              summary: / below 15% free.
+              runbook_url: deploy/monitoring/RUNBOOK.md#disklow

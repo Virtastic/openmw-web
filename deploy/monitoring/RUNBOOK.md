@@ -10,6 +10,26 @@ First: `docker ps -a`, then `docker logs --tail 200` on the server container. A 
 shows in the container's restart count.
 Stage: `docker stop` the server container; fires after 1 min.
 
+## ProcessRestarted
+The server process started again within the last 10 min: a crash that Docker restarted before
+a scrape missed it, or a deploy. Silence it in Alertmanager for planned deploys.
+First: `docker inspect -f '{{.RestartCount}} {{.State.StartedAt}}' openmw-web`; the tail of
+`data/logs/server.log` before the restart (`server.crash` lines from the last-gasp handler).
+Stage: `docker kill -s KILL openmw-web` (restart policy brings it back); fires on the next
+evaluation once the new process has spawned its sim peer.
+
+## SimPeerCrashing
+Three or more sim peer crashes in 15 min. Each restart freezes the region's NPCs.
+First: `simpeer.output` / `simpeer.crashed` lines in the world log; `deploy/mp-health.py` peer
+errors.
+Stage: `pkill -KILL -f openmw` (the headless peer) three times inside the container.
+
+## PeerFrameSlow
+A region's sim peer frame interval p99 is over 50 ms (its pace) for 5 min: sim time runs slow
+there, so NPCs and combat lag for everyone in the region.
+First: `omwmp_peer_active_actors` and `omwmp_peer_held_cells` for the region; box CPU.
+Stage: on the test box, `stress-ng --cpu 0` for 6 min with a player in the region.
+
 ## EventLoopStalled
 Event-loop p99 above 100 ms for 5 min: a sync hot path (big flush, a JSON blob, a regex) is
 blocking every socket.
@@ -51,5 +71,5 @@ First: the server log for backup errors; disk space; the backup target's credent
 Stage: point the backup target at a path that does not exist.
 
 ## Not covered yet
-- Peer frame p99 > 50 ms: the sim peer does not export frame times. Needs a peer-side metric
-  (frame-time histogram reported up the peer socket) before a rule can be written.
+- A direct process start-time metric: ProcessRestarted infers restarts from counter resets
+  until metrics.ts exports `process_start_time_seconds`.
