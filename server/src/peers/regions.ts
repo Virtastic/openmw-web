@@ -91,6 +91,14 @@ export class RegionMap {
     return de ? this.exteriorRegion(de.x, de.y) : this.defaultId;
   }
 
+  /** OT3-204: the regions whose peers keep an avatar of a player standing in this cell: the
+   *  owner FIRST (its peer is the one canonical author), then every other region owning a cell
+   *  of the 3x3 ring (each loads that ring, and its creatures fight the player there). */
+  regionsNear(cellKey: string): string[] {
+    const own = this.regionOf(cellKey);
+    return [own, ...this.regionsTouching(cellKey).filter((r) => r !== own)];
+  }
+
   /** Regions owning any cell of the 3x3 ring around an exterior (or the interior's own). */
   regionsTouching(cellKey: string): string[] {
     const e = parseExterior(cellKey);

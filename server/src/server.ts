@@ -82,7 +82,7 @@ import { disconnectMsg } from './proto/session';
 import { log, logHistory } from './log';
 import { startTestBots } from './dev/testbots';
 import { metrics } from './metrics';
-import { SimPeerSupervisor } from './core/simpeer';
+import { SimPeerSupervisor, type Spawner } from './core/simpeer';
 import { PeerLoad } from './peers/peerload';
 import { RegionMap, partitionAnchors, AnchorSender, type AnchorPlayer } from './peers/regions';
 import { parseExterior, isChargenCell } from './core/movement';
@@ -138,6 +138,9 @@ export interface StartOptions {
   worldId?: string;
   presenceMs?: number; // social heartbeat period (tests shorten it)
   configOverride?: DeepPartial<Config>; // tests
+  /** In-process callers only (the test suite): how a sim peer process is started. Lets a test
+   *  stand two region peers up as its own sockets (OT3-204). Never a config key. */
+  simPeerSpawner?: Spawner;
 }
 
 export interface RunningServer {
@@ -1332,6 +1335,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     settings: config.simPeer,
     wsUrl: () => `ws://127.0.0.1:${port}/ws`,
     password: config.server.password,
+    ...(opts.simPeerSpawner ? { spawner: opts.simPeerSpawner } : {}),
   });
   ctx.simPeers = simPeers;
   ctx.gameDataOk = gameData.ok;
@@ -1396,6 +1400,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   };
   worldPeerImpl = (): Player | undefined => peerOfRegion(regionMap.defaultId);
   peerForImpl = (cellKey) => peerOfRegion(cellKey === undefined ? regionMap.defaultId : regionMap.regionOf(cellKey));
+  // OT3-204: every region peer loading the 3x3 around a cell, owner first, each once. With one
+  // region this is [peerFor(cellKey)], exactly the old single forward.
+  ctx.peersNear = (cellKey) => {
+    const out: Player[] = [];
+    for (const r of cellKey === undefined ? [regionMap.defaultId] : regionMap.regionsNear(cellKey)) {
+      const p = peerOfRegion(r);
+      if (p && !out.includes(p)) out.push(p);
+    }
+    return out;
+  };
   // OT3-70: per-region capacity series. Peer load is measured on batch arrival (peers/peerload.ts);
   // held cells and sessions come straight from the state the pass already keeps.
   const peerLoad = new PeerLoad();

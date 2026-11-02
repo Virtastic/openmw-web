@@ -807,6 +807,10 @@ export class WorldState {
   // the holder's ActorCellChange) so a claim can be replayed to whoever next holds that cell
   // -- the peer restarts, and a fresh process has never heard who follows whom.
   private readonly followedBy = new Map<string, { ref: ObjRef; cellKey: string; follow: number; charId: string; escort?: Record<string, number>; at: number }>();
+  // OT3-204: who each actor is fighting, as its holder last said (ActorAI.combat). A border
+  // crossing hands the actor to another peer, whose copy was an AI-off puppet that may never
+  // have heard the fight start; the new holder is told again so the chase goes on.
+  private readonly combatOf = new Map<string, number>();
   private static readonly MAX_FOLLOWERS = 16; // per player
   // OT3-118: a claim whose character has been gone (offline, not seen to claim or change
   // cell) this long lets the companion go -- no escort NPC held forever by one player.
@@ -1147,6 +1151,7 @@ export class WorldState {
       const payload = { ...lToJs(body) as Record<string, JsLike> };
       this.relayCellExcept(cellKey, player.id, name, payload);
       if (toCellKey !== cellKey) this.relayCellExcept(toCellKey, player.id, name, payload);
+      this.handOffActor(player, ref, cellKey, toCellKey);
       const f = this.followedBy.get(ref.key);
       if (f && f.cellKey !== toCellKey) {
         await this.storeFollow(f.cellKey, ref.key);
@@ -1157,6 +1162,11 @@ export class WorldState {
     }
     // Stats/Equip/AI: relay verbatim cell-scoped (excluding the holder).
     const out = { ...lToJs(body) as Record<string, JsLike> };
+    if (name === 'ActorAI' && body.get('combat') !== undefined) {
+      const foe = finite(body.get('combat'));
+      if (foe !== undefined) this.combatOf.set(ref.key, foe);
+      else this.combatOf.delete(ref.key);
+    }
     // #401: the holder's ActorDisposition.ai is bounded like the dialogue path's (0..100 per key).
     if (name === 'ActorDisposition' && out['ai'] !== null && typeof out['ai'] === 'object') out['ai'] = Object.fromEntries(Object.entries(out['ai'] as Record<string, JsLike>).map(([k, v]) => [k, Math.max(0, Math.min(100, typeof v === 'number' && Number.isFinite(v) ? v : 0))]));
     // ActorSay (#217) is a script line the PEER's engine spoke: only the system peer sends it,
@@ -1169,6 +1179,30 @@ export class WorldState {
       out['text'] = clip(body.get('text'), 256);
     }
     this.relayCellExcept(cellKey, player.id, name, out);
+  }
+
+  // OT3-204: A BORDER CROSSING IS AN ACTOR HANDOFF BETWEEN PEERS. With region peers the cell an
+  // actor walks into may be held by ANOTHER peer (the 3x3 ring straddling a border is loaded on
+  // both sides, each cell claimed by its one owner). The new holder already has the
+  // ActorCellChange (it hears the cell it holds): its puppet detaches and its AI takes over.
+  // The OLD holder still has its own copy loaded, running its own AI; told ActorHandoff, it
+  // puppets that copy, so exactly one peer simulates the actor. The fight goes with it: the new
+  // holder is told who the actor was fighting. One holder for both cells (one region) = no-op.
+  private handOffActor(from: Player, ref: ObjRef, cellKey: string, toCellKey: string): void {
+    if (toCellKey === cellKey) return;
+    const toHolderId = this.authority.holderOf(toCellKey);
+    if (toHolderId === undefined || toHolderId === from.id) return;
+    const toHolder = this.roster.get(toHolderId);
+    if (!toHolder) return;
+    const addr = objRefToJs(ref);
+    from.peer.sendEvent('ActorHandoff', { ...addr, cellKey: toCellKey, holderId: toHolderId });
+    const foe = this.combatOf.get(ref.key);
+    if (foe !== undefined && this.roster.get(foe)?.inWorld) {
+      toHolder.peer.sendEvent('ActorAI', { ...addr, cellKey: toCellKey, epoch: this.authority.currentEpoch(toCellKey) ?? 0, combat: foe });
+    }
+    metrics.actorHandoffs.inc();
+    log('info', 'actor.region_handoff', { key: ref.key, from: cellKey, to: toCellKey, fromHolder: from.id, toHolder: toHolderId,
+      combat: foe ?? null });
   }
 
   private async actorDeath(player: Player, cellKey: string, ref: ObjRef, body: LTable): Promise<void> {
@@ -1185,6 +1219,7 @@ export class WorldState {
     this.cells.markDirty(cellKey);
     // A corpse follows nobody: a restarted peer replayed the claim and stood the companion up.
     this.followedBy.delete(ref.key);
+    this.combatOf.delete(ref.key);
     delete doc.follows?.[ref.key];
     this.relayCellExcept(cellKey, player.id, 'ActorDeath', lToJs(body) as Record<string, JsLike>);
     // Shared kill tally. Counted for EVERY death that names a record, not only

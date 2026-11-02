@@ -139,6 +139,9 @@ export interface ServerCtx {
   peerFor(cellKey?: string): Player | undefined;
   /** Is this player one of the region peers? */
   isPeer(p: Player): boolean;
+  /** OT3-204: every region peer that loads the 3x3 around this cell, owner first (each one keeps
+   *  a live avatar of a player standing there). Absent or one region = [peerFor(cellKey)]. */
+  peersNear?(cellKey?: string): Player[];
   worldPeer(): Player | undefined; // the default region's peer
   relayPose?(p: Player): void; // an accepted pose, to near observers now (MoveBroadcaster.relayNow)
   config: Config;
@@ -1074,14 +1077,25 @@ export class Connection implements Peer {
     if (player.inputSeq !== undefined && seq <= player.inputSeq) return; // stale/replayed
     player.inputSeq = seq;
     player.lastInputAt = Date.now();
-    const peer = this.ctx.peerFor(player.cellKey);
-    if (!peer) {
+    // OT3-204: EVERY PEER THAT LOADS THE PLAYER'S SURROUNDINGS DRIVES AN AVATAR OF THEM. Near a
+    // region border the 3x3 is loaded by both peers, and a creature on the far side fights the
+    // far peer's avatar: fed no input it stood frozen where the player crossed, so the creature
+    // chased a statue and arrived at the border without its fight. Only the owner's poses and
+    // reports are accepted (avatarOwner); the others' avatars exist to be fought and followed.
+    const peers = this.peersNear(player.cellKey);
+    if (peers.length === 0) {
       metrics.playerInputDropped.inc({ reason: 'no_peer' });
       return; // degraded mode; see above
     }
     metrics.playerInputForwarded.inc();
-    peer.peer.sendBinaryFrame(MSG_PLAYER_INPUT,
-      packEnvelope(MSG_PLAYER_INPUT, nextBroadcastSeq(), packInputForward(player.id, payload)));
+    const frame = packEnvelope(MSG_PLAYER_INPUT, nextBroadcastSeq(), packInputForward(player.id, payload));
+    for (const peer of peers) peer.peer.sendBinaryFrame(MSG_PLAYER_INPUT, frame);
+  }
+
+  private peersNear(cellKey?: string): Player[] {
+    if (this.ctx.peersNear) return this.ctx.peersNear(cellKey);
+    const peer = this.ctx.peerFor(cellKey);
+    return peer ? [peer] : [];
   }
 
   private static readonly INPUT_ACTIVE_MS = PEER_POSE_FRESH_MS; // poses: the SHORT window (players.ts); bars/items keep INPUT_DRIVING_MS
@@ -1125,6 +1139,13 @@ export class Connection implements Peer {
       if ((e.pose.flags & POSE_OBSERVER_BIT) !== 0) continue;
       const p = this.ctx.roster.get(e.id);
       if (!p || p.system === true || !p.inWorld) continue;
+      // OT3-204: ONE AUTHOR PER AVATAR. Every peer near a border drives an avatar of the player
+      // (peersNear); only the region peer that owns the player's cell is canonical. The other's
+      // pose is a few frames apart and would make the player jitter between two bodies.
+      if (this.ctx.peerFor(p.cellKey) !== sender) {
+        metrics.avatarBatchRejected.inc({ reason: 'not_region_peer' });
+        continue;
+      }
       // ONLY a player actually driving the input tier is ruled by the peer's pose. A client
       // that sends no PlayerInput (an old client, a protocol bot, a browser mid-outage) has
       // an avatar with no input, which coasts to a stop -- accepting its pose here would
@@ -1223,8 +1244,8 @@ export class Connection implements Peer {
     player.poseVersion++;
     this.ctx.relayPose?.(player);
     if (this.ctx.config.limits.clientAuthority && player.inChargen !== true) {
-      this.ctx.peerFor(player.cellKey)?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
-        nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose: player.pose }])));
+      const frame = packEnvelope(MSG_PLAYER_MOVE_BATCH, nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose: player.pose }]));
+      for (const peer of this.peersNear(player.cellKey)) peer.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, frame);
     }
   }
 
@@ -1324,8 +1345,8 @@ export class Connection implements Peer {
     // already decodes): the broadcaster only sends it players near where it is parked, and
     // the avatar has to stand where its owner is for NPCs to fight and see them there.
     if (this.ctx.config.limits.clientAuthority && !this.isSystem && player.inChargen !== true) {
-      this.ctx.peerFor(player.cellKey)?.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, packEnvelope(MSG_PLAYER_MOVE_BATCH,
-        nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose }])));
+      const frame = packEnvelope(MSG_PLAYER_MOVE_BATCH, nextBroadcastSeq(), packMoveBatch([{ id: player.id, pose }]));
+      for (const peer of this.peersNear(player.cellKey)) peer.peer.sendBinaryFrame(MSG_PLAYER_MOVE_BATCH, frame);
     }
   }
 

@@ -35,7 +35,7 @@ export interface SimPeerSettings {
 }
 
 // Injected so tests can drive the supervisor without launching a real engine.
-interface Spawner {
+export interface Spawner {
   (key: string, env: NodeJS.ProcessEnv, args: string[]): ChildProcess;
 }
 

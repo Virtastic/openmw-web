@@ -46,6 +46,11 @@ local batchesIn = 0 -- diagnostic: ActorMoveBatch frames applied as a non-holder
 -- detachActorPuppetsInCell never found it (a frozen NPC under its new holder).
 local movedTo = {}
 local frameNo = 0 -- actors.tick count
+-- refKey -> true: an actor this holder gave away across a region border (MP_ActorHandoff,
+-- OT3-204). It is puppeted here and driven by the other peer's poses; while it is, it is never
+-- streamed from here even if those poses carry it back into a cell we hold, until that peer's
+-- ActorCellChange hands it back. One simulator per actor.
+local handedOff = {}
 
 -- --------------------------------------------------------------- ref helpers
 
@@ -278,6 +283,8 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
         -- live it was never "gone" below, so no ObjectDelete went out and every client's copy of
         -- the skeleton stood there for good, with no pose stream (npcNoPose, prod 2026-10-23).
         if obj.count == 0 then
+        elseif handedOff[refKeyOf(obj)] and puppetActors[refKeyOf(obj)] then
+            -- another peer simulates it (OT3-204): its poses, not ours
         elseif obj.contentFile or (deps.netIdOf and deps.netIdOf(obj)) then
             addressable[#addressable + 1] = obj
         elseif not netPending[obj.id] and deps.requestNetActor
@@ -660,6 +667,7 @@ actors.handlers.MP_ActorCellChange = function(data)
         pcall(function() p.obj:sendEvent('MP_Detach', {}) end)
         puppetActors[key] = nil
     end
+    handedOff[key] = nil -- handed back to us (OT3-204): ours to simulate again
     -- AN EXTERIOR KEY IS NOT A CELL NAME. teleport() takes a cell NAME (interiors) or '' for
     -- the exterior, where the position picks the grid square; "x,y" is our own key and the
     -- engine looked it up as a name, failed inside the pcall, and the actor never arrived --
@@ -667,6 +675,24 @@ actors.handlers.MP_ActorCellChange = function(data)
     local cellArg = data.toCellKey:match('^%-?%d+,%-?%d+$') and '' or data.toCellKey
     movedTo[key] = { cellKey = data.toCellKey, frame = frameNo }
     retry.teleport(obj, cellArg, util.vector3(data.x or 0, data.y or 0, data.z or 0))
+end
+
+-- OT3-204: AN ACTOR WE STREAMED HAS CROSSED INTO A CELL ANOTHER PEER HOLDS (a region border).
+-- The server sends this to the old holder only, after relaying our ActorCellChange to the new
+-- one. Our copy is still loaded here (the border ring is loaded on both sides) and would keep
+-- running its own AI -- and walk back into a cell we hold and be streamed by us AND by the new
+-- holder. So it becomes a puppet at once, AI off, driven by the new holder's poses.
+actors.handlers.MP_ActorHandoff = function(data)
+    local obj = actorOf(data)
+    if not obj or type(data.cellKey) ~= 'string' then return end
+    local key = refKeyOf(obj)
+    handedOff[key] = true
+    if puppetActors[key] then
+        puppetActors[key].cellKey = data.cellKey
+        return
+    end
+    local ok = pcall(function() obj:addScript('scripts/mp/puppet.lua', { actorKey = key }) end)
+    if ok then puppetActors[key] = { obj = obj, cellKey = data.cellKey } end
 end
 
 actors.handlers.MP_ActorStatsDynamic = function(data)
@@ -1471,6 +1497,7 @@ function actors.reset()
     holderOfCell = {}
     infoEpoch = {}
     puppetActors = {}
+    handedOff = {}
 end
 
 function actors.init(d)

@@ -839,6 +839,13 @@ const RESURRECT_GRACE_MS = 6_000;
 const RESTORE_WINDOW_MS = 10_000;
 const RESTORE_BUDGET_MULT = 4; // x the player's max health per window: a level-2 chugging three cheap potions in a fight is inside it
 
+// OT3-204: ONE AUTHOR PER AVATAR. Near a region border more than one peer drives an avatar of
+// the same player (connection.ts peersNear); what happened to it counts only from the region
+// peer that owns the player's cell. One region: that is every peer there is.
+function avatarOwner(ctx: StateCtx, sender: Player, p: Player): boolean {
+  return ctx.peerFor(p.cellKey) === sender;
+}
+
 export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
   if (sender.system !== true || !ctx.isPeer(sender)) return; // forgery / second peer: only THE world peer reports avatars
   const body = tbl(value);
@@ -948,7 +955,7 @@ export function handleAvatarSkillUse(ctx: StateCtx, sender: Player, value: LValu
   if (id === undefined || typeof skill !== 'string' || !SKILL_USE_SKILLS.has(skill)) return;
   if (useType === undefined || !Number.isInteger(useType) || useType < 0 || useType > 3) return;
   const p = ctx.roster.get(id);
-  if (!p || p.system === true || !p.inWorld) return;
+  if (!p || p.system === true || !p.inWorld || !avatarOwner(ctx, sender, p)) return;
   const now = Date.now();
   const w = skillUseWindow.get(p);
   if (!w || now - w.at >= SKILL_USE_WINDOW_MS) skillUseWindow.set(p, { at: now, n: 1 });
@@ -1005,7 +1012,7 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
     const id = finite(e.get('id'));
     if (id === undefined) continue;
     const p = ctx.roster.get(id);
-    if (!p || p.system === true || !p.inWorld) continue;
+    if (!p || p.system === true || !p.inWorld || !avatarOwner(ctx, sender, p)) continue;
     if (p.lastInputAt === undefined || now - p.lastInputAt > drivingWindowMs(ctx)) continue; // not driving
     const states = parseItemStatesL(tbl(e.get('itemStates')));
     if (Object.keys(states).length > MAX_INVENTORY) continue;
@@ -1223,7 +1230,7 @@ export function handleAvatarEffectsBatch(ctx: StateCtx, sender: Player, value: L
     if (!e) continue;
     const id = finite(e.get('id'));
     const p = id !== undefined ? ctx.roster.get(id) : undefined;
-    if (!p || p.system === true || !p.inWorld) continue;
+    if (!p || p.system === true || !p.inWorld || !avatarOwner(ctx, sender, p)) continue;
     const spellsAdd: string[] = [];
     const rawSpells = tbl(e.get('spellsAdd'));
     if (rawSpells) {

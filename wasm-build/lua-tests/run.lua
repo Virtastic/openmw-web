@@ -4911,6 +4911,42 @@ do
   package.loaded['scripts.mp.actors'] = nil
 end
 
+print('OT3-204 an actor handed across a region border is puppeted by the old holder and never streamed by it')
+do
+  fresh()
+  package.loaded['scripts.mp.actors'] = nil
+  package.loaded['scripts.mp.retry'] = nil
+  local env = stubs.install({})
+  env.types.Player.objectIsInstance = env.types.Player.objectIsInstance or function() return false end
+  package.loaded['scripts.mp.quests'] = { isTalkingTo = function() return false end }
+  local actors = require('scripts.mp.actors')
+  actors.init({ ownIdFn = function() return 7 end, netIdOf = function() return nil end, playerIdOf = function() return nil end })
+  local scripts, events = {}, {}
+  local rat = { id = 'rat1', recordId = 'rat', contentFile = 'morrowind.esm', count = 1, cell = { isExterior = true, gridX = 0, gridY = 0 } }
+  function rat:isValid() return true end
+  function rat:teleport() end
+  function rat:addScript(path) scripts[#scripts + 1] = path end
+  function rat:sendEvent(name) events[#events + 1] = name end
+  actors.handlers.MP_ActorHandoff({ ref = rat, cellKey = '0,0', holderId = 9 })
+  check('the old holder puppets its copy at once (AI off)', scripts[1] == 'scripts/mp/puppet.lua', tostring(scripts[1]))
+  check('it is a puppet now', actors.isPuppetedActor(rat) == true)
+  actors.handlers.MP_ActorHandoff({ ref = rat, cellKey = '0,0', holderId = 9 })
+  check('a repeated handoff attaches once', #scripts == 1, tostring(#scripts))
+  actors.handlers.MP_ActorHandoff({ cellKey = '0,0' })
+  check('a handoff naming no actor is ignored', #scripts == 1)
+  -- Handed back: the other peer's ActorCellChange detaches it and it is ours again.
+  actors.handlers.MP_ActorCellChange({ ref = rat, toCellKey = '-1,0', x = 1, y = 2, z = 3 })
+  local detached = false
+  for _, e in ipairs(events) do if e == 'MP_Detach' then detached = true end end
+  check('handed back, it is detached and simulated here again', detached and actors.isPuppetedActor(rat) == false)
+  local src = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('the holder broadcast skips an actor it handed off while it is still a puppet',
+    src:find('elseif handedOff[refKeyOf(obj)] and puppetActors[refKeyOf(obj)] then', 1, true) ~= nil)
+  check('reset forgets every handoff', src:find('    puppetActors = {}\n    handedOff = {}\nend', 1, true) ~= nil)
+  package.loaded['scripts.mp.quests'] = nil
+  package.loaded['scripts.mp.actors'] = nil
+end
+
 print('1.7.1 rebuildPuppet respawns at the queued teleport or the last pose, not the lagging body')
 do
   local g = globalSrc()

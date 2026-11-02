@@ -363,6 +363,10 @@ export const metrics = {
 
   actorBatchRejected: reg(
     new Counter('omwmp_actor_batch_rejected_total', 'Inbound ActorMoveBatch frames dropped.', ['reason'])),
+  // OT3-204: actors handed from one region peer to another at a border, and avatar reports
+  // ignored because they came from a peer that is not the player's region peer.
+  actorHandoffs: reg(
+    new Counter('omwmp_actor_region_handoffs_total', 'Actors handed to another region peer on a border crossing.', [])),
   avatarBatchRejected: reg(
     new Counter('omwmp_avatar_batch_rejected_total', 'Inbound AvatarMoveBatch frames dropped (only the world peer may author avatar poses).', ['reason'])),
   playerInputForwarded: reg(
