@@ -195,9 +195,8 @@ export const DERIVED_FIELDS = [
   'login.allowHarnessAuth',
   // Same door, other side: relaxes the anti-cheat refusals for the browser scenarios.
   'limits.harness',
-  // Not a question any more, anywhere: the server always supplies the game files ('serve'),
-  // and per-player cloud copies belong to the game launcher. Old configs saying 'verify' are
-  // still honoured at runtime; they just cannot be produced from here.
+  // Not a question any more, anywhere: v2 delivers by esm only (CL2) and config.ts runs esm
+  // whatever the file says, so a control here would change a record and nothing else.
   'setup.deliveryModel',
   // Clearing this reopens the first-run gate over a configured server, which is a lockout
   // dressed as a checkbox.
@@ -433,7 +432,7 @@ export function applySection(
   const patch: Tree = {};
   for (const [key, raw] of Object.entries(body)) {
     // LOCKED FIELDS ARE REFUSED HERE, not merely left off the page. This endpoint is reachable
-    // without the page — the same reason the wizard forces deliveryModel server-side rather
+    // without the page — the same reason the wizard's route validates its answers rather
     // than trusting the form — so a field the dashboard must not change has to be refused by
     // the server. Until now the view filtered them and the save took them anyway: setup.
     // completed was one POST away from reopening first-run setup on a live server, which is
@@ -481,8 +480,6 @@ export interface WizardAnswers {
   owners?: string[];
   /** Step 5: which game content this server expects. */
   contentProfile?: 'morrowind' | 'expansions' | 'tamriel-rebuilt';
-  /** Step 6: do players bring their own files, or does the server supply them? */
-  deliveryModel?: 'verify' | 'serve';
   /** Step 7: reachable from the internet, or LAN only? */
   hosting?: 'public' | 'internal';
   httpPort?: number;
@@ -539,7 +536,6 @@ export function applyWizard(
   // dashboard could never branch on "is this single player?" and re-running the wizard
   // presented every question blank, the two complaints that forced this rewrite.
   if (a.deploymentMode) set('setup', 'deploymentMode', a.deploymentMode);
-  if (a.deliveryModel) set('setup', 'deliveryModel', a.deliveryModel);
   if (a.storage) set('setup', 'storage', a.storage);
   if (a.loginMethods) set('setup', 'loginMethods', a.loginMethods.filter((m) => typeof m === 'string'));
   if (a.registration === 'open' || a.registration === 'closed') set('setup', 'registration', a.registration);
@@ -601,11 +597,14 @@ export function applyWizard(
   // fallback without one is the account key.
   if (a.completed === true) merge('login', { requireProfile: true });
 
-  if (a.deliveryModel === 'serve') {
-    // The server is the source of truth for content, so the locker is how players get it.
-    set('locker', 'acceptByNameAndSize', true);
-  } else if (a.deliveryModel === 'verify') {
-    set('content', 'enforce', 'names');
+  // OT3-43: NO DELIVERY ANSWER. The wizard stopped asking, and config.ts runs esm whatever
+  // [setup].deliveryModel says, so storing an answer recorded something that never ran. A
+  // stale 'serve' or 'verify' an earlier wizard wrote is dropped, so the file stops claiming
+  // a delivery model this server does not use.
+  const setupSec = next['setup'] as Tree | undefined;
+  if (setupSec && 'deliveryModel' in setupSec) {
+    const { deliveryModel: _d, ...rest } = setupSec;
+    next['setup'] = rest;
   }
 
   if (a.storage === 's3' && a.s3) {

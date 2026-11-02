@@ -92,15 +92,14 @@ test('the delivery question is gone from the wizard, not merely gated', () => {
   assert.doesNotMatch(app, /stepDelivery/, 'the delivery step must not exist');
   assert.doesNotMatch(app, /playerUploads/, 'no trace of the removed flag in the page');
   assert.doesNotMatch(app, /'delivery',/, 'no delivery entry in the step list');
-  // The answer still travels, as the one constant value the server also forces.
-  assert.match(app, /deliveryModel: 'serve'/);
+  // OT3-43: nor does an answer travel. v2 runs esm whatever is stored, so the page sends none.
+  assert.doesNotMatch(app, /deliveryModel/);
 });
 
-test('the server forces serve, whatever the page did', () => {
+test('the server stores no delivery answer, whatever the page did', () => {
   const routes = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'routes.ts'), 'utf8');
   const handler = /if \(method === 'POST' && path === '\/admin\/api\/setup'\) \{[\s\S]*?\n    \}/.exec(routes)!;
-  // The endpoint is reachable without the page, so the missing question is enforced here.
-  assert.match(handler[0], /body\.deliveryModel = 'serve';/);
+  assert.doesNotMatch(handler[0], /body\.deliveryModel = 'serve';/);
   assert.doesNotMatch(handler[0], /playerUploads/);
 });
 

@@ -714,7 +714,7 @@ test('the deployment shape is set by the wizard, and the settings API refuses to
   }
 
   // AND THE ENDPOINT REFUSES IT. Hiding a field from the page is not a control: this API is
-  // reachable without the page, which is why the wizard forces deliveryModel server-side
+  // reachable without the page, which is why the server refuses these fields
   // rather than trusting its own form.
   for (const k of ['deploymentMode', 'hosting', 'contentProfile', 'completed']) {
     const r = applySection(dir, 'setup', { [k]: 'single' });
