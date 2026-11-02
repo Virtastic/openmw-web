@@ -16,6 +16,7 @@
 #include "constants.hpp"
 #include "contacttestwrapper.h"
 #include "object.hpp"
+#include "phasefilter.hpp"
 #include "physicssystem.hpp"
 #include "projectile.hpp"
 #include "projectileconvexcallback.hpp"
@@ -38,10 +39,17 @@ namespace MWPhysics
         {
         public:
             explicit ContactCollectionCallback(const btCollisionObject& me, const osg::Vec3f& velocity)
-                : mVelocity(Misc::Convert::toBullet(velocity))
+                : mMe(&me)
+                , mVelocity(Misc::Convert::toBullet(velocity))
             {
                 m_collisionFilterGroup = me.getBroadphaseHandle()->m_collisionFilterGroup;
                 m_collisionFilterMask = me.getBroadphaseHandle()->m_collisionFilterMask & ~CollisionType_Projectile;
+            }
+
+            // OT3-207: overlaps with another phase's refs do not push us out.
+            bool needsCollision(btBroadphaseProxy* proxy) const override
+            {
+                return btCollisionWorld::ContactResultCallback::needsCollision(proxy) && phasesCollide(mMe, proxy);
             }
 
             btScalar addSingleResult(btManifoldPoint& contact, const btCollisionObjectWrapper* colObj0Wrap,
@@ -81,6 +89,7 @@ namespace MWPhysics
             btScalar mDistance = 0.0; // negative or zero
 
         protected:
+            const btCollisionObject* mMe;
             btVector3 mVelocity;
         };
     }

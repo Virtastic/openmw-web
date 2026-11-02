@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -171,6 +172,10 @@ namespace MWPhysics
         void removeProjectile(const int projectileId);
 
         void updatePtr(const MWWorld::Ptr& old, const MWWorld::Ptr& updated);
+
+        /// OT3-207: refresh the cached phase mask of ptr's collision object (mwmp/phases.hpp).
+        /// False when ptr has none (not in the scene; it reads the tag when it is added).
+        bool setPhaseMask(const MWWorld::Ptr& ptr, std::uint64_t mask);
 
         Actor* getActor(const MWWorld::Ptr& ptr);
         const Actor* getActor(const MWWorld::ConstPtr& ptr) const;

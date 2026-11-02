@@ -71,3 +71,10 @@ export function peerPhaseView(base: { enabled: string[]; disabled: string[] },
     disabled: [...new Set([...base.disabled.filter((r) => !tagged.has(r)), ...nowOff])],
   };
 }
+
+/** OT3-207: a player's phase for the cell their avatar stands in changed (a stage moved them to
+ *  another overlay). Sent to the peer that holds the cell; '' clears the tag. A cell change
+ *  carries the same key on PlayerCellChange (WorldState.playerPhaseKey). */
+export function avatarPhaseEvent(playerId: number, phase: string | undefined): [string, { id: number; phase: string }] {
+  return ['AvatarPhase', { id: playerId, phase: phase ?? '' }];
+}

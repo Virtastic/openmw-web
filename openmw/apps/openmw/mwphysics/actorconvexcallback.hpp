@@ -3,6 +3,8 @@
 
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 
+#include "phasefilter.hpp"
+
 class btCollisionObject;
 
 namespace MWPhysics
@@ -21,6 +23,12 @@ namespace MWPhysics
         }
 
         btScalar addSingleResult(btCollisionWorld::LocalConvexResult& convexResult, bool normalInWorldSpace) override;
+
+        // OT3-207: a ref only present in another phase is not there for this actor.
+        bool needsCollision(btBroadphaseProxy* proxy) const override
+        {
+            return btCollisionWorld::ClosestConvexResultCallback::needsCollision(proxy) && phasesCollide(mMe, proxy);
+        }
 
     protected:
         const btCollisionObject* mMe;

@@ -152,6 +152,8 @@ export interface RunningServer {
    *  production; the test suite goes through the gate directly, as the dashboard does. */
   admin: Admin;
   roster: Roster;
+  /** The world's cell state; its phase hooks (OT3-206/207) are set here until server phases wire them. */
+  world: WorldState;
   /** What the content scan decided at boot, including the operator's saved load order. */
   gameData: GameData;
   flush(): Promise<void>;
@@ -2059,6 +2061,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     accounts,
     admin,
     roster,
+    world,
     gameData,
     flush: async () => {
       // Drain background writes first: they WRITE, so they must finish before the flush that

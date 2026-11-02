@@ -3,6 +3,7 @@
 
 #include "rotationflags.hpp"
 
+#include <cstdint>
 #include <deque>
 #include <set>
 #include <span>
@@ -593,6 +594,10 @@ namespace MWBase
         /// fires no objectTeleported. The smooth-correction primitive for reconciliation;
         /// see MWPhysics::Actor::adjustPosition. No-op for a ptr with no physics actor.
         virtual void adjustActorPosition(const MWWorld::Ptr& actor, const osg::Vec3f& offset) = 0;
+
+        /// MP (OT3-207): ptr's phase tag changed (mwmp/phases.hpp); refresh what the scene
+        /// caches of it. No-op for a ptr not in the scene: it reads the tag when it is added.
+        virtual void phaseTagChanged(const MWWorld::Ptr& ptr, std::uint64_t mask) = 0;
 
         /// MP: set those anchors. Server-driven; see MWWorld::Scene::setSimAnchors.
         /// Exteriors anchor by WORLD POSITION (a player's live pose, so coverage follows

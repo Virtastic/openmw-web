@@ -5465,5 +5465,29 @@ do
   check('the engine has setRefPhases/refPhases', lb:find('api["setRefPhases"]', 1, true) ~= nil
     and lb:find('api["refPhases"]', 1, true) ~= nil)
 end
+-- OT3-207: per-viewer collision -- the avatar carries its player's phase, physics masks by it.
+print('global.lua / mwphysics -- avatars stand in their player\'s phase; collision is masked by phase (OT3-207)')
+do
+  local gl = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local cc = gl:match('MP_PlayerCellChange = function%(data%)(.-)\n    end,') or ''
+  check('PlayerCellChange records the mover\'s phase (absent = untagged)', cc:find('noteAvatarPhase(data.id, data.phase)', 1, true) ~= nil)
+  check('AvatarPhase retags the body', (gl:match('MP_AvatarPhase = function%(data%)(.-)\n    end,') or ''):find('noteAvatarPhase(data.id, data.phase)', 1, true) ~= nil)
+  local sp = gl:match('local function spawnPuppet%(id, pose%)(.-)\nend') or ''
+  check('a new avatar body gets its player\'s phase', sp:find('applyAvatarPhase(id)', 1, true) ~= nil)
+  local ap = gl:match('local function applyAvatarPhase%(id%)(.-)\nend') or ''
+  check('only the peer tags avatars, and no key clears the tag',
+    ap:find('mp.isSystem()', 1, true) ~= nil and ap:find('key and { key } or {}', 1, true) ~= nil)
+  local cb = io.open('./openmw/apps/openmw/mwphysics/actorconvexcallback.hpp'):read('*a')
+  local ms = io.open('./openmw/apps/openmw/mwphysics/movementsolver.cpp'):read('*a')
+  local pf = io.open('./openmw/apps/openmw/mwphysics/phasefilter.hpp'):read('*a')
+  local ps = io.open('./openmw/apps/openmw/mwphysics/physicssystem.cpp'):read('*a')
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  check('the actor sweep and the unstuck contact test both skip other phases',
+    cb:find('&& phasesCollide(mMe, proxy)', 1, true) ~= nil and ms:find('&& phasesCollide(mMe, proxy)', 1, true) ~= nil)
+  check('an untagged mover collides with everything', pf:find('if (mine == 0)\n            return true;', 1, true) ~= nil)
+  check('objects and actors read their tag when added',
+    select(2, ps:gsub('setPhaseMask%(MWMP::phaseMaskOf%(ptr%.getCellRef%(%)%.getRefNum%(%)%)%)', '')) == 2)
+  check('a live retag reaches physics', lb:find('getWorld()->phaseTagChanged(ptr, mask)', 1, true) ~= nil)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

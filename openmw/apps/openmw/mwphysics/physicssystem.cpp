@@ -56,6 +56,8 @@
 #include "object.hpp"
 #include "projectile.hpp"
 
+#include "../mwmp/phases.hpp"
+
 namespace
 {
     void handleJump(const MWWorld::Ptr& ptr)
@@ -433,6 +435,7 @@ namespace MWPhysics
         }
 
         auto obj = std::make_shared<Object>(ptr, shapeInstance, rotation, collisionType, mTaskScheduler.get());
+        obj->setPhaseMask(MWMP::phaseMaskOf(ptr.getCellRef().getRefNum())); // OT3-207
         mObjects.emplace(ptr.mRef, obj);
 
         if (obj->isAnimated())
@@ -478,6 +481,17 @@ namespace MWPhysics
             if (projectile->getCaster() == old)
                 projectile->setCaster(updated);
         }
+    }
+
+    bool PhysicsSystem::setPhaseMask(const MWWorld::Ptr& ptr, std::uint64_t mask)
+    {
+        if (auto found = mObjects.find(ptr.mRef); found != mObjects.end())
+            found->second->setPhaseMask(mask);
+        else if (auto foundActor = mActors.find(ptr.mRef); foundActor != mActors.end())
+            foundActor->second->setPhaseMask(mask);
+        else
+            return false;
+        return true;
     }
 
     Actor* PhysicsSystem::getActor(const MWWorld::Ptr& ptr)
@@ -583,6 +597,7 @@ namespace MWPhysics
         auto actor = std::make_shared<Actor>(
             ptr, shape, mTaskScheduler.get(), canWaterWalk, Settings::game().mActorCollisionShapeType);
 
+        actor->setPhaseMask(MWMP::phaseMaskOf(ptr.getCellRef().getRefNum())); // OT3-207
         mActors.emplace(ptr.mRef, std::move(actor));
     }
 

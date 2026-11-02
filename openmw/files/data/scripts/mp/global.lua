@@ -549,6 +549,25 @@ local function poseInView(pose)
     return visibleFrom(ownCellKeyCache, math.floor(pose.x / 8192) .. ',' .. math.floor(pose.y / 8192))
 end
 
+-- OT3-207: THE AVATAR STANDS IN ITS PLAYER'S PHASE. In a phased cell the peer holds every
+-- phase's refs side by side (objects.lua applyPhaseRefs); the server names the player's phase
+-- for the cell on PlayerCellChange (and AvatarPhase when a stage moves them), and the engine
+-- then lets the body touch only base refs and that phase's (mwphysics/phasefilter.hpp). No key
+-- -- every unphased cell -- leaves the avatar untagged, colliding with everything as before.
+local avatarPhase = {} -- playerId -> phase key for the cell they are in
+local function applyAvatarPhase(id)
+    if not (mp.isSystem() and mp.setRefPhases) then return end
+    local p = puppets[id]
+    if not (p and p.obj:isValid()) then return end
+    local key = avatarPhase[id]
+    pcall(mp.setRefPhases, p.obj, key and { key } or {})
+end
+local function noteAvatarPhase(id, key)
+    if not mp.isSystem() then return end
+    avatarPhase[id] = (type(key) == 'string' and key ~= '') and key or nil
+    applyAvatarPhase(id)
+end
+
 local function spawnPuppet(id, pose)
     if puppets[id] then return end
     if not poseInView(pose) then return end -- the next pose in range spawns it (480)
@@ -586,6 +605,7 @@ local function spawnPuppet(id, pose)
     end
     puppets[id] = { obj = obj, name = name }
     puppetBodies[obj.id] = id
+    applyAvatarPhase(id) -- a new body (respawn, rebuild) keeps its player's phase
     -- THE WOLF. The appearance relay carries isWerewolf and a change rebuilds the body -- and
     -- the body was always built a man: nothing set the form on it. A transformed player looked
     -- human on every other screen, and the avatar fought with human hands on the peer.
@@ -612,6 +632,7 @@ local function despawnPuppet(id)
     local p = puppets[id]
     if not p then return end
     puppets[id] = nil
+    if mp.isSystem() and mp.setRefPhases then pcall(mp.setRefPhases, p.obj, {}) end -- OT3-207: drop the body's tag
     pcall(function() puppetBodies[p.obj.id] = nil end)
     av.avatarStatsLast[id] = nil
     av.appliedPose[id] = nil -- a rejoin must not stream the last body's place
@@ -1414,6 +1435,11 @@ local eventHandlers = {
     -- Phase 4A/2: the peer replaced this player's avatar body after a respawn; resurrect the
     -- avatar and put it at the respawn point so its next bar report is ALIVE (else it keeps
     -- reporting hp 0 and the server re-kills the player -- a death loop).
+    -- OT3-207: a stage moved this player to another phase of the cell they stand in.
+    MP_AvatarPhase = function(data)
+        if data and data.id then noteAvatarPhase(data.id, data.phase) end
+    end,
+
     MP_AvatarResurrect = function(data)
         if not (mp.isSystem()) or not data or not data.id then return end
         -- The body stands back up in place (backlog 138): mp.resurrect(obj) is the engine's
@@ -1979,6 +2005,7 @@ local eventHandlers = {
         if not data.id or data.id == net.playerId then return end
         local prevCell = remoteCell[data.id]
         remoteCell[data.id] = data.cellKey
+        noteAvatarPhase(data.id, data.phase) -- OT3-207: absent = untagged
         actors.catchUpCell(data.cellKey) -- backlog 142: newcomer hears the room's dispositions
         -- A CELL CHANGE WITHOUT A POSITION IS NOT A TELEPORT ORDER. On the peer the branch
         -- below MOVES that player's avatar to these coordinates, so a relay carrying no pose

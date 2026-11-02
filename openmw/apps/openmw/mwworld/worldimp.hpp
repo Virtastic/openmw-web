@@ -193,6 +193,7 @@ namespace MWWorld
 
         std::vector<osg::Vec3f> getSimAnchorPositions() const override;
         void adjustActorPosition(const MWWorld::Ptr& actor, const osg::Vec3f& offset) override;
+        void phaseTagChanged(const MWWorld::Ptr& ptr, std::uint64_t mask) override;
 
         void setSimAnchors(const std::vector<osg::Vec3f>& anchors,
             const std::vector<ESM::RefId>& interiors) override;

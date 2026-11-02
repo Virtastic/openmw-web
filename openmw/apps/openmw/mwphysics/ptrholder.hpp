@@ -1,6 +1,8 @@
 #ifndef OPENMW_MWPHYSICS_PTRHOLDER_H
 #define OPENMW_MWPHYSICS_PTRHOLDER_H
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -50,6 +52,12 @@ namespace MWPhysics
 
         osg::Vec3d getPreviousPosition() const { return mPreviousPosition; }
 
+        /// OT3-207: the phases this object is present in (mwmp/phases.hpp); 0 = untagged, which
+        /// meets everything. Atomic: set on the main thread, read by the physics workers.
+        void setPhaseMask(std::uint64_t mask) { mPhaseMask.store(mask, std::memory_order_relaxed); }
+
+        std::uint64_t getPhaseMask() const { return mPhaseMask.load(std::memory_order_relaxed); }
+
     protected:
         MWWorld::Ptr mPtr;
         std::unique_ptr<btCollisionObject> mCollisionObject;
@@ -57,6 +65,7 @@ namespace MWPhysics
         osg::Vec3f mSimulationPosition;
         osg::Vec3d mPosition;
         osg::Vec3d mPreviousPosition;
+        std::atomic<std::uint64_t> mPhaseMask{ 0 };
     };
 }
 

@@ -2771,6 +2771,11 @@ namespace MWWorld
             physicActor->adjustPosition(offset);
     }
 
+    void World::phaseTagChanged(const MWWorld::Ptr& ptr, std::uint64_t mask)
+    {
+        mPhysics->setPhaseMask(ptr, mask);
+    }
+
     void World::setSimAnchors(
         const std::vector<osg::Vec3f>& anchors, const std::vector<ESM::RefId>& interiors)
     {

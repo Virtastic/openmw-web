@@ -263,7 +263,12 @@ namespace MWMP
             for (const auto& kv : keys)
                 if (kv.second.is<std::string>())
                     list.push_back(kv.second.as<std::string>());
-            setRefPhases(obj.as<MWLua::Object>().id(), list);
+            const PhaseMask mask = setRefPhases(obj.as<MWLua::Object>().id(), list);
+            // OT3-207: the live collision object picks the new mask up now; one added later
+            // reads it from the registry (PhysicsSystem::addObject/addActor).
+            const MWWorld::Ptr ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (!ptr.isEmpty())
+                MWBase::Environment::get().getWorld()->phaseTagChanged(ptr, mask);
         };
         api["refPhases"] = [](sol::this_state state, const sol::object& obj) {
             sol::table res(state, sol::create);

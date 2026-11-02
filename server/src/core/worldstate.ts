@@ -474,6 +474,10 @@ export class WorldState {
    *  base). Unset, or nothing active: the peer gets exactly today's body. Server phases (step
    *  18) wire it; the peer then holds every phase side by side, refs tagged (phase/peertags.ts). */
   phaseOverlays?: (cellKey: string) => Record<string, PhaseOverlay> | undefined;
+  /** OT3-207: this character's phase key for a cell, when the cell has active overlays. The
+   *  peer tags the avatar with it, so the body only collides with that phase's refs. Unset
+   *  or undefined: the avatar stays untagged and collides with everything, as today. */
+  playerPhaseKey?: (charId: string, cellKey: string) => string | undefined;
   // Is this player (one of) those talking to an NPC (quests.ts)? Wired by server.ts; the
   // actor facts a non-holder may state hang off it (see actorEvent, ActorDisposition).
   talkingTo?: (refKey: string, playerId: number) => boolean;

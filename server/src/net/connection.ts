@@ -1563,7 +1563,9 @@ export class Connection implements Peer {
       // VIEWERS ONLY (OT3-78): the mover, the sim peer, and anyone who can see the old or new
       // cell. Everyone else learns on arrival (the occupants sync below).
       if (p.id !== player.id && p.system !== true && !cellsVisible(p.cellKey, cellKey) && !cellsVisible(p.cellKey, oldCell)) continue;
-      p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
+      // OT3-207: the peer tags the avatar with the mover's phase for the new cell.
+      const phase = p.system === true && player.system !== true ? this.ctx.world.playerPhaseKey?.(player.charId, cellKey) : undefined;
+      p.peer.sendEvent('PlayerCellChange', phase === undefined ? { id: player.id, cellKey, x, y, z } : { id: player.id, cellKey, x, y, z, phase });
       // OT3-59: whoever the mover has just come into view of learns how they look now (looks
       // are not broadcast world-wide).
       if (p.id !== player.id && p.system !== true && player.system !== true
