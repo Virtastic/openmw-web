@@ -252,6 +252,15 @@ namespace MWLua
             [](const ESM::NPC& rec) -> bool { return rec.mRecordFlags & ESM::FLAG_Persistent; });
         record["baseGold"] = sol::readonly_property([](const ESM::NPC& rec) -> int { return rec.mNpdt.mGold; });
         record["bloodType"] = sol::readonly_property([](const ESM::NPC& rec) -> int { return rec.mBloodType; });
+        // OT3-126 (openmw-web): ids of the record's NPCO entries with a NEGATIVE count -- the ones
+        // the engine restocks. The server cannot read the ESM, so the client reports them.
+        record["restockingItems"] = sol::readonly_property([](const ESM::NPC& rec, sol::this_state s) {
+            sol::table out(s, sol::create);
+            for (const ESM::ContItem& it : rec.mInventory.mList)
+                if (it.mCount < 0)
+                    out.add(it.mItem.serializeText());
+            return out;
+        });
         addActorServicesBindings<ESM::NPC>(record, context);
 
         npc["classes"] = initClassRecordBindings(context);

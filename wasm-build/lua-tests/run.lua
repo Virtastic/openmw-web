@@ -848,6 +848,12 @@ do
   -- 161: record ids cross the container wire in net form, as the drop path does.
   local c2i = o:match('local function countsToItems%(counts%)(.-)\nend') or ''
   check('ContainerOpen contents / put-take ids go out through worldmp.toNet', c2i:find('worldmp.toNet(id)', 1, true) ~= nil)
+  -- OT3-126: a merchant's first open reports which entries restock, in wire form.
+  local ocn = o:match('local function openContainerNow%(object, now, live, packAtOpen%)(.-)\nend') or ''
+  check('ContainerOpen carries the record\'s restockingItems (toNet) for a live merchant',
+    ocn:find('.restockingItems', 1, true) ~= nil and ocn:find('worldmp.toNet(id)', 1, true) ~= nil
+      and ocn:find('restocking = restocking', 1, true) ~= nil,
+    'a merchant restocks its purse but never its stock')
   local sco = o:match('function objects%.sendContainerOp%(obj, op, itemId, n%)(.-)\nend') or ''
   check('sendContainerOp maps the item id toNet before it is pended and sent', sco:find('itemId = worldmp.toNet(itemId)', 1, true) ~= nil)
   local scc = o:match('local function setContainerContents%(obj, items%)(.-)\nend') or ''

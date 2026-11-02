@@ -604,6 +604,17 @@ local function openContainerNow(object, now, live, packAtOpen)
         local okg, g = pcall(function() return types.Actor.getBarterGold(object) end)
         if okg and type(g) == 'number' then gold = g end
     end
+    -- OT3-126: which of the merchant's entries RESTOCK (negative count in the record). The server
+    -- cannot read the ESM; without this list it can only restock the purse, never the stock.
+    -- Nil on an engine without the binding: the server then keeps gold-only behaviour.
+    local restocking = nil
+    if live and gold ~= nil then
+        local okr, ids = pcall(function() return object.type.record(object).restockingItems end)
+        if okr and ids then
+            restocking = {}
+            for _, id in ipairs(ids) do restocking[#restocking + 1] = worldmp.toNet(id) end
+        end
+    end
     -- WAS THE WATCH ARMED, AND IF NOT WHY. s31 fails with the item provably moved out of the
     -- player's inventory and into the chest, no ContainerOpRequest on the wire, and no dropOut
     -- refusal either -- so the request is never PRODUCED. The watch armed here is what produces
@@ -620,7 +631,7 @@ local function openContainerNow(object, now, live, packAtOpen)
     -- meaningful once the server can be told about it, and an armed watch on an unaddressable
     -- object would diff into requests that go nowhere.
     local armed = snapshot and sendAddressed('ContainerOpen', object,
-        { contents = countsToItems(snapshot), gold = gold })
+        { contents = countsToItems(snapshot), gold = gold, restocking = restocking })
     if not armed then
         local tries = (openRetries[object.id] or 0) + 1
         if object:isValid() and tries <= CONTAINER_OPEN_RETRIES then

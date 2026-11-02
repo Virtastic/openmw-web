@@ -121,6 +121,9 @@ export interface CellDoc {
   containers: Record<string, {
     items: ContainerItems; stateSeq: number; origin?: ContainerItems;
     gold?: number; goldOrigin?: number; goldRestockAt?: number;
+    // OT3-126: a merchant's restocking entries (negative count in its record) at first-seen
+    // counts; the 24h restock tops `items` back up to these and nothing else.
+    restock?: ContainerItems;
     // OT3-82: each character's own copy, made on its first take/put (charId -> view).
     // `items` above stays the shared roll a character without a view sees.
     views?: Record<string, { items: ContainerItems; stateSeq: number }>;
@@ -468,6 +471,7 @@ export class CellStore {
           ...(cont.gold !== undefined ? { gold: cont.gold } : {}),
           ...(cont.goldOrigin !== undefined ? { goldOrigin: cont.goldOrigin } : {}),
           ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}),
+          ...(cont.restock ? { restock: cont.restock.map((i) => ({ ...i })) } : {}),
           ...(cont.stash ? { stash: true as const } : {}),
           ...(cont.views ? { views: Object.fromEntries(Object.entries(cont.views).map(([c, v]) =>
             [c, { items: v.items.map((i) => ({ ...i })), stateSeq: v.stateSeq + 1 }])) } : {}) };
@@ -491,7 +495,8 @@ export class CellStore {
       doc.containers[key] = { items, stateSeq: cont.stateSeq + 1, origin: cont.origin.map((i) => ({ ...i })),
         ...(Object.keys(views).length ? { views } : {}),
         ...(cont.goldOrigin !== undefined ? { gold: cont.goldOrigin, goldOrigin: cont.goldOrigin } : {}),
-        ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}) };
+        ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}),
+        ...(cont.restock ? { restock: cont.restock.map((i) => ({ ...i })) } : {}) };
     }
     this.cache.set(cellKey, doc);
     this.dirty.add(cellKey);

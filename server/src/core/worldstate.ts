@@ -264,6 +264,33 @@ function itemCount(v: LValue | undefined, id?: string): number | undefined {
   return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= cap ? v : undefined;
 }
 
+/** OT3-126: top a merchant's stock back up to each restocking entry's first-seen count. Only
+ *  the SHORTFALL is minted (what players bought); stock at or over the count -- including
+ *  what players sold in -- is left as it is, so nothing doubles. Returns the units added. */
+export function restockStock(items: ContainerItems, restock: ContainerItems): number {
+  let added = 0;
+  for (const r of restock) {
+    const k = r.id.toLowerCase();
+    const have = items.reduce((n, i) => n + (i.id.toLowerCase() === k ? i.n : 0), 0);
+    if (have >= r.n) continue;
+    const stack = items.find((i) => i.id.toLowerCase() === k);
+    if (stack) stack.n += r.n - have; else items.push({ id: r.id, n: r.n - have });
+    added += r.n - have;
+  }
+  return added;
+}
+
+/** OT3-126: the client's list of restocking record ids (strings), bounded like contents. */
+function parseIdList(v: LValue | undefined): Set<string> | undefined {
+  if (!(v instanceof Map) || v.size > MAX_CONTAINER_ENTRIES) return undefined;
+  const out = new Set<string>();
+  for (const [, e] of v) {
+    const id = str(e, MAX_RECORD_ID);
+    if (id) out.add(id.toLowerCase());
+  }
+  return out;
+}
+
 function parseItems(v: LValue | undefined): ContainerItems | undefined {
   if (!(v instanceof Map) || v.size > MAX_CONTAINER_ENTRIES) return undefined;
   const out: ContainerItems = [];
@@ -1844,6 +1871,17 @@ export class WorldState {
           cont.gold = Math.floor(gold);
           cont.goldOrigin = cont.gold;
           cont.goldRestockAt = absGameHours(this.cells.worldM7().time) + GOLD_RESTOCK_HOURS;
+          // OT3-126: the entries the RECORD marks as restocking (negative count), at their
+          // first-seen counts. Trusted on the same first-opener rule as the stock it names, and
+          // intersected with it: an id the merchant was not seen holding never restocks, and a
+          // quest or bound (notable) item never does, whatever the client claims.
+          const restocking = parseIdList(body.get('restocking'));
+          if (restocking?.size) {
+            const restock = items.filter((i) => i.id.toLowerCase() !== GOLD && restocking.has(i.id.toLowerCase())
+              && !this.questItems.has(i.id.toLowerCase()) && !this.binding?.isBound(i.id))
+              .map((i) => ({ ...i }));
+            if (restock.length) cont.restock = restock;
+          }
         }
         doc.containers[ref.key] = cont;
         this.cells.markDirty(cellKey);
@@ -1864,12 +1902,11 @@ export class WorldState {
           cont.gold = cont.goldOrigin;
           changed = true;
         }
-        // GOLD ONLY (backlog 165). The stock used to come back too, so the potions and arrows
-        // bought on day one were not gone for good -- but neither was Creeper's one-off
-        // loot: a first-seen list cannot tell a restocking entry (negative count in the
-        // record) from a unique item, so a daily refill of the whole list duped every unique
-        // in every merchant. Until a client binding reports which entries restock, what
-        // players bought stays bought.
+        // STOCK: only the entries the record marks as restocking (OT3-126, reported by the
+        // client binding at first open). Backlog 165 refilled the whole first-seen list and so
+        // duped every unique a merchant held (Creeper's one-off loot); `restock` names only the
+        // negative-count entries, and only the shortfall comes back.
+        if (cont.restock && restockStock(cont.items, cont.restock) > 0) changed = true;
         if (changed) {
           cont.stateSeq += 1;
           this.cells.markDirty(cellKey);

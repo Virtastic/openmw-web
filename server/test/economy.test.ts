@@ -281,10 +281,8 @@ test("a merchant restocks on the 24-hour rule, including across a month boundary
   b.sendCellChange('0,0', 0, 0, 0);
   b.sendEvent('ContainerOpen', { ref: REF, cellKey: '0,0', contents: [], gold: 500 });
   const state = (await b.waitEvent('ContainerState')).value as { gold?: number; items: { id: string; n: number }[] };
-  // Backlog 165: the restock is the PURSE only. The stock used to come back too, but the
-  // server cannot tell a restocking entry from Creeper's one-off loot (that is a sign on the
-  // record's count, which no client reports), so a whole-list refill duped every unique daily.
-  // What was bought stays bought until a binding names the restocking entries.
+  // Backlog 165 / OT3-126: no `restocking` list was sent at open, so only the purse restocks;
+  // stock restocks only for entries the record marks (merchant-restock.test.ts).
   assert.deepEqual(state.items.map((i) => i.id + ':' + i.n).sort(), ['ash_yam:1'],
     'the bought dagger stays bought and the sold yam stays');
   assert.equal(state.gold, 500,

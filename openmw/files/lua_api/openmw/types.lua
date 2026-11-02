@@ -880,6 +880,7 @@
 -- @field #number soulValue The soul value of the creature record
 -- @field #number type The @{#Creature.TYPE} of the creature
 -- @field #number baseGold The base barter gold of the creature
+-- @field #list<#string> restockingItems Ids of inventory entries with a negative count (restocked by merchants)
 -- @field #number combatSkill The base combat skill of the creature. This is the skill value used for all skills with a 'combat' specialization
 -- @field #number magicSkill The base magic skill of the creature. This is the skill value used for all skills with a 'magic' specialization
 -- @field #number stealthSkill The base stealth skill of the creature. This is the skill value used for all skills with a 'stealth' specialization
@@ -1184,6 +1185,7 @@
 -- @field #string hair ID of the hair body part
 -- @field #string head ID of the head body part
 -- @field #number baseGold The base barter gold of the NPC
+-- @field #list<#string> restockingItems Ids of inventory entries with a negative count (restocked by merchants)
 -- @field #number baseDisposition NPC's starting disposition
 -- @field #boolean isMale The gender setting of the NPC
 -- @field #map<#string, #boolean> servicesOffered The services of the NPC, in a table. Value is if the service is provided or not, and they are indexed by: Spells, Spellmaking, Enchanting, Training, Repair, Barter, Weapon, Armor, Clothing, Books, Ingredients, Picks, Probes, Lights, Apparatus, RepairItems, Misc, Potions, MagicItems, Travel.

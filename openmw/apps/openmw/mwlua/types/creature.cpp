@@ -139,6 +139,15 @@ namespace MWLua
         record["soulValue"] = sol::readonly_property([](const ESM::Creature& rec) -> int { return rec.mData.mSoul; });
         record["type"] = sol::readonly_property([](const ESM::Creature& rec) -> int { return rec.mData.mType; });
         record["baseGold"] = sol::readonly_property([](const ESM::Creature& rec) -> int { return rec.mData.mGold; });
+        // OT3-126 (openmw-web): ids of the record's NPCO entries with a NEGATIVE count -- the ones
+        // the engine restocks. The server cannot read the ESM, so the client reports them.
+        record["restockingItems"] = sol::readonly_property([](const ESM::Creature& rec, sol::this_state s) {
+            sol::table out(s, sol::create);
+            for (const ESM::ContItem& it : rec.mInventory.mList)
+                if (it.mCount < 0)
+                    out.add(it.mItem.serializeText());
+            return out;
+        });
         record["combatSkill"]
             = sol::readonly_property([](const ESM::Creature& rec) -> int { return rec.mData.mCombat; });
         record["magicSkill"] = sol::readonly_property([](const ESM::Creature& rec) -> int { return rec.mData.mMagic; });
