@@ -146,6 +146,8 @@ set(BUILTIN_DATA_FILES
     scripts/mp/reconcile.lua
     scripts/mp/retry.lua
     scripts/mp/social.lua
+    scripts/mp/viewdist.lua
+    scripts/mp/viewdistctl.lua
     scripts/mp/avatars.lua
     scripts/mp/shared.lua
     scripts/mp/selfkill.lua

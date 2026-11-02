@@ -5256,5 +5256,90 @@ do
   check('scaleDamage reads the server value before the slider',
     ds:find('MWMP::effectiveDifficulty(Settings::game().mDifficulty)', 1, true) ~= nil)
 end
+-- OT3-212: dynamic view distance. The controller is pure; feed it frames.
+print('viewdistctl.lua -- view distance follows frame time, capped by the tier (OT3-212)')
+do
+  package.loaded['scripts.mp.viewdistctl'] = nil
+  local ctl = require('scripts.mp.viewdistctl')
+  -- run `secs` of frames of length dt; returns the distances applied, in order
+  local function run(s, dt, secs, ceiling)
+    local out = {}
+    for _ = 1, math.floor(secs / dt + 0.5) do
+      local v = ctl.update(s, dt, ceiling)
+      if v then out[#out + 1] = v end
+    end
+    return out
+  end
+  local C = 16384
+  check('floor is half the ceiling, at least 4096, never above it',
+    ctl.floorOf(16384) == 8192 and ctl.floorOf(8192) == 4096 and ctl.floorOf(3000) == 3000)
+
+  -- Smooth 60 fps at the ceiling: nothing changes, ever.
+  local s = ctl.new(C)
+  check('steady fast frames at the ceiling change nothing', #run(s, 1 / 60, 60, C) == 0 and s.vd == C)
+
+  -- Long frames whose cost scales with distance: it steps down and settles, not to the floor.
+  s = ctl.new(C)
+  local applied = {}
+  for _ = 1, 60 * 60 do
+    local dt = 1 / 60 + (s.vd - 8192) / 8192 * 0.012 -- 16384 -> ~28.7 ms, 12288 -> ~22.7, 10240 -> ~19.7
+    local v = ctl.update(s, dt, C)
+    if v then applied[#applied + 1] = v end
+  end
+  check('slow frames lower the distance', s.vd < C, 'vd=' .. s.vd)
+  check('...and stop once frames are inside the band, above the floor', s.vd > 8192, 'vd=' .. s.vd)
+  local reversals = 0
+  for i = 3, #applied do
+    if (applied[i] - applied[i - 1]) * (applied[i - 1] - applied[i - 2]) < 0 then reversals = reversals + 1 end
+  end
+  check('no pumping: at most one change of direction in a minute', reversals <= 1, 'reversals=' .. reversals .. ' steps=' .. #applied)
+  local gap = math.huge
+  for i = 2, #applied do gap = math.min(gap, math.abs(applied[i] - applied[i - 1])) end
+  check('steps are bounded', #applied < 2 or gap <= ctl.STEP_DOWN)
+
+  -- Headroom brings it back up, in small steps, to the ceiling and no further.
+  local ups = run(s, 1 / 60, 120, C)
+  check('headroom raises it back to the ceiling', s.vd == C, 'vd=' .. s.vd)
+  local okUp = true
+  for i = 2, #ups do if ups[i] - ups[i - 1] > ctl.STEP_UP then okUp = false end end
+  check('...in steps of at most STEP_UP', okUp)
+
+  -- Never below the floor, however slow.
+  s = ctl.new(C)
+  run(s, 1 / 15, 120, C)
+  check('never under the floor', s.vd >= ctl.floorOf(C), 'vd=' .. s.vd)
+
+  -- DFPSO's failure mode: frames slow for some other reason. Lowering buys nothing, so it goes back.
+  s = ctl.new(C)
+  local seen = run(s, 1 / 30, 8, C)
+  check('a futile lowering is undone', #seen >= 3 and seen[#seen] == C, table.concat(seen, ','))
+  local more = run(s, 1 / 30, ctl.FUTILE_REST_S - 5, C)
+  check('...and lowering rests after it', #more == 0, table.concat(more, ','))
+
+  -- Hitches (cell loads) are not frame time.
+  s = ctl.new(C)
+  local h = {}
+  for _ = 1, 40 do
+    run(s, 1 / 60, 1, C)
+    local v = ctl.update(s, 2.0, C); if v then h[#h + 1] = v end
+  end
+  check('load hitches alone never lower it', #h == 0 and s.vd == C)
+
+  -- The tier/settings ceiling caps it at once; paused frames are ignored.
+  s = ctl.new(C)
+  check('a lower ceiling applies at once', ctl.update(s, 1 / 60, 8192) == 8192)
+  check('paused frames are ignored', ctl.update(s, 0, 8192) == nil)
+
+  local src = io.open('./openmw/files/data/scripts/mp/viewdist.lua'):read('*a')
+  local om = io.open('./openmw/files/data/mp.omwscripts'):read('*a')
+  check('viewdist.lua is a PLAYER script, capped by the base setting',
+    om:find('PLAYER: scripts/mp/viewdist.lua', 1, true) ~= nil and src:find('camera.getBaseViewDistance()', 1, true) ~= nil)
+  local others = 0
+  for _, f in ipairs({ 'player.lua', 'social.lua', 'nameplates.lua', 'global.lua', 'menu.lua', 'avatar.lua', 'puppet.lua' }) do
+    local t = io.open('./openmw/files/data/scripts/mp/' .. f):read('*a')
+    if t:find('setViewDistance', 1, true) then others = others + 1 end
+  end
+  check('nothing else sets the view distance', others == 0)
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
