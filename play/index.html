@@ -842,18 +842,16 @@ window.omw = (function(){
  // log lines (game-data download / local mount phases), and hidden on the first engine frame.
  window.__omwLoading = (function(){
    var el, titleEl, st, fill, det, done=false, inited=false, warmQueued=false;
-   // What the background warm-up fills, and in which order (see finish()).
-   // + the greetings and idle lines of Seyda Neen's people (Imperials, Dunmer): each was a 0.3-0.6 s
-   // miss walking through town (prod 2026-10-21, [sfs] slow read Hlo_IM064.mp3, Idl_DF006.mp3).
-   // ~850 small files, 16 MB; the rest of Sound/Vo (6,400 files) stays on demand.
-   var WARM_RE = /\.bsa$|^\/mwdata\/(sound\/(fx|cr)|music)\/|^\/mwdata\/sound\/vo\/[id]\/[mf]\/(hlo|idl)_/i;
-   // THE ASSET PACK FIRST: its meshes and textures replace vanilla ones, so nearly every model the
-   // next town loads is read from it -- and Morrowind.bsa ahead of it (~150 chunks) left it cold
-   // at the Seyda Neen dock: 20 of 26 slow reads, a 10.9 s freeze with ~100 chunks warmed (prod
-   // 2026-10-21). 57 chunks, about a minute of the boat.
-   // ...then the exploration music: a track starts within a minute of every boot, and its first
-   // read was a 0.3-0.6 s hitch (prod 2026-10-22, [sfs] slow read mx_explore_1/4/7.mp3). 22 MB.
-   var WARM_FIRST = [/openmw-web-assets\.bsa$/i, /morrowind\.bsa$/i, /^\/mwdata\/music\/explore\//i, /^\/mwdata\/sound\/vo\//i, /^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i, /^\/mwdata\/music\//i, /bloodmoon\.bsa$/i, /tribunal\.bsa$/i];
+   // What the background warm-up fills: StreamFS.warmPlan (OT3-57). The archives come per cell
+   // now; music and voice are opt-in with ?warm=music,voice (or all / none), remembered across
+   // visits in localStorage omw_warm.
+   function warmOpt(){
+     var m = /[?&]warm=([^&]*)/.exec(location.search);
+     try {
+       if (m) { var v = decodeURIComponent(m[1]); localStorage.setItem('omw_warm', v); return v; }
+       return localStorage.getItem('omw_warm') || '';
+     } catch (e) { return m ? decodeURIComponent(m[1]) : ''; }
+   }
    function E(){
      if (inited) return el; inited=true;
      el=document.getElementById('loading'); titleEl=document.getElementById('ld-title');
@@ -994,7 +992,13 @@ window.omw = (function(){
      // the terrain on two players' servers (2026-10-27), back only after walking away and returning.
      if (!warmQueued) { warmQueued = true; setTimeout(function(){
        var share = 0.25; // every v2 server is a self-deployment (CL10)
-       try { if (window.StreamFS && window.StreamFS.warm) window.StreamFS.warm(WARM_RE, WARM_FIRST, share); } catch (e) {}
+       // OT3-57: archives are fetched per cell now; see StreamFS.warmPlan for what is left here.
+       try {
+         if (window.StreamFS && window.StreamFS.warm && window.StreamFS.warmPlan) {
+           var plan = window.StreamFS.warmPlan(warmOpt());
+           if (plan) window.StreamFS.warm(plan.re, plan.first, share);
+         }
+       } catch (e) {}
      }, 2000); }
      el.classList.remove('indet', 'creep'); fill.style.setProperty('--p', 1); el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);

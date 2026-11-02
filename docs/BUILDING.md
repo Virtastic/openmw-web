@@ -123,4 +123,4 @@ Not part of the build, but kept on purpose:
 | `perf-ab.mjs` | frame-time and peak-heap sampler for A/B-ing two engine builds |
 | `make-navmesh-template.sh` | builds the prebuilt `navmesh.db` that `[simPeer] navmeshTemplate` points at |
 | `refresh-harness-engine.sh` | refreshes the harness's `play/` engine from the deployed image before a local harness run |
-| `telemetry-tapkey.test.mjs`, `test-loadorder.mjs`, `streamfs-retry.test.mjs` | standalone checks of `play/index.html` helpers: `node wasm-build/<file>` |
+| `telemetry-tapkey.test.mjs`, `test-loadorder.mjs`, `streamfs-retry.test.mjs`, `streamfs-warmplan.test.mjs` | standalone checks of `play/index.html` helpers: `node wasm-build/<file>` |

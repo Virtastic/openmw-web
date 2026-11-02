@@ -828,6 +828,33 @@
       });
     },
 
+    // WHAT THE BACKGROUND WARM-UP FILLS (OT3-57). It used to be every BSA plus Sound/Music and the
+    // town greetings, up to 80% of the origin's quota: ~0.9 GB on a desktop's first visit, most of
+    // each player's egress bill, and most of it never read. The archives are now fetched per cell
+    // instead: the engine names the current cell's neighbours and door destinations as they come
+    // into reach (Scene::prefetchNearbyFiles -> prefetchPaths), and the boot set covers the first
+    // cell. What the cell prefetch cannot name stays here: loose sound effects and creature sounds,
+    // decoded whole on their first play (small, heard everywhere). Music and voice are OPT-IN.
+    //   `opt`: a comma list from ?warm= or the remembered omw_warm -- "music", "voice", or "all"
+    //   (the old blanket warm-up, archives included); "none" turns the warm-up off.
+    // Returns {re, first} for warm(), or null for nothing. Pure: no DOM, no storage.
+    warmPlan(opt) {
+      const want = new Set(String(opt || '').toLowerCase().split(/[\s,]+/).filter(Boolean));
+      if (want.has('none')) return null;
+      const all = want.has('all');
+      const parts = ['sound\\/(fx|cr)\\/'];
+      const first = [/^\/mwdata\/sound\/fx\//i, /^\/mwdata\/sound\/cr\//i];
+      if (all || want.has('music')) { parts.push('music\\/'); first.unshift(/^\/mwdata\/music\/explore\//i); first.push(/^\/mwdata\/music\//i); }
+      if (all || want.has('voice')) { parts.push('sound\\/vo\\/[id]\\/[mf]\\/(hlo|idl)_'); first.push(/^\/mwdata\/sound\/vo\//i); }
+      let src = '^\\/mwdata\\/(' + parts.join('|') + ')';
+      if (all) {
+        src = '\\.bsa$|' + src;
+        first.unshift(/openmw-web-assets\.bsa$/i, /morrowind\.bsa$/i);
+        first.push(/bloodmoon\.bsa$/i, /tribunal\.bsa$/i);
+      }
+      return { re: new RegExp(src, 'i'), first };
+    },
+
     // Fill the persistent chunk cache from every mounted file whose path matches `re`, in the
     // background (see warm() in the worker). Persistable (hosted, same-origin) files only; the
     // order of `first` decides which archive warms first. Skipped on a Save-Data connection.

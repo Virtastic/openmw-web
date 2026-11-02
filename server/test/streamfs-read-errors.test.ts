@@ -41,5 +41,5 @@ test('the warm-up rests in proportion to its fetches, at a quarter share on ever
   assert.equal(fn(undefined, id, 1000), 30);
   const page = readFileSync(PAGE, 'utf8');
   assert.match(page, /var share = 0.25;/); // CL10: every v2 server is a self-deployment
-  assert.match(page, /StreamFS\.warm\(WARM_RE, WARM_FIRST, share\)/);
+  assert.match(page, /StreamFS\.warm\(plan\.re, plan\.first, share\)/);
 });

@@ -228,13 +228,12 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
 }
 
 // LOOSE AUDIO IS WARMED (prod 2026-10-19: "each new sound, just the first time"). Sound/ and Music/
-// are loose files the engine reads with the main thread blocked; index.html's warm-up list must
-// queue Fx first, smallest first, then the archives, creatures and music -- and never Sound/Vo.
-// The real streamfs.js runs in a sandbox with the patterns index.html passes.
+// are loose files the engine reads with the main thread blocked. OT3-57: by default only Fx and
+// creature sounds; the archives come per cell, music and voice are opt-in (?warm=), and "all" is
+// the old blanket order. The real streamfs.js runs in a sandbox with StreamFS.warmPlan's patterns.
 {
   const html = readFileSync(new URL('../play/index.html', import.meta.url), 'utf8');
-  const re = html.match(/var WARM_RE = (\/.*\/i);/), first = html.match(/var WARM_FIRST = (\[.*\]);/);
-  assert.ok(re && first && /StreamFS\.warm\(WARM_RE, WARM_FIRST, share\)/.test(html), 'index.html warms WARM_RE in WARM_FIRST order');
+  assert.ok(/var plan = window\.StreamFS\.warmPlan\(warmOpt\(\)\);\s+if \(plan\) window\.StreamFS\.warm\(plan\.re, plan\.first, share\);/.test(html), 'index.html warms what warmPlan returns');
   const vm = await import('node:vm');
   const posted = [];
   const ctx = {
@@ -252,9 +251,12 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
     ['Sound/Vo/i/m/Hlo_IM064.mp3', 2e4]];
   for (const [p, s] of mounts) ctx.StreamFS.mount('/mwdata/' + p, 'mwdata/' + p + '?v=2', s);
   ctx.StreamFS.mount('/mods/openmw-web-assets.bsa', 'mods/openmw-web-assets.bsa', 1.1e8);
-  assert.equal(vm.runInContext('StreamFS.warm(' + re[1] + ', ' + first[1] + ')', ctx), 8, 'eight files queued');
+  const strip = (m) => Array.from(m.warm, (f) => f.url.replace(/^https:\/\/h\/(mwdata|mods)\/|\?v=2$/g, ''));
+  assert.equal(vm.runInContext("(() => { const p = StreamFS.warmPlan(''); return StreamFS.warm(p.re, p.first); })()", ctx), 3, 'default: three loose sounds');
+  assert.deepEqual(strip(posted.at(-1)), ['Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav', 'Sound/Cr/rat/roar.wav'], 'Fx smallest first, creatures; no archive, music or voice');
+  assert.equal(vm.runInContext("(() => { const p = StreamFS.warmPlan('all'); return StreamFS.warm(p.re, p.first); })()", ctx), 8, 'all: eight files queued');
   // ...and it starts at release, not 20 s later (prod 2026-10-23: the first steps in town cold).
-  assert.ok(/StreamFS\.warm\(WARM_RE, WARM_FIRST, share\); \} catch \(e\) \{\}\s+\}, 2000\);/.test(html), 'the warm-up starts 2 s after release');
+  assert.ok(/StreamFS\.warm\(plan\.re, plan\.first, share\);\s+\}\s+\} catch \(e\) \{\}\s+\}, 2000\);/.test(html), 'the warm-up starts 2 s after release');
   // THE BOOT PRELOAD names the logo and intro movies; the splash screens go to the background prefetch.
   const movies = new RegExp(html.match(/var BOOT_MOVIES = \/(.*)\/i;/)[1], 'i');
   assert.deepEqual(['Video/bethesda logo.bik', 'video/MW_Logo.bik', 'Video/mw_intro.bik', 'Video/mw_credits.bik', 'Video/mw_menu.bik']
@@ -268,7 +270,7 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   const arriveRe = new RegExp(arrive[1], 'i');
   assert.deepEqual(['Sound/Fx/REGN/wndTREE.wav', 'Sound/Fx/envrn/dockCREAK.wav', 'Sound/Cr/silt/silt01.wav', 'Sound/Fx/bodyfallMED.wav', 'Sound/Vo/Misc/x.mp3', 'Sound/Fx/envrn/boat_waves.wav']
     .map((p) => arriveRe.test('/mwdata/' + p)), [true, true, true, true, false, false]);
-  const order = Array.from(posted.at(-1).warm, (f) => f.url.replace(/^https:\/\/h\/(mwdata|mods)\/|\?v=2$/g, ''));
+  const order = strip(posted.at(-1));
   // Archives first: the next town comes out of them (prod 2026-10-20: Fx-first left Morrowind.bsa
   // cold at the Seyda Neen dock, a 26.5 s freeze). Then Fx smallest first, creatures, music.
   // The asset pack ahead of Morrowind.bsa (prod 2026-10-21: the pack's chunks were 20 of 26 slow
@@ -276,8 +278,8 @@ await assert.rejects(rf('u', 0, 8), (e) => /short body 3\/8/.test(e.message) && 
   // Then Seyda Neen's greetings (prod 2026-10-21: Hlo_IM064.mp3, Idl_DF006.mp3 walking through town);
   // a/f (an Ashlander's) and the rest of Sound/Vo stay on demand.
   // The exploration music right after the archives (prod 2026-10-22: mx_explore_*.mp3 first plays).
-  assert.deepEqual(order, ['openmw-web-assets.bsa', 'Morrowind.bsa', 'Music/Explore/mx_explore_7.mp3', 'Sound/Vo/i/m/Hlo_IM064.mp3', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
-    'Sound/Cr/rat/roar.wav', 'Tribunal.bsa'], 'archives, explore music, voices, then Fx smallest first, creatures; no other Vo, no Splash');
+  assert.deepEqual(order, ['openmw-web-assets.bsa', 'Morrowind.bsa', 'Music/Explore/mx_explore_7.mp3', 'Sound/Fx/item/bookpag1.wav', 'Sound/Fx/foot/walkr_lt.wav',
+    'Sound/Cr/rat/roar.wav', 'Sound/Vo/i/m/Hlo_IM064.mp3', 'Tribunal.bsa'], 'all: archives, explore music, Fx smallest first, creatures, greetings; no other Vo, no Splash');
 
   // A PRELOADED CHUNK LANDS IN THE LRU under the key the engine's read looks up, so the read is a
   // memory hit (prod 2026-10-21: stored-only chunks were fetched again when the store was busy).
