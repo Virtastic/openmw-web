@@ -2,6 +2,18 @@
 # Multi-stage: deps -> build (typecheck+test+bundle) -> prod-deps -> tiny runtime.
 # The deploy workflow builds --target test first as a hard gate, then the default target.
 
+# OT3-14: the quest/phase tables (tools/scan-quests.mjs), generated in the build. Game data
+# cannot be committed or shipped in a public build context, so it comes in as a named build
+# context:  docker build --build-context mwdata="/path/Data Files" ...
+# Without it, `mwdata` is this empty stage: the step writes no tables and the build still
+# succeeds. With it, a failed scan fails the build. The tables land in /app/phase-tables.
+FROM scratch AS mwdata
+
+FROM node:22-alpine AS phase-tables
+WORKDIR /app
+COPY tools ./tools
+RUN --mount=type=bind,from=mwdata,target=/mwdata sh tools/build-phase-tables.sh /mwdata /app/phase-tables
+
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -49,6 +61,7 @@ COPY config.default.toml ./
 COPY web ./web
 # OT3-63: the hourly SQLite backup runs inside the container (docker exec ... node tools/backup-sqlite.mjs).
 COPY tools ./tools
+COPY --from=phase-tables /app/phase-tables ./phase-tables
 COPY docker-entrypoint.sh /usr/local/bin/
 # Explicit: a checkout on Windows does not carry the executable bit, so relying on the
 # source file's mode would produce an image that fails to start on some machines and not

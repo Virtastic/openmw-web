@@ -74,6 +74,37 @@ from the live pose at flush time (move frames never trigger writes).
 To seed an admin: register in-game, stop the server (or it flushes within 30 s), edit
 the account JSON's `"rank"` to `1` and restart or relog. `"banned": true` blocks login.
 
+## Quest/phase tables (build step)
+
+`tools/scan-quests.mjs` reads a load order's DIAL/INFO, SCPT, SSCR, GLOB, CELL/REFR and
+scripted-object records. It follows `StartScript` calls transitively, from dialogue results and
+from other scripts, and writes four tables plus a report:
+
+| file | contents |
+|---|---|
+| `phase-cells.json` | per cell: the quest stages (`quest:index`) whose effects touch a ref in it, or the cell itself |
+| `phase-quests.json` | per quest: name, kind (faction/main/side), eligibility (givers, factions, min rank, prerequisite journal and global conditions), stages, branches (finishing stages) |
+| `phase-stages.json` | per stage: journal text, finished flag, effects (`op`, `ref`, `args`, `source`, `via` = the StartScript chain) |
+| `script-classes.json` | per script: startup / global / targeted / local, started by, stopped by, attached to |
+| `phase-scan-report.json` | StartScript call and target counts, unresolved targets, cycles |
+
+Both images (`Dockerfile` and `Dockerfile.simpeer`) run the scanner in a `phase-tables` stage
+and copy the result to `/app/phase-tables`. Game data cannot go in the repo or in the build
+context, so it comes in as a named build context:
+
+    docker build --build-context mwdata="/path/to/Data Files" -t openmw-mp .
+
+The load order is Morrowind.esm, Tribunal.esm, Bloodmoon.esm, then the other `.esm` files,
+then the `.esp` files, each group by name. If no data is given, or the directory has no `.esm`,
+the step writes no tables and the build still succeeds. If data is present and the scan fails,
+the build fails. To run the scanner by hand:
+
+    node tools/scan-quests.mjs --out-dir out/ --data-dir "/path/to/Data Files"
+    node tools/scan-quests.mjs --out-dir out/ Morrowind.esm Tribunal.esm Bloodmoon.esm
+
+The scan is static and text-level: it is a starting table to spot-check in game, not a proof
+of what the engine will do. Unresolved StartScript targets and cycles are reported, never fatal.
+
 ## Config reference
 
 Defaults live in [`config.default.toml`](config.default.toml); an operator
