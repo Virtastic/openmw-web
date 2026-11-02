@@ -6,6 +6,7 @@
 #include <osg/ref_ptr>
 
 #include "positioncellgrid.hpp"
+#include "simanchorqueue.hpp"
 #include "ptr.hpp"
 
 #include <memory>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include <components/esm/exteriorcelllocation.hpp>
+#include <components/esm/refid.hpp>
 #include <components/misc/constants.hpp>
 
 namespace osg
@@ -149,6 +151,13 @@ namespace MWWorld
         // These are kept loaded and their actors keep processing regardless of where this
         // process's own player stands, exactly like an exterior anchor.
         std::vector<ESM::RefId> mSimAnchorInteriors;
+
+        // Cells the anchors want that are not loaded yet (OT3-123): drained a few per frame by
+        // update() instead of all at once in setSimAnchors / changeCellGrid. Exteriors are in
+        // mSimAnchorWorldspace (the worldspace of the grid change that queued them).
+        SimAnchorLoadQueue<ESM::RefId> mSimAnchorQueue;
+        ESM::RefId mSimAnchorWorldspace;
+        void loadSimAnchorQueue();
 
         // Load and unload cells as necessary to create a cell grid with "X" and "Y" in the center
         void changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent = true);

@@ -365,8 +365,62 @@ namespace MWWorld
             mChangeCellGridRequest.reset();
         }
 
+        loadSimAnchorQueue();
+
         mPreloader->updateCache(mRendering.getReferenceTime());
         preloadCells(duration);
+    }
+
+    void Scene::loadSimAnchorQueue()
+    {
+        if (mSimAnchorQueue.empty())
+            return;
+        // The peer steps at 1/20 s; leave most of the frame to the simulation itself. A single
+        // cell can still run past this (the queue always loads at least one per frame).
+        constexpr std::chrono::milliseconds budget(20);
+        auto navigatorUpdateGuard = mNavigator.makeUpdateGuard();
+        const std::size_t loaded = mSimAnchorQueue.drain(budget, [&](const auto& item) -> bool {
+            if (const auto* ext = std::get_if<std::pair<int, int>>(&item))
+            {
+                // Re-checked at load time: an anchor that has moved on since the cell was queued
+                // has already pruned it (setExteriors), and one the player's own grid loaded in
+                // the meantime is in mActiveCells.
+                const ESM::ExteriorCellLocation loc(ext->first, ext->second, mSimAnchorWorldspace);
+                if (isCellInCollection(loc, mActiveCells))
+                    return false;
+                // respawn=true: same reason as the interior load in setSimAnchors.
+                loadCell(mWorld.getWorldModel().getExterior(loc), nullptr, true, mLastPlayerPos,
+                    navigatorUpdateGuard.get());
+                return true;
+            }
+            const ESM::RefId& id = std::get<ESM::RefId>(item);
+            // GUARDED: these names originate in a client-reported cellKey and arrive over the
+            // network. WorldModel::getCell THROWS on an id no content file defines -- one renamed
+            // or mistyped cell must not kill the sim peer. Skip the bad name and keep going.
+            CellStore* cell = nullptr;
+            try
+            {
+                cell = &mWorld.getWorldModel().getCell(id);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "Sim anchor names no such cell, ignoring: " << id << " (" << e.what() << ")";
+                return false;
+            }
+            if (std::find(mActiveCells.begin(), mActiveCells.end(), cell) != mActiveCells.end())
+                return false;
+            // respawn=true: this is the ONLY load path the sim peer takes for a room it does not
+            // stand in, and with false nothing in a multiplayer world ever ran CellStore::respawn
+            // (backlog 149).
+            loadCell(*cell, nullptr, true, osg::Vec3f(0.f, 0.f, 0.f), navigatorUpdateGuard.get());
+            return true;
+        });
+        if (loaded > 0)
+            mNavigator.update(mLastPlayerPos, navigatorUpdateGuard.get());
+        navigatorUpdateGuard.reset();
+        if (loaded > 0)
+            Log(Debug::Verbose) << "Sim anchors: loaded " << loaded << " cell(s), " << mSimAnchorQueue.size()
+                                << " still queued";
     }
 
     void Scene::unloadCell(CellStore* cell, const DetourNavigator::UpdateGuard* navigatorUpdateGuard)
@@ -676,37 +730,11 @@ namespace MWWorld
             }
             mSimAnchorInteriors = interiors;
 
-            // Load interiors newly anchored. Loading one does NOT make it current: the local
-            // player stays where they are, and this process simply also ticks that room. That
-            // is the whole point — a peer can hold a hundred rooms it is not standing in.
-            for (const ESM::RefId& id : mSimAnchorInteriors)
-            {
-                // GUARDED: these names originate in a client-reported cellKey and arrive over
-                // the network. WorldModel::getCell THROWS on an id no content file defines, and
-                // this runs inside the SimAnchors event handler — one renamed or mistyped cell
-                // would kill the sim peer, which then crash-loops through its restart backoff
-                // and nobody's cell gets simulated at all. Skip the bad name and keep going.
-                CellStore* cell = nullptr;
-                try
-                {
-                    cell = &mWorld.getWorldModel().getCell(id);
-                }
-                catch (const std::exception& e)
-                {
-                    Log(Debug::Warning) << "Sim anchor names no such cell, ignoring: " << id
-                                        << " (" << e.what() << ")";
-                    continue;
-                }
-                if (std::find(mActiveCells.begin(), mActiveCells.end(), cell) != mActiveCells.end())
-                    continue;
-                // respawn=true: this is the ONLY load path the sim peer takes for a room it does
-                // not stand in, and with false nothing in a multiplayer world ever ran
-                // CellStore::respawn -- no corpse cleared, no levelled list re-rolled, no
-                // container restocked, for the life of the world (backlog 149). The server
-                // forgets a death after fCorpseRespawnDelay, so the re-stood actor is not
-                // re-killed by the cell state that follows.
-                loadCell(*cell, nullptr, true, osg::Vec3f(0.f, 0.f, 0.f), nullptr);
-            }
+            // Load interiors newly anchored -- QUEUED (OT3-123), loaded a few per frame by
+            // loadSimAnchorQueue. Loading one does NOT make it current: the local player stays
+            // where they are, and this process simply also ticks that room. That is the whole
+            // point -- a peer can hold a hundred rooms it is not standing in.
+            mSimAnchorQueue.setInteriors(mSimAnchorInteriors);
         }
 
         // Re-run the grid so newly anchored regions load and dropped ones unload. Cheap when
@@ -843,9 +871,23 @@ namespace MWWorld
         };
         iterateOverCellsAround(playerCellX, playerCellY, mHalfGridSize, wantCell);
         // Each anchor gets the same grid the player does: this is the whole point — one engine
-        // holding several populated regions instead of one process per region.
+        // holding several populated regions instead of one process per region. Those cells are
+        // QUEUED, not loaded here (OT3-123): loading every anchor's 3x3 in this one call took a
+        // cold peer ~17 s and stalled the sim for every player. Nearest the player first.
+        std::vector<std::pair<int, int>> anchorCells;
         for (const osg::Vec2i& a : mSimAnchors)
-            iterateOverCellsAround(a.x(), a.y(), mHalfGridSize, wantCell);
+            iterateOverCellsAround(a.x(), a.y(), mHalfGridSize, [&](int x, int y) {
+                const std::pair<int, int> c(x, y);
+                if (std::abs(x - playerCellX) <= mHalfGridSize && std::abs(y - playerCellY) <= mHalfGridSize)
+                    return; // the player's own grid, loaded synchronously above
+                if (std::find(anchorCells.begin(), anchorCells.end(), c) == anchorCells.end())
+                    anchorCells.push_back(c);
+            });
+        sortCellsToLoad(playerCellX, playerCellY, anchorCells);
+        if (mSimAnchorWorldspace != playerCellIndex.mWorldspace)
+            mSimAnchorQueue.setExteriors({});
+        mSimAnchorWorldspace = playerCellIndex.mWorldspace;
+        mSimAnchorQueue.setExteriors(anchorCells);
 
         Loading::Listener* loadingListener = MWBase::Environment::get().getWindowManager()->getLoadingScreen();
         Loading::ScopedLoad load(loadingListener);
