@@ -3,9 +3,9 @@
 # replace, tables merge key-by-key).
 
 # Built-in plugins to load, in order. Available: "motd", "respawn", "death-penalty",
-# "pvp", "sharing", "cell-reset", "admin", "bounty-board".
+# "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals".
 # (Top-level key: in an override file it must appear before any [table] header.)
-plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin", "bounty-board"]
+plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals"]
 
 [server]
 name = "OpenMW-Web server"        # shown in SessionHelloOk and /status
@@ -335,6 +335,15 @@ intervalSec = 259200              # 3 days; only applies to the cells listed abo
 enabled = false
 requireMembership = true          # only guild members see, progress and are paid for its contract
 goldPerContract = 150             # paid to each eligible party member on completion
+
+[festivals]
+# OT3-201: festivals on the world's own calendar (the `festivals` plugin): the New Life
+# Festival (1 Morning Star), Heart's Day (16 Sun's Dawn) and the Witches Festival (30 Second
+# Seed). Announced in chat when the date turns; every character in the world that day gets a
+# small gift once per festival per game year. Off by default: the gifts are free items.
+enabled = false
+giftGold = 0                      # gold added to each festival gift
+dates = []                        # move a festival: "witches=5/30" (id=month/day, month 1-12)
 # DEV/TEST ONLY. Fake players that auto-accept friend requests and party invites, so the
 # social flows can be exercised (and recorded) without a second human. They take real roster
 # slots and write real friend/party rows, so a server strangers can reach must leave this at

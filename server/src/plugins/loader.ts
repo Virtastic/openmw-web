@@ -14,12 +14,13 @@ import { sharing } from './builtin/sharing';
 import { cellReset } from './builtin/cell-reset';
 import { admin } from './builtin/admin';
 import { bountyBoard } from './builtin/bounty-board';
+import { festivals } from './builtin/festivals';
 import { log } from '../log';
 
 /** OT3-199: how often onTick fires. */
 export const TICK_MS = 10_000;
 
-const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset, admin, 'bounty-board': bountyBoard };
+const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset, admin, 'bounty-board': bountyBoard, festivals };
 
 export class HookBus {
   private plugins: Plugin[] = [];

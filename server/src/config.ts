@@ -164,6 +164,8 @@ export interface Config {
   };
   // OT3-199: daily guild contracts (bounty-board plugin). Off by default: it pays gold.
   bounties: { enabled: boolean; requireMembership: boolean; goldPerContract: number };
+  // OT3-201: calendar festivals (festivals plugin). dates: "id=month/day" overrides, month 1-based.
+  festivals: { enabled: boolean; giftGold: number; dates: string[] };
   // M8 ops.
   // dashboardToken: bearer for the web admin dashboard (/admin). Empty = the whole
   // dashboard is off, which is the right default for a self-hoster who only wants the
@@ -634,6 +636,11 @@ function validate(t: Tree): Config {
       enabled: optBool(t, 'bounties', 'enabled', false),
       requireMembership: optBool(t, 'bounties', 'requireMembership', true),
       goldPerContract: Math.max(0, optNum(t, 'bounties', 'goldPerContract', 150)),
+    },
+    festivals: {
+      enabled: optBool(t, 'festivals', 'enabled', false),
+      giftGold: Math.max(0, optNum(t, 'festivals', 'giftGold', 0)),
+      dates: optStrArray(t, 'festivals', 'dates', []),
     },
     dev: {
       // Env wins so a one-off `OMW_DEV_BOTS=3` run needs no config edit and leaves no file
