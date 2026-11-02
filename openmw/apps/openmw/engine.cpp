@@ -40,6 +40,7 @@
 
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
+#include <components/resource/niffilemanager.hpp>
 #include <components/resource/stats.hpp>
 
 #include <components/compiler/extensions0.hpp>
@@ -954,6 +955,8 @@ void OMW::Engine::prepareEngine()
     mResourceSystem->getSceneManager()->setFilterSettings(Settings::general().mTextureMagFilter,
         Settings::general().mTextureMinFilter, Settings::general().mTextureMipmap,
         static_cast<float>(Settings::general().mAnisotropy));
+    // OT3-210: before anything parses a NIF, so rendering and collision see the same tree.
+    Resource::NifFileManager::setMeshCleanup(Settings::models().mMeshCleanup);
     mEnvironment.setResourceSystem(*mResourceSystem);
 
     mWorkQueue = new SceneUtil::WorkQueue(Settings::cells().mPreloadNumThreads);

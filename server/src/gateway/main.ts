@@ -207,6 +207,7 @@ const directory = await startDirectory({
     gameDataDir: gameDataDir(sharedDir),
     modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
     allowStockSwap: () => config.content.allowStockSwap,
+    meshCleanup: () => config.engine.meshCleanup,
     mayServe: frontDoor.mwdataGate,
   }),
   // The player app (./play mounted at /client), served here so Caddy is optional (#203).

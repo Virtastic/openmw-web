@@ -152,6 +152,8 @@ export interface Config {
     enforce: 'warn' | 'refuse' | 'off';
     /** 12-hex engine build the operator serves. Empty = adopt the first client's. */
     pin: string;
+    /** OT3-210: [Models] mesh cleanup for the peer AND every browser (mwdata-mods.json). */
+    meshCleanup: boolean;
   };
   // M7 world state.
   time: { scale: number };
@@ -618,6 +620,7 @@ function validate(t: Tree): Config {
       // treating that as "the operator cleared the pin" would quietly turn a stated build back
       // into first-arrival-wins on the next deploy.
       pin: (process.env.OMW_ENGINE_PIN ?? '').trim() || optStr(t, 'engine', 'pin', ''),
+      meshCleanup: optBool(t, 'engine', 'meshCleanup', true),
     },
     time: { scale: reqNum(t, 'time', 'scale') },
 

@@ -12,6 +12,17 @@ Models Settings
    Do not enable unless you understand the risks.
 
 .. omw-setting::
+   :title: mesh cleanup
+   :type: boolean
+   :range: true, false
+   :default: true
+
+   Cleans meshes as they load: drops degenerate triangles, empty shapes, unnamed empty nodes and
+   properties that repeat one already in effect from an ancestor. The result looks the same and
+   collides the same; it only saves draw work. Rendering and collision both read the cleaned mesh,
+   so every process sharing a multiplayer world must use the same value (the server sets it).
+
+.. omw-setting::
    :title: xbaseanim
    :type: string
    :default: meshes/xbase_anim.nif

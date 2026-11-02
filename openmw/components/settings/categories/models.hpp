@@ -11,6 +11,7 @@ namespace Settings
         using WithIndex::WithIndex;
 
         SettingValue<bool> mLoadUnsupportedNifFiles{ mIndex, "Models", "load unsupported nif files" };
+        SettingValue<bool> mMeshCleanup{ mIndex, "Models", "mesh cleanup" };
         SettingValue<VFS::Path::Normalized> mXbaseanim{ mIndex, "Models", "xbaseanim" };
         SettingValue<VFS::Path::Normalized> mBaseanim{ mIndex, "Models", "baseanim" };
         SettingValue<VFS::Path::Normalized> mXbaseanim1st{ mIndex, "Models", "xbaseanim1st" };

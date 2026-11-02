@@ -20,6 +20,7 @@
 #include <components/resource/niffilemanager.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/settings/settings.hpp>
+#include <components/settings/values.hpp>
 #include <components/toutf8/toutf8.hpp>
 #include <components/version/version.hpp>
 #include <components/vfs/manager.hpp>
@@ -173,6 +174,8 @@ namespace
 
         constexpr double expiryDelay = 0;
         Resource::ImageManager imageManager(&vfs, expiryDelay);
+        // OT3-210: same collision as the engine that will use the result.
+        Resource::NifFileManager::setMeshCleanup(Settings::models().mMeshCleanup);
         Resource::NifFileManager nifFileManager(&vfs, &encoder.getStatelessEncoder());
         Resource::BgsmFileManager bgsmFileManager(&vfs, expiryDelay);
         Resource::SceneManager sceneManager(&vfs, &imageManager, &nifFileManager, &bgsmFileManager, expiryDelay);

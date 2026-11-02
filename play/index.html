@@ -2298,6 +2298,12 @@ window.omw = (function(){
          // /userdata/config/openmw/settings.cfg (IDBFS) on top — so Options-menu changes,
          // including a chosen resolution, override these and survive reloads. NEVER write
          // the baseline to the user path (it would clobber the player's saved options).
+         // Engine switches from the URL (OT3-210 ?meshcleanup=). A server's own value replaces
+         // these once mwdata-mods.json is read (window.__mwEngineOpts, below).
+         StreamFS.engineOpts(location.search).forEach(function(o){
+           settingsCfg = StreamFS.applySetting(settingsCfg, o[0], o[1], o[2]);
+           append('[cfg] ' + o[0] + ' ' + o[1] + ' = ' + o[2] + ' (url)');
+         });
          FS.writeFile('/settings.cfg', settingsCfg);
          append('[cfg] render resolution ' + rW + 'x' + rH);
        } catch(e){ append('[settings err] '+e,'err'); }
@@ -2506,6 +2512,9 @@ window.omw = (function(){
            doc = await r.json();
          } catch (e) { return out; }
          if (!doc || doc.v !== 2) return out;
+         // OT3-210: the world's engine options (mesh cleanup). Read before the no-mods return;
+         // applied to /settings.cfg with the load order, before the engine starts.
+         window.__mwEngineOpts = (doc.engine && typeof doc.engine === 'object') ? doc.engine : null;
          // Read before the no-mods return: a switched-off expansion is an answer on its own.
          window.__mwDisabled = Array.isArray(doc.disabled) ? doc.disabled : [];
          if (window.__mwDisabled.length) append('[data] disabled by the server: ' + window.__mwDisabled.join(', '));
@@ -3339,6 +3348,16 @@ window.omw = (function(){
                           'fallback=Movies_Morrowind_Logo,mw_logo.bik',
                           'fallback=Movies_New_Game,mw_intro.bik');
                FS.writeFile('/openmw.cfg', cfg.join('\n'));
+               // OT3-210: THE SERVER'S MESH CLEANUP WINS. The peer loads meshes with the world's
+               // [engine] meshCleanup, so every browser does too, whatever ?meshcleanup= said.
+               var eo = window.__mwEngineOpts;
+               if (eo && typeof eo.meshCleanup === 'boolean') {
+                 try {
+                   FS.writeFile('/settings.cfg', StreamFS.applySetting(FS.readFile('/settings.cfg', {encoding:'utf8'}),
+                     'Models', 'mesh cleanup', eo.meshCleanup ? 'true' : 'false'));
+                   append('[cfg] Models mesh cleanup = ' + eo.meshCleanup + ' (server)');
+                 } catch(e){ append('[cfg] mesh cleanup not applied: '+e, 'err'); }
+               }
                append('[mw] READY -> Morrowind GOTY (base+Tribunal+Bloodmoon, audio+voice+video)');
                // THE CONTENT FILES BEFORE THE ENGINE, WHERE IT CAN BE SHOWN. The engine reads every
                // byte of Morrowind.esm, Tribunal.esm, Bloodmoon.esm and any plugin inside its one

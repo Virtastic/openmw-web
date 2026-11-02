@@ -72,6 +72,9 @@ interface MwDataDeps {
   modDoc?(): ModDoc;
   /** `[content] allowStockSwap`. Read per request. Absent = off. */
   allowStockSwap?(): boolean;
+  /** OT3-210 `[engine] meshCleanup`, sent to the page as `engine.meshCleanup`. Absent = not sent
+   *  (the page keeps the engine default, which is the server default too). */
+  meshCleanup?(): boolean;
   /** May THIS request have the files (a signed-in account that proved it owns the game)?
    *  Absent = never, so the routes fail closed. */
   mayServe?(req: IncomingMessage): boolean | Promise<boolean>;
@@ -142,6 +145,16 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
       // BAD_CONTENT. The base-game order rides here because it is the one file the page
       // already asks for; it is served even with no mods installed when something is off.
       const disabled = (doc?.entries ?? []).filter((e) => !e.enabled).map((e) => e.file);
+      // OT3-210: the world's engine options ride here too, for the same reason `disabled` does.
+      // A non-default value is an answer on its own, so it is served even with no mods.
+      const meshCleanup = deps.meshCleanup?.();
+      const engine = meshCleanup === undefined ? undefined : { meshCleanup };
+      if (meshCleanup === false && (!doc || (doc.mods.length === 0 && disabled.length === 0))) {
+        const body = JSON.stringify({ v: 2, mods: [], content: [], groundcover: [], archives: [], disabled, swaps: [], engine });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': noCache });
+        res.end(req.method === 'HEAD' ? undefined : body);
+        return true;
+      }
       if (!doc || (doc.mods.length === 0 && disabled.length === 0)) { res.writeHead(404); res.end('not found'); return true; }
 
       // Keyed on the mods directory's mtime AND the enabled set, because switching a mod off
@@ -149,7 +162,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
       let modsAt = '';
       try { modsAt = String((await stat(join(deps.gameDataDir, MODS_SUBDIR))).mtimeMs); } catch { /* none */ }
       const allowSwap = deps.allowStockSwap?.() === true;
-      const key = `${allowSwap ? 1 : 0}|${modsAt}|${disabled.join(',')}|${doc.mods.map((m) => (m.replaces ?? []).join('+')).join(',')}|${doc.mods.map((m) => `${m.slug}:${m.enabled ? 1 : 0}`
+      const key = `${allowSwap ? 1 : 0}|${meshCleanup === undefined ? '-' : meshCleanup ? 1 : 0}|${modsAt}|${disabled.join(',')}|${doc.mods.map((m) => (m.replaces ?? []).join('+')).join(',')}|${doc.mods.map((m) => `${m.slug}:${m.enabled ? 1 : 0}`
         + `:${m.plugins.filter((p) => p.enabled).map((p) => p.file).join(',')}`).join('|')}`;
       if (modCache && modCache.at === key) {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': noCache });
@@ -184,7 +197,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
         });
       }
       const body = JSON.stringify({ v: 2, mods, content: stack.content, groundcover: stack.groundcover, archives: stack.archives, disabled,
-        swaps: stack.swaps });
+        swaps: stack.swaps, ...(engine ? { engine } : {}) });
       modCache = { at: key, body };
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': noCache });
       res.end(req.method === 'HEAD' ? undefined : body);

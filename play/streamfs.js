@@ -855,6 +855,37 @@
       return { re: new RegExp(src, 'i'), first };
     },
 
+    // ENGINE OPTIONS FROM THE URL (OT3-210 and on). Pure: returns [section, key, value] triples
+    // for the baseline settings.cfg; an absent or unrecognised parameter adds nothing, so the
+    // engine default stands.
+    //   ?meshcleanup=0|1  [Models] mesh cleanup (solo only: in MP the server's value replaces it)
+    engineOpts(search) {
+      const out = [];
+      const q = String(search || '');
+      const m = /[?&]meshcleanup=([01])\b/.exec(q);
+      if (m) out.push(['Models', 'mesh cleanup', m[1] === '1' ? 'true' : 'false']);
+      return out;
+    },
+
+    // Set one key in settings.cfg text: replace it inside its [section], or add it (and the
+    // section) if missing. OpenMW refuses a duplicate key in one file, so a later override has to
+    // replace rather than append. Pure.
+    applySetting(cfg, section, key, value) {
+      const lines = String(cfg || '').split('\n');
+      const norm = (k) => k.trim().toLowerCase();
+      let inSec = false, secAt = -1;
+      for (let i = 0; i < lines.length; i++) {
+        const h = /^\s*\[([^\]]+)\]\s*$/.exec(lines[i]);
+        if (h) { inSec = norm(h[1]) === norm(section); if (inSec && secAt < 0) secAt = i; continue; }
+        const kv = /^\s*([^=#]+?)\s*=/.exec(lines[i]);
+        if (inSec && kv && norm(kv[1]) === norm(key)) { lines[i] = key + ' = ' + value; return lines.join('\n'); }
+      }
+      if (secAt >= 0) { lines.splice(secAt + 1, 0, key + ' = ' + value); return lines.join('\n'); }
+      let text = lines.join('\n');
+      if (text && !text.endsWith('\n')) text += '\n';
+      return text + '[' + section + ']\n' + key + ' = ' + value + '\n';
+    },
+
     // Fill the persistent chunk cache from every mounted file whose path matches `re`, in the
     // background (see warm() in the worker). Persistable (hosted, same-origin) files only; the
     // order of `first` decides which archive warms first. Skipped on a Save-Data connection.

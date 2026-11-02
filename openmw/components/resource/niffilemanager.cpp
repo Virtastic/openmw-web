@@ -4,6 +4,8 @@
 
 #include <osg/Object>
 
+#include <components/debug/debuglog.hpp>
+#include <components/nif/cleanup.hpp>
 #include <components/vfs/manager.hpp>
 
 #include "objectcache.hpp"
@@ -31,6 +33,8 @@ namespace Resource
         Nif::NIFFilePtr mNifFile;
     };
 
+    std::atomic_bool NifFileManager::sMeshCleanup{ false };
+
     NifFileManager::NifFileManager(const VFS::Manager* vfs, const ToUTF8::StatelessUtf8Encoder* encoder)
         // NIF files aren't needed any more once the converted objects are cached in SceneManager / BulletShapeManager,
         // so no point in using an expiry delay.
@@ -52,6 +56,15 @@ namespace Resource
         OPENMW_NIF_STAT_BEGIN(nifStatBegin);
         reader.parse(mVFS->get(name));
         OPENMW_NIF_STAT_END(Resource::NifStage::Parse, nifStatBegin);
+        if (sMeshCleanup)
+        {
+            const Nif::CleanupStats stats = Nif::cleanupFile(*file);
+            if (stats.total() != 0)
+                Log(Debug::Verbose) << "Mesh cleanup " << name.value() << ": " << stats.mDegenerateTriangles
+                                    << " degenerate triangles, " << stats.mEmptyShapes << " empty shapes, "
+                                    << stats.mEmptyNodes << " empty nodes, " << stats.mRedundantProperties
+                                    << " redundant properties";
+        }
         obj = new NifFileHolder(file);
         mCache->addEntryToObjectCache(name.value(), obj);
         return file;

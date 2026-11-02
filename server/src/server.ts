@@ -1159,6 +1159,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // should reach the next player to load the page, not the next restart.
       modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
       allowStockSwap: () => config.content.allowStockSwap,
+      meshCleanup: () => config.engine.meshCleanup,
       mayServe: esmOwnerGate(locker, lockerSessions),
     }),
     lockerRoutes({
@@ -1325,7 +1326,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         resolveMods(presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
           { allowStockSwap: config.content.allowStockSwap })));
     // Pace the peer. Headless means nothing else will.
-    writeFileSync(join(cfgDir, 'settings.cfg'), buildPeerSettings());
+    writeFileSync(join(cfgDir, 'settings.cfg'), buildPeerSettings({ meshCleanup: config.engine.meshCleanup }));
     config.simPeer.configDir = cfgDir;
     config.simPeer.userDataDir = udDir;
     log('info', 'simpeer.cfg_written', { configDir: cfgDir, resources });

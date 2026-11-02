@@ -24,9 +24,10 @@ function fixture(): string {
 
 /** Boot the route on a real server, the way the rest of the suite does. */
 async function serve(
-  dir: string, model: string, modDoc?: () => import('../src/core/mods').ModDoc,
+  dir: string, model: string, modDoc?: () => import('../src/core/mods').ModDoc, meshCleanup?: () => boolean,
 ): Promise<{ base: string; stop(): Promise<void> }> {
-  const route = mwDataRoutes({ gameDataDir: dir, mayServe: () => model === 'serve', ...(modDoc ? { modDoc } : {}) });
+  const route = mwDataRoutes({ gameDataDir: dir, mayServe: () => model === 'serve', ...(modDoc ? { modDoc } : {}),
+    ...(meshCleanup ? { meshCleanup } : {}) });
   const srv: Server = createServer((req, res) => {
     void (async () => {
       if (!(await route(req, res, new URL(req.url ?? '/', 'http://x')))) { res.writeHead(404); res.end(); }
@@ -187,6 +188,42 @@ test('mwdata-mods.json names the disabled official masters, even with no mods in
   // Nothing off and nothing installed: still the 404 older pages expect.
   const s2 = await serve(dir, 'serve', () => ({ version: 2 as const, entries: [{ file: 'Morrowind.esm', enabled: true }], mods: [] }));
   try { assert.equal((await fetch(`${s2.base}/mwdata-mods.json`)).status, 404); } finally { await s2.stop(); }
+});
+
+// OT3-210: the world's [engine] meshCleanup reaches the page, so browsers load meshes the way the
+// peer does. Off is an answer on its own (served with no mods); on is the default and keeps the
+// 404 older pages expect when there is nothing else to say.
+test('OT3-210: mwdata-mods.json carries engine.meshCleanup from the server', async () => {
+  const dir = fixture();
+  const none = () => ({ version: 2 as const, entries: [{ file: 'Morrowind.esm', enabled: true }], mods: [] });
+  const off = await serve(dir, 'serve', none, () => false);
+  try {
+    const r = await fetch(`${off.base}/mwdata-mods.json`);
+    assert.equal(r.status, 200);
+    const body = await r.json() as { v: number; mods: unknown[]; engine: { meshCleanup: boolean } };
+    assert.equal(body.v, 2);
+    assert.deepEqual(body.mods, []);
+    assert.deepEqual(body.engine, { meshCleanup: false });
+  } finally { await off.stop(); }
+  const on = await serve(dir, 'serve', none, () => true);
+  try { assert.equal((await fetch(`${on.base}/mwdata-mods.json`)).status, 404); } finally { await on.stop(); }
+
+  mkdirSync(join(dir, 'mods', 'a-mod'), { recursive: true });
+  writeFileSync(join(dir, 'mods', 'a-mod', 'A.esp'), 'plugin');
+  const withMod = () => ({ version: 2 as const, entries: [], mods: [{
+    slug: 'a-mod', name: 'A', archive: '', source: '', installedAt: '', enabled: true,
+    plugins: [{ file: 'A.esp', enabled: true }], archives: [], files: 1, bytes: 6 }] });
+  let flag = true;
+  const live = await serve(dir, 'serve', withMod, () => flag);
+  try {
+    assert.deepEqual((await (await fetch(`${live.base}/mwdata-mods.json`)).json() as { engine: unknown }).engine, { meshCleanup: true });
+    flag = false; // read per request, and part of the cache key
+    assert.deepEqual((await (await fetch(`${live.base}/mwdata-mods.json`)).json() as { engine: unknown }).engine, { meshCleanup: false });
+  } finally { await live.stop(); }
+  // Nothing wired: no engine field, exactly as before.
+  const bare = await serve(dir, 'serve', withMod);
+  try { assert.equal((await (await fetch(`${bare.base}/mwdata-mods.json`)).json() as { engine?: unknown }).engine, undefined); }
+  finally { await bare.stop(); }
 });
 
 // Backlog 178: re-installing a mod keeps the slug URL and changes the bytes. Under "immutable"

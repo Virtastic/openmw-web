@@ -68,6 +68,12 @@ enforce = "warn"
 # engine yourself — then the canonical build is something you STATED, and it survives the
 # server emptying.
 pin = ""
+# OT3-210: the engine's load-time mesh cleanup ([Models] mesh cleanup). The sim peer is started
+# with this value and every browser is told it in mwdata-mods.json, so the whole world loads
+# meshes the same way: the server's value wins over a player's ?meshcleanup=. The pass never
+# changes what collides (it only drops geometry nothing can touch), so a client that could not
+# read the value still agrees with the peer on collision.
+meshCleanup = true
 
 [rules]
 # Where the respawn plugin sends the dead (M2). Empty = where you fell (health restored in

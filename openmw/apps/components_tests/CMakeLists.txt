@@ -94,6 +94,7 @@ file(GLOB UNITTEST_SRC_FILES
     bsa/testcompressedbsafile.cpp
 
     nif/node.hpp
+    nif/testcleanup.cpp
     nif/testphysics.cpp
 )
 

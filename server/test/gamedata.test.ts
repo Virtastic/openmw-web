@@ -261,6 +261,13 @@ test('the peer settings keep physics on the main thread, so a stamped pose inclu
   assert.match(buildPeerSettings(), /^\[Physics\]\nasync num threads = 0$/m);
 });
 
+// OT3-210: the peer loads meshes with the world's cleanup switch.
+test('the peer settings carry [engine] meshCleanup', () => {
+  assert.match(buildPeerSettings(), /^\[Models\]\nmesh cleanup = true$/m);
+  assert.match(buildPeerSettings({ meshCleanup: false }), /^mesh cleanup = false$/m);
+  assert.match(buildPeerSettings({ meshCleanup: true }), /^mesh cleanup = true$/m);
+});
+
 // Backlog 299: a mod's plugins are hashed from gamedata/mods/<slug>/, keyed lowercase.
 test('hashContentFiles covers installed mod plugins too', () => {
   const d = dirWith(RETAIL);

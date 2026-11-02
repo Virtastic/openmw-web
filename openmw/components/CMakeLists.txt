@@ -147,7 +147,7 @@ add_component_dir (sceneutil
     )
 
 add_component_dir (nif
-    base controller data effect extra niffile nifkey nifstream niftypes node parent particle physics property record recordptr texture
+    base cleanup controller data effect extra niffile nifkey nifstream niftypes node parent particle physics property record recordptr texture
     )
 
 add_component_dir (nifosg

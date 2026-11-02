@@ -230,6 +230,8 @@ namespace NavMeshTool
             constexpr double expiryDelay = 0;
 
             Resource::ImageManager imageManager(&vfs, expiryDelay);
+            // OT3-210: same collision as the engine that will use the result.
+            Resource::NifFileManager::setMeshCleanup(Settings::models().mMeshCleanup);
             Resource::NifFileManager nifFileManager(&vfs, &encoder.getStatelessEncoder());
             Resource::BgsmFileManager bgsmFileManager(&vfs, expiryDelay);
             Resource::SceneManager sceneManager(&vfs, &imageManager, &nifFileManager, &bgsmFileManager, expiryDelay);
