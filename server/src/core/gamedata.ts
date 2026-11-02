@@ -291,9 +291,10 @@ export function buildPeerSettings(opts: { meshCleanup?: boolean } = {}): string 
     '[Physics]',
     'async num threads = 0',
     // OT3-210: the same load-time mesh cleanup the browsers run (they read the value from
-    // mwdata-mods.json).
+    // mwdata-mods.json). The texture atlas (OT3-211) is visual only, so the peer skips its cost.
     '[Models]',
     `mesh cleanup = ${opts.meshCleanup === false ? 'false' : 'true'}`,
+    'texture atlas = false',
     '',
   ].join('\n');
 }

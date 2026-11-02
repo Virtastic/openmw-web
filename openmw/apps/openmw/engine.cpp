@@ -957,6 +957,9 @@ void OMW::Engine::prepareEngine()
         static_cast<float>(Settings::general().mAnisotropy));
     // OT3-210: before anything parses a NIF, so rendering and collision see the same tree.
     Resource::NifFileManager::setMeshCleanup(Settings::models().mMeshCleanup);
+    // OT3-211: shares the cleanup switch (it runs after it); visual only.
+    mResourceSystem->getSceneManager()->setTextureAtlas(
+        Settings::models().mMeshCleanup && Settings::models().mTextureAtlas);
     mEnvironment.setResourceSystem(*mResourceSystem);
 
     mWorkQueue = new SceneUtil::WorkQueue(Settings::cells().mPreloadNumThreads);

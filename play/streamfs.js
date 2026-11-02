@@ -859,11 +859,14 @@
     // for the baseline settings.cfg; an absent or unrecognised parameter adds nothing, so the
     // engine default stands.
     //   ?meshcleanup=0|1  [Models] mesh cleanup (solo only: in MP the server's value replaces it)
+    //   ?atlas=0|1        [Models] texture atlas (OT3-211; visual only, needs mesh cleanup on)
     engineOpts(search) {
       const out = [];
       const q = String(search || '');
       const m = /[?&]meshcleanup=([01])\b/.exec(q);
       if (m) out.push(['Models', 'mesh cleanup', m[1] === '1' ? 'true' : 'false']);
+      const a = /[?&]atlas=([01])\b/.exec(q);
+      if (a) out.push(['Models', 'texture atlas', a[1] === '1' ? 'true' : 'false']);
       return out;
     },
 

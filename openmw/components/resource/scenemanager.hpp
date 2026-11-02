@@ -193,6 +193,10 @@ namespace Resource
         /// @param mask The node mask to apply to loaded particle system nodes.
         void setParticleSystemMask(unsigned int mask);
 
+        /// OT3-211: pack sibling shapes' base textures into per-mesh S3TC atlases at load so the
+        /// optimizer can merge them (SceneUtil::atlasTextures). Set before the first load.
+        void setTextureAtlas(bool enabled) { mTextureAtlas = enabled; }
+
         /// @warning It is unsafe to call this method while the draw thread is using textures! call
         /// Viewer::stopThreading first.
         void setFilterSettings(
@@ -248,6 +252,7 @@ namespace Resource
         float mMaxAnisotropy;
 
         unsigned int mParticleSystemMask;
+        bool mTextureAtlas = false;
         bool mSupportsClusteredLighting = false;
         bool mAutoUseNormalMaps = false;
         bool mAutoUseSpecularMaps = false;

@@ -44,6 +44,7 @@
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/lightmanager.hpp>
 #include <components/sceneutil/optimizer.hpp>
+#include <components/sceneutil/textureatlas.hpp>
 #include <components/sceneutil/riggeometryosgaextension.hpp>
 #include <components/sceneutil/util.hpp>
 #include <components/sceneutil/visitor.hpp>
@@ -975,6 +976,16 @@ namespace Resource
                 loaded = cloneErrorMarker();
                 if (mVFS->exists(path))
                     noteTransientLoadFailure();
+            }
+
+            // OT3-211: before filtering, shaders and the optimizer, so the atlas texture is filtered
+            // like any other and the now-identical state sets get shared and merged. Only where the
+            // optimizer runs: without MERGE_GEOMETRY the atlas would cost memory and save nothing.
+            if (mTextureAtlas && canOptimize(path.value()))
+            {
+                const unsigned atlased = SceneUtil::atlasTextures(*loaded);
+                if (atlased != 0)
+                    Log(Debug::Verbose) << "Texture atlas " << path << ": " << atlased << " shapes";
             }
 
             // set filtering settings

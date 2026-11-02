@@ -23,6 +23,18 @@ Models Settings
    so every process sharing a multiplayer world must use the same value (the server sets it).
 
 .. omw-setting::
+   :title: texture atlas
+   :type: boolean
+   :range: true, false
+   :default: false
+
+   Packs the base textures of sibling shapes within one mesh into a single S3TC atlas as the mesh
+   loads and remaps their texture coordinates, so the shapes can merge into fewer draw calls.
+   Compressed blocks are copied as they are, without re-encoding. Only shapes whose texture
+   coordinates stay inside the texture (no tiling) and whose state differs only in that texture
+   take part. Visual only. Has no effect unless mesh cleanup is on.
+
+.. omw-setting::
    :title: xbaseanim
    :type: string
    :default: meshes/xbase_anim.nif
