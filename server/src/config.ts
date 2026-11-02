@@ -839,6 +839,18 @@ export function assertMultiplayer(config: Config): void {
   }
 }
 
+/** OT3-54: the harness's fixed-password login is safe only where nobody else can reach it.
+ *  Returns why it is exposed (bound beyond loopback, or a public domain configured), or null
+ *  when it is off or confined to loopback. server.ts logs a warning at startup when non-null. */
+export function harnessAuthExposure(config: Config, bindHost: string): string | null {
+  if (!config.login.allowHarnessAuth) return null;
+  const loopback = /^(localhost|127(\.\d+){3}|::1|\[::1\])$/i;
+  const domain = config.setup.domain.trim();
+  if (domain !== '' && !loopback.test(domain)) return `[setup] domain is ${domain}`;
+  if (!loopback.test(bindHost)) return `listening on ${bindHost}`;
+  return null;
+}
+
 export function loadConfig(dataDir: string, override?: DeepPartial<Config>, sharedDir?: string): Config {
   let base = parse(readFileSync(DEFAULTS_URL, 'utf8')) as Tree;
   const operatorTrees: (Tree | undefined)[] = [];

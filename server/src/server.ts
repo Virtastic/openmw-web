@@ -8,7 +8,7 @@ import { VERSION } from './version';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { WebSocket } from 'ws';
-import { loadConfig, assertMultiplayer, type Config, type DeepPartial } from './config';
+import { loadConfig, assertMultiplayer, harnessAuthExposure, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
 import { ContentTable } from './core/content-table';
 import { QuestRepair } from './core/quest-repair';
@@ -2028,6 +2028,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     httpServer.once('error', reject);
     httpServer.listen(opts.port, opts.host ?? '0.0.0.0', resolve);
   });
+  // OT3-54: say loudly when the fixed-password harness login is reachable from outside.
+  const harnessExposed = harnessAuthExposure(config, opts.host ?? '0.0.0.0');
+  if (harnessExposed !== null) {
+    log('warn', 'config.harness_auth_exposed', {
+      why: harnessExposed,
+      fix: 'set [login] allowHarnessAuth = false (and unset OMW_ALLOW_HARNESS_AUTH): it is a fixed, public test password, not an auth method',
+    });
+  }
   const address = httpServer.address();
   const port = typeof address === 'object' && address !== null ? address.port : opts.port;
   const moveBroadcaster = new MoveBroadcaster(roster, undefined, interest,
