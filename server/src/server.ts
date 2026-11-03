@@ -400,6 +400,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       peer.peer.sendEvent('QuestSpawn', { recordId, count: Math.min(10, Math.max(1, Math.trunc(count))), forId: playerId });
       return true;
     },
+    journalOf: (playerId) => { // OT3-198
+      const p = roster.get(playerId);
+      return (p && playerStore.getCached(p.charId)?.journal) || {};
+    },
     claimOnce: (playerId, key) => {
       const p = roster.get(playerId);
       if (!p || p.system) return false;
@@ -466,6 +470,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   hooks = new HookBus(config.plugins, api);
   // OT3-199: kills and unlocks are facts every plugin hears; the tick drives scheduled ones.
   world.onKill = (kill) => hooks.actorKilled(kill);
+  // OT3-198: a stronghold guest sees the owner's copy of the cell and takes nothing from it.
+  world.viewAs = (p, cellKey) => {
+    if (p.system || p.bot) return undefined;
+    const v = hooks.cellView({ id: p.id, name: p.name, rank: p.rank }, cellKey);
+    const host = v ? roster.get(v.hostId) : undefined;
+    return host && !host.system ? { charId: host.charId, readOnly: v!.readOnly } : undefined;
+  };
   world.onUnlock = (p, cellKey) => hooks.lockOpened({ id: p.id, name: p.name, rank: p.rank }, cellKey);
   const pluginTick = setInterval(() => hooks.tick(Date.now()), TICK_MS);
   pluginTick.unref();

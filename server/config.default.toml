@@ -3,9 +3,9 @@
 # replace, tables merge key-by-key).
 
 # Built-in plugins to load, in order. Available: "motd", "respawn", "death-penalty",
-# "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals", "world-events".
+# "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals", "world-events", "strongholds".
 # (Top-level key: in an override file it must appear before any [table] header.)
-plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals", "world-events"]
+plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin", "bounty-board", "festivals", "world-events", "strongholds"]
 
 [server]
 name = "OpenMW-Web server"        # shown in SessionHelloOk and /status
@@ -344,6 +344,13 @@ goldPerContract = 150             # paid to each eligible party member on comple
 enabled = false
 giftGold = 0                      # gold added to each festival gift
 dates = []                        # move a festival: "witches=5/30" (id=month/day, month 1-12)
+
+[strongholds]
+# OT3-198: visiting a friend's stronghold (the `strongholds` plugin). A party member who has not
+# built Rethan Manor / Indarys Manor / Tel Uvirith themselves, inside it while its owner (a party
+# member on that stronghold quest) is online, sees the OWNER's chests and items and can take or
+# put nothing there. Everyone else keeps their own per-character copy, as before.
+guestView = true
 
 [worldEvents]
 # OT3-200: open-world events (the `world-events` plugin). Every intervalMin one starts in the

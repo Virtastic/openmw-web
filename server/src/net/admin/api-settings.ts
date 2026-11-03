@@ -19,7 +19,7 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
   // [engine] beside [content]: both are checks run against a client as it joins. It was in
   // no group at all, so it landed in a synthesised "Other" with no sidebar entry.
   { group: 'Core', sections: ['setup', 'server', 'login', 'content', 'engine'] },
-  { group: 'Gameplay', sections: ['rules', 'economy', 'sharing', 'time', 'cellReset', 'bounties', 'festivals', 'worldEvents'] },
+  { group: 'Gameplay', sections: ['rules', 'economy', 'sharing', 'time', 'cellReset', 'bounties', 'festivals', 'worldEvents', 'strongholds'] },
   { group: 'Access', sections: ['admin', 'auth', 'moderation', 'authority'] },
   { group: 'Storage', sections: ['locker'] },
   { group: 'Operations', sections: ['limits', 'metrics', 'notifications', 'integrations', 'dev'] },
@@ -206,6 +206,7 @@ const SECTION_LABEL: Record<string, string> = {
   bounties: 'Guild contracts',
   festivals: 'Festivals',
   worldEvents: 'World events',
+  strongholds: 'Strongholds',
   limits: 'Rate limits and anti-cheat',
   moderation: 'Chat logs and reports',
   admin: 'Administration',

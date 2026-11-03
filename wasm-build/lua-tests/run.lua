@@ -832,6 +832,22 @@ do
   end
 end
 
+-- OT3-198: a stronghold guest is refused with 'guest' by BOTH take paths; the generic scan above
+-- only words what it finds, so this pins that the server still sends it and the client says so.
+print('objects.lua -- a stronghold guest is told why they cannot take')
+do
+  local ts = io.open('./server/src/core/worldstate.ts'):read('*a')
+  local lua = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  check("containerOp refuses a read-only guest with 'guest'",
+    (ts:match('private async containerOp%(.-\10  }') or ''):find("reply(false, 'guest'", 1, true) ~= nil)
+  check("take refuses a read-only guest with 'guest'",
+    (ts:match('private async take%(.-\10  }') or ''):find("reply(false, 'guest'", 1, true) ~= nil)
+  for _, h in ipairs({ 'MP_ContainerOpResult', 'MP_ObjectTakeResult' }) do
+    local body = lua:match(h .. ' = function%(data%)(.-)\10end') or ''
+    check(h .. ' words the guest refusal', body:find("guest%s*=%s*'You are a guest here") ~= nil)
+  end
+end
+
 -- ============================== objects.lua / player.lua: the barter window is a long window
 -- Backlog 160/161/162. objects.lua needs types.Weapon.TYPE at load, which the stubs do not
 -- carry, so these read the source: each check names the exact expression the fix hangs on.

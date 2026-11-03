@@ -16,12 +16,13 @@ import { admin } from './builtin/admin';
 import { bountyBoard } from './builtin/bounty-board';
 import { festivals } from './builtin/festivals';
 import { worldEvents } from './builtin/world-events';
+import { strongholds } from './builtin/strongholds';
 import { log } from '../log';
 
 /** OT3-199: how often onTick fires. */
 export const TICK_MS = 10_000;
 
-const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset, admin, 'bounty-board': bountyBoard, festivals, 'world-events': worldEvents };
+const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset, admin, 'bounty-board': bountyBoard, festivals, 'world-events': worldEvents, strongholds };
 
 export class HookBus {
   private plugins: Plugin[] = [];
@@ -94,6 +95,13 @@ export class HookBus {
   }
   lockOpened(player: PluginPlayer, cellKey: string): void {
     this.all('onLockOpened', (p) => p.onLockOpened?.(this.api, player, cellKey));
+  }
+  cellView(player: PluginPlayer, cellKey: string): { hostId: number; readOnly: boolean } | undefined {
+    const r = this.run('onCellView', (p) => p.onCellView?.(this.api, player, cellKey) ?? undefined);
+    return r as { hostId: number; readOnly: boolean } | undefined;
+  }
+  playerCellChange(player: PluginPlayer, from: string | undefined, to: string): void {
+    this.all('onPlayerCellChange', (p) => p.onPlayerCellChange?.(this.api, player, from, to));
   }
   tick(nowMs: number): void {
     this.all('onTick', (p) => p.onTick?.(this.api, nowMs));

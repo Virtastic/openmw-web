@@ -491,6 +491,9 @@ export class WorldState {
   onKill?: (kill: { recordId: string; cellKey: string; killerId?: number; witnesses: number[] }) => void;
   /** OT3-199: a human unlocked a lock (lockpick, key or Open). */
   onUnlock?: (player: Player, cellKey: string) => void;
+  /** OT3-198: whose copy of this cell a human sees, and whether they may only look. Undefined
+   *  (or absent) = their own, as before. A stronghold guest sees the owner's and takes nothing. */
+  viewAs?: (player: Player, cellKey: string) => { charId: string; readOnly: boolean } | undefined;
 
   /** Backlog 298: the peer's manifest just became the world's content list (connection.ts
    *  handleHello, ContentGate.setAuthoritative). Every c:<index>:<contentFile> key in the cell
@@ -1698,6 +1701,10 @@ export class WorldState {
     // stand -- is there once PER CHARACTER. A human's take is recorded against their
     // character and answered to them alone: nobody else's copy goes, so a griefer camping
     // the spot denies no one. Spawned (net) objects and the peer's takes stay shared.
+    if (!player.system && this.viewAs?.(player, cellKey)?.readOnly) {
+      reply(false, 'guest'); // OT3-198: a stronghold guest may look, not take
+      return;
+    }
     if (ref.kind === 'ref' && !player.system) {
       // ponytail: one flat cap per cell; per-ref pruning of long-gone characters if it bites.
       const total = Object.values(doc.taken ?? {}).reduce((n, ids) => n + ids.length, 0);
@@ -1978,7 +1985,7 @@ export class WorldState {
         }
       }
     }
-    const view = containerView(cont, player.charId, player.system === true, false);
+    const view = containerView(cont, player.system ? player.charId : (this.viewAs?.(player, cellKey)?.charId ?? player.charId), player.system === true, false);
     player.peer.sendEvent('ContainerState', {
       ...objRefToJs(ref),
       items: view.items.map((i) => ({ ...i })),
@@ -2042,6 +2049,11 @@ export class WorldState {
     // cast: a cast would also silence a REAL regression here later.
     if (!itemId || n === undefined) {
       this.invalid(player, 'ContainerOpRequest');
+      return;
+    }
+    // OT3-198: a stronghold guest looks at the owner's copy and changes nothing in it.
+    if (!player.system && this.viewAs?.(player, cellKey)?.readOnly) {
+      reply(false, 'guest', cont.stateSeq);
       return;
     }
     if (op === 'put' && this.contained(player)) {
@@ -2169,7 +2181,7 @@ export class WorldState {
       // MemberVarUpdate and never read back, so a joiner's copy started from the defaults).
       // Not to a character still in creation (prod 2026-10-26): a stored dock-guard `state`
       // of -1 skipped the race menu for every new character after the first (quests.ts memberVar).
-      const body = cellStateBody(cellKey, doc, deaths, player.inChargen !== true, player.system ? undefined : player.charId,
+      const body = cellStateBody(cellKey, doc, deaths, player.inChargen !== true, player.system ? undefined : (this.viewAs?.(player, cellKey)?.charId ?? player.charId),
         player.system ? undefined : this.charMemberVars?.(player.charId, cellKey));
       if (player.system) withPeerPhases(body, this.phaseOverlays?.(cellKey));
       player.peer.sendEvent('WorldCellState', body);

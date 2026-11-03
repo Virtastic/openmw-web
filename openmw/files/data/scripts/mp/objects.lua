@@ -1050,6 +1050,7 @@ handlers.MP_ObjectTakeResult = function(data)
                 gone = 'Someone got there first.',
                 unreachable = 'You cannot reach that.',
                 cell_full = 'This place has seen too much taken; it cannot be picked up here.',
+                guest = 'You are a guest here: look, but leave what belongs to the owner where it is.',
             }
             deps.noticeFn(why[tostring(data.reason or '')] or 'You cannot take that right now.')
         end
@@ -1231,6 +1232,7 @@ handlers.MP_ContainerOpResult = function(data)
             contained = 'That cannot be moved directly.',
             bound = 'That item is bound to its owner and cannot be moved.',
             nostate = 'That container is still opening — try again.',
+            guest = 'You are a guest here: look, but leave what belongs to the owner where it is.',
         }
         deps.noticeFn(why[tostring(data.reason or '')]
             or (op.op == 'take' and 'You could not take that.' or 'That would not go in.'))

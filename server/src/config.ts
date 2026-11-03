@@ -166,6 +166,8 @@ export interface Config {
   bounties: { enabled: boolean; requireMembership: boolean; goldPerContract: number };
   // OT3-201: calendar festivals (festivals plugin). dates: "id=month/day" overrides, month 1-based.
   festivals: { enabled: boolean; giftGold: number; dates: string[] };
+  // OT3-198: a party member in the owner's stronghold sees the owner's copy and takes nothing.
+  strongholds: { guestView: boolean };
   // OT3-200: open-world events (world-events plugin).
   worldEvents: {
     enabled: boolean; intervalMin: number; durationMin: number; minPlayers: number;
@@ -647,6 +649,7 @@ function validate(t: Tree): Config {
       giftGold: Math.max(0, optNum(t, 'festivals', 'giftGold', 0)),
       dates: optStrArray(t, 'festivals', 'dates', []),
     },
+    strongholds: { guestView: optBool(t, 'strongholds', 'guestView', true) },
     worldEvents: {
       enabled: optBool(t, 'worldEvents', 'enabled', false),
       intervalMin: Math.max(1, optNum(t, 'worldEvents', 'intervalMin', 120)),

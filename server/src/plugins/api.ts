@@ -74,6 +74,8 @@ export interface PluginApi {
   /** OT3-200: have the sim peer simulating this player's cell spawn `count` of `recordId`
    *  beside them (QuestSpawn). False when no sim peer holds that cell. */
   spawnNear?(playerId: number, recordId: string, count: number): boolean;
+  /** OT3-198: this character's journal (questId -> highest index). */
+  journalOf?(playerId: number): Record<string, number>;
 }
 
 /** OT3-199: an actor died; `witnesses` are the humans credited (killer plus those who saw it). */
@@ -110,4 +112,8 @@ export interface Plugin {
   onLockOpened?(api: PluginApi, player: PluginPlayer, cellKey: string): void;
   // OT3-199: a coarse clock (TICK_MS) for anything scheduled.
   onTick?(api: PluginApi, nowMs: number): void;
+  // OT3-198: whose copy of a cell this player sees (another online player's), and whether they
+  // may only look. First answer wins; none = their own, as always.
+  onCellView?(api: PluginApi, player: PluginPlayer, cellKey: string): { hostId: number; readOnly: boolean } | void;
+  onPlayerCellChange?(api: PluginApi, player: PluginPlayer, from: string | undefined, to: string): void;
 }
