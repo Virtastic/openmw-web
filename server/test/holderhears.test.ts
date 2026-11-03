@@ -132,7 +132,9 @@ test('entering an exterior cell yields the neighbours\' records as well', async 
   const neighbour = (await friend.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '1,0', 3000)).value as { placed: { recordId: string }[] };
   assert.equal(neighbour.placed[0]?.recordId, 'gold_001', 'the neighbour\'s record carries the drop');
 
-  // An interior yields itself only.
+  // An interior yields itself only. OT3-259: the 0,0 burst is chained, '1,1' last; clearing the
+  // inbox before it had all landed let a late neighbour count as the interior's.
+  await friend.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '1,1');
   friend.inbox.events.length = 0;
   friend.sendCellChange('some tavern', 0, 0, 0);
   await friend.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === 'some tavern');

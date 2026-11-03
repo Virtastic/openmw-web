@@ -62,7 +62,9 @@ function dial(port: number, path: string): Promise<{ got: string; ms: number }> 
     sock.on('data', (b) => { got += b.toString(); done(); });
     sock.on('error', done);
     sock.on('close', done);
-    setTimeout(done, 5000).unref();
+    // OT3-259: a safety net, not the measurement. It equalled the 5 s hold, so a loaded machine
+    // (status poll + splice late) cut the dial off before the world answered.
+    setTimeout(done, 30_000).unref();
   });
 }
 
@@ -100,7 +102,8 @@ test('an unknown world is still refused at once', async () => {
   try {
     const { got, ms } = await dial(h.dir.port, '/w/priv-nobody-00000000');
     assert.match(got, /502/);
-    assert.ok(ms < 1000, `took ${ms} ms`);
+    // "At once" = well inside the 5 s hold, not a wall-clock budget a loaded machine can miss.
+    assert.ok(ms < 2500, `took ${ms} ms: an unknown world was held`);
   } finally {
     await h.cleanup();
   }

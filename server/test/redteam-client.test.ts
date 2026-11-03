@@ -379,7 +379,12 @@ test('#403 a REFUSED DialogueLock buys neither the same-cell jump nor the bounty
   const { server } = await boot(t);
   const { c: a } = await join(t, server, 'Faker');
   const { c: b } = await join(t, server, 'Watcher');
-  server.roster.get(a.playerId)!.joinedWorldAt = Date.now() - 60_000;
+  const me = server.roster.get(a.playerId)!;
+  me.joinedWorldAt = Date.now() - 60_000;
+  // OT3-259: ...and standing since then. Without this the join's own declaration at 0,0 is the
+  // "last accepted move": once more than ~165 ms pass before the hop below (a loaded machine),
+  // 3000 u fits SAME_CELL_JUMP + MAX_PLAUSIBLE_SPEED * dt, so it read as motion and was relayed.
+  me.lastDeclared = { x: 0, y: 0, z: 0, at: Date.now() - 60_000 };
   a.sendEvent('CrimeUpdate', { bounty: 40 });
   a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '9,9', want: true }); // far cell: refused
   assert.equal(((await a.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, false);
