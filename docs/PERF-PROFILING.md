@@ -16,8 +16,9 @@ time and callers before trusting a self-time name.
 
 ## First profile (2026-11-05, Balmora, 60 s walk, retail data, 4.5k samples/s, `-O3` link)
 
-Share of `OMW::Engine::frame`: render traversals 48% (draw 27, cull 12), actor mechanics 16
-(`ActiveSpells::update` 9, all self time), Lua 11, sound loading 11 (`FFmpegDecoder::open` 8.5).
+Share of `OMW::Engine::frame`: render traversals 48% (draw 27, cull 12), actor mechanics 16, Lua 11,
+sound loading 11 (`FFmpegDecoder::open` 8.5). (The first read of this profile put 9% on
+`ActiveSpells::update`; that was a false attribution, see "A false lead" below.)
 Main-thread time blocked in `fetchChunkSync` was 4.5% of the frame, ALL of it under sound loading
 (first play of a voice or effect file), on a fast local server; production telemetry shows those
 reads at 300-1300 ms.
@@ -40,6 +41,22 @@ reads at 300-1300 ms.
 ## Open leads
 
 - Pack voice lines into archives, then warm them (removes first-play freezes).
-- `ActiveSpells::update`: 9% of the frame. Needs a profiling build (`--profiling-funcs`) to see which
-  loop; touching upstream spell logic needs a rebake and the multiplayer sweep.
 - Rendering off the main thread (OffscreenCanvas), a wasm32 build for the vanilla game, an LTO retry.
+
+## A false lead: `ActiveSpells::update` (9% in the first profile, 1% in fact)
+
+The first profile showed `MWMechanics::ActiveSpells::update` at 553 ms self time, 9% of the frame.
+Building the engine with that one file at `-O0` (`#pragma clang optimize off` at the top of
+`activespells.cpp`, a ~20 min bake with a warm ccache) and profiling the same walk put it at 62 ms,
+1.0%, and its callees (`isSpellActive`, `applyPurges`, `WorldModel::getPtr`) were tiny. `wasm-opt`
+had merged identical function bodies, and the symbol map names only one function of a merged group,
+so a different hot body was reported under that name. Do not optimise `ActiveSpells`. Before acting
+on any self-time name in a symbolised profile, rebuild the suspect file with its optimisation off
+and confirm it still costs the time; a wrong edit to upstream gameplay code is the expensive outcome.
+
+## Building a local engine from HEAD
+
+`fsroot/defaults.bin` (the base64 of `settings-default.cfg`) used to go stale, so an engine baked
+after a settings change died at startup with "Trying to retrieve a non-existing setting"; the link step
+now regenerates it. A profiling bake: `flock /tmp/omw-build.lock env DOCKER_BUILDKIT=1 docker build
+--network=host --build-arg CCACHE=1 --build-arg BUILD_JOBS=6 -t morrowind:prof -f Dockerfile .`
