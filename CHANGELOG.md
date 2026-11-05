@@ -2,6 +2,13 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.24
+
+**Firefox runs smoother.** Firefox does not tell a page how much memory the computer has, so it
+was always given the middle quality setting, whose small cache of game data kept re-downloading
+what it had just dropped: in a busy town the game paused repeatedly to wait for data. Firefox on a
+computer with 8 or more cores now gets the same setting Chrome gives a computer with 8 GB or more.
+
 ## 1.7.23
 
 **Firefox can play.** Firefox 134 and later is no longer turned away on the sign-in page, the
