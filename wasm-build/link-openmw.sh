@@ -134,6 +134,14 @@ else
 fi
 cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscripts"
 
+# fsroot/defaults.bin is the engine's built-in default settings: the base64 of
+# openmw/files/settings-default.cfg, exactly what CMake's pack_resource_file writes for a native
+# build. It is preloaded from fsroot/ and NOTHING else regenerated it, so it went stale the moment
+# a setting was added (OT3-210's [Models] mesh cleanup): an engine baked from the new source then
+# died at startup with "Trying to retrieve a non-existing setting". Regenerate it on every link.
+cmake -DINPUT_FILE="$ROOT/openmw/files/settings-default.cfg" -DOUTPUT_FILE="$ROOT/fsroot/defaults.bin" \
+  -P "$ROOT/openmw/cmake/base64.cmake" || exit 1
+
 # ICU DATA. The emscripten ICU port links `libicu_stubdata` — ICU's "data supplied elsewhere"
 # placeholder — and ships the actual package under ports/icu without linking it. Nothing was
 # supplying it, so ICU had NO locale data: NumberFormat::createInstance returned null and
