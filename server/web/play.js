@@ -51,15 +51,17 @@
     if (s.serverName) { $('#name').textContent = s.serverName; document.title = s.serverName; }
   } catch { /* keep the default heading */ }
 
-  // CHROME OR EDGE ON A COMPUTER, SAID BEFORE SIGN-IN. The engine is a wasm64 build that only
-  // Chromium runs; a Firefox or Safari player used to sign in, wait for a download and only then
-  // meet "Browser not supported" on the game page. The brand is what decides it (Firefox 134+
-  // passes the memory64 probe and still cannot carry the game), the probe catches an old
+  // CHROME, EDGE OR FIREFOX ON A COMPUTER, SAID BEFORE SIGN-IN. The engine is a wasm64 build that
+  // Chromium and Firefox 134+ run; a Safari player used to sign in, wait for a download and only then
+  // meet "Browser not supported" on the game page. The brand decides it, the probe catches an old
   // Chromium, and the phone test is the launcher's (engineUnsupported). Insecure pages are
   // already explained above, and they hide the brand list, so they are not judged here.
   const unsupported = (() => {
     if (/[?&]forceUnsupported\b/.test(location.search)) return true;
-    const chromium = !!navigator.userAgentData?.brands?.some((b) => b.brand === 'Chromium');
+    // Firefox 134+ runs the engine too (measured at parity with Chromium in Seyda Neen); every other
+    // non-Chromium browser is still refused.
+    const chromium = !!navigator.userAgentData?.brands?.some((b) => b.brand === 'Chromium')
+      || (/\bFirefox\/(\d+)/.exec(navigator.userAgent)?.[1] ?? 0) >= 134;
     let mem64 = true;
     try { new WebAssembly.Memory({ initial: 1n, maximum: 2n, address: 'i64' }); } catch { mem64 = false; }
     const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
@@ -67,7 +69,7 @@
     return !chromium || !mem64 || phone;
   })();
   if (self.isSecureContext && unsupported) {
-    $('#options').innerHTML = '<div class="note err">This game runs in <b>Chrome</b> or <b>Edge</b> '
+    $('#options').innerHTML = '<div class="note err">This game runs in <b>Chrome</b>, <b>Edge</b> or <b>Firefox</b> '
       + 'on a desktop or laptop. Open this page there.</div>'
       + '<button class="btn" type="button" id="copyLink">Copy this link</button>';
     const copy = $('#copyLink');

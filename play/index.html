@@ -1168,13 +1168,14 @@ window.omw = (function(){
      'The engine needs a secure page, and browsers only treat https:// (or this computer\'s own '
      + 'localhost) as one. Ask the server\'s owner for its https:// address, or play on the '
      + 'server machine itself at http://localhost.', false);
- } else if (!(navigator.userAgentData && navigator.userAgentData.brands
-     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }))){
-   // CHROMIUM ONLY, by brand: Firefox 134+ passes both probes below and still cannot carry the
-   // game. The front door (server/web/play.js) and the launcher say this before sign-in; this
+ } else if (!((navigator.userAgentData && navigator.userAgentData.brands
+     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }))
+     || /\bFirefox\/(\d+)/.test(navigator.userAgent) && +RegExp.$1 >= 134)){
+   // CHROMIUM OR FIREFOX 134+, by brand (the engine was measured at parity with Chromium on
+   // Firefox 159, Seyda Neen, 60 fps / ~13 ms). The front door (server/web/play.js) and the launcher say this before sign-in; this
    // is for whoever arrives by a pasted link.
-   fatalOverlay('Open this in Chrome or Edge',
-     'This game runs in Chrome or Edge on a desktop or laptop. Open this page there.',
+   fatalOverlay('Open this in Chrome, Edge or Firefox',
+     'This game runs in Chrome, Edge or Firefox on a desktop or laptop. Open this page there.',
      false, { actionLabel: 'Back', actionHref: '/' });
  } else if (!self.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined'){
    // Chromium on a secure page without isolation is the server's headers, not the player.

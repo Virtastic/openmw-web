@@ -105,7 +105,7 @@ gotcha live in [`docs/BUILDING.md`](docs/BUILDING.md). Questions:
 
 Desktop Chrome or Chromium with MEMORY64 (Chrome/Edge 133+): the engine needs
 SharedArrayBuffer + threads, WebGL2 via ANGLE, `EXT_clip_control`, and the File System
-Access API. Firefox, Safari and mobile are not supported.
+Access API (Firefox 134+ also runs it, without the folder picker: own-data folders go through a file input). Safari and mobile are not supported.
 
 ## License
 
