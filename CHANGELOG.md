@@ -2,6 +2,13 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.23
+
+**Firefox can play.** Firefox 134 and later is no longer turned away on the sign-in page, the
+launcher or the game page. The sample world and multiplayer run in it, at the same frame rate as
+Chrome in our tests. Loading your own Morrowind folder still needs Chrome, Edge or Brave, because
+Firefox has no folder picker.
+
 ## 1.7.22
 
 **The sign-in page says what it is.** Its browser tab and link previews read "Play"; they now

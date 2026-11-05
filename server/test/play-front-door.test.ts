@@ -274,12 +274,14 @@ test('a refused invite says where to get one', () => {
     'helpLink is defined before the refusal note uses it');
 });
 
-test('the front door: sign-in buttons are never greyed, a lost state cookie retries once, Chromium only', () => {
+test('the front door: sign-in buttons are never greyed, a lost state cookie retries once, Chromium and Firefox 134+ only', () => {
   assert.doesNotMatch(play, /aria-disabled|classList\.toggle\('off'/, 'returning players are never locked out of the buttons');
   assert.match(play, /localStorage\.setItem\('omwmp:returning', '1'\)/, 'a sign-in that worked is remembered');
   assert.match(play, /if \(code === 'state'\) \{[\s\S]*?omwmp:stateRetry[\s\S]*?location\.href = again/, 'state is retried');
   assert.ok(play.indexOf("if (code === 'state')") < play.indexOf('const said = {'), 'retried before it is said');
   assert.match(play, /b\.brand === 'Chromium'/, 'the browser gate names the brand');
+  assert.match(play, /Firefox\\\/\(\\d\+\)/, 'Firefox is let through by version');
+  assert.match(play, /\?\.\[1\] \?\? 0\) >= 134/, 'from Firefox 134, the first with memory64');
 });
 
 test('a boot that cannot get its memory yet retries, then says so', clientOpts, () => {
