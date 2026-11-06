@@ -39,3 +39,20 @@ PRs are welcome. A few ground rules:
 
 Deployment (morrowind.virtastic.app), release publishing, and CI on the
 self-hosted runner are maintainer-only for security reasons.
+
+## New here? Quick start
+
+You never need write access. Every change comes in through a pull request and is reviewed before it is merged.
+
+1. **Fork** the repository on GitHub and clone your fork.
+2. Create a branch: `git checkout -b my-change`.
+3. Make one small, focused change and test it as described above.
+4. Push the branch to your fork and open a **pull request** against `main`.
+5. A maintainer reviews it. Requests for changes are normal; they are not a rejection.
+
+**Finding something to work on:** look for issues labelled
+[`good first issue`](https://github.com/Virtastic/openmw-web/labels/good%20first%20issue) or
+[`help wanted`](https://github.com/Virtastic/openmw-web/labels/help%20wanted), and comment on the issue to claim it.
+For anything bigger than a small fix, open an issue first so we can agree on the approach.
+
+**Questions?** Ask in the [Discord](https://discord.gg/PzFfDkbSue). Security issues go through [SECURITY.md](SECURITY.md), not a public issue.
