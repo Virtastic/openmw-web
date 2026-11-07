@@ -434,7 +434,14 @@ function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'at
       // dropping Long Blade and re-adding it at 100 was measured against nothing. Damage keys
       // were emitted only while dmg != 0 by older clients (now always, 0 included)
       // and only ever lower the stat, so those alone start from wherever they appear.
-      const from = had[k] ?? (k.endsWith('_damage') ? v : 0);
+      // A "<id>_damage" key is a DRAIN (Damage Attribute, a disease, ash chill): a bigger value
+      // LOWERS the stat, so it is never a gain to budget. It was budgeted, and a drain of 9
+      // tripped the +5 window, which refused the WHOLE map -- the level-up's attribute gains
+      // riding in the same declaration with it (prod 2026-11-06, Polnedra: personality_damage
+      // 0 -> 9, five refusals in a row). It is still bounded by MAX_STAT_VALUE and non-negative
+      // in parseNumberMap, and a lower stat is no exploit.
+      if (k.endsWith('_damage')) continue;
+      const from = had[k] ?? 0;
       if (!raiseWithin(player, `${field}:${k}`, v - from, STAT_RAISE_PER_WINDOW)) {
         noteGain(ctx, player, 'stat_raise', { field, key: k, from, to: v });
         return false;
@@ -513,9 +520,56 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
     noteGain(ctx, player, 'level_jump', { from: had, to: level });
     return false;
   }
-  // Level-up is a specced flush point.
-  ctx.store.update(player.charId, (doc) => (doc.stats = { ...doc.stats, level, ...(reputation !== undefined ? { reputation } : {}) }), 'now');
+  // LEVEL PROGRESS rides along (the same way reputation does): NpcStats-only in the engine, so
+  // nothing carried it, and every relog reset the count of skill increases toward the next
+  // level to 0 while the raised skills stayed. A player who plays in short sessions could
+  // build skills for days and never reach the 10 increases in one sitting -- they could not
+  // level up. Optional and lenient: a malformed extra is dropped, never a reason to refuse the
+  // level itself, and an old client that sends none leaves the stored copy untouched.
+  const levelProgress = parseLevelProgress(body);
+  // Level-up is a specced flush point. A declaration that only moved the progress counter is
+  // not: it happens on every skill gain, and the sweep (or the disconnect) persists it.
+  const progressOnly = had === level && (reputation === undefined || reputation === hadStats?.reputation);
+  ctx.store.update(player.charId, (doc) => (doc.stats = {
+    ...doc.stats, level,
+    ...(reputation !== undefined ? { reputation } : {}),
+    ...(levelProgress ? { levelProgress } : {}),
+  }), progressOnly ? 'sweep' : 'now');
   return true;
+}
+
+// Skill increases counted toward the next level-up: `progress` (the 10 that opens the dialog),
+// the per-attribute counts that set the dialog's x1..x5 attribute multipliers, and the
+// per-specialization counts. Counts, not stats: bounded, whole, and not budgeted -- the worst a
+// modified client gains is a level-up it could take anyway, still one step per window.
+const MAX_LEVEL_PROGRESS = 10_000;
+const LEVEL_ATTRIBUTES = ['strength', 'intelligence', 'willpower', 'agility', 'speed', 'endurance', 'personality', 'luck'];
+const LEVEL_SPECIALIZATIONS = ['combat', 'magic', 'stealth'];
+interface LevelProgressDoc {
+  progress: number;
+  attributes?: Record<string, number>;
+  specializations?: Record<string, number>;
+}
+function parseLevelProgress(body: LTable): LevelProgressDoc | undefined {
+  const count = (v: LValue | undefined): number | undefined => {
+    const n = finite(v);
+    return n !== undefined && Number.isInteger(n) && n >= 0 && n <= MAX_LEVEL_PROGRESS ? n : undefined;
+  };
+  const progress = count(body.get('progress'));
+  if (progress === undefined) return undefined;
+  const counts = (v: LValue | undefined, allowed: string[]): Record<string, number> | undefined => {
+    const t = tbl(v);
+    if (!t) return undefined;
+    const out: Record<string, number> = {};
+    for (const id of allowed) {
+      const n = count(t.get(id));
+      if (n !== undefined) out[id] = n;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+  const attributes = counts(body.get('attributeIncreases'), LEVEL_ATTRIBUTES);
+  const specializations = counts(body.get('specializationIncreases'), LEVEL_SPECIALIZATIONS);
+  return { progress, ...(attributes ? { attributes } : {}), ...(specializations ? { specializations } : {}) };
 }
 
 function parseIdList(v: LValue | undefined): string[] | undefined {

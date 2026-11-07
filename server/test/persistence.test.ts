@@ -157,7 +157,7 @@ test('m2 state sync end to end', async (t) => {
   await t.test('store-only messages persist and Welcome restores the doc', async () => {
     a.sendEvent('PlayerAttributes', { strength: 55, intelligence: 40 });
     a.sendEvent('PlayerSkills', { longblade: 35, destruction: 22 });
-    a.sendEvent('PlayerLevel', { level: 7 });
+    a.sendEvent('PlayerLevel', { level: 7, progress: 6, attributeIncreases: { strength: 2 }, specializationIncreases: { magic: 4 } });
     a.sendEvent('PlayerSpellbook', { add: ['fire_bite', 'heal_companion'], remove: [] });
     a.sendEvent('PlayerSpellbook', { add: [], remove: ['heal_companion'] });
     a.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 250 }, { id: 'p_restore_health_s', n: 3 }] });
@@ -178,7 +178,8 @@ test('m2 state sync end to end', async (t) => {
       appearance: typeof APPEARANCE;
       equipment: Record<string, string>;
       inventory: { id: string; n: number }[];
-      stats: { dynamic: unknown; attributes: Record<string, number>; skills: Record<string, number>; level: number };
+      stats: { dynamic: unknown; attributes: Record<string, number>; skills: Record<string, number>; level: number;
+        levelProgress?: { progress: number; attributes?: Record<string, number>; specializations?: Record<string, number> } };
       spells: string[];
       position: { cellKey: string; x: number; y: number; z: number };
     };
@@ -188,6 +189,9 @@ test('m2 state sync end to end', async (t) => {
     assert.deepEqual(rec.stats.attributes, { strength: 55, intelligence: 40 });
     assert.deepEqual(rec.stats.skills, { longblade: 35, destruction: 22 });
     assert.equal(rec.stats.level, 7);
+    // The skill increases counted toward the next level-up come back too: they reset to 0 on
+    // every relog before, so a player in short sessions never reached the 10 that level them.
+    assert.deepEqual(rec.stats.levelProgress, { progress: 6, attributes: { strength: 2 }, specializations: { magic: 4 } });
     assert.deepEqual(rec.spells, ['fire_bite']);
     assert.deepEqual(rec.position, { cellKey: '0,0', x: 111, y: 222, z: 333 }); // logout captured the live pose
     aId = w['playerId'] as number;
