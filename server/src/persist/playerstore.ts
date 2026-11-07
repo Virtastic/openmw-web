@@ -118,6 +118,10 @@ export interface PlayerDoc {
     skills?: Record<string, number>;
     level?: number;
     reputation?: number; // 0..255, NpcStats-only in the engine: nothing else carries it across a relog
+    // Skill increases counted toward the next level-up (NpcStats-only in the engine, so a relog
+    // reset it to 0): `progress` is the count against iLevelUpTotal, the others set the
+    // level-up dialog's attribute multipliers. Absent on a character that predates the field.
+    levelProgress?: { progress: number; attributes?: Record<string, number>; specializations?: Record<string, number> };
   };
   spells?: string[];
   // The Mark spell's spot: the engine's serialized cell id and a position. Lives in NpcStats
