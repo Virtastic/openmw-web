@@ -2,6 +2,18 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.25
+
+**Levelling up works across sessions.** The game counts your skill increases toward the next
+level, and that count was not saved: every time you logged out or reloaded it went back to zero
+while your skills stayed raised, so anyone who plays in short sessions could build skills for
+days and never get the level-up. The count is now saved with your character and comes back when
+you log in. Skill increases you made before this update were not counted and start from zero.
+
+**Attribute drains no longer hide a level-up.** A drain on an attribute (Damage Personality, a
+disease, ash chill) of more than a few points made the server refuse the whole attribute update,
+including the points gained at a level-up, which were then lost on the next login.
+
 ## 1.7.24
 
 **Firefox runs smoother.** Firefox does not tell a page how much memory the computer has, so it

@@ -70,6 +70,15 @@ function M.install(opts)
   -- point is to exercise the DIFF logic, and a stat that never changes is exactly what keeps
   -- an unrelated broadcast from muddying the assertion under test.
   local function stat(v) return { getModified = function() return v end, base = v, current = v } end
+  -- The player's LevelStat: ONE stateful table (the engine hands back the same stat), with the
+  -- skill-increase counters level-ups are counted against. opts.noLevelProgress models an engine
+  -- that lacks the binding (the fields read nil).
+  local levelStat = { current = 1 }
+  if not opts.noLevelProgress then
+    levelStat.progress = 0
+    levelStat.skillIncreasesForAttribute = {}
+    levelStat.skillIncreasesForSpecialization = {}
+  end
   local dyn = { health = stat(100), magicka = stat(50), fatigue = stat(80) }
   local attrs, skills = {}, {}
   for _, a in ipairs({ 'strength', 'intelligence', 'willpower', 'agility',
@@ -103,7 +112,7 @@ function M.install(opts)
                     fatigue = function() return dyn.fatigue end },
         attributes = setmetatable({}, { __index = function(_, k)
           return function() return attrs[k] or stat(30) end end }),
-        level = function() return stat(1) end,
+        level = function() return levelStat end,
       },
       EQUIPMENT_SLOT = {},
     },
@@ -162,6 +171,7 @@ function M.install(opts)
     now = function() return realTime end,
     setInventory = function(items) inventory = items end,
     setActive = function(list) active = list end,
+    level = levelStat,
     dyn = dyn, -- the dynamic stats, mutable: a heal is `dyn.health.current = 100`
     spellbook = spellbook,
     world = world,

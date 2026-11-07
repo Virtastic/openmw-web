@@ -5075,5 +5075,88 @@ do
   a, g = join(nil, false, false)
   check('nothing runs before chargen is reported (mid-chargen, restore pending)', a == 0 and #g == 0)
 end
+
+-- ============================================================ identity.lua: level progress
+-- The skill increases counted toward the next level-up live in NpcStats only, so a relog reset
+-- them to 0 while the raised skills stayed: a player in short sessions never reached the 10
+-- that open the level-up dialog (prod 2026-11, "couldn't level up").
+print('identity.lua — level progress is declared and restored')
+local function levelEvents(calls)
+  local out = {}
+  for _, c in ipairs(calls.events) do if c.name == 'PlayerLevel' then out[#out + 1] = c.body end end
+  return out
+end
+do
+  fresh()
+  local e = stubs.install({})
+  local id = require('scripts.mp.identity')
+  e.level.progress = 7
+  e.level.skillIncreasesForAttribute.strength = 3
+  e.level.skillIncreasesForSpecialization.combat = 4
+  id.markBaselineReady()
+  id.tick(0)
+  local lv = levelEvents(e.calls)
+  check('PlayerLevel carries the progress counter', #lv >= 1 and lv[#lv].progress == 7,
+    'progress=' .. tostring(lv[#lv] and lv[#lv].progress))
+  check('...the per-attribute counts', lv[#lv] and lv[#lv].attributeIncreases and lv[#lv].attributeIncreases.strength == 3)
+  check('...and the per-specialization counts', lv[#lv] and lv[#lv].specializationIncreases and lv[#lv].specializationIncreases.combat == 4)
+  local n = #lv
+  id.tick(1.5)
+  check('an unchanged counter is not re-sent', #levelEvents(e.calls) == n, (#levelEvents(e.calls) - n) .. ' extra')
+  e.level.progress = 8
+  id.tick(3.0)
+  lv = levelEvents(e.calls)
+  check('a counted skill increase is re-sent', #lv == n + 1 and lv[#lv].progress == 8, '#lv=' .. #lv)
+end
+
+do
+  -- THE FIX: a returning character's counters come back with the record.
+  fresh()
+  local e = stubs.install({})
+  local id = require('scripts.mp.identity')
+  id.applyRecord({ stats = { level = 1, levelProgress = {
+    progress = 6, attributes = { strength = 2, luck = 1 }, specializations = { magic = 5 } } } })
+  e.advance(1.0)
+  id.equipRetryTick(e.now())
+  check('the restore puts the progress counter back', e.level.progress == 6, 'progress=' .. tostring(e.level.progress))
+  check('...the per-attribute counts', e.level.skillIncreasesForAttribute.strength == 2 and e.level.skillIncreasesForAttribute.luck == 1)
+  check('...and the per-specialization counts', e.level.skillIncreasesForSpecialization.magic == 5)
+  local before = #levelEvents(e.calls)
+  id.tick(2.0)
+  check('the restored state is the baseline: nothing is echoed back to the server',
+    #levelEvents(e.calls) == before, (#levelEvents(e.calls) - before) .. ' PlayerLevel sent')
+end
+
+do
+  -- A character that predates the field: the restore must not zero or invent anything.
+  fresh()
+  local e = stubs.install({})
+  local id = require('scripts.mp.identity')
+  e.level.progress = 4
+  id.applyRecord({ stats = { level = 1 } })
+  e.advance(1.0)
+  id.equipRetryTick(e.now())
+  check('a record with no levelProgress leaves the live counter alone', e.level.progress == 4,
+    'progress=' .. tostring(e.level.progress))
+end
+
+do
+  -- An engine without the binding degrades to the old behaviour; nothing throws or is sent half-made.
+  fresh()
+  local e = stubs.install({ noLevelProgress = true })
+  local id = require('scripts.mp.identity')
+  id.applyRecord({ stats = { level = 1, levelProgress = { progress = 6 } } })
+  e.advance(1.0)
+  id.equipRetryTick(e.now())
+  id.markBaselineReady()
+  e.level.current = 2 -- a level-up must still be declared, just without the missing counters
+  id.tick(0)
+  local lv = levelEvents(e.calls)
+  check('without the binding PlayerLevel still goes out, without a progress field',
+    #lv >= 1 and lv[#lv].progress == nil and lv[#lv].level == 2, 'progress=' .. tostring(lv[#lv] and lv[#lv].progress))
+  check('...and the restore did not report a failure',
+    not (function() for _, l in ipairs(e.calls.prints) do if l:find('restore failed', 1, true) then return true end end end)())
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
