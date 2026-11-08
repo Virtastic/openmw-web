@@ -117,6 +117,7 @@ export interface PlayerDoc {
     attributes?: Record<string, number>;
     skills?: Record<string, number>;
     level?: number;
+    werewolfKills?: number; // NpcStats-only in the engine; the peer's avatar counts them (#314)
     reputation?: number; // 0..255, NpcStats-only in the engine: nothing else carries it across a relog
     // Skill increases counted toward the next level-up (NpcStats-only in the engine, so a relog
     // reset it to 0): `progress` is the count against iLevelUpTotal, the others set the

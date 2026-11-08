@@ -968,9 +968,16 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     p.avatarDead = died;
     const hpBefore = ctx.store.getCached(p.charId)?.stats?.dynamic?.hp?.c;
     if (hpBefore !== undefined && hp.c < hpBefore) ctx.onDamaged?.(p);
+    // #314: werewolf kills counted on the avatar. A count, never lowered by a report (a fresh
+    // avatar body reports 0 until it restores), bounded like the other whole-number counts.
+    const wkRaw = finite(e.get('wk'));
+    const wk = wkRaw !== undefined && Number.isInteger(wkRaw) && wkRaw > 0 && wkRaw <= MAX_LEVEL_PROGRESS
+      ? wkRaw : undefined;
     ctx.store.update(p.charId, (doc) => {
-      doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
+      const keep = Math.max(wk ?? 0, doc.stats?.werewolfKills ?? 0);
+      doc.stats = { ...doc.stats, dynamic: { hp, mp, ft }, ...(keep > 0 ? { werewolfKills: keep } : {}) };
     }, transition ? 'now' : 'sweep');
+    const wkOut = ctx.store.getCached(p.charId)?.stats?.werewolfKills;
     const msg = { id: p.id, hp, mp, ft, speed: baseSpeed(ctx, p) };
     for (const other of ctx.roster.inWorld()) {
       if (other.id !== p.id && cellsVisible(other.cellKey, p.cellKey)) {
@@ -984,6 +991,7 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     // Backlog 312: the shield sound of a block made on the peer, played by the owner.
     const blk = e.get('blk');
     p.peer.sendEvent('SelfStats', { hp, mp, ft, kd: e.get('kd') === true,
+      ...(wkOut !== undefined && wkOut > 0 ? { wk: wkOut } : {}),
       ...(typeof blk === 'string' && /^(Light|Medium|Heavy) Armor Hit$/.test(blk) ? { blk } : {}) });
   }
 }

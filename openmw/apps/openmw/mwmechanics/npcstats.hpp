@@ -166,6 +166,9 @@ namespace MWMechanics
         /// Increments mWerewolfKills by 1.
         void addWerewolfKill();
 
+        /// OT3 (#314): restores the count carried by a character record after a relog.
+        void setWerewolfKills(int kills);
+
         float getTimeToStartDrowning() const;
         /// Sets time left for the creature to drown if it stays underwater.
         /// @param time value from [0,20]

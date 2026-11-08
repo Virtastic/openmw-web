@@ -275,6 +275,25 @@ namespace MWLua
                 throw std::runtime_error("NPC or Player expected");
         };
 
+        // OT3 (#314): the kills NpcStats counts for a werewolf; PcWerewolfKills dialogue reads it.
+        npc["getWerewolfKills"] = [](const Object& o) -> int {
+            const MWWorld::Class& cls = o.ptr().getClass();
+            if (!cls.isNpc())
+                throw std::runtime_error("NPC or Player expected");
+            return cls.getNpcStats(o.ptr()).getWerewolfKills();
+        };
+
+        npc["setWerewolfKills"] = [context](const Object& obj, int kills) -> void {
+            if (obj.isLObject() && !obj.isSelfObject())
+                throw std::runtime_error("Local scripts can modify only self");
+            const MWWorld::Ptr& ptr = obj.ptr();
+            if (!ptr.getClass().isNpc())
+                throw std::runtime_error("NPC or Player expected");
+            context.mLuaManager->addAction(
+                [obj = Object(ptr), kills] { obj.ptr().getClass().getNpcStats(obj.ptr()).setWerewolfKills(kills); },
+                "setWerewolfKillsAction");
+        };
+
         npc["setWerewolf"] = [context](const Object& obj, bool werewolf) -> void {
             if (obj.isLObject() && !obj.isSelfObject())
                 throw std::runtime_error("Local scripts can modify only self");

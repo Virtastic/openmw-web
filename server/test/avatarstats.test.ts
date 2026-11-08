@@ -80,6 +80,26 @@ test('a knocked-down report reaches the owner as SelfStats.kd', async (t) => {
   void server;
 });
 
+// #314: a werewolf's kills are counted on the avatar's NpcStats on the peer. They ride the
+// bars into the doc and back to the owner, and a later report of 0 never lowers the count.
+test('werewolf kills reported by the peer reach the owner and never go down', async (t) => {
+  const { peer, a } = await world(t);
+  let seq = 0;
+  a.sendInput({ move: 1 }, ++seq);
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  let wk: number | undefined = 3;
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', {
+    entries: [{ id: a.playerId, ...bars(42), ...(wk !== undefined ? { wk } : {}) }],
+  }), 100);
+  t.after(() => clearInterval(reporter));
+  assert.ok(await a.waitEvent('SelfStats', (v) => (v as { wk?: number })?.wk === 3), 'the owner learns the count');
+  wk = undefined; // a fresh avatar body reports no count until it restores
+  await new Promise((r) => setTimeout(r, 400)); // let the wk-less reports land
+  const later = await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 42);
+  assert.equal((later as { value?: { wk?: number } }).value?.wk, 3, 'the stored count survives a report without one');
+});
+
 test("while peer reports are fresh the client's own assertion is ignored", async (t) => {
   const { server, peer, a } = await world(t);
   const b = await TestClient.connect(server.port);

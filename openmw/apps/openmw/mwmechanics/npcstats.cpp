@@ -1,5 +1,6 @@
 #include "npcstats.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <iomanip>
 #include <sstream>
@@ -400,6 +401,11 @@ int MWMechanics::NpcStats::getWerewolfKills() const
 void MWMechanics::NpcStats::addWerewolfKill()
 {
     ++mWerewolfKills;
+}
+
+void MWMechanics::NpcStats::setWerewolfKills(int kills)
+{
+    mWerewolfKills = std::max(0, kills);
 }
 
 float MWMechanics::NpcStats::getTimeToStartDrowning() const

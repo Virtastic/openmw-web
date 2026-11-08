@@ -341,12 +341,18 @@ local function avatarStatsTick(now)
                         local ok, e = pcall(function() return types.Actor.activeEffects(p.obj):getEffect('paralyze') end)
                         return ok and e ~= nil and (e.magnitude or 0) > 0
                     end)()) or nil,
+                    -- #314: a werewolf's kills land on the avatar's NpcStats here, on the peer;
+                    -- report the count so the doc keeps it and the owner's dialogue sees it.
+                    wk = (function()
+                        local okw, n = pcall(function() return types.NPC.getWerewolfKills(p.obj) end)
+                        return okw and type(n) == 'number' and n > 0 and n or nil
+                    end)(),
                     -- Backlog 312: a block since the last report; the owner plays its sound.
                     blk = (function() local s = mp.takeBlock(p.obj); return s ~= '' and s or nil end)() }
             end)
             if ok and entry then
                 local key = string.format('%d:%.1f/%.1f %.1f/%.1f %.1f/%.1f %s', entry.id,
-                    entry.hp.c, entry.hp.b, entry.mp.c, entry.mp.b, entry.ft.c, entry.ft.b, tostring(entry.kd))
+                    entry.hp.c, entry.hp.b, entry.mp.c, entry.mp.b, entry.ft.c, entry.ft.b, tostring(entry.kd)) .. ':' .. tostring(entry.wk)
                 -- Diff for cadence, REFRESH for correctness: the server may drop a report
                 -- (the owner's input tier not warmed up yet, a teleport race), and a dropped
                 -- report the diff never retries is a player whose bars freeze forever.

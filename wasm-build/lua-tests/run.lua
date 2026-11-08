@@ -5646,5 +5646,27 @@ do
     not (function() for _, l in ipairs(e.calls.prints) do if l:find('restore failed', 1, true) then return true end end end)())
 end
 
+do
+  -- #314: a werewolf's kills come back with the record.
+  fresh()
+  local e = stubs.install({})
+  local id = require('scripts.mp.identity')
+  id.applyRecord({ stats = { level = 1, werewolfKills = 7 } })
+  e.advance(1.0)
+  id.equipRetryTick(e.now())
+  check('the restore puts the werewolf kill count back', e.wk.n == 7, 'n=' .. tostring(e.wk.n))
+end
+
+do
+  fresh()
+  local e = stubs.install({})
+  local id = require('scripts.mp.identity')
+  e.wk.n = 2
+  id.applyRecord({ stats = { level = 1 } })
+  e.advance(1.0)
+  id.equipRetryTick(e.now())
+  check('a record with no werewolfKills leaves the live count alone', e.wk.n == 2, 'n=' .. tostring(e.wk.n))
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

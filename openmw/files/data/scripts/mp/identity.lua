@@ -981,6 +981,9 @@ local function applyPhase2(record)
         if stats.reputation then pcall(function() NPC.stats.reputation(self).current = stats.reputation end) end
         -- Level progress (see snapProgression). Its own pcall: an engine without the binding, or a
         -- character that predates the field (nil here), must leave the rest of the restore alone.
+        if type(stats.werewolfKills) == 'number' then -- #314
+            pcall(function() NPC.setWerewolfKills(self, stats.werewolfKills) end)
+        end
         local lp = stats.levelProgress
         if type(lp) == 'table' then
             pcall(function()

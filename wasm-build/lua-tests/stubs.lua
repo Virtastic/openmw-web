@@ -77,6 +77,7 @@ function M.install(opts)
   -- skill-increase counters level-ups are counted against. opts.noLevelProgress models an engine
   -- that lacks the binding (the fields read nil).
   local levelStat = { current = 1 }
+  local wkState = { n = 0 } -- #314 werewolf kills
   if not opts.noLevelProgress then
     levelStat.progress = 0
     levelStat.skillIncreasesForAttribute = {}
@@ -128,6 +129,9 @@ function M.install(opts)
       stats = { skills = setmetatable({}, { __index = function(_, k)
         return function() return skills[k] or stat(15) end end }) },
       classes = { records = {} },
+      -- #314: NpcStats' werewolf kill counter, readable and settable by the scripts.
+      getWerewolfKills = function() return wkState.n end,
+      setWerewolfKills = function(_, n) wkState.n = n end,
     },
     -- The engine's shape (mwlua/itemdata.cpp): a FUNCTION on types.Item, nil for a non-item.
     -- A fake item carries its state as a plain `itemData` field; `item.itemData` on a real
@@ -183,6 +187,7 @@ function M.install(opts)
     setInventory = function(items) inventory = items end,
     setActive = function(list) active = list end,
     level = levelStat,
+    wk = wkState,
     dyn = dyn, -- the dynamic stats, mutable: a heal is `dyn.health.current = 100`
     spellbook = spellbook,
     world = world,
