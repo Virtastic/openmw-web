@@ -862,6 +862,19 @@ function actors.noteCombat(obj, target)
     local body = withAddr({
         cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, combat = foeId or false,
     }, obj)
+    -- #351: a non-player foe (an NPC against a companion, creature against NPC). `combat` stays
+    -- false -- the server's combatOf and the taunt claim are about PLAYER foes -- and the foe's
+    -- own address rides beside it, so a client's AI-off puppet can hold a Combat package too and
+    -- the engine's battle music (any actor with a combat target near the player) plays.
+    if body and foeId == nil and target ~= nil then
+        local okF, foeAddr = pcall(function()
+            if target:isValid() and not types.Player.objectIsInstance(target) then return actorAddr(target) end
+        end)
+        if okF and foeAddr then
+            body.foeRef = foeAddr.ref
+            body.foeNet = foeAddr.net
+        end
+    end
     if body then mp.sendEvent('ActorAI', body) end
 end
 
@@ -1083,6 +1096,14 @@ actors.handlers.MP_ActorAI = function(data)
         -- with its AI off it never executes; it only makes the state readable. On MP_Detach
         -- the AI resumes with the fight it was actually in, which is right.
         local foe = data.combat and deps.playerObjOf and deps.playerObjOf(data.combat) or nil
+        if not foe and (data.foeRef ~= nil or data.foeNet ~= nil) then
+            -- #351: the holder's actor is fighting another actor; mirror it so the state is readable.
+            local foeObj = actorOf({ ref = data.foeRef, net = data.foeNet })
+            if foeObj and foeObj ~= obj then
+                pcall(function() obj:sendEvent('StartAIPackage', { type = 'Combat', target = foeObj }) end)
+                return
+            end
+        end
         if foe then
             -- `pursue`: a guard's arrest chase for a small crime, not a fight.
             local pursue = data.pursue == true

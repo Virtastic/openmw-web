@@ -121,6 +121,12 @@ test('actor authority and relay end to end', async (t) => {
     const ai = await b.waitEvent('ActorAI', notHold);
     assert.equal((ai.value as { pkg?: string }).pkg, 'combat');
 
+    // #351: an NPC fighting another actor travels as combat=false plus the foe's address, so a
+    // puppet can hold the Combat package (the battle music reads it). The server must not eat it.
+    a.sendEvent('ActorAI', { cellKey: '0,0', epoch: epochA, ref: ACTOR_REF, combat: false, foeNet: 77 });
+    const foeAi = await b.waitEvent('ActorAI', (v) => (v as { foeNet?: number }).foeNet === 77);
+    assert.equal((foeAi.value as { combat?: unknown }).combat, false);
+
     // A NON-HOLDER cannot dress or command somebody else's NPCs. Bob is in the same cell and
     // knows the live epoch, which is exactly what makes this worth checking: the only thing
     // stopping him is the holder test.

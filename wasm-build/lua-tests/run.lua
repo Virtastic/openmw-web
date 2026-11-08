@@ -5668,5 +5668,36 @@ do
   check('a record with no werewolfKills leaves the live count alone', e.wk.n == 2, 'n=' .. tostring(e.wk.n))
 end
 
+print('#351 an actor fighting another actor is mirrored on the puppet so the battle music plays')
+do
+  fresh()
+  package.loaded['scripts.mp.actors'] = nil
+  local env = stubs.install({})
+  local actors = require('scripts.mp.actors')
+  actors.init({ ownIdFn = function() return 7 end, netIdOf = function() return nil end,
+    playerIdOf = function() return nil end, playerObjOf = function() return nil end })
+  local sent = {}
+  local function actor(id)
+    return { id = id, isValid = function() return true end,
+      sendEvent = function(self, name, data) sent[#sent + 1] = { who = id, name = name, target = data and data.target, type = data and data.type } end }
+  end
+  local guard, rat = actor('guard'), actor('rat')
+  actors.handlers.MP_ActorAI({ ref = guard, cellKey = '-2,-7', combat = false, foeRef = rat })
+  check('a non-player foe on the wire stacks a Combat package on the puppet targeting that actor',
+    #sent == 1 and sent[1].who == 'guard' and sent[1].name == 'StartAIPackage' and sent[1].type == 'Combat' and sent[1].target == rat,
+    #sent .. ' events')
+  sent = {}
+  actors.handlers.MP_ActorAI({ ref = guard, cellKey = '-2,-7', combat = false })
+  check('combat=false with no foe still clears the Combat package',
+    #sent == 1 and sent[1].name == 'RemoveAIPackages', #sent .. ' events')
+  sent = {}
+  actors.handlers.MP_ActorAI({ ref = guard, cellKey = '-2,-7', combat = false, foeRef = guard })
+  check('an actor never fights itself', #sent == 1 and sent[1].name == 'RemoveAIPackages', #sent .. ' events')
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('the holder puts a non-player foe\'s address beside combat=false',
+    ac:find('body.foeRef = foeAddr.ref', 1, true) ~= nil and ac:find('body.foeNet = foeAddr.net', 1, true) ~= nil
+    and ac:find('not types.Player.objectIsInstance(target)', 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
