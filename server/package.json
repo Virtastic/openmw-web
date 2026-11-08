@@ -15,7 +15,7 @@
     "soak": "tsx bots/soak.ts"
   },
   "dependencies": {
-    "@node-rs/argon2": "^2.0.2",
+    "@node-rs/argon2": "^2.2.2",
     "smol-toml": "^1.9.1",
     "ws": "^8.18.0"
   },
