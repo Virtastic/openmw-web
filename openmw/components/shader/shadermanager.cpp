@@ -28,6 +28,8 @@
 #include <components/misc/strings/conversion.hpp>
 #include <components/settings/settings.hpp>
 
+#include "glesrewrite.hpp"
+
 namespace
 {
     osg::Shader::Type getShaderType(const std::string& templateName)
@@ -176,23 +178,28 @@ namespace
         else
             source = header + source;
 
+        // Every rewrite below is a plain scan (glesrewrite.hpp) producing exactly the bytes of the
+        // std::regex it replaced (`\b`: word boundary, `\s`: white space).
+        using namespace Shader::GlesRewrite;
         // Declarations to inject at the prelude marker.
         std::string prelude;
         auto convert = [&](const std::string& glName, const std::string& osgName, const std::string& decl) {
-            if (std::regex_search(source, std::regex("\\b" + glName + "\\b")))
+            // (\bglName\b)
+            bool found = false;
+            std::string replaced = replaceWord(source, glName, osgName, &found);
+            if (found)
             {
                 prelude += decl + "\n";
-                source = std::regex_replace(source, std::regex("\\b" + glName + "\\b"), osgName);
+                source.swap(replaced);
             }
         };
 
         // ftransform() only works with fixed-function built-ins; expand it first.
-        source = std::regex_replace(
-            source, std::regex("\\bftransform\\s*\\(\\s*\\)"), "(gl_ModelViewProjectionMatrix * gl_Vertex)");
+        // (\bftransform\s*\(\s*\))
+        source = replaceFtransform(source, "(gl_ModelViewProjectionMatrix * gl_Vertex)");
 
         // gl_ModelViewMatrixInverse isn't converted by OSG; derive it (gl_ModelViewMatrix is).
-        source = std::regex_replace(
-            source, std::regex("\\bgl_ModelViewMatrixInverse\\b"), "inverse(gl_ModelViewMatrix)");
+        source = replaceWord(source, "gl_ModelViewMatrixInverse", "inverse(gl_ModelViewMatrix)");
 
         // Fixed-function matrices -> uniforms (OSG only converts these in vertex shaders, and
         // not at all once we've renamed everything ourselves; do it here for both stages so
@@ -204,21 +211,21 @@ namespace
         convert("gl_NormalMatrix", "osg_NormalMatrix", "uniform mat3 osg_NormalMatrix;");
 
         // Fixed-function texture matrix: OpenMW only uses it as identity here.
-        source = std::regex_replace(source, std::regex("gl_TextureMatrix\\[[0-9]+\\]"), "mat4(1.0)");
+        source = replaceTextureMatrix(source, "mat4(1.0)"); // (gl_TextureMatrix\[[0-9]+\])
 
         // Legacy texture lookup functions -> ES 3.00 overloads.
-        source = std::regex_replace(source, std::regex("\\btexture2DLod\\b"), "textureLod");
-        source = std::regex_replace(source, std::regex("\\btexture2DProjLod\\b"), "textureProjLod");
-        source = std::regex_replace(source, std::regex("\\btexture2DProj\\b"), "textureProj");
-        source = std::regex_replace(source, std::regex("\\btexture2DArray\\b"), "texture");
-        source = std::regex_replace(source, std::regex("\\btexture2D\\b"), "texture");
-        source = std::regex_replace(source, std::regex("\\btextureCubeLod\\b"), "textureLod");
-        source = std::regex_replace(source, std::regex("\\btextureCube\\b"), "texture");
+        source = replaceWord(source, "texture2DLod", "textureLod");
+        source = replaceWord(source, "texture2DProjLod", "textureProjLod");
+        source = replaceWord(source, "texture2DProj", "textureProj");
+        source = replaceWord(source, "texture2DArray", "texture");
+        source = replaceWord(source, "texture2D", "texture");
+        source = replaceWord(source, "textureCubeLod", "textureLod");
+        source = replaceWord(source, "textureCube", "texture");
         // textureSize2D (EXT_gpu_shader4) -> ES 3.00 textureSize; shaders assign the result to
         // a vec2, so wrap the ivec2 return in a vec2() conversion (ES has no implicit int->float).
         if (source.find("textureSize2D") != std::string::npos)
         {
-            source = std::regex_replace(source, std::regex("\\btextureSize2D\\b"), "omw_textureSize2D");
+            source = replaceWord(source, "textureSize2D", "omw_textureSize2D");
             prelude += "vec2 omw_textureSize2D(highp sampler2D s, int lod) { return "
                        "vec2(textureSize(s, lod)); }\n";
         }
@@ -228,13 +235,13 @@ namespace
         // direct rename breaks compilation ("field selection on float"). Wrap instead.
         if (source.find("shadow2DProj") != std::string::npos)
         {
-            source = std::regex_replace(source, std::regex("\\bshadow2DProj\\b"), "omw_shadow2DProj");
+            source = replaceWord(source, "shadow2DProj", "omw_shadow2DProj");
             prelude += "vec4 omw_shadow2DProj(highp sampler2DShadow s, highp vec4 c) { return "
                        "vec4(textureProj(s, c)); }\n";
         }
-        if (std::regex_search(source, std::regex("\\bshadow2D\\b")))
+        if (hasWord(source, "shadow2D"))
         {
-            source = std::regex_replace(source, std::regex("\\bshadow2D\\b"), "omw_shadow2D");
+            source = replaceWord(source, "shadow2D", "omw_shadow2D");
             prelude += "vec4 omw_shadow2D(highp sampler2DShadow s, highp vec3 c) { return "
                        "vec4(texture(s, c)); }\n";
         }
@@ -287,9 +294,7 @@ namespace
                        "uniform vec4 osg_FrontMaterial_diffuse;\nuniform vec4 osg_FrontMaterial_specular;\n"
                        "uniform float osg_FrontMaterial_shininess;\n";
             for (const char* m : { "emission", "ambient", "diffuse", "specular", "shininess" })
-                source = std::regex_replace(source,
-                    std::regex(std::string("\\bgl_FrontMaterial\\s*\\.\\s*") + m + "\\b"),
-                    std::string("osg_FrontMaterial_") + m);
+                source = replaceMember(source, "gl_FrontMaterial", m, std::string("osg_FrontMaterial_") + m);
         }
         if (source.find("gl_Fog") != std::string::npos)
         {
@@ -299,8 +304,7 @@ namespace
             prelude += "uniform vec4 osg_Fog_color;\nuniform float osg_Fog_start;\nuniform float osg_Fog_end;\n"
                        "uniform float osg_Fog_scale;\nuniform float osg_Fog_density;\n";
             for (const char* m : { "color", "start", "end", "scale", "density" })
-                source = std::regex_replace(source,
-                    std::regex(std::string("\\bgl_Fog\\s*\\.\\s*") + m + "\\b"), std::string("osg_Fog_") + m);
+                source = replaceMember(source, "gl_Fog", m, std::string("osg_Fog_") + m);
         }
 
         if (type == osg::Shader::VERTEX)
@@ -318,12 +322,12 @@ namespace
             // gl_ClipVertex was removed in ES 3.00; route writes to a dummy (clipping disabled).
             convert("gl_ClipVertex", "osg_ClipVertex", "vec4 osg_ClipVertex;");
 
-            source = std::regex_replace(source, std::regex("\\battribute\\b"), "in");
-            source = std::regex_replace(source, std::regex("\\bvarying\\b"), "out");
+            source = replaceWord(source, "attribute", "in");
+            source = replaceWord(source, "varying", "out");
         }
         else if (type == osg::Shader::FRAGMENT)
         {
-            source = std::regex_replace(source, std::regex("\\bvarying\\b"), "in");
+            source = replaceWord(source, "varying", "in");
 
             for (int i = 0; i < 4; ++i)
             {
@@ -338,7 +342,7 @@ namespace
             if (source.find("gl_FragColor") != std::string::npos)
             {
                 prelude += "layout(location=0) out vec4 _fragColor;\n";
-                source = std::regex_replace(source, std::regex("\\bgl_FragColor\\b"), "_fragColor");
+                source = replaceWord(source, "gl_FragColor", "_fragColor");
             }
         }
 
@@ -673,6 +677,15 @@ namespace Shader
         size_t lineEnd = source.find_first_of('\n', endPos);
         // If lineEnd = npos, this is the last line, so no need to check
         std::string linkStatement = source.substr(endPos, lineEnd - endPos);
+#ifdef __EMSCRIPTEN__
+        // Parsed by hand exactly as the regex below matches it whole (glesrewrite.hpp), without
+        // constructing a std::regex for each $link of each shader variant.
+        bool hasCondition = false, negated = false;
+        std::string linkConditionExpression;
+        if (!Shader::GlesRewrite::parseLinkStatement(
+                linkStatement, linkTarget, hasCondition, negated, linkConditionExpression))
+        {
+#else
         std::regex linkRegex(R"r(\s*"([^"]+)"\s*)r" // Find any quoted string as the link name -> match[1]
                              R"r((if\s+)r" // Begin optional condition -> match[2]
                              R"r((!)?\s*)r" // Optional ! -> match[3]
@@ -690,6 +703,7 @@ namespace Shader
         }
         else
         {
+#endif
             Log(Debug::Error) << "Shader " << templateName << " error: Expected a shader filename to link";
             return false;
         }
@@ -702,7 +716,11 @@ namespace Shader
         if (hasCondition)
         {
             bool condition = !(linkConditionExpression.empty() || linkConditionExpression == "0");
+#ifdef __EMSCRIPTEN__
+            if (negated)
+#else
             if (linkMatch[3].str() == "!")
+#endif
                 condition = !condition;
 
             if (!condition)
