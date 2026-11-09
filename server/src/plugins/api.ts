@@ -43,6 +43,8 @@ export interface PluginApi {
   /** Where a player currently is, or undefined if they have not reported a pose yet. Needed by
    *  any rule that has to put somebody NEXT TO somebody else — summons, travel. */
   posOfPlayer?(playerId: number): { cellKey: string; x: number; y: number; z: number } | undefined;
+  /** The last temple town this character entered a building of, and where to respawn. */
+  settlementOf?(playerId: number): { name: string; cellKey: string; x: number; y: number; z: number } | undefined;
 }
 
 export interface Plugin {

@@ -92,3 +92,30 @@ test('no configured point, below zero indoors: where you fell, untouched', () =>
   respawn.onPlayerDeath!(api, DEAD);
   assert.deepEqual(events[0]!.body, { ...deep, restoreHp: true });
 });
+
+test('back outside the last friendly settlement visited, ahead of where they fell', () => {
+  const { api, events } = fakeApi({ respawnCellKey: '', positions: { 1: { cellKey: '-2,6', x: -15000, y: 50000, z: 100 } } });
+  Object.assign(api, { settlementOf: () => ({ name: 'balmora', cellKey: '-2,-9', x: -11000, y: -71000, z: 120 }) });
+  respawn.onPlayerDeath!(api, DEAD);
+  const res = events.find((e) => e.name === 'PlayerResurrect');
+  assert.deepEqual(res!.body, { cellKey: '-2,-9', x: -11000, y: -71000, z: 120, restoreHp: true });
+});
+
+test('settlementOf: temple-town interiors count; templeless towns, ruins and caves do not', async () => {
+  const { settlementOf } = await import('../src/net/connection');
+  assert.equal(settlementOf('Balmora, Council Club'), 'balmora');
+  assert.equal(settlementOf('seyda neen, arrille\'s tradehouse'), undefined, 'no temple in Seyda Neen');
+  assert.equal(settlementOf('Gnisis, Madach Tradehouse'), 'gnisis');
+  assert.equal(settlementOf('Mournhold, Royal Palace: Courtyard'), 'mournhold');
+  assert.equal(settlementOf('Mournhold Temple: Reception Area'), 'mournhold temple');
+  assert.equal(settlementOf('Arkngthand, Hall of Centrifuge'), undefined);
+  assert.equal(settlementOf('Addamasartus'), undefined);
+});
+
+test('the last temple town beats even the operator\'s configured point', () => {
+  const { api, events } = fakeApi({ positions: { 1: { cellKey: '-2,6', x: 0, y: 0, z: 0 } } });
+  Object.assign(api, { settlementOf: () => ({ name: 'balmora', cellKey: '-3,-2', x: 1, y: 2, z: 3 }) });
+  respawn.onPlayerDeath!(api, DEAD);
+  const res = events.find((e) => e.name === 'PlayerResurrect');
+  assert.equal((res!.body as { cellKey: string }).cellKey, '-3,-2');
+});

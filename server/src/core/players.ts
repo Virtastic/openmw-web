@@ -108,6 +108,8 @@ export interface Player {
   // (~100 ms later), before the client's move to the respawn point arrives; this one stays,
   // so that move is never refused as a jump.
   respawnAt?: number;
+  /** The outdoor spot this player last left for an interior (settlement respawn). */
+  lastOutside?: { x: number; y: number; cellKey?: string; z?: number };
   avatarDead?: boolean; // the peer's last bar report had hp 0 (346: the sync flush is the transition's only)
   // Wall-clock of the last sendCellStateAround: nine fat cell docs land in one burst and the
   // outbound hard ceiling is not what a healthy client crossing a city gate should die of.

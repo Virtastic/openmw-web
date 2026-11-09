@@ -2,6 +2,19 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.7.26
+
+**The map stays lit.** The parts of the map you had uncovered went black again every time you
+logged back in, because the game only keeps that in a save file and multiplayer has none. The
+places you explore (indoors and out) are now remembered with your character and stay uncovered
+when you return. Places explored before this update come back as you revisit them.
+
+**Death sends you to the last temple town you visited.** You come back just outside the door of
+the last building you entered in a town with a temple or chapel (Balmora, Vivec, Ald-ruhn,
+Gnisis, Maar Gan, Molag Mar, Suran, Ghostgate, Ebonheart, Sadrith Mora, Vos, Mournhold, Fort
+Frostmoth), instead of always Seyda Neen. Until you have been to one, it is still Seyda Neen.
+You keep everything you carry.
+
 ## 1.7.25
 
 **Levelling up works across sessions.** The game counts your skill increases toward the next

@@ -271,6 +271,7 @@ namespace MWGui
         void notifyInputActionBound() override;
 
         void addVisitedLocation(const std::string& name, int x, int y) override;
+        void revealMapCell(const std::string& cellKey) override;
 
         /// Hides dialog and schedules dialog to be deleted.
         void removeDialog(std::unique_ptr<Layout>&& dialog) override;

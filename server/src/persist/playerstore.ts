@@ -114,6 +114,10 @@ export interface PlayerDoc {
   // Backlog 260: exterior cells this character (or the campaign, when the map is shared)
   // has discovered, replayed on the welcome so the world map survives a relog.
   explored?: string[];
+  // The last temple town this character walked into a building of, and where to put
+  // them back: on the doorstep outside when they came in from outdoors, else where they
+  // arrived inside. Respawn prefers it over where they fell.
+  settlement?: { name: string; cellKey: string; x: number; y: number; z: number };
   // Phase 4: character-shadowed mwscript globals — quest progress variables that must NOT
   // travel between players (see quests.ts WORLD_GLOBALS). Restored on join/world-hop.
   globals?: Record<string, number>;

@@ -117,6 +117,7 @@ namespace MWGui
         void allowMouse() override {}
         void notifyInputActionBound() override {}
         void addVisitedLocation(const std::string&, int, int) override {}
+        void revealMapCell(const std::string&) override {}
         void removeDialog(std::unique_ptr<MWGui::Layout>&&) override {}
         void exitCurrentGuiMode() override {}
         void messageBox(std::string_view message, enum MWGui::ShowInDialogueMode) override
