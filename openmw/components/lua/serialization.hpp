@@ -1,3 +1,5 @@
+// Modified by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2025-2026.
+// See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #ifndef COMPONENTS_LUA_SERIALIZATION_H
 #define COMPONENTS_LUA_SERIALIZATION_H
 
@@ -51,6 +53,17 @@ namespace LuaUtil
     };
 
     BinaryData serialize(const sol::object&, const UserdataSerializer* customSerializer = nullptr);
+
+#ifdef __EMSCRIPTEN__
+    // Writing a table from parts that are already serialized (LuaStorage::save keeps every value serialized):
+    // tableOpen starts the data (format version + a table), appendKey writes a string key, appendSerialized a value
+    // as serialize() returned it (its version byte dropped), tableStart opens a nested table, tableClose ends one.
+    void tableOpen(BinaryData& out);
+    void tableStart(BinaryData& out);
+    void tableClose(BinaryData& out);
+    void appendKey(BinaryData& out, std::string_view key);
+    void appendSerialized(BinaryData& out, std::string_view serialized);
+#endif
     sol::object deserialize(lua_State* lua, std::string_view binaryData,
         const UserdataSerializer* customSerializer = nullptr, bool readOnly = false);
 

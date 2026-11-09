@@ -1,6 +1,11 @@
+// Modified by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2025-2026.
+// See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #ifndef COMPONENTS_LUA_STORAGE_H
 #define COMPONENTS_LUA_STORAGE_H
 
+#ifdef __EMSCRIPTEN__
+#include <atomic>
+#endif
 #include <map>
 #include <sol/sol.hpp>
 #include <stdexcept>
@@ -15,6 +20,11 @@ namespace LuaUtil
     class LuaStorage
     {
     public:
+#ifdef __EMSCRIPTEN__
+        // Counts every change of any section (set, setAll), so that the page's periodic flush
+        // (omw_save_settings, engine.cpp) writes the permanent storage only when something changed.
+        static std::atomic<unsigned long long> sChanges;
+#endif
         static void initLuaBindings(LuaUtil::LuaView& view);
         static sol::table initGlobalPackage(LuaUtil::LuaView& view, LuaStorage* globalStorage);
         static sol::table initLocalPackage(LuaUtil::LuaView& view, LuaStorage* globalStorage);
@@ -72,6 +82,9 @@ namespace LuaUtil
             {
             }
             sol::object getCopy(lua_State* state) const;
+#ifdef __EMSCRIPTEN__
+            const std::string& serialized() const { return mSerializedValue; }
+#endif
             sol::object getReadOnly(lua_State* state) const;
 
         private:
