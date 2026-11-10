@@ -394,15 +394,16 @@ export class WorldM7 {
     }
     // Persist BEFORE the sharing gate: an individual map is still this character's map
     // (backlog 260: nothing was kept, and a returning host had a blank world map).
-    const exterior = cellKeys.filter((k) => /^-?\d+,-?\d+$/.test(k));
     const targets = new Set([player.charId]);
     const owner = this.ctx.ownerCharId?.();
     if (owner !== undefined && this.ctx.isMapShared()) targets.add(owner);
-    if (exterior.length > 0 && !player.system) {
+    // Interiors too: the client replays every key to clear that cell's map fog; only the
+    // exterior ones also become world-map markers.
+    if (cellKeys.length > 0 && !player.system) {
       for (const charId of targets) {
         this.ctx.players?.update(charId, (doc) => {
           const set = new Set(doc.explored ?? []);
-          for (const k of exterior) set.add(k);
+          for (const k of cellKeys) set.add(k);
           doc.explored = [...set].slice(-MAX_EXPLORED);
         });
       }

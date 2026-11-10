@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 
 #include <MyGUI_Types.h>
@@ -99,6 +100,12 @@ namespace MWRender
 
         osg::Group* getRoot();
 
+        /// MP (OT3): a cell this character explored in an earlier session. The engine keeps
+        /// fog of war only in memory/savegames and MP has no savegame, so without this every
+        /// rejoin painted already-explored cells black again. Key = mp cellKey ("x,y" for an
+        /// exterior, the lower-cased cell name for an interior). Its fog starts fully clear.
+        void revealCell(const std::string& cellKey);
+
         MyGUI::IntRect getInteriorGrid() const;
 
     private:
@@ -122,7 +129,7 @@ namespace MWRender
 
         struct MapSegment
         {
-            void initFogOfWar();
+            void initFogOfWar(bool revealed = false);
             void loadFogOfWar(const ESM::FogTexture& fog);
             void saveFogOfWar(ESM::FogTexture& fog) const;
             void createFogOfWarTexture();
@@ -137,6 +144,9 @@ namespace MWRender
         typedef std::map<std::pair<int, int>, MapSegment> SegmentMap;
         SegmentMap mExteriorSegments;
         SegmentMap mInteriorSegments;
+
+        std::set<std::string> mRevealedCells; // MP: see revealCell
+        bool isRevealed(const MWWorld::CellStore* cell) const;
 
         int mMapResolution;
 

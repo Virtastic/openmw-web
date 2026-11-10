@@ -2,6 +2,8 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "localmap.hpp"
 
+#include <components/misc/strings/lower.hpp>
+#include <sstream>
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -326,7 +328,36 @@ namespace MWRender
         if (cell->getFog() && !cell->getFog()->mFogTextures.empty())
             segment.loadFogOfWar(cell->getFog()->mFogTextures.back());
         else
-            segment.initFogOfWar();
+            segment.initFogOfWar(isRevealed(cell));
+    }
+
+    bool LocalMap::isRevealed(const MWWorld::CellStore* cell) const
+    {
+        if (mRevealedCells.empty())
+            return false;
+        const MWWorld::Cell* c = cell->getCell();
+        std::string key;
+        if (c->isExterior())
+            key = std::to_string(c->getGridX()) + "," + std::to_string(c->getGridY());
+        else
+            key = Misc::StringUtils::lowerCase(c->getNameId());
+        return mRevealedCells.count(key) > 0;
+    }
+
+    void LocalMap::revealCell(const std::string& cellKey)
+    {
+        mRevealedCells.insert(cellKey);
+        // A segment already built this session (the cell around us at join) still has the
+        // black fog it was given; clear it now. Interiors rebuild on their next request.
+        int x = 0, y = 0;
+        char comma = 0;
+        std::istringstream in(cellKey);
+        if (in >> x >> comma >> y && comma == ',')
+        {
+            auto it = mExteriorSegments.find({ x, y });
+            if (it != mExteriorSegments.end() && it->second.mFogOfWarImage && !it->second.mHasFogState)
+                it->second.initFogOfWar(true);
+        }
     }
 
     static osg::Vec2f getNorthVector(const MWWorld::CellStore* cell)
@@ -475,7 +506,7 @@ namespace MWRender
                         }
                     }
                     if (!loaded)
-                        segment.initFogOfWar();
+                        segment.initFogOfWar(isRevealed(cell));
                 }
             }
         }
@@ -659,7 +690,7 @@ namespace MWRender
         mFogOfWarTexture->setImage(mFogOfWarImage);
     }
 
-    void LocalMap::MapSegment::initFogOfWar()
+    void LocalMap::MapSegment::initFogOfWar(bool revealed)
     {
         mFogOfWarImage = new osg::Image;
         // Assign a PixelBufferObject for asynchronous transfer of data to the GPU
@@ -667,7 +698,8 @@ namespace MWRender
         mFogOfWarImage->allocateImage(sFogOfWarResolution, sFogOfWarResolution, 1, GL_RGBA, GL_UNSIGNED_BYTE);
         assert(mFogOfWarImage->isDataContiguous());
         std::vector<uint32_t> data;
-        data.resize(sFogOfWarResolution * sFogOfWarResolution, 0xff000000);
+        // alpha 0 = explored (the same value updatePlayer writes as the player walks)
+        data.resize(sFogOfWarResolution * sFogOfWarResolution, revealed ? 0x00000000 : 0xff000000);
 
         memcpy(mFogOfWarImage->data(), data.data(), data.size() * 4);
 

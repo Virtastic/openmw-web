@@ -8,7 +8,9 @@
 //
 // THE ORDER MATTERS:
 //
-//   1. The operator's configured respawn point, if they set one.
+//   1. The last town with a temple or chapel this character visited (entered a building of):
+//      outside the door they used. Ahead of even the configured point.
+//   1b. The operator's configured respawn point, if they set one.
 //   2. WHERE YOU DIED. Not ideal (it can loop in a bad spot) but it is recoverable, and it is
 //      strictly better than the alternative below.
 //
@@ -37,10 +39,12 @@ export const respawn: Plugin = {
     // so a where-you-fell below it comes back at the surface of the same spot: breath
     // restored, able to swim for the shore. Interiors keep their own water levels, which the
     // server does not know; the operator's configured point is untouched.
-    const surfaced = whereTheyFell && !configured && /^-?\d+,-?\d+$/.test(whereTheyFell.cellKey) && whereTheyFell.z < 0
+    const town = api.settlementOf?.(player.id); // ahead of even the configured point
+    const settlement = town ? { cellKey: town.cellKey, x: town.x, y: town.y, z: town.z } : undefined;
+    const surfaced = whereTheyFell && !configured && !settlement && /^-?\d+,-?\d+$/.test(whereTheyFell.cellKey) && whereTheyFell.z < 0
       ? { ...whereTheyFell, z: 32 }
       : undefined;
-    const dest = configured ?? surfaced ?? whereTheyFell;
+    const dest = settlement ?? configured ?? surfaced ?? whereTheyFell;
     if (!dest) {
       // No configured point, and no pose yet (died before ever moving). Nothing to send
       // — the client keeps its own position rather than being teleported into the void.
@@ -51,7 +55,7 @@ export const respawn: Plugin = {
     api.sendEvent(player.id, 'PlayerResurrect', { ...dest, restoreHp: true });
     api.log('info', 'respawn.sent', {
       id: player.id, cellKey: dest.cellKey,
-      via: configured ? 'configured' : surfaced ? 'surfaced' : 'where_they_fell',
+      via: settlement ? `settlement:${town!.name}` : configured ? 'configured' : surfaced ? 'surfaced' : 'where_they_fell',
     });
 
     // TELL THE WORLD. A friend vanishing mid-fight with no message reads as a bug or a

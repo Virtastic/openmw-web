@@ -243,6 +243,7 @@ namespace MWBase
         virtual void notifyInputActionBound() = 0;
 
         virtual void addVisitedLocation(const std::string& name, int x, int y) = 0;
+        virtual void revealMapCell(const std::string& cellKey) = 0; // MP: see LocalMap::revealCell
 
         /// Hides dialog and schedules dialog to be deleted.
         virtual void removeDialog(std::unique_ptr<MWGui::Layout>&& dialog) = 0;

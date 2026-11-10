@@ -234,6 +234,22 @@ export interface ServerCtx {
 // that three consecutive windows is still under a second of sustained impossibility.
 const MOVE_WINDOW_MS = 200;
 
+// The towns a dead character comes back to: the last one with a temple or chapel whose
+// building they entered (any building -- the tavern counts; they reappear outside its door).
+// Morrowind names every town interior "<Town>, <Place>" (Mournhold "<Place>: <Room>" too), so
+// the prefix is the town. Towns without a Tribunal temple, Imperial chapel or shrine (Seyda
+// Neen, Caldera, Pelagiad, Hla Oad...) do not count: you go back to the last one that did.
+const EXTERIOR_CELL = /^-?\d+,-?\d+$/;
+export const FRIENDLY_SETTLEMENTS = new Set([
+  'balmora', 'vivec', 'ald-ruhn', "ald'ruhn", 'gnisis', 'maar gan', 'molag mar', 'suran',
+  'ghostgate', 'ebonheart', 'sadrith mora', 'wolverine hall', 'vos', 'mournhold',
+  'mournhold temple', 'fort frostmoth',
+]);
+export function settlementOf(cellKey: string): string | undefined {
+  const town = cellKey.split(/[,:]/)[0]!.trim().toLowerCase();
+  return FRIENDLY_SETTLEMENTS.has(town) ? town : undefined;
+}
+
 export class Connection implements Peer {
   state: SessionState = 'CONNECTED';
   player?: Player;
@@ -251,6 +267,22 @@ export class Connection implements Peer {
   // Declared at Hello; carried onto the Player so cell-authority election can require it.
   private simulatesActors = false;
   private isSystem = false;
+
+  // Where a dead character comes back: leaving the outdoors remembers where (an interior has
+  // no world coordinates); walking into a friendly town's building records that town.
+  private noteSettlement(player: Player, oldCell: string | undefined, cellKey: string,
+    prev: { x: number; y: number; z: number } | undefined, x: number, y: number, z: number): void {
+    const fromOutside = oldCell !== undefined && EXTERIOR_CELL.test(oldCell);
+    if (fromOutside && prev) player.lastOutside = { x: prev.x, y: prev.y, cellKey: oldCell, z: prev.z };
+    if (this.isSystem || player.bot || EXTERIOR_CELL.test(cellKey)) return;
+    const town = settlementOf(cellKey);
+    if (!town) return;
+    const o = fromOutside ? player.lastOutside : undefined;
+    const at = o?.cellKey !== undefined && o.z !== undefined
+      ? { name: town, cellKey: o.cellKey, x: o.x, y: o.y, z: o.z }
+      : { name: town, cellKey, x, y, z };
+    this.ctx.players.update(player.charId, (doc) => { doc.settlement = at; });
+  }
   private engineHeld = false;
   // Set by resolveCharacter when this connection's character is genuinely still in
   // Morrowind's opening sequence, so authenticate() can withhold persistence until it
@@ -1488,6 +1520,7 @@ export class Connection implements Peer {
       rebase: oldCell !== undefined && oldCell !== cellKey };
     player.cellKey = cellKey;
     const prev = player.pose;
+    if (oldCell !== cellKey) this.noteSettlement(player, oldCell, cellKey, prev, x, y, z);
     player.pose = {
       x, y, z,
       yaw: prev?.yaw ?? 0,
