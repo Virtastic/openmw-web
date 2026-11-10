@@ -548,7 +548,7 @@ test('map sharing follows the [sharing] toggle', async (t) => {
     const back = await TestClient.connect(server.port);
     const w = await back.joinExisting('MapBack');
     const rec = w['playerRecord'] as { explored?: string[] } | null;
-    assert.deepEqual(rec?.explored, ['1,1', '2,2', '3,3'], 'exterior keys only, in discovery order, deduped');
+    assert.deepEqual(rec?.explored, ['1,1', '2,2', 'Balmora, Guild of Mages', '3,3'], 'interiors kept too (their map fog is cleared on rejoin), in discovery order, deduped');
     back.close();
     await back.closed;
   });

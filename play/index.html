@@ -1202,13 +1202,13 @@ try {
      'The engine needs a secure page, and browsers only treat https:// (or this computer\'s own '
      + 'localhost) as one. Ask the server\'s owner for its https:// address, or play on the '
      + 'server machine itself at http://localhost.', false);
- } else if (!(navigator.userAgentData && navigator.userAgentData.brands
-     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }))){
-   // CHROMIUM ONLY, by brand: Firefox 134+ passes both probes below and still cannot carry the
-   // game. The front door (server/web/play.js) and the launcher say this before sign-in; this
+ } else if (!((navigator.userAgentData && navigator.userAgentData.brands
+     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }))
+     || /\bFirefox\/(\d+)/.test(navigator.userAgent) && +RegExp.$1 >= 134)){
+   // CHROMIUM OR FIREFOX 134+, by brand (Firefox 159 measured at parity with Chromium). The front door (server/web/play.js) and the launcher say this before sign-in; this
    // is for whoever arrives by a pasted link.
-   fatalOverlay('Open this in Chrome or Edge',
-     'This game runs in Chrome or Edge on a desktop or laptop. Open this page there.',
+   fatalOverlay('Open this in Chrome, Edge or Firefox',
+     'This game runs in Chrome, Edge or Firefox on a desktop or laptop. Open this page there.',
      false, { actionLabel: 'Back', actionHref: '/' });
  } else if (!self.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined'){
    // Chromium on a secure page without isolation is the server's headers, not the player.
@@ -2200,8 +2200,16 @@ try {
          // tier when it is absent rather than assuming the best case.
          // ?tier=low|mid|high forces one (QA, and a support answer for "it runs badly").
          var __devMem = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 0;
+         // FIREFOX REPORTS NO deviceMemory, so it always landed on 'mid' -- a 96-chunk cache that
+         // thrashes in a town (prod 2026-11-05, two Firefox sessions: 593 and 833 evictions and 12-28 s
+         // of main-thread stall, against 49-269 evictions and 0-4.5 s for Chrome sessions on 'high';
+         // lab, Firefox, same 75 s Balmora walk: mid 138 evictions / 3.3 s stalled, high 75 / 1.2 s).
+         // Chrome gives 'high' to ANY machine with 8 GB or more whatever its core count, so when the
+         // memory is unknown, 8 or more logical cores (hardwareConcurrency, which Firefox does report)
+         // is a no-riskier proxy for the same class of machine.
+         var __cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 0;
          var __tier = (/[?&]tier=(low|mid|high)/.exec(location.search) || [])[1]
-                   || (__devMem >= 8 ? 'high' : (__devMem > 0 && __devMem <= 4 ? 'low' : 'mid'));
+                   || (__devMem >= 8 ? 'high' : (__devMem > 0 && __devMem <= 4 ? 'low' : (__devMem === 0 && __cores >= 8 ? 'high' : 'mid')));
          // Only the knobs whose cost scales with the scene. Everything else stays common.
          // lru = streamfs chunk slots (2MB each), i.e. the JS-side cache ceiling on top of the
          // wasm heap. MEASURED in Balmora at matched workload: the old flat 128 was thrashing --
@@ -2220,7 +2228,7 @@ try {
          // streamfs.js is parsed before this runs, so it resolves LRU_MAX lazily from this global.
          try { window.__omwLruDefault = TIER.lru; } catch(e){}
          try { window.__omwTier = { tier: __tier, deviceMemory: __devMem || null }; } catch(e){}
-         append('[tier] '+__tier+' (navigator.deviceMemory='+(__devMem||'unknown')+', lru='+TIER.lru+')');
+         append('[tier] '+__tier+' (navigator.deviceMemory='+(__devMem||'unknown')+', cores='+(__cores||'unknown')+', lru='+TIER.lru+')');
          // IMPORTANT: OpenMW loads user settings from <last active config dir>/settings.cfg.
          // In this build the only config dir is '/' (where openmw.cfg lives), NOT the XDG
          // path — write the file to BOTH so the engine actually reads it.

@@ -88,6 +88,10 @@ export interface PlayerDoc {
     skills?: Record<string, number>;
     level?: number;
     reputation?: number; // 0..255, NpcStats-only in the engine: nothing else carries it across a relog
+    // Skill increases counted toward the next level-up (NpcStats-only in the engine, so a relog
+    // reset it to 0): `progress` is the count against iLevelUpTotal, the others set the
+    // level-up dialog's attribute multipliers. Absent on a character that predates the field.
+    levelProgress?: { progress: number; attributes?: Record<string, number>; specializations?: Record<string, number> };
   };
   spells?: string[];
   // The Mark spell's spot: the engine's serialized cell id and a position. Lives in NpcStats
@@ -110,6 +114,10 @@ export interface PlayerDoc {
   // Backlog 260: exterior cells this character (or the campaign, when the map is shared)
   // has discovered, replayed on the welcome so the world map survives a relog.
   explored?: string[];
+  // The last temple town this character walked into a building of, and where to put
+  // them back: on the doorstep outside when they came in from outdoors, else where they
+  // arrived inside. Respawn prefers it over where they fell.
+  settlement?: { name: string; cellKey: string; x: number; y: number; z: number };
   // Phase 4: character-shadowed mwscript globals — quest progress variables that must NOT
   // travel between players (see quests.ts WORLD_GLOBALS). Restored on join/world-hop.
   globals?: Record<string, number>;

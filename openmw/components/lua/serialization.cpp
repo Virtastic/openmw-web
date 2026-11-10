@@ -1,3 +1,5 @@
+// Modified by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2025-2026.
+// See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "serialization.hpp"
 
 #include <osg/Matrixf>
@@ -355,6 +357,32 @@ namespace LuaUtil
         }
         throw std::runtime_error("Unknown type in serialized data: " + std::to_string(type));
     }
+
+#ifdef __EMSCRIPTEN__
+    void tableOpen(BinaryData& out)
+    {
+        out.push_back(FORMAT_VERSION);
+        appendType(out, SerializedType::TABLE_START);
+    }
+    void tableStart(BinaryData& out)
+    {
+        appendType(out, SerializedType::TABLE_START);
+    }
+    void tableClose(BinaryData& out)
+    {
+        appendType(out, SerializedType::TABLE_END);
+    }
+    void appendKey(BinaryData& out, std::string_view key)
+    {
+        appendString(out, key);
+    }
+    void appendSerialized(BinaryData& out, std::string_view serialized)
+    {
+        if (serialized.empty() || serialized[0] != FORMAT_VERSION)
+            throw std::runtime_error("Lua storage: a stored value of another serialization format");
+        out.append(serialized.data() + 1, serialized.size() - 1);
+    }
+#endif
 
     BinaryData serialize(const sol::object& obj, const UserdataSerializer* customSerializer)
     {

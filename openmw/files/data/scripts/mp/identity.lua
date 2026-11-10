@@ -322,9 +322,32 @@ local function snapProgression()
     -- Reputation (backlog 223): NpcStats only, like the mark, so it reset to 0 on every relog
     -- and every PcReputation-gated topic vanished. Rides on PlayerLevel.
     local okRep, rep = pcall(function() return NPC.stats.reputation(self).current end)
+    -- LEVEL PROGRESS: the skill increases counted toward the next level-up. NpcStats-only like the
+    -- mark and the reputation, so it reset to 0 on every relog while the raised skills stayed --
+    -- a player in short sessions never reached the 10 increases that open the level-up dialog.
+    -- The per-attribute counts set that dialog's x1..x5 multipliers, so they travel with it.
+    local progress, attrInc, specInc
+    local okLvl = pcall(function()
+        local lv = Actor.stats.level(self)
+        local p = lv.progress
+        if type(p) ~= 'number' then return end
+        local a, sp = {}, {}
+        for _, id in ipairs(ATTRIBUTES) do
+            local n = lv.skillIncreasesForAttribute[id]
+            if type(n) == 'number' then a[id] = n end
+        end
+        for _, id in ipairs({ 'combat', 'magic', 'stealth' }) do
+            local n = lv.skillIncreasesForSpecialization[id]
+            if type(n) == 'number' then sp[id] = n end
+        end
+        progress, attrInc, specInc = p, a, sp
+    end)
+    if not okLvl then progress, attrInc, specInc = nil, nil, nil end
     return { attributes = attributes, skills = skills, level = Actor.stats.level(self).current, mark = mark,
-        reputation = okRep and type(rep) == 'number' and rep or nil }
+        reputation = okRep and type(rep) == 'number' and rep or nil,
+        progress = progress, attributeIncreases = attrInc, specializationIncreases = specInc }
 end
+
 
 local function snapSpells()
     local set = {}
@@ -496,6 +519,12 @@ local function fingerprint(v)
         parts[#parts + 1] = k .. '=' .. fingerprint(raw)
     end
     return '{' .. table.concat(parts, ',') .. '}'
+end
+
+-- What PlayerLevel declares besides the level: changes whenever a skill increase is counted.
+local function levelExtraFingerprint(prog)
+    if prog.progress == nil then return nil end
+    return fingerprint({ p = prog.progress, a = prog.attributeIncreases, s = prog.specializationIncreases })
 end
 
 -- TALKED-TO (backlog 230). TalkedToPc is a flag on each NPC's CreatureStats, per engine, and
@@ -686,10 +715,14 @@ function identity.tick(now)
             last.skills = sfp
             mp.sendEvent('PlayerSkills', prog.skills)
         end
-        if prog.level ~= last.level or prog.reputation ~= last.reputation then
+        local lfp = levelExtraFingerprint(prog)
+        if prog.level ~= last.level or prog.reputation ~= last.reputation or lfp ~= last.levelExtra then
             last.level = prog.level
             last.reputation = prog.reputation
-            mp.sendEvent('PlayerLevel', { level = prog.level, reputation = prog.reputation })
+            last.levelExtra = lfp
+            mp.sendEvent('PlayerLevel', { level = prog.level, reputation = prog.reputation,
+                progress = prog.progress, attributeIncreases = prog.attributeIncreases,
+                specializationIncreases = prog.specializationIncreases })
         end
         -- The mark, when the engine can read one; only a SET mark is sent (nothing clears one).
         if prog.mark then
@@ -935,6 +968,21 @@ local function applyPhase2(record)
         local stats = record.stats or {}
         if stats.level then Actor.stats.level(self).current = stats.level end
         if stats.reputation then pcall(function() NPC.stats.reputation(self).current = stats.reputation end) end
+        -- Level progress (see snapProgression). Its own pcall: an engine without the binding, or a
+        -- character that predates the field (nil here), must leave the rest of the restore alone.
+        local lp = stats.levelProgress
+        if type(lp) == 'table' then
+            pcall(function()
+                local lv = Actor.stats.level(self)
+                if type(lp.progress) == 'number' then lv.progress = lp.progress end
+                for id, n in pairs(lp.attributes or {}) do
+                    if type(n) == 'number' then lv.skillIncreasesForAttribute[id] = n end
+                end
+                for id, n in pairs(lp.specializations or {}) do
+                    if type(n) == 'number' then lv.skillIncreasesForSpecialization[id] = n end
+                end
+            end)
+        end
         for id, v in pairs(stats.attributes or {}) do
             local base = id:match('^(.-)_damage$')
             local stat = Actor.stats.attributes[base or id]
@@ -1031,6 +1079,7 @@ local function applyPhase2(record)
         last.skills = fingerprint(prog.skills)
         last.level = prog.level
         last.reputation = prog.reputation
+        last.levelExtra = levelExtraFingerprint(prog)
         last.mark = prog.mark and fingerprint(prog.mark) or nil
         last.spells = snapSpells()
         last.inventory = fingerprint(snapInventory())

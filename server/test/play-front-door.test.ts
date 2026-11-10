@@ -131,6 +131,22 @@ test('the launcher no longer emits mpstart and index.html no longer boots with -
   assert.doesNotMatch(index, /omw-mpstart-retried/);
 });
 
+test('the launcher cloud boot asks whether the server hands out the game', clientOpts, () => {
+  // Prod 2026-10-20: on a deliveryModel = "serve" server the cloud tile opened an empty locker
+  // and bounced with "no game manifest configured" (9 sign-ins, 3 accounts). The multiplayer
+  // boot already asks /mwdata-manifest.json and sends #mwdata=1; the cloud boot must too.
+  const launcher = readFileSync(join(process.cwd(), '..', 'play', 'launcher.html'), 'utf8');
+  const branch = /if \(intent === 'cloud'\)\{[\s\S]*?\n {3}\}/.exec(launcher);
+  assert.ok(branch, 'no cloud branch in the SSO return handler');
+  assert.match(branch[0], /fetch\('\/mwdata-manifest\.json', \{ method: 'HEAD' \}\)/);
+  assert.match(branch[0], /\(hosted \? '&mwdata=1' : ''\)/);
+  assert.match(branch[0], /&cloud=1/);
+  assert.doesNotMatch(branch[0], /[#&]mp=/, 'still single player');
+  // ...and index.html reads that flag from the cloud fragment before it decides on the locker.
+  assert.match(index, /var __hostedData = \/\(\^\|\[#&\]\)mwdata=1\(\$\|\[&#\]\)\/\.test\(__bootFrag\);/);
+  assert.match(index, /var __mpLocker = !!window\.__omwLockerToken && !__hostedData;/);
+});
+
 test('a failed openmw.data download and a failed syncfs both say so', clientOpts, () => {
   // 409: emscripten's loadPackage rejects with the package path and nothing else fires.
   assert.match(index, /if \(\/openmw\\\.data\/\.test\(String\(e\.reason && e\.reason\.message \|\| e\.reason\)\)\) \{\r?\n\s*fatalOverlay\('Could not download the game'/);
@@ -274,12 +290,14 @@ test('a refused invite says where to get one', () => {
     'helpLink is defined before the refusal note uses it');
 });
 
-test('the front door: sign-in buttons are never greyed, a lost state cookie retries once, Chromium only', () => {
+test('the front door: sign-in buttons are never greyed, a lost state cookie retries once, Chromium and Firefox 134+ only', () => {
   assert.doesNotMatch(play, /aria-disabled|classList\.toggle\('off'/, 'returning players are never locked out of the buttons');
   assert.match(play, /localStorage\.setItem\('omwmp:returning', '1'\)/, 'a sign-in that worked is remembered');
   assert.match(play, /if \(code === 'state'\) \{[\s\S]*?omwmp:stateRetry[\s\S]*?location\.href = again/, 'state is retried');
   assert.ok(play.indexOf("if (code === 'state')") < play.indexOf('const said = {'), 'retried before it is said');
   assert.match(play, /b\.brand === 'Chromium'/, 'the browser gate names the brand');
+  assert.match(play, /Firefox\\\/\(\\d\+\)/, 'Firefox is let through by version');
+  assert.match(play, /\?\.\[1\] \?\? 0\) >= 134/, 'from Firefox 134, the first with memory64');
 });
 
 test('a boot that cannot get its memory yet retries, then says so', clientOpts, () => {

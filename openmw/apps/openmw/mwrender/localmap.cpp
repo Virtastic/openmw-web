@@ -2,6 +2,8 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "localmap.hpp"
 
+#include <components/misc/strings/lower.hpp>
+#include <sstream>
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -15,10 +17,6 @@
 #include <osg/Texture2D>
 
 #include <osgDB/ReadFile>
-
-#include <osgUtil/CullVisitor>
-#include <osgUtil/RenderBin>
-#include <osgUtil/StateGraph>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/fogstate.hpp>
@@ -91,51 +89,6 @@ namespace MWRender
     {
     public:
         void operator()(LocalMapRenderToTexture* node, osg::NodeVisitor* nv);
-    };
-
-    // WHETHER THE CAMERA'S SUBGRAPH SURVIVES ITS OWN CULL -- the last unchecked step on this
-    // defect. Everything upstream of the draw is now proven against a real build: the camera is
-    // created and added to the scene, it IS traversed, and its texture is real and attached (the
-    // null-texture path never fires). Five suspects died that way -- fog of war, the pbuffer
-    // fallback, the one-frame render window, a null texture, traversal -- and what is left is a
-    // correct-looking camera that clears its target and draws nothing into it.
-    //
-    // The cull is the one step in between that has never been looked at, and it is a plausible
-    // culprit rather than a leftover: this camera's view and projection are hand-built for a
-    // top-down orthographic shot with a near/far computed from cell bounds, so a frustum that
-    // excludes the world -- or a child node-mask that rejects it -- produces EXACTLY the observed
-    // symptom and nothing else in the pipeline would complain.
-    //
-    // One number decides it. A cull that keeps the world leaves a positive drawable count in this
-    // camera's own render bin; a cull that throws the world away leaves zero. Positive means the
-    // fault is in the draw or the readback, and this camera is exonerated; zero means the cull is
-    // the bug and the matrices are where to look. Once per session, and it costs one walk of one
-    // bin -- deliberately cheap enough to leave in place rather than carry as a patch.
-    class MapCullDiagnostic : public osg::NodeCallback
-    {
-    public:
-        void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
-    };
-
-    // DOES THE DRAW ACTUALLY EXECUTE. The cull answered yes -- 109 drawables survive into this
-    // camera's bin against build 58 -- so the world genuinely reaches the draw and the camera is
-    // exonerated. The step after it has never been observed: whether the GPU runs this camera's
-    // render stage at all, and how many times.
-    //
-    // That matters here specifically because the map camera RETIRES ITSELF. The update callback
-    // counts mFramesLeft down and then masks the node off forever, so the camera gets a fixed
-    // and very small number of chances. Under WebGL a framebuffer object is created lazily and
-    // the first attempts can be no-ops, and update traversals are not draws -- so the countdown
-    // can run out on frames that never drew anything, switching the camera off before it ever
-    // rendered. The target then keeps its clear colour permanently, which is the reported bug.
-    //
-    // A final-draw callback fires only when the stage really ran, so counting them separates
-    // "never drew" from "drew and produced black". Logged for the first few draws only.
-    class MapDrawDiagnostic : public osg::Camera::DrawCallback
-    {
-    public:
-        void operator()(osg::RenderInfo& renderInfo) const override;
-        mutable unsigned int mDraws = 0;
     };
 
     LocalMap::LocalMap(osg::Group* root)
@@ -375,7 +328,36 @@ namespace MWRender
         if (cell->getFog() && !cell->getFog()->mFogTextures.empty())
             segment.loadFogOfWar(cell->getFog()->mFogTextures.back());
         else
-            segment.initFogOfWar();
+            segment.initFogOfWar(isRevealed(cell));
+    }
+
+    bool LocalMap::isRevealed(const MWWorld::CellStore* cell) const
+    {
+        if (mRevealedCells.empty())
+            return false;
+        const MWWorld::Cell* c = cell->getCell();
+        std::string key;
+        if (c->isExterior())
+            key = std::to_string(c->getGridX()) + "," + std::to_string(c->getGridY());
+        else
+            key = Misc::StringUtils::lowerCase(c->getNameId());
+        return mRevealedCells.count(key) > 0;
+    }
+
+    void LocalMap::revealCell(const std::string& cellKey)
+    {
+        mRevealedCells.insert(cellKey);
+        // A segment already built this session (the cell around us at join) still has the
+        // black fog it was given; clear it now. Interiors rebuild on their next request.
+        int x = 0, y = 0;
+        char comma = 0;
+        std::istringstream in(cellKey);
+        if (in >> x >> comma >> y && comma == ',')
+        {
+            auto it = mExteriorSegments.find({ x, y });
+            if (it != mExteriorSegments.end() && it->second.mFogOfWarImage && !it->second.mHasFogState)
+                it->second.initFogOfWar(true);
+        }
     }
 
     static osg::Vec2f getNorthVector(const MWWorld::CellStore* cell)
@@ -524,7 +506,7 @@ namespace MWRender
                         }
                     }
                     if (!loaded)
-                        segment.initFogOfWar();
+                        segment.initFogOfWar(isRevealed(cell));
                 }
             }
         }
@@ -708,7 +690,7 @@ namespace MWRender
         mFogOfWarTexture->setImage(mFogOfWarImage);
     }
 
-    void LocalMap::MapSegment::initFogOfWar()
+    void LocalMap::MapSegment::initFogOfWar(bool revealed)
     {
         mFogOfWarImage = new osg::Image;
         // Assign a PixelBufferObject for asynchronous transfer of data to the GPU
@@ -716,7 +698,8 @@ namespace MWRender
         mFogOfWarImage->allocateImage(sFogOfWarResolution, sFogOfWarResolution, 1, GL_RGBA, GL_UNSIGNED_BYTE);
         assert(mFogOfWarImage->isDataContiguous());
         std::vector<uint32_t> data;
-        data.resize(sFogOfWarResolution * sFogOfWarResolution, 0xff000000);
+        // alpha 0 = explored (the same value updatePlayer writes as the player walks)
+        data.resize(sFogOfWarResolution * sFogOfWarResolution, revealed ? 0x00000000 : 0xff000000);
 
         memcpy(mFogOfWarImage->data(), data.data(), data.size() * 4);
 
@@ -954,142 +937,7 @@ namespace MWRender
         // override sun for local map
         SceneUtil::configureStateSetSunOverride(light, stateset);
 
-        // The scene hangs under an identity group ONLY so the cull diagnostic has somewhere to sit
-        // that is INSIDE this camera's own render stage. A cull callback on the camera itself runs
-        // before that stage is pushed, so it would count the main view's bin -- a number that is
-        // always large, always healthy, and says nothing whatsoever about the map. The group adds
-        // no state and no transform; it is a place to stand.
-        osg::ref_ptr<osg::Group> sceneHolder = new osg::Group;
-        sceneHolder->setName("LocalMapSceneHolder");
-        sceneHolder->setCullCallback(new MapCullDiagnostic);
-        sceneHolder->addChild(mSceneRoot);
-        camera->addChild(sceneHolder);
-        camera->setFinalDrawCallback(new MapDrawDiagnostic);
-    }
-
-    namespace
-    {
-        // Leaves live in TWO places during cull. A bin's own leaf list is only populated once the
-        // bin has been sorted, and at cull time most of them are still sitting in StateGraphs --
-        // so counting just getRenderLeafList() would report zero for a perfectly healthy cull and
-        // frame the wrong suspect. Both are walked, recursively, the same way the shadow
-        // technique walks them.
-        unsigned int countCulledDrawables(osgUtil::StateGraph* sg)
-        {
-            if (!sg)
-                return 0;
-            unsigned int n = static_cast<unsigned int>(sg->_leaves.size());
-            for (const auto& child : sg->_children)
-                n += countCulledDrawables(child.second.get());
-            return n;
-        }
-
-        unsigned int countCulledDrawables(osgUtil::RenderBin* bin)
-        {
-            if (!bin)
-                return 0;
-            unsigned int n = static_cast<unsigned int>(bin->getRenderLeafList().size());
-            for (osgUtil::StateGraph* sg : bin->getStateGraphList())
-                n += countCulledDrawables(sg);
-            for (const auto& child : bin->getRenderBinList())
-                n += countCulledDrawables(child.second.get());
-            return n;
-        }
-    }
-
-    void MapDrawDiagnostic::operator()(osg::RenderInfo& renderInfo) const
-    {
-        // The first few only. If this never appears the draw is not running; if it appears and
-        // the map is still blank, the draw runs and produces nothing, which is a different bug
-        // in a different place.
-        if (mDraws < 4)
-        {
-            // ...and WHICH TEXTURE this draw is actually landing in. If this differs from the
-            // pointer logged at setup, the widget is holding an orphan that nothing ever renders
-            // into, and that is the whole bug -- every other measurement stays exactly as it is.
-            const void* attached = nullptr;
-            if (const osg::Camera* cam = renderInfo.getCurrentCamera())
-            {
-                const auto& map = cam->getBufferAttachmentMap();
-                const auto it = map.find(osg::Camera::COLOR_BUFFER);
-                if (it != map.end())
-                    attached = static_cast<const void*>(it->second._texture.get());
-            }
-            Log(Debug::Warning) << "Local map: RTT camera DREW (draw #" << (mDraws + 1)
-                                << ") into texture " << attached;
-        }
-
-        // WHAT IS ACTUALLY IN THE TARGET. Build 59 established that this camera draws: created,
-        // traversed, 109 drawables through the cull, draw executed -- and the HUD panel is still
-        // solid black, which is exactly this camera's clear colour.
-        //
-        // Two very different bugs remain and no amount of reasoning separates them. Either the
-        // draw writes colour and the widget is showing something else, or the draw runs and
-        // produces nothing. Reading the target answers it outright: non-black pixels mean the
-        // render is fine and the fault is in what MyGUI binds; all-black means the geometry
-        // reached the rasteriser and wrote no colour, which points at depth or shaders.
-        //
-        // Read in the FINAL draw callback, where this camera's framebuffer is still bound, and
-        // ONCE -- glReadPixels stalls the pipeline, which is acceptable for a single diagnostic
-        // frame and would not be as a per-frame cost.
-        //
-        // Sampled from the CENTRE, not the corner: a corner of a top-down map shot is plausibly
-        // dark on its own merits, and reporting that as "black" would manufacture the very
-        // conclusion this is meant to test.
-        if (mDraws == 0)
-        {
-            int w = 16, h = 16, x0 = 0, y0 = 0;
-            if (const osg::Camera* cam = renderInfo.getCurrentCamera())
-            {
-                if (const osg::Viewport* vp = cam->getViewport())
-                {
-                    x0 = static_cast<int>(vp->width()) / 2 - w / 2;
-                    y0 = static_cast<int>(vp->height()) / 2 - h / 2;
-                    if (x0 < 0) x0 = 0;
-                    if (y0 < 0) y0 = 0;
-                }
-            }
-            std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4, 0);
-            glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-            unsigned int mn = 255, mx = 0;
-            unsigned long sum = 0;
-            size_t n = 0;
-            for (size_t i = 0; i + 3 < px.size(); i += 4)
-            {
-                for (int c = 0; c < 3; ++c)
-                {
-                    const unsigned int v = px[i + c];
-                    mn = std::min(mn, v);
-                    mx = std::max(mx, v);
-                    sum += v;
-                    ++n;
-                }
-            }
-            Log(Debug::Warning) << "Local map: target centre pixels min=" << mn << " max=" << mx
-                                << " mean=" << (n ? sum / n : 0) << " (at " << x0 << "," << y0 << ")";
-        }
-        ++mDraws;
-    }
-
-    void MapCullDiagnostic::operator()(osg::Node* node, osg::NodeVisitor* nv)
-    {
-        // AFTER the traversal, not before: the question is what the cull PRODUCED, and asking
-        // before it has run reads an empty bin every time and would "prove" the bug that is
-        // being investigated.
-        traverse(node, nv);
-
-        static bool logged = false;
-        if (logged)
-            return;
-        // A cull visitor is the only visitor with a render bin to ask. Update and intersection
-        // traversals reach this node too, and answering for one of those would be a number about
-        // the wrong thing.
-        osgUtil::CullVisitor* cv = dynamic_cast<osgUtil::CullVisitor*>(nv);
-        if (!cv)
-            return;
-        logged = true;
-        Log(Debug::Warning) << "Local map: camera subgraph culled to "
-                            << countCulledDrawables(cv->getCurrentRenderBin()) << " drawable(s)";
+        camera->addChild(mSceneRoot);
     }
 
     void CameraLocalUpdateCallback::operator()(LocalMapRenderToTexture* node, osg::NodeVisitor* nv)

@@ -14,6 +14,44 @@ the invite code, and an invite link fills the code in and opens straight on acco
 The code is checked with the same guess limits as Discord, Google and Microsoft sign-up, and the
 password follows the dashboard's rule (at least 12 characters, not the username). With the switch
 off, a password-only front page now tells new players to ask the owner for an account.
+## 1.7.26
+
+**The map stays lit.** The parts of the map you had uncovered went black again every time you
+logged back in, because the game only keeps that in a save file and multiplayer has none. The
+places you explore (indoors and out) are now remembered with your character and stay uncovered
+when you return. Places explored before this update come back as you revisit them.
+
+**Death sends you to the last temple town you visited.** You come back just outside the door of
+the last building you entered in a town with a temple or chapel (Balmora, Vivec, Ald-ruhn,
+Gnisis, Maar Gan, Molag Mar, Suran, Ghostgate, Ebonheart, Sadrith Mora, Vos, Mournhold, Fort
+Frostmoth), instead of always Seyda Neen. Until you have been to one, it is still Seyda Neen.
+You keep everything you carry.
+
+## 1.7.25
+
+**Levelling up works across sessions.** The game counts your skill increases toward the next
+level, and that count was not saved: every time you logged out or reloaded it went back to zero
+while your skills stayed raised, so anyone who plays in short sessions could build skills for
+days and never get the level-up. The count is now saved with your character and comes back when
+you log in. Skill increases you made before this update were not counted and start from zero.
+
+**Attribute drains no longer hide a level-up.** A drain on an attribute (Damage Personality, a
+disease, ash chill) of more than a few points made the server refuse the whole attribute update,
+including the points gained at a level-up, which were then lost on the next login.
+
+## 1.7.24
+
+**Firefox runs smoother.** Firefox does not tell a page how much memory the computer has, so it
+was always given the middle quality setting, whose small cache of game data kept re-downloading
+what it had just dropped: in a busy town the game paused repeatedly to wait for data. Firefox on a
+computer with 8 or more cores now gets the same setting Chrome gives a computer with 8 GB or more.
+
+## 1.7.23
+
+**Firefox can play.** Firefox 134 and later is no longer turned away on the sign-in page, the
+launcher or the game page. The sample world and multiplayer run in it, at the same frame rate as
+Chrome in our tests. Loading your own Morrowind folder still needs Chrome, Edge or Brave, because
+Firefox has no folder picker.
 
 ## 1.7.22
 

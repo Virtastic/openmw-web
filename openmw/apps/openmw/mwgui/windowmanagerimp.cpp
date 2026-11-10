@@ -1911,6 +1911,11 @@ namespace MWGui
         mMap->addVisitedLocation(name, x, y);
     }
 
+    void WindowManager::revealMapCell(const std::string& cellKey)
+    {
+        mLocalMapRender->revealCell(cellKey);
+    }
+
     const Translation::Storage& WindowManager::getTranslationDataStorage() const
     {
         return mTranslationDataStorage;

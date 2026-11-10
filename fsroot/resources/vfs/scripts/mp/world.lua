@@ -587,6 +587,9 @@ handlers.MP_WorldMapExplored = function(data)
     for _, key in ipairs(data.cellKeys or {}) do
         if type(key) == 'string' then
             exploredIn[key] = true
+            -- The cell's local-map fog starts clear (it was explored in an earlier session;
+            -- fog is not kept anywhere else, so a rejoin painted it black again).
+            if mp.revealMapCell then pcall(mp.revealMapCell, key) end
             local gx, gy = key:match('^(-?%d+),(-?%d+)$')
             if gx and mp.setMapExplored then
                 local name = key

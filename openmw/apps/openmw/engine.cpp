@@ -76,6 +76,9 @@
 
 #include "mwlua/luamanagerimp.hpp"
 #include "mwlua/worker.hpp"
+#ifdef __EMSCRIPTEN__
+#include <components/lua/storage.hpp>
+#endif
 
 #include "mwscript/interpretercontext.hpp"
 #include "mwscript/scriptmanagerimp.hpp"
@@ -1201,13 +1204,21 @@ namespace
 {
     void (*g_emTick)(void*) = nullptr;
     void* g_emArg = nullptr;
+    // The mods' Lua storage (player_storage.bin, global_storage.bin: their settings and their own
+    // state, such as "first-run screen already shown") was written only when the engine quits --
+    // never, in a browser -- or when the Options window closes. Anything a mod stored outside
+    // Options was lost at every reload. The page's periodic and lifecycle flush (omw_save_settings)
+    // now writes it too when it changed, between frames only: a frame's Lua update may be running.
+    bool g_inTick = false; // a frame is under way
+    bool g_storageSaveAsked = false; // asked during a frame: written at its end
+    void (*g_saveLuaStorage)() = nullptr;
 }
 extern "C" EMSCRIPTEN_KEEPALIVE void omw_pump_frame()
 {
     // Re-entrancy guard: a long frame can spin the browser event loop (e.g. via a proxied
     // main-thread call), which dispatches a queued MessageChannel message and would call this
     // again mid-frame — recursively re-locking OpenMW's non-recursive mutexes → pthread deadlock.
-    static bool inTick = false;
+    bool& inTick = g_inTick;
     if (inTick)
         return;
     if (g_emTick && g_emArg)
@@ -1247,6 +1258,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE void omw_save_settings()
     catch (const std::exception& e)
     {
         printf("omw_save_settings: %s\n", e.what());
+    }
+    if (g_saveLuaStorage)
+    {
+        if (g_inTick)
+            g_storageSaveAsked = true;
+        else
+            g_saveLuaStorage();
     }
 }
 
@@ -1608,6 +1626,8 @@ void OMW::Engine::go()
             const unsigned frameNumber = self->mViewer->getFrameStamp()->getFrameNumber();
             if (!self->frame(frameNumber, static_cast<float>(dt)))
                 return;
+            if (g_storageSaveAsked && g_saveLuaStorage)
+                g_saveLuaStorage(); // asked during this frame; its Lua update is over
             timeManager.updateIsPaused();
             if (!timeManager.isPaused())
             {
@@ -1625,6 +1645,33 @@ void OMW::Engine::go()
         maxSimulationInterval };
     g_emTick = &EmscriptenLoop::tick;
     g_emArg = loop;
+    // The mods' Lua storage, written when it changed since the last write (or the load).
+    {
+        static OMW::Engine* engine = this;
+        static unsigned long long saved = LuaUtil::LuaStorage::sChanges.load();
+        g_saveLuaStorage = [] {
+            g_storageSaveAsked = false;
+            const unsigned long long now = LuaUtil::LuaStorage::sChanges.load();
+            if (now == saved || !engine->mLuaManager)
+                return;
+            // A heavily modded game's storage can be several MB (map mods cache there): written only
+            // while a menu is open or the page is hidden (the player away, or closing the tab),
+            // never in play, where a frame would carry the write.
+            const bool hidden = EM_ASM_INT({ return document.visibilityState === 'hidden' ? 1 : 0; }) != 0;
+            MWBase::WindowManager* windows = MWBase::Environment::get().getWindowManager();
+            if (!hidden && !(windows && windows->isGuiMode()))
+                return;
+            try
+            {
+                engine->mLuaManager->savePermanentStorage(engine->mCfgMgr.getUserConfigPath());
+                saved = now;
+            }
+            catch (const std::exception& e)
+            {
+                printf("Lua storage not saved: %s\n", e.what());
+            }
+        };
+    }
     // SINGLE frame driver: the MessageChannel pump in index.html calls omw_pump_frame()
     // (-> this tick). The pump paces itself with requestAnimationFrame while the tab is
     // visible (vsync-aligned) and free-runs unthrottled when hidden. We deliberately do NOT

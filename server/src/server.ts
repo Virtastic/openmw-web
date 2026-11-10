@@ -343,6 +343,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     log,
     players: () => roster.inWorld().map((p) => ({ id: p.id, name: p.name, rank: p.rank })),
     cellOfPlayer: (playerId) => roster.get(playerId)?.cellKey,
+    settlementOf: (playerId) => {
+      const p = roster.get(playerId);
+      return p ? playerStore.getCached(p.charId)?.settlement : undefined;
+    },
     posOfPlayer: (playerId) => {
       const p = roster.get(playerId);
       if (!p || p.cellKey === undefined || !p.pose) return undefined;

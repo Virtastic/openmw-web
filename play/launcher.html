@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><head><!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app | SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web --><meta charset="utf-8">
 <title>Morrowind in your browser - OpenMW compiled to WebAssembly</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Play Morrowind in your browser - the OpenMW engine compiled to WebAssembly. Free sample world, bring your own copy, or multiplayer. Desktop Chrome/Chromium.">
+<meta name="description" content="Play Morrowind in your browser - the OpenMW engine compiled to WebAssembly. Free sample world, bring your own copy, or multiplayer. Desktop Chrome, Edge or Firefox.">
 <!-- Canonical host for every entry point. /launcher.html and /index.html (with or without the
      ?nomw / ?src boot query) are the SAME landing experience to a search engine, so they all
      fold into the bare root. Without this, Google indexed morrowind.virtastic.app/index.html?nomw=
@@ -28,10 +28,10 @@
  "description":"The OpenMW engine - the open-source reimplementation of The Elder Scrolls III: Morrowind - compiled to WebAssembly and running in a desktop browser. Play the free sample world, stream your own copy of the game from disk, or join multiplayer.",
  "image":"https://morrowind.virtastic.app/og.png",
  "applicationCategory":"GameApplication",
- "operatingSystem":"Web browser (desktop Chrome/Chromium)",
+ "operatingSystem":"Web browser (desktop Chrome, Edge or Firefox)",
  "gamePlatform":"Web browser",
  "playMode":["SinglePlayer","MultiPlayer"],
- "browserRequirements":"Requires WebAssembly, SharedArrayBuffer and WebGL2. Desktop Chrome or Chromium.",
+ "browserRequirements":"Requires WebAssembly, SharedArrayBuffer and WebGL2. Desktop Chrome, Edge or Firefox 134+.",
  "isAccessibleForFree":true,
  "offers":{"@type":"Offer","price":"0","priceCurrency":"USD","availability":"https://schema.org/InStock"},
  "publisher":{"@type":"Organization","name":"Virtastic","url":"https://virtastic.app"},
@@ -423,9 +423,9 @@ html.door .topbar, html.door .wrap { display:none !important }
        that DO work on a phone instead of a dead end. The cards below stay reachable on purpose:
        detection can be wrong, and being wrong should cost prominence, not access. -->
   <div class="unsupported" id="unsupported" hidden>
-    <h2>This needs Chrome or Edge on a computer</h2>
+    <h2>This needs Chrome, Edge or Firefox on a computer</h2>
     <p class="lead">The game runs on your own machine, in <b>Chrome</b> or <b>Edge</b> 133+
-      (or Brave) on a desktop or laptop. Until you are there you can still:</p>
+      (or Brave), or <b>Firefox</b> 134+, on a desktop or laptop. Until you are there you can still:</p>
     <div class="u-actions">
       <a class="btn btn-solid" href="https://www.youtube.com/watch?v=iqZ20MtdD4I"
          target="_blank" rel="noopener">Watch it running <span class="arw">▸</span></a>
@@ -542,7 +542,7 @@ html.door .topbar, html.door .wrap { display:none !important }
     Morrowind game data is not included or distributed here. Supply your own legally-obtained copy.
     openmw-web is based on the <a href="https://openmw.org/" target="_blank" rel="noopener">OpenMW</a>
     engine, effectively rebuilt in WebAssembly to run in the browser, and is released under the GPLv3.
-    Loading your own files needs a Chromium browser (Chrome, Edge or Brave) on desktop.
+    Loading your own files needs Chrome, Edge or Brave on desktop; the sample world and multiplayer also run in Firefox.
     <br><br>
     WASM port &copy; 2025&ndash;2026 <a href="https://virtastic.app" target="_blank" rel="noopener">Virtastic</a>
     &middot; <a href="https://github.com/Virtastic/openmw-web" target="_blank" rel="noopener">Source code &amp; releases</a>
@@ -901,9 +901,12 @@ html.door .topbar, html.door .wrap { display:none !important }
    // short side just like a phone, but no phone is 1100 wide in either orientation.
    const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
    const phone = touch && Math.min(innerWidth, innerHeight) < 820 && Math.max(innerWidth, innerHeight) < 1100;
-   // Chromium by brand as well: Firefox 134+ passes every probe above and cannot carry the game.
+   // Chromium or Firefox 134+ by brand (Firefox 159 measured at parity with Chromium). Firefox has
+   // no File System Access API, so its "own copy" card is disabled below; sample world and
+   // multiplayer work.
    const chromium = !!(navigator.userAgentData && navigator.userAgentData.brands
-     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }));
+     && navigator.userAgentData.brands.some(function(b){ return b.brand === 'Chromium'; }))
+     || (/\bFirefox\/(\d+)/.exec(navigator.userAgent) || [])[1] >= 134;
    return noSAB || noMem64 || phone || !chromium;
  }
 
@@ -1671,10 +1674,17 @@ html.door .topbar, html.door .wrap { display:none !important }
    // concept, so there is nothing to pick; boot straight into single player with the locker
    // mounted. index.html keys multiplayer off `mp=` alone, so omitting it is the whole mode.
    if (intent === 'cloud'){
+     // A SERVER THAT HANDS OUT THE GAME HAS NO LOCKER TO MOUNT. Same question bootGame asks, and
+     // the same #mwdata=1 answer: without it the boot opened an empty locker, read the server's
+     // empty needed-list as "no game manifest configured" and bounced back here (prod
+     // 2026-10-20: 9 sign-ins from 3 accounts, one of them brand new, never reached the game).
+     let hosted = false;
+     try { hosted = (await fetch('/mwdata-manifest.json', { method: 'HEAD' })).ok; } catch(e){}
      window.__omwAllowLeave = true;
      location.href = 'index.html#locker=' + encodeURIComponent(gwHttp)
        + '&mplocker=' + encodeURIComponent(lockerToken)
        + '&mpaccount=' + encodeURIComponent(account)
+       + (hosted ? '&mwdata=1' : '')
        + '&cloud=1';   // read by index.html's launcher gate; see the guard there
      return;
    }

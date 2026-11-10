@@ -480,6 +480,70 @@ test('#369 a stat rises by a level-up step per window, a level by one; reputatio
   assert.equal(doc.stats?.reputation, 15);
 });
 
+// PROD 2026-11-06 (Polnedra): a drain is not a gain. "<id>_damage" keys ride the attributes map
+// and a bigger value LOWERS the stat, but the +5/window raise budget counted it, so a Damage
+// Personality of 9 refused the whole map -- and the level-up's attribute gains in the same
+// declaration with it, never stored, gone on relog.
+test('an attribute drain never trips the raise budget, and a level-up beside it is kept', async (t) => {
+  const { server, dataDir } = await boot(t);
+  const { c, charId } = await join(t, server, 'Drained');
+  c.sendEvent('PlayerAttributes', { strength: 40, personality: 40, personality_damage: 0, willpower_damage: 0 });
+  await settle();
+  // The drain lands (9 and 11), and the level-up's +5 arrives in the very same declaration.
+  c.sendEvent('PlayerAttributes', { strength: 45, personality: 40, personality_damage: 9, willpower_damage: 11 });
+  await settle();
+  c.sendEvent('PlayerAttributes', { strength: 45, personality: 40, personality_damage: 40, willpower_damage: 11 });
+  await settle();
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId) as { stats?: { attributes?: Record<string, number> } };
+  assert.deepEqual(doc.stats?.attributes,
+    { strength: 45, personality: 40, personality_damage: 40, willpower_damage: 11 });
+  // ...and a REAL raise is still budgeted: the exemption is for the drain keys only.
+  const refused = c.waitEvent('StateRefused');
+  c.sendEvent('PlayerAttributes', { strength: 52, personality: 40, personality_damage: 40, willpower_damage: 11 });
+  assert.equal(((await refused).value as { kind: string }).kind, 'PlayerAttributes');
+});
+
+// PROD 2026-11: "I can't level up". The skill increases counted toward the next level-up are
+// NpcStats-only, so a relog reset them to 0 while the raised skills stayed -- a player in short
+// sessions never reached the 10. They ride on PlayerLevel (like reputation) into the doc.
+test('level progress rides on PlayerLevel into the doc, survives malformed and old-client declarations', async (t) => {
+  const { server, dataDir } = await boot(t);
+  const { c, charId } = await join(t, server, 'Grinder2');
+  c.sendEvent('PlayerLevel', { level: 1, progress: 7,
+    attributeIncreases: { strength: 3, luck: 1, bogus: 9, agility: -2, speed: 1.5 },
+    specializationIncreases: { combat: 4, stealth: 0, other: 3 } });
+  await settle();
+  await server.flush();
+  let doc = readPlayerDoc(dataDir, charId) as { stats?: { level?: number; levelProgress?: { progress: number } } };
+  assert.equal(doc.stats?.level, 1);
+  assert.deepEqual(doc.stats?.levelProgress, {
+    progress: 7, attributes: { strength: 3, luck: 1 }, specializations: { combat: 4, stealth: 0 },
+  }, 'known keys with whole, non-negative counts only');
+
+  // An OLD client (no progress field) must not wipe the stored count...
+  c.sendEvent('PlayerLevel', { level: 1 });
+  // ...and a malformed progress is dropped without costing the level itself.
+  c.sendEvent('PlayerLevel', { level: 1, progress: -4 });
+  c.sendEvent('PlayerLevel', { level: 1, progress: 2.5 });
+  c.sendEvent('PlayerLevel', { level: 1, progress: 1e9 });
+  await settle();
+  await server.flush();
+  doc = readPlayerDoc(dataDir, charId) as { stats?: { level?: number; levelProgress?: { progress: number } } };
+  assert.equal(doc.stats?.levelProgress?.progress, 7, 'a missing or malformed progress leaves the stored one');
+  assert.equal(doc.stats?.level, 1);
+
+  // The count moves with play and resets with the level-up itself (the engine zeroes it).
+  c.sendEvent('PlayerLevel', { level: 1, progress: 10 });
+  await settle();
+  c.sendEvent('PlayerLevel', { level: 2, progress: 0, attributeIncreases: {}, specializationIncreases: {} });
+  await settle();
+  await server.flush();
+  doc = readPlayerDoc(dataDir, charId) as { stats?: { level?: number; levelProgress?: { progress: number } } };
+  assert.equal(doc.stats?.level, 2);
+  assert.equal(doc.stats?.levelProgress?.progress, 0);
+});
+
 // #369/#422: a base above 100 is not a player's -- the example template's Acrobatics 125 is
 // content, and a map carrying it is refused whole (the demo bot's skills persist once the
 // party world's class rebuild normalises them). 100 itself is fine.

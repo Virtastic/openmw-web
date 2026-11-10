@@ -1,3 +1,5 @@
+// Modified by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2025-2026.
+// See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "storage.hpp"
 
 #include <filesystem>
@@ -83,10 +85,17 @@ namespace LuaUtil
                 "Too many subscribe callbacks triggering in a chain, likely an infinite recursion");
     }
 
+#ifdef __EMSCRIPTEN__
+    std::atomic<unsigned long long> LuaStorage::sChanges{ 0 };
+#endif
+
     void LuaStorage::Section::set(std::string_view key, const sol::object& value)
     {
         checkIfActive();
         throwIfCallbackRecursionIsTooDeep();
+#ifdef __EMSCRIPTEN__
+        sChanges.fetch_add(1, std::memory_order_relaxed);
+#endif
         if (value != sol::nil)
             mValues[std::string(key)] = Value(value);
         else
@@ -104,6 +113,9 @@ namespace LuaUtil
     {
         checkIfActive();
         throwIfCallbackRecursionIsTooDeep();
+#ifdef __EMSCRIPTEN__
+        sChanges.fetch_add(1, std::memory_order_relaxed);
+#endif
         mValues.clear();
         if (values)
         {
@@ -280,6 +292,31 @@ namespace LuaUtil
 
     void LuaStorage::save(lua_State* state, const std::filesystem::path& path) const
     {
+#ifdef __EMSCRIPTEN__
+        // Written straight from the values as they are kept, already serialized: the same data as the
+        // table copy below (every section deserialized, then serialized again), which took ~0.5 s for
+        // the 8 MB storage of a game with ~30 Lua mods in the browser, now that the page writes it
+        // while playing. Here: tens of ms.
+        (void)state;
+        std::string serializedData;
+        tableOpen(serializedData);
+        for (const auto& [sectionName, section] : mData)
+        {
+            if (section->mLifeTime != Section::Persistent || section->mValues.empty())
+                continue;
+            appendKey(serializedData, sectionName);
+            tableStart(serializedData);
+            for (const auto& [key, value] : section->mValues)
+            {
+                if (value.serialized().empty())
+                    continue;
+                appendKey(serializedData, key);
+                appendSerialized(serializedData, value.serialized());
+            }
+            tableClose(serializedData);
+        }
+        tableClose(serializedData);
+#else
         sol::table data(state, sol::create);
         for (const auto& [sectionName, section] : mData)
         {
@@ -287,6 +324,7 @@ namespace LuaUtil
                 data[sectionName] = section->asTable(state);
         }
         std::string serializedData = serialize(data);
+#endif
         Log(Debug::Info) << "Saving Lua storage \"" << path << "\" (" << serializedData.size() << " bytes)";
         std::ofstream fout(path, std::fstream::binary);
         fout.write(serializedData.data(), serializedData.size());

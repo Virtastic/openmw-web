@@ -918,6 +918,14 @@ namespace MWMP
                       "MPSetMapExplored");
               };
 
+        // OT3: clear the local-map fog of a cell this character explored in an earlier
+        // session (LocalMap::revealCell). cellKey is shared.cellKeyOf's form.
+        api["revealMapCell"] = [luaManager = context.mLuaManager](std::string_view cellKey) {
+            std::string key(cellKey);
+            luaManager->addAction(
+                [key] { MWBase::Environment::get().getWindowManager()->revealMapCell(key); }, "MPRevealMapCell");
+        };
+
         // Every menu window for a character past chargen. Two ways to lose one for good:
         // chargen's disallowAll (statemanagerimp.cpp:176) is only undone by the census
         // scripts' Enable*Menu, and toggleVisible (a menu-mode click on a HUD icon, a

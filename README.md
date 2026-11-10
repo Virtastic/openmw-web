@@ -21,7 +21,7 @@
 [![YouTube](https://img.shields.io/badge/YouTube-Virtastic-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/@Virtastic-Apps)
 [![Reddit](https://img.shields.io/badge/Reddit-r%2Fvirtastic-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/virtastic)
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPLv3-blue)
-![Platform: Chrome desktop](https://img.shields.io/badge/browser-Chrome%20%2F%20Chromium-brightgreen)
+![Platform: desktop browser](https://img.shields.io/badge/browser-Chrome%20%2F%20Edge%20%2F%20Firefox-brightgreen)
 [![Latest release](https://img.shields.io/github/v/release/Virtastic/openmw-web)](https://github.com/Virtastic/openmw-web/releases)
 
 openmw-web is a WebAssembly build of [OpenMW](https://openmw.org/), the open-source
@@ -157,9 +157,10 @@ gotcha live in [`docs/BUILDING.md`](docs/BUILDING.md). Questions:
 
 ### Browser requirement
 
-Desktop Chrome or Chromium with MEMORY64 (Chrome/Edge 133+): the engine needs
-SharedArrayBuffer + threads, WebGL2 via ANGLE, `EXT_clip_control`, and the File System
-Access API. Firefox, Safari and mobile are not supported.
+Desktop Chrome or Chromium with MEMORY64 (Chrome/Edge 133+), or Firefox 134+: the engine needs
+SharedArrayBuffer + threads, WebGL2, `EXT_clip_control` and 64-bit memory. Loading your own
+Morrowind folder also needs the File System Access API (Chrome, Edge, Brave; not Firefox).
+Safari and mobile are not supported.
 
 ## License
 
