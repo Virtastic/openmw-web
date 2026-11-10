@@ -206,6 +206,11 @@ Emscripten's virtual filesystem and persisted in browser storage:
   reloads. Settings and Lua storage call `FS.syncfs` immediately on write
   (`components/settings/settings.cpp`, `apps/openmw/mwlua/luamanagerimp.cpp`) so a crash or tab close
   right after saving can't lose data — the periodic timer-based sync is only a backstop.
+  The mods' Lua storage is also written by the page's periodic and lifecycle flush
+  (`omw_save_settings`, `apps/openmw/engine.cpp`) when it changed, while a menu is open or the page
+  is hidden: desktop OpenMW writes it only at exit, which never happens in a tab. It is written
+  straight from the values it keeps serialized (`components/lua/storage.cpp`), not through a Lua
+  table copy (~0.5 s → tens of ms for a heavily modded game's several-MB storage).
 - **Bring-your-own saves go to disk.** When the player grants read-write access to their `Data Files`
   folder, `play/index.html` mirrors the save directory to an `openmw-web-saves` subfolder in that folder
   via the File System Access API, so saves are real files that survive clearing browser data (like
@@ -340,6 +345,10 @@ needs a surface vanilla Lua does not expose; no upstream file is patched for the
 - `openmw/components/fx/stateupdater.cpp`
 - `openmw/components/fx/stateupdater.hpp`
 - `openmw/components/fx/technique.cpp`
+- `openmw/components/lua/serialization.cpp`
+- `openmw/components/lua/serialization.hpp`
+- `openmw/components/lua/storage.cpp`
+- `openmw/components/lua/storage.hpp`
 - `openmw/components/misc/frameratelimiter.hpp`
 - `openmw/components/misc/thread.cpp`
 - `openmw/components/myguiplatform/myguirendermanager.cpp`
