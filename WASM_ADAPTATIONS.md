@@ -27,6 +27,10 @@ that rewrites each shader to `#version 300 es`: fixed-function attributes/unifor
 (`setUseVertexAttributeAliasing`/`setUseModelViewAndProjectionUniforms`, enabled in
 `apps/openmw/engine.cpp`), `texture2D`→`texture`, `varying`→`in`/`out`, `gl_FragData[n]`→declared
 `layout(location=n) out`, and precision qualifiers injected.
+The rewrites are plain scans (`components/shader/glesrewrite.hpp`), not `std::regex`: about 40
+regex constructions and passes per merged source cost ~11 ms each time a shader variant was first
+needed (a 213 ms frame for the rain's); the scans give the same bytes in ~0.07 ms. On the web the
+`$link` statements are parsed the same way.
 
 ### One shader per stage (the merge)
 WebGL permits exactly **one** vertex and one fragment shader object per program, but OpenMW composes
