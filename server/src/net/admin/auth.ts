@@ -268,7 +268,7 @@ export function passwordProblem(password: string, name: string): string | null {
   if (password.length < 12) return 'must be at least 12 characters';
   if (password.length > 200) return 'must be under 200 characters';
   const lower = password.toLowerCase();
-  if (WEAK.has(lower)) return 'that is one of the most common passwords in the world';
+  if (WEAK.has(lower)) return 'is one of the most common passwords in the world';
   if (name !== '' && lower.includes(name.toLowerCase())) return 'must not contain the username';
   if (/^(.)\1+$/.test(password)) return 'must not be a single repeated character';
   return null;

@@ -99,7 +99,7 @@ curl -s localhost:8080/worlds
 | `[server] password` | **the sim peer's credential**, not a player password |
 | `[auth] requireSso`, `[auth.google/discord/microsoft]` | sign-in |
 | `[locker] *` | storage: S3 endpoint/bucket, or `publicBase` for disk mode; save quota |
-| `[login] allowRegistration`, `inviteCode`, `resumeWindowSec` | who may join; rejoin window |
+| `[login] allowRegistration`, `inviteCode`, `allowPasswordSignup`, `resumeWindowSec` | who may join (and whether the front page's password form can make accounts, off by default); rejoin window |
 | `[content] enforce`, `[engine] enforce` | load-order / engine matching |
 | `[sharing] *`, `[rules] *` | what is shared, and gameplay policy |
 | `[admin] owners`, `allowConsole` | moderation |
